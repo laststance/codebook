@@ -123,6 +123,31 @@ const SAVE_LEARNING_SUMMARY_ADVICE =
 /** What the run resource tells an agent in place of {@link SAVE_LEARNING_SUMMARY_ADVICE} once the run's explanation keys are spent, because {@link StudyService.explain} refuses every new key then; the refusal of a new key begins with the same budget statement. */
 const EXPLANATION_BUDGET_SPENT_ADVICE = `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; the saved study will have no learning summary.`
 
+/**
+ * Chooses what the run resource says under `saveLearningSummary`, for {@link StudyService.state} each time the resource is read.
+ * @param lacksLearningSummary - Whether the released run reached its demonstrated result and no saved explanation carries a learning summary.
+ * @param explanationBudgetSpent - Whether {@link StudyService.explain} accepts no new key for the run.
+ * @param isSavingLearningSummary - Whether an accepted key's explanation that carries a learning summary is still being saved. The budget counts a key when it is reserved, so the last key can be spent while its summary is on its way.
+ * @returns
+ * - `undefined` for a run that lacks no learning summary
+ * - {@link SAVE_LEARNING_SUMMARY_ADVICE} while explain still accepts a new key
+ * - `undefined` once it does not, while a learning summary is still being saved: whether the study gets one is not known yet
+ * - {@link EXPLANATION_BUDGET_SPENT_ADVICE} once the budget is spent and no summary is on its way
+ * @example
+ * learningSummaryAdvice(true, false, false) // => SAVE_LEARNING_SUMMARY_ADVICE
+ * learningSummaryAdvice(true, true, true)   // => undefined
+ * learningSummaryAdvice(false, true, false) // => undefined
+ */
+function learningSummaryAdvice(
+  lacksLearningSummary: boolean,
+  explanationBudgetSpent: boolean,
+  isSavingLearningSummary: boolean,
+): string | undefined {
+  if (!lacksLearningSummary) return undefined
+  if (!explanationBudgetSpent) return SAVE_LEARNING_SUMMARY_ADVICE
+  return isSavingLearningSummary ? undefined : EXPLANATION_BUDGET_SPENT_ADVICE
+}
+
 /** What the run resource tells an agent beside a browser profile folder that the run's cleanup could not remove: the run is released, and nobody is asked to delete anything. */
 const BROWSER_PROFILE_LEFT_ADVICE =
   'The run is released and its outcome is unchanged; only the folder of its own browser profile could not be removed. Do nothing: Codebook removes the folder at the start of a later run, after this editor window was closed or reloaded.'
@@ -185,7 +210,12 @@ interface StudyRecordState {
   explanations: Map<string, Explanation>
   explanationKeys: Map<
     string,
-    { signature: string; result: Promise<ExplanationReceipt> }
+    {
+      signature: string
+      result: Promise<ExplanationReceipt>
+      /** Set while the key's explanation carries a learning summary and is still being saved: until its save ends, nobody can say whether the study gets a summary. */
+      isSavingLearningSummary?: boolean
+    }
   >
   sourceReveals: Set<Promise<void>>
   /** Per committed snapshot of a moved stop, how far {@link StudyService.explain}'s one check of the paused line has gone: `refused` after the one refusal, `explained` once an explanation was accepted, after which none is checked. */
@@ -1387,7 +1417,15 @@ export class StudyService {
         throw record.error
       }
     })
-    record.explanationKeys.set(input.key, { signature, result })
+    const accepted: NonNullable<
+      ReturnType<StudyRecord['explanationKeys']['get']>
+    > = { signature, result, isSavingLearningSummary: Boolean(learningSummary) }
+    record.explanationKeys.set(input.key, accepted)
+    // Saved or failed, the key's explanation is no longer being written.
+    const saveEnded = (): void => {
+      accepted.isSavingLearningSummary = false
+    }
+    void result.then(saveEnded, saveEnded)
     return result
   }
 
@@ -2174,11 +2212,13 @@ export class StudyService {
     return {
       ...material,
       // Present while the run lacks a learning summary: the step to save one while explain still accepts a new key, the spent budget once it does not; gone once an explanation with a learning summary is saved.
-      saveLearningSummary: lacksLearningSummary
-        ? explanationBudgetSpent
-          ? EXPLANATION_BUDGET_SPENT_ADVICE
-          : SAVE_LEARNING_SUMMARY_ADVICE
-        : undefined,
+      saveLearningSummary: learningSummaryAdvice(
+        lacksLearningSummary,
+        explanationBudgetSpent,
+        [...record.explanationKeys.values()].some(
+          (accepted) => accepted.isSavingLearningSummary,
+        ),
+      ),
       observedAt:
         observedAtMs === undefined
           ? undefined

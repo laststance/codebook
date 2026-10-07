@@ -857,19 +857,40 @@ test('the server reports API 1.7 and its instructions say that codebook_source a
 
 /**
  * Takes the client example out of the packaged README, so the test below runs the code a reader copies and the README cannot drift from what is tested.
- * @param readme - The packaged README's text.
- * @returns The JavaScript between the example's `node --input-type=module <<'NODE'` line and its closing `NODE` line.
+ * A checkout whose Git settings give text files CRLF line ends (the default on Windows) holds the same README with other line ends, so the example is found under either and returned with line feeds.
+ * @param readme - The packaged README's text, with LF or CRLF line ends.
+ * @returns The JavaScript between the example's `node --input-type=module <<'NODE'` line and its closing `NODE` line, with LF line ends.
  * @throws When the README holds no such example.
  * @example
  * readmeClientExample("```sh\nnode --input-type=module <<'NODE'\nconsole.log(1);\nNODE\n```") // => 'console.log(1);\n'
+ * readmeClientExample("```sh\r\nnode --input-type=module <<'NODE'\r\nconsole.log(1);\r\nNODE\r\n```") // => 'console.log(1);\n'
  */
 function readmeClientExample(readme: string): string {
-  const example = /^node --input-type=module <<'NODE'\n([\s\S]*?\n)NODE$/m.exec(
-    readme,
-  )
+  const example =
+    /^node --input-type=module <<'NODE'\r?\n([\s\S]*?\r?\n)NODE\r?$/m.exec(
+      readme,
+    )
   if (!example?.[1]) throw new Error('The README holds no client example.')
-  return example[1]
+  return example[1].replaceAll('\r\n', '\n')
 }
+
+// Cycle 0046 (row 164): red while the example was found with a pattern of line feeds alone: in a checkout whose Git settings give the README CRLF line ends, the default on Windows, the test below threw "The README holds no client example."
+test('the README’s client example is found and read alike in a checkout with LF and with CRLF line ends', () => {
+  // Arrange: one README excerpt, once with the line ends of each kind of checkout.
+  const withLineFeeds =
+    "Run it:\n\n```sh\nnode --input-type=module <<'NODE'\nconst price = 24;\nconsole.log(price);\nNODE\n```\n"
+  const withCarriageReturns = withLineFeeds.replaceAll('\n', '\r\n')
+  // Act
+  const examples = [
+    readmeClientExample(withLineFeeds),
+    readmeClientExample(withCarriageReturns),
+  ]
+  // Assert
+  assert.deepEqual(examples, [
+    'const price = 24;\nconsole.log(price);\n',
+    'const price = 24;\nconsole.log(price);\n',
+  ])
+})
 
 // Value: protects=a developer who copies the README's source-reading example getting the source instead of a schema error; fails_when=the example's schema no longer matches the codebook_source answer (it threw "Unrecognized key: numberedText" for every source since API 1.6, and expected a text member the answer lost in API 1.7), or the example no longer runs; why_new=Cycle 0046 row 49 (package STA, found while working); seam=none
 test('the README’s client example, run as the README says against a tracked file, prints that file’s identity and numbered lines', async () => {

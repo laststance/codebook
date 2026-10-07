@@ -15,12 +15,16 @@ import {
 } from './constants'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import { NodeTestOutputTerminal } from './nodeTestOutputTerminal'
-import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
+import {
+  OwnedBreakpointMovedError,
+  OwnedRepositoryBreakpoint,
+} from './ownedRepositoryBreakpoint'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
+import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import {
   inspectNodeTestVariables,
@@ -113,6 +117,8 @@ export class OwnedNodeTestRun {
                 session,
                 message as DebugProtocol.Response,
               )
+            // The adapter's later news about the owned breakpoint (a pending one it verifies) is read before the editor drops its column.
+            this.forwardBreakpointNews(session, message)
             if (
               message.type === 'event' &&
               (message as DebugProtocol.Event).event === 'continued'
@@ -261,8 +267,8 @@ export class OwnedNodeTestRun {
       sessionId: this.bound.session.id,
       identity: this.bound.identity,
     })
-    const registration = await this.breakpoint.registered(
-      this.bound.session,
+    const registration = await this.registeredAsDeclared(
+      launch.stops[0]!.source,
       signal,
     )
     this.ownedBreakpointId = registration.breakpointId
@@ -285,6 +291,64 @@ export class OwnedNodeTestRun {
       elapsedMs: this.owned.elapsedMs(),
     })
     return this.captureStop(0, fromIndex)
+  }
+
+  /**
+   * Hands the adapter's `breakpoint` events to the owned breakpoint, for the tracker of the owned session: a pending breakpoint the adapter verifies later names its place only there, and the tracker reads it with its column, which both editors drop for a breakpoint requested at column 1.
+   * @param session - The owned session that sent the message.
+   * @param message - Any message of the adapter; only a `breakpoint` event is forwarded.
+   * @example
+   * ```ts
+   * this.forwardBreakpointNews(session, { type: 'event', event: 'breakpoint', body: { reason: 'changed', breakpoint: { id: 4, verified: true, line: 20, column: 12 } } })
+   * ```
+   */
+  private forwardBreakpointNews(
+    session: vscode.DebugSession,
+    message: DebugProtocol.ProtocolMessage,
+  ): void {
+    if (message.type !== 'event') return
+    const event = message as DebugProtocol.Event
+    if (event.event === 'breakpoint') this.breakpoint?.onEvent(session, event)
+  }
+
+  /**
+   * Waits for the adapter's acknowledgement of the current stop's owned breakpoint, for {@link prepareOwned} and {@link advance}; news that put the breakpoint away from the declared position before the receipt was read is refused with the sentence of every such binding.
+   * @param declared - The position the stop was declared at.
+   * @param signal - The caller's cancellation and budget.
+   * @returns The adapter's receipt, `pending` or `bound`.
+   * @throws The refusal of {@link boundElsewhereRefusalText} when the adapter's news names another place; every other failure of the registration unchanged.
+   * @example
+   * ```ts
+   * const registered = await this.registeredAsDeclared(next.source, signal) // { status: 'pending', breakpointId: 4, ... }
+   * ```
+   */
+  private async registeredAsDeclared(
+    declared: { line: number; column: number },
+    signal: AbortSignal,
+  ): Promise<Awaited<ReturnType<OwnedRepositoryBreakpoint['registered']>>> {
+    try {
+      return await this.breakpoint!.registered(this.bound!.session, signal)
+    } catch (error) {
+      if (!(error instanceof OwnedBreakpointMovedError)) throw error
+      throw new Error(boundElsewhereRefusalText(declared, error.place))
+    }
+  }
+
+  /**
+   * Refuses a stop whose owned breakpoint the adapter's news put away from the declared position, at the moment that news arrives; {@link advance} asks it before it resumes the test and {@link captureStop} at every look while the test runs, so the stop does not end one resume later or at its budget.
+   * @param declared - The position the stop was declared at.
+   * @throws The refusal of {@link boundElsewhereRefusalText}, naming both positions.
+   * @example
+   * ```ts
+   * this.assertNotMovedByNews(next.source) // throws 'Declared breakpoint 20:1 is bound at 22:5; …' once the adapter reported 22:5
+   * ```
+   */
+  private assertNotMovedByNews(declared: {
+    line: number
+    column: number
+  }): void {
+    const place = this.breakpoint?.refusedPlace(this.bound!.session)
+    if (place) throw new Error(boundElsewhereRefusalText(declared, place))
   }
 
   /** Reports whether another declared checked source stop must be captured before the test may finish. @example while (run.hasNextStop()) await run.advance() */
@@ -327,11 +391,13 @@ export class OwnedNodeTestRun {
         next.source.column,
         'declared-column',
       )
-      const registered = await this.breakpoint.registered(bound.session, signal)
+      const registered = await this.registeredAsDeclared(next.source, signal)
       this.ownedBreakpointId = registered.breakpointId
       // A pending reply names no position, so the adapter is asked once more while the test is still paused.
       if (registered.status === 'pending')
         await this.breakpoint.assertBoundAsDeclared(bound.session, signal)
+      // News that arrived since the receipt was read is refused while the test is still paused.
+      this.assertNotMovedByNews(next.source)
       // The learner can resume or step while retirement and registration are awaited.
       await this.assertAcceptedPause(previous, 'the next declared stop')
       const fromIndex = this.stops.length
@@ -383,6 +449,8 @@ export class OwnedNodeTestRun {
       async () => {
         // A test process that ended can never reach this stop; fail now instead of at the budget.
         this.assertActive(bound.session.id)
+        // Neither can a stop whose breakpoint the adapter's news put away from the declared position.
+        this.assertNotMovedByNews(selected.source)
         const nowMs = performance.now()
         // Only time the test could run counts; while a pause Codebook did not make holds it, the learner decides when it continues.
         if (!held) runningMs += nowMs - lastPollMs

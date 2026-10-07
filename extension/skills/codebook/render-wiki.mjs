@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { contentIdsOf, escapeHtml, renderWikiDiagrams, withAttributeValues } from './render-wiki-diagrams.mjs';
+import { contentIdsOf, escapeHtml, hasEndlessComment, renderWikiDiagrams, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -59,8 +59,12 @@ function validatePages(manifest) {
     paths.add(page.path);
     if (typeof page.title !== 'string' || !page.title.trim() || typeof page.section !== 'string' || !page.section.trim() || typeof page.contentHtml !== 'string' || !page.contentHtml.trim()) throw new Error(`Wiki page ${page.path} needs title, section and contentHtml.`);
     // Catch accidental old-page reuse; authored article HTML is not an untrusted-HTML sanitization API.
-    if (/<\/?(?:html|head|body|main|article|form|script|style|iframe|object|embed|base|meta|link|title|h1)\b/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must contain article sections, not a document, form or script.`);
+    // The content is read as raw text on purpose, here and for authored SVG: a comment or an attribute value that only shows one of these tags is refused too (escaped text, `&lt;form&gt;`, is not). Read so, the check can only refuse too much; one that skipped comments would miss an element wherever it took a place for a comment that a browser does not.
+    // With them are refused the elements whose content a browser reads as text (`textarea`, `xmp`, `noembed`, `noframes`, `plaintext`, and `noscript` on a page that runs a script, as the reader's does) or keeps out of the document (`template`): an article needs none of them, the publisher would read tags and ids in their content that a browser does not, and one that is never closed takes the reader's own form, rail and script with it.
+    if (/<\/?(?:html|head|body|main|article|form|script|style|iframe|object|embed|base|meta|link|title|h1|textarea|xmp|noembed|noframes|plaintext|noscript|template)\b/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must contain article sections, not a document, form or script.`);
     if (/<\/?svg\b/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must use diagram records and figure slots instead of authored SVG.`);
+    // A browser reads everything after a comment that never ends as comment: the rest of the article and, after it, the reader's question form, rail and script.
+    if (hasEndlessComment(page.contentHtml)) throw new Error(`Wiki page ${page.path} has a comment that never ends; close it with -->.`);
     if (!Array.isArray(page.sources) || !page.sources.length || !Array.isArray(page.outline)) throw new Error(`Wiki page ${page.path} needs source references and an outline.`);
     // An outline entry names an anchor of its page: an id an element of the content really carries, not one a code example or a comment only shows.
     const anchors = new Set(), contentIds = contentIdsOf(page.contentHtml);

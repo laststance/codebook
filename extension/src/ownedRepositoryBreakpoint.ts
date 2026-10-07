@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { ACTIVE_TIMEOUT_MS } from './constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
+import { completeBindingPlace } from './utils/completeBindingPlace'
 
 const requestSourceSchema = z.object({ source: z.object({ path: z.string() }) })
 const requestSchema = requestSourceSchema.extend({
@@ -46,7 +48,7 @@ const registrationResponseSchema = z.object({
 type RegistrationBinding = z.infer<
   typeof registrationResponseSchema
 >['breakpoints'][number]
-/** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. {@link OwnedRepositoryBreakpoint.assertBoundAsDeclared} reads a binding with it, and {@link ConfiguredBrowserRun} names a browser binding it completed ({@link verifiedLineSchema}) by its type. */
+/** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. An editor's answer may lack the column and is read with {@link verifiedLineSchema}; {@link ConfiguredBrowserRun} names a browser binding it completed by this schema's type. */
 export const verifiedPlaceSchema = z.object({
   verified: z.literal(true),
   line: z.number().int(),
@@ -583,9 +585,10 @@ export class OwnedRepositoryBreakpoint {
   /**
    * Asks the adapter where it has this breakpoint now and refuses a verified binding away from the declared position, for an owner whose first reply was pending and named no position; {@link OwnedNodeTestRun} calls it before it resumes the test.
    * A binding the adapter does not report, or one that is still unverified, decides nothing: the pause check remains.
+   * Both editors answer a breakpoint requested at column 1 without a column once the adapter sent news about it, so the binding is read as {@link ConfiguredBrowserRun} reads it: a missing column is taken from the adapter's own report ({@link reportedPlace}, {@link completeBindingPlace}), and without one the line decides. A verified binding on the declared line that names no column names no other column either: it refuses nothing here, and the owner's check of its pause at the declared column remains.
    * @param session - The debug session whose adapter holds the breakpoint.
    * @param signal - The caller's cancellation: an adapter that never answers this read must not hold a run that is being stopped.
-   * @throws When the adapter reports the breakpoint verified at another line or column than declared; the text names both positions. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
+   * @throws When the adapter reports the breakpoint verified at another line or column than declared ({@link boundElsewhereRefusalText}); the text names both positions, or the bound line when no column is known. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
    * @example
    * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 20:12; …'
    */
@@ -593,20 +596,41 @@ export class OwnedRepositoryBreakpoint {
     session: vscode.DebugSession,
     signal: AbortSignal,
   ): Promise<void> {
-    const place = verifiedPlaceSchema.safeParse(
+    const answered = verifiedLineSchema.safeParse(
       await awaitResponse(
         session.getDebugProtocolBreakpoint(this.breakpoint),
         'owned breakpoint binding',
         signal,
       ),
-    )
-    if (
-      place.success &&
-      (place.data.line !== this.line || place.data.column !== this.column)
-    )
+    ).data
+    if (!answered) return
+    // The editor may have dropped the column the adapter reported; without any column only the line is known.
+    const bound = completeBindingPlace(
+      answered,
+      this.reportedPlace(session),
+    ) ?? { line: answered.line }
+    if (this.isAwayFromDeclared(bound))
       throw new Error(
-        `Declared breakpoint ${this.line}:${this.column} is bound at ${place.data.line}:${place.data.column}; this stop is captured at its declared position, so declare ${place.data.line}:${place.data.column} or another statement.`,
+        boundElsewhereRefusalText(
+          { line: this.line, column: this.column },
+          bound,
+        ),
       )
+  }
+
+  /**
+   * Tells {@link assertBoundAsDeclared} whether a verified binding names another place than the requested position.
+   * @param bound - The binding's line and, when one is known, its column.
+   * @returns `true` for another line, and for another column on the requested line; `false` for the requested position, and for the requested line without a column, which names no other column.
+   * @example
+   * this.isAwayFromDeclared({ line: 20 }) // => false for an owner requested at 20:1
+   */
+  private isAwayFromDeclared(bound: {
+    line: number
+    column?: number
+  }): boolean {
+    if (bound.line !== this.line) return true
+    return bound.column !== undefined && bound.column !== this.column
   }
 
   /**
