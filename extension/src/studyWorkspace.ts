@@ -295,6 +295,8 @@ const messageSchema = z.discriminatedUnion('type', [
     studyId: studyIdSchema,
     // The number the asking pane gave this delete request; every state of the removal it starts or is refused with echoes it.
     removalRequest: openRequestNumberSchema.optional(),
+    // Set by a pane of a window without a Trash on a request for a study's files that it sends by itself, because its open "Remove by hand" follows the host; a request the learner made by opening the disclosure or pressing the delete button carries none.
+    unprompted: z.literal(true).optional(),
   }),
   z.strictObject({
     type: z.literal('copy-study-files'),
@@ -12037,6 +12039,15 @@ export class StudyWorkspace {
       } catch (error) {
         this.report('presentation', error)
       }
+      return
+    }
+    // A request for a study's files that the pane sent by itself names its study and changes nothing, so it is answered whatever the reader shows by now. Refused like a control the learner pressed on a view that has changed, it would put a line into the pane for nothing the learner did. Only a window without a Trash answers it so: with a Trash the message is a deletion and keeps every check.
+    if (
+      message.type === 'delete-study' &&
+      message.unprompted &&
+      this.studyRemovalAvailability() === 'no-trash'
+    ) {
+      await this.removeSavedStudy(message.studyId, message.removalRequest)
       return
     }
     if (!(message.type === 'action' && message.action === 'stop'))

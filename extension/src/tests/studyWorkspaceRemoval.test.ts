@@ -4785,6 +4785,104 @@ test('in a window without a Trash two panes that ask for the files of two studie
   }
 })
 
+// Value: protects=the learner of a window without a Trash seeing no error line for a request the pane sent by itself: an open "Remove by hand" asks for its study's files again after Retry storage / refresh, and such a request can reach the reader after it rendered again; fails_when=the reader refuses it like a control the learner pressed on a view that has changed, and the pane shows "Error: The displayed study changed. Inspect the current view before acting." for nothing the learner did; why_new=Cycle 0046 row 202; seam=the Study pane's webview, through which the message and its refusal travel as in the editor
+test('in a window without a Trash a request for a study’s files that the pane sent by itself is answered although the reader has rendered since, without an error line, and the same request made by the learner on the old view keeps its sentence', async () => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the Study workspace is open and has rendered again since the pane read its revision.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const revisionThePaneRead = harness.reader.inspect().view!.revision
+    await harness.reader.action('retry')
+    const revisionNow = harness.reader.inspect().view!.revision
+    /** Sends the pane's request under the revision it read, and waits until the reader has answered it or told a line. */
+    const askUnderOldRevision = async (
+      removalRequest: number,
+      mark: { unprompted?: true },
+    ) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: revisionThePaneRead,
+        studyId: study.id,
+        removalRequest,
+        ...mark,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answeredRequest: harness.reader.inspect().view!.studyRemoval?.request,
+        files: harness.reader.inspect().view!.studyFiles?.[study.id],
+        errorLines: readerSeams(harness).errorLines(),
+      })
+    }
+    // Act: the pane's own request, then the same request as the learner makes it by opening the disclosure.
+    const sentByThePane = await askUnderOldRevision(1, { unprompted: true })
+    const madeByTheLearner = await askUnderOldRevision(2, {})
+    // Assert
+    assert.equal(revisionNow, revisionThePaneRead + 1)
+    assert.deepEqual(sentByThePane, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [],
+    })
+    assert.deepEqual(madeByTheLearner, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [
+        'Error: The displayed study changed. Inspect the current view before acting.',
+      ],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study in a window with a Trash: no message can start its removal past the reader's checks by calling itself a request of the pane; fails_when=the reader answers every delete request marked `unprompted` whatever it shows, so a marked message under an old revision opens the removal dialog for a study the learner may no longer see; why_new=Cycle 0046 row 202 (the mark is honoured in a window without a Trash only); seam=the Study pane's webview and the editor's dialog, recorded by the harness
+test('in a window with a Trash a delete request marked as sent by the pane keeps every check: under an old revision it is refused with its sentence, and no dialog opens', async () => {
+  // Arrange: a window with a Trash, one saved study, and a Study workspace that has rendered again since the pane read its revision.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    const revisionThePaneRead = harness.reader.inspect().view!.revision
+    await harness.reader.action('retry')
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act
+    harness.receive({
+      type: 'delete-study',
+      revision: revisionThePaneRead,
+      studyId: study.id,
+      removalRequest: 1,
+      unprompted: true,
+    })
+    await waitUntil(
+      () =>
+        readerSeams(harness).errorLines().length > 0 ||
+        harness.warningDialogs.length > 0,
+      'the refusal of the marked request or a dialog',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(readerSeams(harness).errorLines(), [
+      'Error: The displayed study changed. Inspect the current view before acting.',
+    ])
+    assert.equal(harness.warningDialogs.length, 0)
+    assert.deepEqual(harness.trashMoves, [])
+    assert.equal(harness.reader.inspect().view!.studyRemoval, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=what the Study pane's DOM check takes for granted about the reader in a window without a Trash: an answer to a request for a study's files, a refusal as well, and the message that ends Retry storage / refresh while the Study workspace is closed all carry the revision the pane asked under; fails_when=the reader gives such a message a new revision, so the DOM cases of "Remove by hand", which publish them under the asking revision, no longer show what a learner gets (they passed on a fixture that gave every message a new revision, while the pane stayed at "Listing this study's files…" in the product); why_new=Cycle 0046 row 168 (delegated review, findings 4 and 5); seam=the bottom-panel view's requests with the Study workspace closed
 test('in a window without a Trash the reader answers a request for a study’s files, a refusal as well, and ends Retry storage / refresh with the Study workspace closed, all under the revision the request was sent with', async () => {
   // Arrange: a WSL remote window with a saved study an older Codebook left and a saved Node test history; the Study workspace is not open.

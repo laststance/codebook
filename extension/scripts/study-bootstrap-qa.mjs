@@ -5493,6 +5493,25 @@ async function check(page, options, collected) {
   })
   const listedAtLast = await removalControl()
   // Assert
+  /** Reads which of the pane's last requests for files were marked as sent by the pane itself, newest last. */
+  const lastRequestMarks = (count) =>
+    page.evaluate(
+      (count) =>
+        window.sent
+          .filter((message) => message.type === 'delete-study')
+          .slice(-count)
+          .map((message) => message.unprompted === true),
+      count,
+    )
+  // The four requests of this case, in order: the learner opened the disclosure twice, then the pane asked by itself after Retry storage / refresh and again under the host's new revision.
+  const requestMarks = await lastRequestMarks(4)
+  cases.push({
+    name: 'a request for a study’s files that the learner makes by opening Remove by hand carries no mark, and one the pane sends by itself (after Retry storage / refresh, and again when the host has rendered since) is marked unprompted, so the host answers it without a line when it arrives late',
+    actual: requestMarks,
+    passed:
+      JSON.stringify(requestMarks) ===
+      JSON.stringify([false, false, true, true]),
+  })
   const requests = (control) => control.deletes.length
   cases.push({
     name: 'Remove by hand knows the host’s answer to its request by the request’s number, under a revision the host does not change: another pane’s answer is not taken for it and nothing is asked twice while it is owed; a refusal stays when another pane’s answer takes its place in the message; Retry storage / refresh beside a refusal asks again; a disclosure that left beside a reason asks anew when it is opened again; and a request the host left behind with a new revision is sent again',
