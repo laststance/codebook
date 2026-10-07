@@ -65,6 +65,14 @@ interface FakeStackThread {
 interface FakeStackFrame extends FakeStackThread {
   frameId: number
 }
+/** What the fake editor calls of a debug adapter tracker: the adapter's messages to the editor, the editor's messages to the adapter, and the two ends of a session (the editor stops the adapter; the adapter exits), as the editor's extension host does. */
+interface FakeDebugAdapterTracker {
+  onDidSendMessage?(message: unknown): void
+  onWillReceiveMessage?(message: unknown): void
+  onWillStopSession?(): void
+  onExit?(code: number | undefined, signal: string | undefined): void
+}
+
 /** Tells a frame from a thread among the fake editor's stack items, as the frame id does in the editor's API. @example isFakeStackFrame({ session: { id: 'live-next-server' }, threadId: 1 }) // => false */
 function isFakeStackFrame(
   item: FakeStackFrame | FakeStackThread | undefined,
@@ -291,10 +299,16 @@ export async function workspaceHarness(
     visibleRanges: Range[]
     revealRange(range: Range, revealType?: number): void
   }
+  /** What the fake editor reports with a change of a text editor's selection: the editor, its selections, and how they changed by the number of the editor's `TextEditorSelectionChangeKind` (1 the keyboard, 2 the mouse, 3 a command, which is also what a selection set by an extension is reported as). A test that sets an editor's `selections` itself names no cause, and the change is reported without a kind, as the editor's API allows. */
+  type SelectionChange = {
+    textEditor: SourceEditor
+    selections: SourceEditor['selections']
+    kind: 1 | 2 | 3 | undefined
+  }
   const activeEditorListeners = new Set<
       (editor: SourceEditor | undefined) => void
     >(),
-    selectionListeners = new Set<() => void>()
+    selectionListeners = new Set<(change: SelectionChange) => void>()
   const activeTextEditorChanged = (editor: SourceEditor | undefined): void => {
     for (const listener of activeEditorListeners) listener(editor)
   }
@@ -590,12 +604,12 @@ export async function workspaceHarness(
   const debugAdapterTrackerFactories = new Set<{
     createDebugAdapterTracker(session: {
       id: string
-    }): { onDidSendMessage?(message: unknown): void } | undefined
+    }): FakeDebugAdapterTracker | undefined
   }>()
-  /** The trackers the reader's factories made, by session: a session gets its tracker once, when it starts. */
+  /** The trackers the reader's factories made, by session: a session gets its tracker once, when it starts, and loses it when it ends (`endDebugSession`). */
   const debugAdapterTrackers = new Map<
     string,
-    ({ onDidSendMessage?(message: unknown): void } | undefined)[]
+    (FakeDebugAdapterTracker | undefined)[]
   >()
   // What the editor reports for Run and Debug: its active stack item, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
   /** Run and Debug's active stack item as the fake editor reports it: a frame while a session is paused, its thread once it runs again, none before a first stop; see `pauseDebugger`. */
@@ -1071,10 +1085,11 @@ export async function workspaceHarness(
    * Opens a learner-owned text document as the tab in front of a group, with its text editor visible there, and gives nothing the keyboard; the shared first step of `focusMutableDraft`, which then gives that editor the keyboard, and of `selectStackFrame`, which does not.
    * @param filename - The document's file name in the harness's folder.
    * @param column - The view column of the group.
+   * @param isPreview - Whether the tab is a preview tab without unsaved text, as the one the editor opens for a file at one click; left out, a kept tab with unsaved text.
    * @returns The document, its tab, its editor, the group, and `replaceText`, which changes the document's text and version.
    * @example const { editor, group } = openDraftTab('notes.txt', 2)
    */
-  function openDraftTab(filename: string, column: number) {
+  function openDraftTab(filename: string, column: number, isPreview = false) {
     let text = 'Original learner draft.\n'
     const document = {
       uri: Uri.file(join(harness.directory, filename)),
@@ -1084,8 +1099,9 @@ export async function workspaceHarness(
     const group = groups.find((group) => group.viewColumn === column)!
     const tab = {
       input: new TabInputText(document.uri),
-      isPreview: false,
-      isDirty: true,
+      isPreview,
+      // A draft has unsaved text; a file the editor opens as a preview tab has none.
+      isDirty: !isPreview,
     }
     const editor = Object.assign(sourceEditor(document, group), { group })
     let selections = editor.selections
@@ -1093,7 +1109,8 @@ export async function workspaceHarness(
       get: () => selections,
       set: (value: typeof selections) => {
         selections = value
-        for (const listener of selectionListeners) listener()
+        for (const listener of selectionListeners)
+          listener({ textEditor: editor, selections: value, kind: undefined })
       },
     })
     group.tabs.push(tab)
@@ -1109,6 +1126,19 @@ export async function workspaceHarness(
         document.version++
       },
     }
+  }
+  /**
+   * Gives the text editor of a draft's tab the keyboard, whoever had it before: the tab is in front of its group, the group is the active one, and the editor is reported as the active text editor; called by `focusMutableDraft` for a learner's click and by `pauseDebugger` for the debugger's own opening of the paused file.
+   * @param opened - What `openDraftTab` returned for that draft.
+   * @example giveDraftKeyboard(openDraftTab('actions.ts', 1))
+   */
+  function giveDraftKeyboard(opened: ReturnType<typeof openDraftTab>): void {
+    opened.group.activeTab = opened.tab
+    activeTabGroup = opened.group
+    if (separateEditorPart) separateEditorPart.focused = false
+    keyboardOnBody = false
+    keyboardInView = false
+    activeTextEditorChanged(opened.editor)
   }
   /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
   function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
@@ -2185,6 +2215,7 @@ export async function workspaceHarness(
       Range,
       ViewColumn: { One: 1, Two: 2, Three: 3 },
       TextEditorRevealType: { Default: 0, AtTop: 3 },
+      TextEditorSelectionChangeKind: { Keyboard: 1, Mouse: 2, Command: 3 },
       ThemeColor: class {},
       RelativePattern,
       env: {
@@ -2746,7 +2777,9 @@ export async function workspaceHarness(
             },
           }
         },
-        onDidChangeTextEditorSelection: (callback: () => void) => {
+        onDidChangeTextEditorSelection: (
+          callback: (change: SelectionChange) => void,
+        ) => {
           selectionListeners.add(callback)
           return {
             dispose(): void {
@@ -2857,13 +2890,17 @@ export async function workspaceHarness(
             get: () => editor.selections,
             set: (selections: SourceEditor['selections']) => {
               editor.selections = selections
-              for (const listener of selectionListeners) listener()
+              for (const listener of selectionListeners)
+                listener({ textEditor: visible, selections, kind: undefined })
             },
           })
           visibleSourceEditors.push(visible)
+          // A document that comes to the front of the active group is the active text editor from then on, also when it was shown preserving the focus: the editor names the text editor in front of the active group while no text editor has the keyboard.
+          const comesToFrontOfActiveGroup =
+            showsAnotherTab && group.viewColumn === activeTabGroup.viewColumn
           // A tab that opened or became the one its group shows changed the tabs; the same tab shown again did not.
           if (showsAnotherTab) replaceGroupObjects()
-          if (!options?.preserveFocus)
+          if (!options?.preserveFocus || comesToFrontOfActiveGroup)
             activeTextEditorChanged(focusedSourceEditor())
           const displayed = nextSourceDisplay
           nextSourceDisplay = undefined
@@ -3658,7 +3695,7 @@ export async function workspaceHarness(
     },
     /**
      * Pauses the fake debugger: Run and Debug's active stack item is a stack frame, and the reader's listeners are told. Both editors report three states of that item, and this method with `resumeDebugger` is the only way to set them: none before a session's first stop (the state every harness starts in), a frame while the focused thread is stopped (this method), and that thread without a frame once the session runs again (`resumeDebugger`). Called again while a frame is active, it reports the next frame with no thread between the two, as an editor does for a thread that stops again within the 200 ms it waits before it reports a running session, and for a frame the learner selects in the Call Stack view. The editor has opened the paused file with the keyboard before it reports the frame (see `focusMutableDraft`; Cursor's and VS Code's debugger await that opening and select the frame after it), so a test focuses that file first.
-     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server.
+     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent); `staysInBackground` sends that event and nothing more, for a stop the editor does not bring to the front itself (both editors skip a stop while a frame of another session has the focus, which a session that went on keeps for about 200 ms; see `passFocusToStoppedSession` for what follows); `keepsFocus` is the adapter's `preserveFocusHint` in that event, its wish that the editor leave the focus where it is, which a test gives together with `staysInBackground`.
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
      * harness.pauseDebugger()
@@ -3668,6 +3705,10 @@ export async function workspaceHarness(
         focusesEditorOnBreak?: boolean
         session?: string
         startedBeforeTheReader?: boolean
+        reason?: string
+        opensWithKeyboard?: { filename: string; column: number }
+        staysInBackground?: boolean
+        keepsFocus?: boolean
       } = {},
     ): void {
       const session = { id: options.session ?? 'live-next-server' }
@@ -3677,8 +3718,22 @@ export async function workspaceHarness(
           tracker?.onDidSendMessage?.({
             type: 'event',
             event: 'stopped',
-            body: { reason: 'breakpoint', threadId: 1 },
+            body: {
+              reason: options.reason ?? 'breakpoint',
+              threadId: 1,
+              ...(options.keepsFocus ? { preserveFocusHint: true } : {}),
+            },
           })
+      // A stop the editor leaves in the background ends here: it opens no file and reports no frame.
+      if (options.staysInBackground) return
+      // The debugger opens the paused file with the keyboard after the adapter reported the stop and before the editor reports the frame.
+      if (options.opensWithKeyboard)
+        giveDraftKeyboard(
+          openDraftTab(
+            options.opensWithKeyboard.filename,
+            options.opensWithKeyboard.column,
+          ),
+        )
       activeStackItem = {
         session,
         threadId: 1,
@@ -3688,22 +3743,145 @@ export async function workspaceHarness(
       for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
-     * Selects another frame of the paused thread as the Call Stack view does for a row chosen with the arrow keys or one click: the editor opens that frame's file in front of a group without giving it the keyboard, and reports the frame. The debug adapter reports nothing: no `stopped` event comes with a selection. The keyboard stays where it is (see `focusView`, or the chat).
+     * Selects another frame of the paused thread, by one of the three gestures the editor offers. The debug adapter reports nothing: no `stopped` event comes with a selection.
+     * - `click` (left out): the Call Stack view's row chosen with one click. The editor opens that frame's file in front of a group without giving it the keyboard, and reports the frame. The keyboard stays where it is (see `focusView`, or the chat).
+     * - `double-click`: the same, and then the second click, for which the editor opens the same file again, with the keyboard and as a kept tab (both editors: the tree's double click opens with `preserveFocus` off and `pinned` on). The frame is the selected one already, so the editor reports no frame, no active text editor and no selection for it: only the tab changes, from a preview tab to a kept one. The file must be opened in the active group, as the editor does. Enter on the selected row does the same as the second click.
+     * - `navigation-command`: the editor's "Navigate Up/Down Call Stack" commands, which open the frame's file with the keyboard and then report the frame (both editors: `focusStackFrame` with `preserveFocus` off). What the editor reports is the same as for a click: the file's opening, then the frame.
      * @param filename - The frame's file.
      * @param column - The view column of the group the editor opens it in.
+     * @param gesture - How the learner selects the frame.
      * @returns The document the editor opened.
      * @example
      * harness.focusView()
      * harness.selectStackFrame('login-form.tsx', 2)
      */
-    selectStackFrame(filename: string, column: number) {
+    selectStackFrame(
+      filename: string,
+      column: number,
+      gesture: 'click' | 'double-click' | 'navigation-command' = 'click',
+    ) {
       assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
-      const opened = openDraftTab(filename, column)
+      const opened = openDraftTab(filename, column, gesture === 'double-click')
+      if (gesture === 'navigation-command') giveDraftKeyboard(opened)
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
-      activeTextEditorChanged(focusedSourceEditor())
+      else activeTextEditorChanged(focusedSourceEditor())
       activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
       for (const listener of [...activeStackItemListeners]) listener()
+      if (gesture !== 'double-click') return opened.document
+      // The second click: the same file, with the keyboard and kept open.
+      assert.equal(opened.group, activeTabGroup)
+      opened.tab.isPreview = false
+      keyboardInView = false
+      keyboardOnBody = false
+      for (const listener of tabChangeListeners)
+        listener({ opened: [], closed: [], changed: [opened.tab] })
       return opened.document
+    },
+    /**
+     * Gives the text editor in front of the active group the keyboard as a learner's click into its text does, or shows the learner at work in it with the keyboard (a cursor key, a typed letter): the editor reports the new selection as one made with the mouse or with the keyboard, and nothing else when that editor was the active text editor already (the active tab group, its tab and the active text editor stay as they are).
+     * @param by - What the learner used.
+     * @example
+     * harness.selectStackFrame('login-form.tsx', 2)
+     * harness.workInActiveTextEditor('mouse')
+     */
+    workInActiveTextEditor(by: 'mouse' | 'keyboard'): void {
+      assert.ok(!separateEditorPart?.focused, 'The chat has the keyboard')
+      const editor = focusedSourceEditor()
+      assert.ok(editor, 'No text editor is in front of the active group')
+      keyboardInView = false
+      keyboardOnBody = false
+      for (const listener of selectionListeners)
+        listener({
+          textEditor: editor,
+          selections: editor.selections,
+          kind: by === 'keyboard' ? 1 : 2,
+        })
+    },
+    /**
+     * Moves the selection of the text editor in front of the active group as a command does: the editor's own jump to a line (Go to Line, a frame of the same file selected again) or a selection an extension sets. The editor reports the change with the kind of a command, and the keyboard stays where it is.
+     * @example
+     * harness.selectStackFrame('login-form.tsx', 2)
+     * harness.jumpInActiveTextEditor()
+     */
+    jumpInActiveTextEditor(): void {
+      const editor = focusedSourceEditor()
+      assert.ok(editor, 'No text editor is in front of the active group')
+      for (const listener of selectionListeners)
+        listener({ textEditor: editor, selections: editor.selections, kind: 3 })
+    },
+    /**
+     * Lets a debug adapter tell the editor that its stacks are no longer valid, as an adapter does when what a paused thread shows changed: the session's trackers see the `invalidated` event, and the editor then handles the session's stop again (both editors: `onDidInvalidated` runs the stop handling for every stored stop), which opens the paused file with the keyboard and reports a frame. No `stopped` event comes with it.
+     * @param paused - The paused file the editor opens with the keyboard.
+     * @example harness.invalidateStacks({ filename: 'actions.ts', column: 1 })
+     */
+    invalidateStacks(paused: { filename: string; column: number }): void {
+      assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
+      for (const tracker of trackersOf(activeStackItem.session))
+        tracker?.onDidSendMessage?.({
+          type: 'event',
+          event: 'invalidated',
+          body: { areas: ['stacks'] },
+        })
+      giveDraftKeyboard(openDraftTab(paused.filename, paused.column))
+      activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Ends a debug session as the editor does when the learner stops it or the debugged program exits: the session's trackers are told that the adapter is stopped and that it exited, the editor forgets them, and Run and Debug has no active stack item any more when it showed that session.
+     * @param sessionId - The session; left out, the live run's server session.
+     * @example
+     * harness.pauseDebugger()
+     * harness.endDebugSession()
+     */
+    endDebugSession(sessionId = 'live-next-server'): void {
+      const trackers = debugAdapterTrackers.get(sessionId) ?? []
+      debugAdapterTrackers.delete(sessionId)
+      for (const tracker of trackers) {
+        tracker?.onWillStopSession?.()
+        tracker?.onExit?.(0, undefined)
+      }
+      if (activeStackItem?.session.id !== sessionId) return
+      activeStackItem = undefined
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Lets a paused session go on as the editor tells its adapter: the session's trackers see the `continue` request. Run and Debug's active stack item stays as it is: the editor keeps the frame for about 200 ms (`resumeDebugger` is what it reports then).
+     * @param sessionId - The session; left out, the live run's server session.
+     * @example
+     * harness.pauseDebugger({ session: 'live-next-browser' })
+     * harness.continueDebugSession('live-next-browser')
+     */
+    continueDebugSession(sessionId = 'live-next-server'): void {
+      for (const tracker of trackersOf({ id: sessionId }))
+        tracker?.onWillReceiveMessage?.({
+          type: 'request',
+          command: 'continue',
+          arguments: { threadId: 1 },
+        })
+    },
+    /**
+     * Brings a stopped session to the front as the editor does 800 ms after the session it showed went on (`passFocusScheduler` of VS Code 1.140 and Cursor 3.23, which focuses the frame preserving the focus): it opens the frame's file in front of a group without giving it the keyboard, and reports the frame of that session. No `stopped` event comes with it: the adapter sent that one when the session stopped (`pauseDebugger` with `staysInBackground`).
+     * @param sessionId - The stopped session.
+     * @param filename - The frame's file.
+     * @param column - The view column of the group the editor opens it in.
+     * @example
+     * harness.pauseDebugger({ staysInBackground: true })
+     * harness.passFocusToStoppedSession('live-next-server', 'actions.ts', 1)
+     */
+    passFocusToStoppedSession(
+      sessionId: string,
+      filename: string,
+      column: number,
+    ): void {
+      openDraftTab(filename, column)
+      // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
+      activeTextEditorChanged(focusedSourceEditor())
+      activeStackItem = {
+        session: { id: sessionId },
+        threadId: 1,
+        frameId: nextStackFrameId++,
+      }
+      for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
      * Gives a view that is no editor the keyboard, as a learner's click into the Call Stack view of Run and Debug does. The editor reports nothing of it to an extension: the active tab group, its tab and the active text editor stay as they are; only the chat's own part loses the keyboard.
@@ -3912,16 +4090,9 @@ export async function workspaceHarness(
       filename = 'mutable-notes.txt',
       column = groups[0]!.viewColumn,
     ) {
-      const { document, tab, editor, group, replaceText } = openDraftTab(
-        filename,
-        column,
-      )
-      activeTabGroup = group
-      if (separateEditorPart) separateEditorPart.focused = false
-      // The learner's editor has the keyboard, whoever lost it before.
-      keyboardOnBody = false
-      keyboardInView = false
-      activeTextEditorChanged(editor)
+      const opened = openDraftTab(filename, column)
+      const { document, tab, editor, replaceText } = opened
+      giveDraftKeyboard(opened)
       return {
         document,
         tab,
@@ -3930,12 +4101,7 @@ export async function workspaceHarness(
           replaceText(value)
         },
         focus(): void {
-          group.activeTab = tab
-          activeTabGroup = group
-          if (separateEditorPart) separateEditorPart.focused = false
-          keyboardOnBody = false
-          keyboardInView = false
-          activeTextEditorChanged(editor)
+          giveDraftKeyboard(opened)
         },
       }
     },
@@ -4758,6 +4924,8 @@ export function readerSeams(harness: {
         origin,
         panel,
       ]),
+    /** Names the debug sessions whose adapters the reader follows now: those that started while it existed and have not ended. @example readerSeams(harness).followedDebugSessions() // => ['live-next-server'] while that session lives */
+    followedDebugSessions: (): string[] => [...reader['followedSessions']],
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
     /** Asks the reader which command gives a remembered tab's group the keyboard back, as the function its focus return runs does once it may give the focus back: after an arrangement, or at a pause. @example await readerSeams(harness).focusReturnCommand(harness.groups[0], false) // => undefined while the group's editor part is not known */

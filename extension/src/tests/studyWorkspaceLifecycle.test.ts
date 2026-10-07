@@ -2078,6 +2078,45 @@ test("a reader that is disposed while its Study workspace is open beside the lea
   }
 })
 
+// Value: protects=the learner whose reader is disposed during a Read (a folder is added to the workspace while a pane is maximized and the learner types in the terminal): the side bars the Read hid are shown again, and because the editor's commands that show a bar give it the keyboard, the active editor group takes the keyboard and the learner is told where it is, as after a Close; fails_when=the disposal shows the side bars, moves the keyboard into the editor group and tells nothing, against "a reader that is disposed moves no keyboard", so the learner's typing stops in the terminal without a word; why_new=Cycle 0046 row 255 (delegated review, finding 8: the exception of a disposal during a Read is stated and told); seam=the workspace harness's side bar model, focusView for the terminal, the reader's Read and its disposal, command log and information messages
+test('a reader that is disposed during a Read shows the side bars the Read hid again, and tells the learner that the keyboard is in the active editor group now', async () => {
+  // Arrange: the primary side bar is open; the learner reads the explanation enlarged, which hides it, and then types in the terminal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.focusView()
+    const duringRead = harness.sideBars()
+
+    // Act: the workspace folders change, and the extension disposes its reader.
+    await harness.reader.dispose()
+
+    // Assert: the bar is back; showing it moved the keyboard, which the active editor group has now, and the learner is told.
+    assert.deepEqual(duringRead, {
+      primary: false,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.keyboardInView(), false)
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner whose Settings page (a tab of the main editor that is no text editor) is the active editor when "Codebook: Close Study Workspace" runs in an editor without a chat tab: the active editor group has it once the panes' groups are closed, and the learner is told where it is; fails_when=Close settles the keyboard only while the editor names an active text editor or pane, the editor rebuilds its grid as the closed tabs' groups leave, and the keyboard is on the page body until the learner clicks; why_new=Cycle 0046 row 140, item 8 (the state of row 66 beside a page that is no text editor); seam=the workspace harness's addOpaqueTab, focusOpaqueTab, closeDisposedPanelTabsLater, removeEmptiedGroupsLater, loseKeyboardWhenGroupCloses, keyboardOnBody, command log and information messages
 test("Close Study Workspace made with the editor's Settings page active gives the active editor group the keyboard once the panes' groups closed, and says where it is", async () => {
   // Arrange: an editor with one editor part; it removes a group its last tab left and lets the keyboard fall to the page body when it does; the reader is open and the Settings page in the first group is the active editor.

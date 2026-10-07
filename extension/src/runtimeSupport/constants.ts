@@ -1,4 +1,9 @@
 export const ACTIVE_TIMEOUT_MS = 20_000
+/**
+ * How long {@link BrowserViewport} waits for its lease's owner to answer whether the pane is to come to the front without the keyboard ({@link ViewportLease.keepsKeyboardAtPause}), before it reveals the pane as if the keyboard had been given to nobody. The owner's answer is two reads of the editor and one focus command, which the editor answers within tens of milliseconds; a reveal that waits also holds every placement queued behind it, whose own waits last five seconds, so the bound lies well below that and well above the answer's usual time.
+ * @example await settledWithin(answered, KEYBOARD_OWNER_ANSWER_TIMEOUT_MS)
+ */
+export const KEYBOARD_OWNER_ANSWER_TIMEOUT_MS = 2_000
 export const RUN_TIMEOUT_MS = 120_000
 export const CAPTURE_TIMEOUT_MS = 3_000
 export const VIEWPORT_ACK_TIMEOUT_REASON =
@@ -44,6 +49,15 @@ export const SCENARIOS = [
   'viewport-timeout',
 ] as const
 export type Scenario = (typeof SCENARIOS)[number]
+/**
+ * The areas of a debug adapter's `invalidated` event after which the editor handles the stops of that session again, opening the paused file with the keyboard: `all`, `threads` and `stacks` (VS Code 1.140 and Cursor 3.23); read by {@link isDebugStopsInvalidation}. An event for `variables` only refreshes the views.
+ * @example STOP_HANDLING_INVALIDATION_AREAS.has('variables') // => false
+ */
+export const STOP_HANDLING_INVALIDATION_AREAS: ReadonlySet<string> = new Set([
+  'all',
+  'threads',
+  'stacks',
+])
 export const RESUME_COMMANDS = new Set([
   'continue',
   'next',

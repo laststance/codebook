@@ -253,6 +253,26 @@ export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
  */
 export const PAUSE_FOCUS_LOOKBACK_MS = 1_000
 /**
+ * The reasons a debug adapter gives in its `stopped` event for a stop the learner started with one of the editor's own debugging commands, as against a stop that happens by itself (`breakpoint`, `exception`, `data breakpoint`, `function breakpoint`, `entry`) or one whose cause the reason does not tell (`pause`, which js-debug also gives for a `debugger` statement and a `debug()` call): `step` is the Debug Adapter Protocol's and js-debug's reason after Step Over, Step Into and Step Out; `goto` is the protocol's reason after a jump to a line; `frame_entry` is what js-debug 1.105 gives after Restart Frame. {@link StudyWorkspace} ends its record of the chat's keyboard at such a stop when a text editor has the keyboard: the learner works in that editor.
+ * @example LEARNER_STARTED_STOP_REASONS.has('step') // => true
+ */
+export const LEARNER_STARTED_STOP_REASONS: ReadonlySet<string> = new Set([
+  'step',
+  'goto',
+  'frame_entry',
+])
+/**
+ * The ways a text editor's selection changes by the learner's own hand, by their numbers in the editor's `TextEditorSelectionChangeKind`: 1 is the keyboard (typing, the cursor keys) and 2 is the mouse (a click, a drag). Every other change is number 3, a command's: the editor's own jump to a line, as for a stack frame's file, and a selection an extension sets (VS Code 1.140 and Cursor 3.23 give 3 for the sources `api`, `code.jump` and `code.navigation`). {@link StudyWorkspace} takes a change of these kinds in the active text editor as a sign that the learner works in that editor. The numbers stand here, and not the editor's names, because this file is also loaded where the editor's API does not exist.
+ * @example LEARNER_SELECTION_KINDS.has(3) // => false
+ */
+export const LEARNER_SELECTION_KINDS: ReadonlySet<number> = new Set([1, 2])
+/**
+ * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling may have left in the background (a frame of another session had the focus, the adapter asked to keep the focus, or the session went on first); {@link StudyWorkspace} takes a later frame as brought to the front without the keyboard.
+ * The editor's handling of a stop takes the adapter's answers to a `threads` and a `stackTrace` request. Its pass of the focus to a session that is still stopped comes 800 ms after the session it showed went on, and it shows that session's frame for only 200 ms of them, so a stop read behind that frame is passed the focus at least 600 ms after it was read (VS Code 1.140 and Cursor 3.23).
+ * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a server stop the editor shows 800 ms after the browser session went on
+ */
+export const STOP_OWN_FOCUS_BOUND_MS = 500
+/**
  * How long "Codebook: Close Study Workspace" waits, once its panes' tabs are gone, for the editor to remove the groups those tabs left empty before it gives the active editor group the keyboard: the removal rebuilds the editor grid and takes the keyboard from the editor that had it (Cursor removed the captured source's group 57 ms after its tab, and the Study pane's 12 ms after its tab).
  * @example await waitUntil(() => hasNoEmptiedGroup(), 'the emptied editor groups to close', CLOSE_GROUP_SETTLE_MS)
  */
