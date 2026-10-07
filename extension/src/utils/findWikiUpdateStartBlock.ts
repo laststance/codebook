@@ -67,7 +67,24 @@ function readOwnedFileHashes(
   return hashes
 }
 
-/** Lists what lies under the Wiki folder that is neither a folder nor a regular file (a link, a named pipe, a socket, a device), as `/`-separated paths, sorted; empty when the folder cannot be listed. Entry types come from the folder itself, so nothing is followed or opened. */
+/**
+ * Says what blocks an update when the Wiki folder's own path holds something that is no folder; called by {@link findWikiUpdateStartBlock} before anything below that path is listed or read.
+ * Why: the publisher looks at the Wiki folder itself before its journal and refuses a link or any other entry that is no directory of its own. Found here, the learner reads the reason at once, and no listing or read goes through a link a repository carries at that path.
+ * @param outputDirectory - Resolved Wiki output folder.
+ * @returns Cause `not-a-folder` with the folder's own name for a link (a junction on Windows), a file or a special file at that path; `undefined` for a real directory and for a path that holds nothing or cannot be looked at.
+ * @example
+ * await findFolderBlock('/repo/.codebook/wiki') // => { cause: 'not-a-folder', paths: ['wiki'] } while `wiki` is a link
+ */
+async function findFolderBlock(
+  outputDirectory: string,
+): Promise<WikiUpdateStartBlock | undefined> {
+  const folderEntry = await lstat(outputDirectory).catch(() => undefined)
+  return folderEntry && !folderEntry.isDirectory()
+    ? { cause: 'not-a-folder', paths: [basename(outputDirectory)] }
+    : undefined
+}
+
+/** Lists what lies under the Wiki folder that is neither a folder nor a regular file (a link, a named pipe, a socket, a device), as `/`-separated paths, sorted; empty when the folder cannot be listed. Entry types come from the folder itself, so nothing below it is followed or opened; the folder's own path was looked at before ({@link findFolderBlock}). */
 async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
   const entries = await readdir(outputDirectory, {
     recursive: true,
@@ -84,7 +101,7 @@ async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
 }
 
 /**
- * Finds what makes the publisher refuse an update before it stages anything: an earlier publish that did not finish, a link or special file in the Wiki folder, a manifest that cannot be read or was changed after its publish, or a generated page that was edited by hand or is gone.
+ * Finds what makes the publisher refuse an update before it stages anything: a Wiki folder that is itself a link or a file, an earlier publish that did not finish, a link or special file in the Wiki folder, a manifest that cannot be read or was changed after its publish, or a generated page that was edited by hand or is gone.
  *
  * Why: in each case the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out. Found before the start, the learner reads the reason at once and no agent is asked. The check runs before the update's timeout and cancel exist, so it opens nothing but regular files and follows no link.
  * Trigger: the extension calls it first when an update starts, before it looks for the manifest and before the already-current check; it sits next to {@link detectWikiPublishConflicts}, which covers the learner's own files.
@@ -93,6 +110,7 @@ async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
  * @param options.now - Clock in epoch milliseconds; tests pass a fixed one.
  * @param options.wait - Waits before the one second look at a journal that was written a moment ago; tests pass their own.
  * @returns
+ * - The Wiki folder's own path holds a link, a file or anything else that is no folder: cause `not-a-folder` with the folder's name; nothing below that path is listed or read
  * - `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name. A journal written within the last {@link WIKI_PUBLISH_JOURNAL_FRESH_MS} belongs to a publish that may be finishing right now, so it is looked at once more after {@link WIKI_UPDATE_WATCH_POLL_MS}; when it is gone then, the check goes on
  * - A link, pipe, socket or device anywhere under the Wiki folder: cause `special-file` with the paths, sorted
  * - A manifest that is there and is not a JSON object Codebook can read: cause `unreadable-manifest` with the manifest's file name
@@ -116,6 +134,9 @@ export async function findWikiUpdateStartBlock(
 ): Promise<WikiUpdateStartBlock | undefined> {
   const now = options.now ?? Date.now
   const wait = options.wait ?? ((delayMs: number) => sleepFor(delayMs))
+  // The publisher refuses a Wiki folder that is no folder of its own before it looks at anything else.
+  const folderBlock = await findFolderBlock(outputDirectory)
+  if (folderBlock) return folderBlock
   // The publisher checks its journal first, so an unfinished publish is reported before any edited page.
   const journalPath = outputDirectory + WIKI_PUBLISH_JOURNAL_SUFFIX
   const readJournalStat = () => lstat(journalPath).catch(() => undefined)

@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rename, rm, utimes, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -147,6 +155,26 @@ test('the stamp names a file id above 2^53 exactly, so a manifest written anew w
         'wiki=210824757556437111:1790000000000000000:10/1:1790000000000',
       ],
     )
+  } finally {
+    await rm(project, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the looks of an update's watch, one every two seconds for fifteen minutes, in a project whose Wiki folder's path holds a link; fails_when=each look lists the folder the link leads to with all its subfolders (2.2 s a look for a link to /usr), row 185; why_new=Cycle 0046 row 185; seam=none (a junction on Windows, which needs no right)
+test('the stamp of a Wiki folder whose own path holds a link counts no folder of the folder the link leads to', async () => {
+  // Arrange: a folder with two subfolders and no manifest, and a link to it where the Wiki folder would be.
+  const project = await mkdtemp(join(tmpdir(), 'codebook-wiki-stamp-'))
+  try {
+    await mkdir(join(project, 'elsewhere', 'pages', 'deep'), {
+      recursive: true,
+    })
+    await symlink(join(project, 'elsewhere'), join(project, 'wiki'), 'junction')
+
+    // Act
+    const stamp = await readWikiWatchStamp(join(project, 'wiki'))
+
+    // Assert: no manifest ("-"), no folder counted and no folder time ("0:0"); through the link the folders would be 3.
+    assert.equal(stamp, 'wiki=-/0:0')
   } finally {
     await rm(project, { recursive: true, force: true })
   }

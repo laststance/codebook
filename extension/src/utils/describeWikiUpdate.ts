@@ -421,6 +421,22 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
+   * Words a start refused because the Wiki folder is itself a link or a file; called by {@link describeConflict} between {@link describePageRefusal} and {@link describeRecoveryRefusal}.
+   * @param cause - The cause of the conflict.
+   * @param named - The Wiki folder's own name, as the sentence names it.
+   * @returns The sentence after the time for `not-a-folder`, with the next step; undefined for every other cause.
+   * @example describeFolderRefusal('not-a-folder', 'wiki')?.slice(0, 52) // => 'the Wiki folder itself (wiki) is a link or a file, an'
+   */
+  const describeFolderRefusal = (
+    cause: WikiUpdateStatusOf<'conflict'>['cause'],
+    named: string,
+  ): string | undefined =>
+    cause === 'not-a-folder'
+      ? 'the Wiki folder itself (' +
+        named +
+        ') is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.'
+      : undefined
+  /**
    * Words a start refused because of the Wiki's manifest or an unfinished publish, each ending with the recovery request for the editor chat; called by {@link describeConflict} after {@link describePageRefusal}.
    * @param cause - The cause of the conflict.
    * @param named - The paths as the sentence names them.
@@ -496,6 +512,7 @@ export function describeWikiUpdate(
     const many = conflict.paths.length > 1
     const refusal =
       describePageRefusal(conflict.cause, named, many) ??
+      describeFolderRefusal(conflict.cause, named) ??
       describeRecoveryRefusal(conflict.cause, named)
     if (refusal !== undefined)
       return describe('Update not started', ' (' + at + '): ' + refusal, detail)

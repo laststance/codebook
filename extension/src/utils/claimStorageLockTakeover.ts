@@ -3,7 +3,6 @@ import {
   access,
   mkdir,
   rename,
-  rm,
   rmdir,
   unlink,
   writeFile,
@@ -15,6 +14,7 @@ import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from '../constants'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { RecordedOwner, StorageOwnerIdentity } from './readRecordedOwner'
 import { removeStaleStorageClaims } from './removeStaleStorageClaims'
+import { removeWithoutFollowing } from './removeWithoutFollowing'
 import { systemErrorCode } from './systemErrorCode'
 
 /** What a rename onto the claim directory answers while another claim is inside: `ENOTEMPTY` or `EEXIST`, and `EPERM` or `EACCES` where a directory cannot be replaced at all. */
@@ -106,7 +106,7 @@ export async function claimStorageLockTakeover(
     await rmdir(claimDirectory).catch(() => undefined)
     await rename(preparedDirectory, claimDirectory)
   } catch (error) {
-    await rm(preparedDirectory, { recursive: true, force: true })
+    await removeWithoutFollowing(preparedDirectory)
     if (OCCUPIED_CLAIM_CODES.includes(systemErrorCode(error))) return undefined
     throw error
   }

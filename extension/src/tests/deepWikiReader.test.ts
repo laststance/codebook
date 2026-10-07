@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { constants as openConstants } from 'node:fs'
 import {
   mkdtemp,
   mkdir,
+  open,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -11,8 +15,15 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { promisify } from 'node:util'
 
 import { readDeepWikiManifest, startDeepWikiReader } from '../deepWikiReader'
+
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
+import { writeMinimalWiki } from './utils/writeMinimalWiki'
 
 test('generated Wiki reader serves published pages and answers an explicit same-origin question', async () => {
   // Arrange
@@ -549,4 +560,90 @@ test('closing the reader while a question is in flight stops the question and en
     await asking
     await rm(projectRoot, { recursive: true, force: true })
   }
+})
+
+// Value: protects=every request of the open Wiki reader and the freshness check of an update in a checkout whose repository carries the Wiki's manifest as a link to a pipe (row 186); fails_when=the reader reads its manifest by name, which follows the link and waits for a writer that never comes; why_new=Cycle 0046 row 186; seam=none (a real named pipe, whose waiting reader the test releases when it ends)
+test(
+  'the reader’s manifest read does not wait on a link to a named pipe at the manifest’s path: it refuses at once and names the file',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pipe-')),
+    )
+    const pipePath = join(projectRoot, 'a-pipe-nobody-writes-to')
+    await promisify(execFile)('mkfifo', [pipePath])
+    // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it, also when the body was stopped at its time bound.
+    context.after(async () => {
+      await open(
+        pipePath,
+        openConstants.O_WRONLY | openConstants.O_NONBLOCK,
+      ).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await rm(projectRoot, { recursive: true, force: true })
+    })
+    const { outputDirectory, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    await rm(manifestPath)
+    if (!(await createLinkIfAllowed(pipePath, manifestPath)))
+      return context.skip(LINK_NOT_ALLOWED)
+
+    // Act
+    const refusal = await readDeepWikiManifest(
+      outputDirectory,
+      projectRoot,
+    ).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      `The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
+    )
+  },
+)
+
+// Value: protects=the rule that the reader takes its manifest from the Wiki folder alone, on every system; fails_when=the read follows a link, so a manifest that lies outside the Wiki folder decides which files the reader serves; why_new=Cycle 0046 row 186: the pipe case cannot run on Windows; seam=none
+test('the reader’s manifest read does not follow a link to a regular manifest elsewhere, while the same manifest as a file of the Wiki folder is read', async (context) => {
+  // Arrange: a one-page Wiki whose manifest is read once in place, then moved out of the Wiki folder with a link left in its place.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-link-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const filesOfTheManifestInPlace = [
+    ...(await readDeepWikiManifest(outputDirectory, projectRoot)).files,
+  ]
+  const manifestElsewhere = join(projectRoot, 'moved.json')
+  await rename(manifestPath, manifestElsewhere)
+  if (!(await createLinkIfAllowed(manifestElsewhere, manifestPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  const throughTheLink = await readDeepWikiManifest(
+    outputDirectory,
+    projectRoot,
+  ).then(
+    () => 'read',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { filesOfTheManifestInPlace, throughTheLink },
+    {
+      filesOfTheManifestInPlace: ['index.html'],
+      throughTheLink: `The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
+    },
+  )
 })

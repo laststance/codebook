@@ -604,8 +604,10 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
+    'extension/src/tests/removeWithoutFollowing.test.ts',
     'extension/src/tests/utils/answerKernelBootId.ts',
     'extension/src/tests/utils/createLinkIfAllowed.ts',
+    'extension/src/tests/utils/fileSystemWhoseLinksResistRemoval.ts',
     'extension/src/tests/utils/fileSystemWithLargeFileIds.ts',
     'extension/src/tests/utils/idOfNoProcess.ts',
     'extension/src/tests/utils/idleChild.ts',
@@ -613,6 +615,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/utils/loadModule.ts',
     'extension/src/tests/utils/loadOpenWithoutFollowing.ts',
     'extension/src/tests/utils/realProcessStart.ts',
+    'extension/src/tests/utils/removeAsNodeOnWindows.ts',
     'extension/src/tests/utils/requireOwnPidNamespace.ts',
     'extension/src/tests/utils/standInForPs.ts',
     'extension/src/tests/utils/startOfKilledWindow.ts',
@@ -650,6 +653,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/refreshCursorMcpCatalog.ts',
     'extension/src/utils/removeStaleStorageClaims.ts',
     'extension/src/utils/removeStaleStorageLock.ts',
+    'extension/src/utils/removeWithoutFollowing.ts',
     'extension/src/utils/systemErrorCode.ts',
     'extension/src/utils/withStorageLock.ts',
     'extension/src/utils/withoutBootTime.ts',
@@ -678,7 +682,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',

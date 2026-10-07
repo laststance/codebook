@@ -119,6 +119,15 @@ test('the packaged README names every state word the update wording can lead wit
       site: 'kept',
       ...output,
     },
+    {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt,
+      paths: ['wiki'],
+      cause: 'not-a-folder',
+      site: 'kept',
+      ...output,
+    },
   ]
   const readme = await readPackagedReadme()
 

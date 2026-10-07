@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { constants as openConstants } from 'node:fs'
+import { open, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
+import { promisify } from 'node:util'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { openWikiOpeningWindow } from './utils/wikiOpeningWindow'
 
 test('a source changed outside the editor reaches the open Wiki, which watches the project’s files until it is closed', async () => {
@@ -152,4 +160,180 @@ test('a question whose tab stays open is sent to the editor’s model', async ()
   } finally {
     await window.close()
   }
+})
+
+/**
+ * Puts a link to a named pipe that nobody writes to at a path of the window's Wiki, in place of the file there; a read that waits on the pipe is released when the test ends, also when its body was stopped at its time bound.
+ * @param context - The test, at whose end a writer opens and closes the pipe.
+ * @param projectRoot - The window's project, in which the pipe is made.
+ * @param wikiFilePath - The file of the Wiki that the link replaces.
+ * @returns Whether the link exists; `false` when this user may not create one.
+ * @example
+ * if (!(await replaceByLinkToPipe(context, window.projectRoot, manifestPath))) return context.skip(LINK_NOT_ALLOWED)
+ */
+async function replaceByLinkToPipe(
+  context: TestContext,
+  projectRoot: string,
+  wikiFilePath: string,
+): Promise<boolean> {
+  const pipePath = join(projectRoot, 'a-pipe-nobody-writes-to')
+  await promisify(execFile)('mkfifo', [pipePath])
+  context.after(() =>
+    open(pipePath, openConstants.O_WRONLY | openConstants.O_NONBLOCK).then(
+      (writer) => writer.close(),
+      () => undefined,
+    ),
+  )
+  await rm(wikiFilePath)
+  return createLinkIfAllowed(pipePath, wikiFilePath)
+}
+
+// Value: protects=the learner who opens the Wiki of a checkout whose repository carries the Wiki's manifest as a link (row 186: a link to a pipe held "Open LLM Wiki" for good, one to an endless device read 670 MiB first); fails_when=the owner check reads the manifest by name, which follows a link and waits on a pipe without a bound; why_new=Cycle 0046 row 186; seam=none (a real named pipe)
+test(
+  'Open LLM Wiki on a Wiki whose manifest path holds a link to a named pipe ends at once with a sentence that names the file, and no reader starts',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange
+    const window = await openWikiOpeningWindow()
+    const manifestPath = join(
+      window.projectRoot,
+      '.codebook',
+      'wiki',
+      'codebook-wiki.json',
+    )
+    const isLinked = await replaceByLinkToPipe(
+      context,
+      window.projectRoot,
+      manifestPath,
+    )
+    // Registered after the pipe's release, so the project is removed only once no read waits on the pipe.
+    context.after(() => window.close())
+    if (!isLinked) return context.skip(LINK_NOT_ALLOWED)
+
+    // Act
+    await window.open().catch(() => undefined)
+
+    // Assert
+    assert.deepEqual(
+      { errors: window.errors, readersStarted: window.readers.length },
+      {
+        errors: [
+          `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+        ],
+        readersStarted: 0,
+      },
+    )
+  },
+)
+
+// Value: protects=the learner who opens the Wiki of a checkout whose repository carries the Wiki's entry page as a link (row 186); fails_when=the check of the entry page reads it by name, which follows a link and waits on a pipe without a bound; why_new=Cycle 0046 row 186; seam=none (a real named pipe)
+test(
+  'Open LLM Wiki on a Wiki whose entry page path holds a link to a named pipe ends at once with a sentence that names the file, and no reader starts',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange
+    const window = await openWikiOpeningWindow()
+    const entryPath = join(
+      window.projectRoot,
+      '.codebook',
+      'wiki',
+      'index.html',
+    )
+    const isLinked = await replaceByLinkToPipe(
+      context,
+      window.projectRoot,
+      entryPath,
+    )
+    // Registered after the pipe's release, so the project is removed only once no read waits on the pipe.
+    context.after(() => window.close())
+    if (!isLinked) return context.skip(LINK_NOT_ALLOWED)
+
+    // Act
+    await window.open().catch(() => undefined)
+
+    // Assert
+    assert.deepEqual(
+      { errors: window.errors, readersStarted: window.readers.length },
+      {
+        errors: [
+          `Codebook could not open DeepWiki: Error: The Wiki’s entry page (${entryPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+        ],
+        readersStarted: 0,
+      },
+    )
+  },
+)
+
+// Value: protects=the rule that the Wiki's manifest and entry page are read as files of the Wiki folder and never through a link, on every system (on Windows a link to a file is the case a repository can carry); fails_when=either read follows a link to a regular file elsewhere, so a Wiki whose two files lie outside its folder is opened; why_new=Cycle 0046 row 186: the pipe cases cannot run on Windows; seam=none
+test('Open LLM Wiki does not open a Wiki whose manifest or entry page is a link to a regular file elsewhere, and names the file that is no file of its own', async (context) => {
+  // Arrange: two windows; in the first the manifest, in the second the entry page is moved out of the Wiki folder and a link to it is left in its place.
+  const withLinkedManifest = await openWikiOpeningWindow()
+  context.after(() => withLinkedManifest.close())
+  const withLinkedEntry = await openWikiOpeningWindow()
+  context.after(() => withLinkedEntry.close())
+  const manifestPath = join(
+    withLinkedManifest.projectRoot,
+    '.codebook',
+    'wiki',
+    'codebook-wiki.json',
+  )
+  const entryPath = join(
+    withLinkedEntry.projectRoot,
+    '.codebook',
+    'wiki',
+    'index.html',
+  )
+  const manifestElsewhere = join(withLinkedManifest.projectRoot, 'moved.json')
+  const entryElsewhere = join(withLinkedEntry.projectRoot, 'moved.html')
+  await rename(manifestPath, manifestElsewhere)
+  await rename(entryPath, entryElsewhere)
+  if (
+    !(await createLinkIfAllowed(manifestElsewhere, manifestPath)) ||
+    !(await createLinkIfAllowed(entryElsewhere, entryPath))
+  )
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  await withLinkedManifest.open().catch(() => undefined)
+  await withLinkedEntry.open().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      withLinkedManifest: {
+        errors: withLinkedManifest.errors,
+        readersStarted: withLinkedManifest.readers.length,
+      },
+      withLinkedEntry: {
+        errors: withLinkedEntry.errors,
+        readersStarted: withLinkedEntry.readers.length,
+      },
+    },
+    {
+      withLinkedManifest: {
+        errors: [
+          `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+        ],
+        readersStarted: 0,
+      },
+      withLinkedEntry: {
+        errors: [
+          `Codebook could not open DeepWiki: Error: The Wiki’s entry page (${entryPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+        ],
+        readersStarted: 0,
+      },
+    },
+  )
 })

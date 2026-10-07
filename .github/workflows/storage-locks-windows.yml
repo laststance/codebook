@@ -5,11 +5,12 @@ name: Storage locks (Windows)
 # workflow runs on Linux only. The marker of a Wiki update is created, claimed and judged with the same calls. Windows
 # also gives no open flag to refuse a link with: there the opener of every file Codebook must not read through a link
 # looks at the path first and opens only the file it looked at. The reader of Wiki metadata files, the file hash and the
-# Cursor MCP catalog open through it. This job runs the lock, marker, opener, reader, hash and catalog test files on
-# Windows whenever a file those tests load, or the Node release they run on, changes. The two constants files are left
-# out of the filter although extension/src/constants.ts holds the lock's times, its path and its file modes: they change
-# with most pull requests. A change there, to the lockfile or to the build that emits the tests is seen by the weekly
-# run instead, within a week of reaching main.
+# Cursor MCP catalog open through it. What Codebook removes at the marker's paths it removes by a walk of its own, which
+# unlinks a link (a junction here) as a name. This job runs the lock, marker, removal, opener, reader, hash and catalog
+# test files on Windows whenever a file those tests load, or the Node release they run on, changes. The two constants
+# files are left out of the filter although extension/src/constants.ts holds the lock's times, its path and its file
+# modes: they change with most pull requests. A change there, to the lockfile or to the build that emits the tests is
+# seen by the weekly run instead, within a week of reaching main.
 on:
   push:
     branches: [main]
@@ -39,8 +40,10 @@ on:
       - extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts
       - extension/src/tests/removeStaleStorageClaims.test.ts
       - extension/src/tests/removeStaleStorageLock.test.ts
+      - extension/src/tests/removeWithoutFollowing.test.ts
       - extension/src/tests/utils/answerKernelBootId.ts
       - extension/src/tests/utils/createLinkIfAllowed.ts
+      - extension/src/tests/utils/fileSystemWhoseLinksResistRemoval.ts
       - extension/src/tests/utils/fileSystemWithLargeFileIds.ts
       - extension/src/tests/utils/idOfNoProcess.ts
       - extension/src/tests/utils/idleChild.ts
@@ -48,6 +51,7 @@ on:
       - extension/src/tests/utils/loadModule.ts
       - extension/src/tests/utils/loadOpenWithoutFollowing.ts
       - extension/src/tests/utils/realProcessStart.ts
+      - extension/src/tests/utils/removeAsNodeOnWindows.ts
       - extension/src/tests/utils/requireOwnPidNamespace.ts
       - extension/src/tests/utils/standInForPs.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
@@ -85,6 +89,7 @@ on:
       - extension/src/utils/refreshCursorMcpCatalog.ts
       - extension/src/utils/removeStaleStorageClaims.ts
       - extension/src/utils/removeStaleStorageLock.ts
+      - extension/src/utils/removeWithoutFollowing.ts
       - extension/src/utils/systemErrorCode.ts
       - extension/src/utils/withStorageLock.ts
       - extension/src/utils/withoutBootTime.ts
@@ -136,4 +141,4 @@ jobs:
       # files' times then add up instead of running beside each other, which is seconds for this job.
       - name: Run the storage lock tests
         working-directory: extension
-        run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js
+        run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js

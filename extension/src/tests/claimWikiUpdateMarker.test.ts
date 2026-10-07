@@ -35,11 +35,14 @@ import {
   type ProcessStartReader,
 } from '../utils/readProcessStart'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
+import type * as removalModule from '../utils/removeWithoutFollowing'
+import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
@@ -350,12 +353,11 @@ test('of three windows that start on a killed editor’s marker at the same mome
   const { claimWikiUpdateMarker: claimAsFirstWindow } = await loadModule<
     typeof claimModule
   >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
-    'node:fs/promises': {
-      ...fileSystem,
-      rm: async (path: string, options?: { force?: boolean }) => {
+    './removeWithoutFollowing': {
+      removeWithoutFollowing: async (path: string) => {
         // Only the first removal of the marker itself is the moment the other windows arrive at.
         if (path !== wiki.markerPath || secondStart) {
-          await rm(path, options)
+          await removeWithoutFollowing(path)
           return
         }
         secondStart = outcomeOf(
@@ -366,7 +368,7 @@ test('of three windows that start on a killed editor’s marker at the same mome
           ),
         )
         await secondStart
-        await rm(path, options)
+        await removeWithoutFollowing(path)
         thirdStart = outcomeOf(
           claimWikiUpdateMarker(
             wiki.outputDirectory,
@@ -420,9 +422,8 @@ test('a window that starts at the moment a stopped watch’s reservation is remo
   const { claimWikiUpdateMarker: claimAsWatchingWindow } = await loadModule<
     typeof claimModule
   >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
-    'node:fs/promises': {
-      ...fileSystem,
-      rm: async (path: string, options?: { force?: boolean }) => {
+    './removeWithoutFollowing': {
+      removeWithoutFollowing: async (path: string) => {
         if (path === wiki.markerPath && !otherStart) {
           otherStart = outcomeOf(
             claimWikiUpdateMarker(wiki.outputDirectory, {
@@ -434,7 +435,7 @@ test('a window that starts at the moment a stopped watch’s reservation is remo
           )
           await otherStart
         }
-        await rm(path, options)
+        await removeWithoutFollowing(path)
       },
     },
   })
@@ -1590,9 +1591,11 @@ test('the reservation a window wrote beside the marker and could not move over i
         isKilled = true
         throw new Error('the window was killed')
       },
-      rm: async (path: string, options?: { force?: boolean }) => {
+    },
+    './removeWithoutFollowing': {
+      removeWithoutFollowing: async (path: string) => {
         // A killed window cleans nothing up.
-        if (!isKilled) await rm(path, options)
+        if (!isKilled) await removeWithoutFollowing(path)
       },
     },
   })
@@ -2114,59 +2117,56 @@ test(
 )
 
 // Value: protects=the rule that what a repository puts beside the marker is judged by itself and never by what it leads to; fails_when=the owner record is read through a link (a link to a file at a claim's or a prepared marker's name, a link to a folder at a prepared claim's name), so a record elsewhere that names a running window keeps the link in place for good and with it the claim on the marker; why_new=Cycle 0046 row 110: "a link is removed by its age without being read"; seam=the clock handed to the claim
-test(
-  'links that lead to the record of a running window, where a claim, a prepared claim folder and a prepared marker would lie, are judged by their age alone and removed 61 s later',
-  {
-    skip:
-      process.platform === 'win32'
-        ? 'a link to a file needs a right on Windows that a user may lack'
-        : false,
-  },
-  async (context) => {
-    // Arrange: a record that names this window, which runs, in a folder of the project; and a link to it, or to its folder, at each of the three names.
-    const cloned = await createClonedProject(context)
-    const recordOfARunningWindow = join(cloned.project, 'docs', 'left')
-    await writeFile(
-      recordOfARunningWindow,
-      JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
-    )
-    await mkdir(`${cloned.markerPath}.takeover`)
-    await symlink(
+test('links that lead to the record of a running window, where a claim, a prepared claim folder and a prepared marker would lie, are judged by their age alone and removed 61 s later', async (context) => {
+  // Arrange: a record that names this window, which runs, in a folder of the project; and a link to it, or to its folder, at each of the three names.
+  const cloned = await createClonedProject(context)
+  const recordOfARunningWindow = join(cloned.project, 'docs', 'left')
+  await writeFile(
+    recordOfARunningWindow,
+    JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
+  )
+  await mkdir(`${cloned.markerPath}.takeover`)
+  // The links to a file are tried on every system; only a user whom the system refuses their creation skips.
+  const mayCreateLinks =
+    (await createLinkIfAllowed(
       recordOfARunningWindow,
       join(`${cloned.markerPath}.takeover`, 'left'),
-    )
-    await symlink(
-      join(cloned.project, 'docs'),
-      `${cloned.markerPath}.takeover-left`,
-      'junction',
-    )
-    await symlink(recordOfARunningWindow, `${cloned.markerPath}.pending-left`)
-    const aMinuteAndASecondLater = Date.now() + 61_000
-    const claim = await claimWikiUpdateMarker(
-      cloned.outputDirectory,
-      {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: aMinuteAndASecondLater,
-      },
-      { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
-    )
-    assert.ok('release' in claim)
+    )) &&
+    (await createLinkIfAllowed(
+      recordOfARunningWindow,
+      `${cloned.markerPath}.pending-left`,
+    ))
+  if (!mayCreateLinks) return context.skip(LINK_NOT_ALLOWED)
+  await symlink(
+    join(cloned.project, 'docs'),
+    `${cloned.markerPath}.takeover-left`,
+    'junction',
+  )
+  const aMinuteAndASecondLater = Date.now() + 61_000
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: aMinuteAndASecondLater,
+    },
+    { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+  )
+  assert.ok('release' in claim)
 
-    // Act
-    await claim.release()
+  // Act
+  await claim.release()
 
-    // Assert
-    assert.deepEqual(
-      {
-        besideTheWiki: await readdir(join(cloned.project, '.codebook')),
-        docs: (await readdir(join(cloned.project, 'docs'))).toSorted(),
-      },
-      { besideTheWiki: ['wiki'], docs: ['guide.md', 'left'] },
-    )
-  },
-)
+  // Assert
+  assert.deepEqual(
+    {
+      besideTheWiki: await readdir(join(cloned.project, '.codebook')),
+      docs: (await readdir(join(cloned.project, 'docs'))).toSorted(),
+    },
+    { besideTheWiki: ['wiki'], docs: ['guide.md', 'left'] },
+  )
+})
 
 // Value: protects=the Update button in a checkout whose repository holds a folder at the marker's path (row 111: every start ended with the file error EISDIR, although the look calls such an entry nobody's); fails_when=the marker in the way is removed as a file only, which fails for a folder; why_new=Cycle 0046 row 111: the existing test of a folder asserts only the look's kind; seam=the clock handed to the claim
 test('a folder with content at the marker’s path does not refuse every start: once it is older than a write takes it is removed with its content as nobody’s marker, and the update runs', async () => {
@@ -2367,4 +2367,118 @@ test('a window whose claim on the marker could not be removed at the end of one 
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
   }
+})
+
+/**
+ * Loads the marker's claim on a file system on which a link cannot be removed as a file ({@link fileSystemWhoseLinksResistRemoval}): the claim and its removal walk both see that file system, and a removal through the recursive `rm` there goes on as the removal of Node.js does on Windows after `EPERM`.
+ * @returns The claim to call, and the paths of every listing the claim and its walk made.
+ * @example
+ * const { claimWhereLinksResist, listed } = await loadClaimWhereLinksResistRemoval()
+ */
+async function loadClaimWhereLinksResistRemoval(): Promise<{
+  claimWhereLinksResist: typeof claimWikiUpdateMarker
+  listed: string[]
+}> {
+  const resisting = fileSystemWhoseLinksResistRemoval()
+  const walkWhereLinksResist = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    { 'node:fs/promises': resisting.fileSystem },
+  )
+  const { claimWikiUpdateMarker: claimWhereLinksResist } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    'node:fs/promises': resisting.fileSystem,
+    './removeWithoutFollowing': walkWhereLinksResist,
+  })
+  return { claimWhereLinksResist, listed: resisting.listed }
+}
+
+// Value: protects=the learner's folders behind links that a repository puts where a prepared claim folder and a prepared marker would lie, on a system that refuses to unlink them (on Windows `EPERM`); fails_when=the sweep removes such an entry with the recursive removal of Node.js, which after the refused unlink looks again with `stat`, follows the link and empties the folder behind it (row 187); why_new=Cycle 0046 row 187: the removal at the marker's paths is a walk of Codebook's own; seam=a file system whose unlink of a link answers EPERM, with the removal of Node.js as it runs on Windows for a caller that still uses it
+test('links beside the marker that the system refuses to unlink are left in place when they are older than 60 s: the folders they lead to are not listed and keep every file, and the run still ends', async (context) => {
+  // Arrange: a link to the project's sources where a prepared claim folder would lie, and one to its documents where a prepared marker would lie.
+  const cloned = await createClonedProject(context)
+  const sources = join(cloned.project, 'src')
+  const documents = join(cloned.project, 'docs')
+  await symlink(sources, `${cloned.markerPath}.takeover-left`, 'junction')
+  await symlink(documents, `${cloned.markerPath}.pending-left`, 'junction')
+  const { claimWhereLinksResist, listed } =
+    await loadClaimWhereLinksResistRemoval()
+  const aMinuteAndASecondLater = Date.now() + 61_000
+  const claim = await claimWhereLinksResist(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: aMinuteAndASecondLater,
+    },
+    { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert: the run's marker is gone, both links stay, and no listing went below a link.
+  assert.deepEqual(
+    {
+      project: await entriesBelow(cloned.project),
+      listedBelowALink: listed.filter(
+        (path) => path === sources || path === documents,
+      ),
+    },
+    {
+      project: [
+        '.codebook',
+        '.codebook/wiki',
+        '.codebook/wiki.update-run.json.pending-left',
+        '.codebook/wiki.update-run.json.takeover-left',
+        'docs',
+        'docs/guide.md',
+        'package.json',
+        'src',
+        'src/main.ts',
+        'src/utils',
+        'src/utils/helper.ts',
+      ],
+      listedBelowALink: [],
+    },
+  )
+})
+
+// Value: protects=the folder behind a link at the marker's own path on a system that refuses to unlink the link; fails_when=the marker in the way is removed with the recursive removal of Node.js, which follows the link after the refused unlink and empties the folder (row 187), or the start goes on as if the entry were gone; why_new=Cycle 0046 row 187; seam=a file system whose unlink of a link answers EPERM
+test('a link to a folder at the marker’s path that the system refuses to unlink ends the start with the file system’s error: the link stays, and the folder it leads to keeps every file', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await symlink(cloned.besideTheProject, cloned.markerPath, 'junction')
+  const linkedAtMs = (await lstat(cloned.markerPath)).mtimeMs
+  const { claimWhereLinksResist } = await loadClaimWhereLinksResistRemoval()
+
+  // Act
+  const start = await outcomeOf(
+    claimWhereLinksResist(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: linkedAtMs,
+      },
+      { ...AS_THIS_WINDOW, now: () => linkedAtMs + 2_000 },
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      start,
+      isTheLinkStillThere: (await lstat(cloned.markerPath)).isSymbolicLink(),
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+    },
+    {
+      start: 'refused with EPERM',
+      isTheLinkStillThere: true,
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
 })
