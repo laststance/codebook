@@ -2123,6 +2123,74 @@ test('Close Study Workspace applies no original layout and keeps all three learn
   }
 })
 
+// Cycle 0046 row 372: comparison keeps its real answer; a queued native-model update must not fit between that guard and the restoration command.
+test('Close Study Workspace keeps a third learner group whose model update was queued by the completed group comparison', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 0.7 }, { size: 0.3 }],
+  })
+  harness.closeDisposedPanelTabsLater()
+  const compareGroups = harness.reader['sameEditorGroups']
+  let queuedUpdate = false
+  let newFile: ReturnType<typeof harness.focusMutableDraft> | undefined
+  let groupLayoutWrite: Promise<unknown> | undefined
+  try {
+    const firstFile = harness.focusMutableDraft('first-learner-file.ts', 1)
+    harness.focusMutableDraft('second-learner-file.ts', 2)
+    await harness.reader.open()
+    harness.focusExistingSource(firstFile.editor)
+    harness.reader['sameEditorGroups'] = (...argumentsOfComparison) => {
+      const answer = compareGroups.call(
+        harness.reader,
+        ...argumentsOfComparison,
+      )
+      // Preserve the real comparison and queue input only in Close's final layout check.
+      if (
+        answer &&
+        !queuedUpdate &&
+        harness.groups.length === 2 &&
+        new Error().stack?.includes('giveLayoutOfBeforeOpenBack')
+      ) {
+        queuedUpdate = true
+        queueMicrotask(() => {
+          groupLayoutWrite = harness.editor.commands.executeCommand(
+            'vscode.setEditorLayout',
+            {
+              orientation: 1,
+              groups: [{ size: 0.4 }, { size: 0.35 }, { size: 0.25 }],
+            },
+          )
+          newFile = harness.focusMutableDraft('new-third-file.ts', 3)
+          harness.focusExistingSource(firstFile.editor)
+        })
+      }
+      return answer
+    }
+
+    // Act
+    await harness.reader.close()
+    await groupLayoutWrite
+
+    // Assert: the queued input is exercised, and no later stale restoration removes its group.
+    assert.deepEqual(
+      {
+        queuedUpdate,
+        groups: harness.groups.length,
+        thirdGroupKeptItsFile:
+          newFile !== undefined &&
+          Boolean(harness.groups[2]?.tabs.includes(newFile.tab)),
+      },
+      { queuedUpdate: true, groups: 3, thirdGroupKeptItsFile: true },
+    )
+  } finally {
+    harness.reader['sameEditorGroups'] = compareGroups
+    await groupLayoutWrite?.catch(() => undefined)
+    await harness.close()
+  }
+})
+
 for (const situation of [
   {
     name: 'the learner replaced the file of the second group by another one during the session',
