@@ -1310,7 +1310,7 @@ function studyClient(
     filesRequestFor(studyId)?.refusal
   /**
    * Says whether this pane's request for one entry's files is still open: it was sent under the current Study message's revision and has no answer. Read by {@link awaitsOrHasFilesAnswer}.
-   * A request sent under an earlier revision is void: the host refuses a message of a revision it has left and answers nothing, so the pane asks again.
+   * A request sent under an earlier revision no longer counts as open, so the pane asks again. The host answers a request the pane sent by itself whatever its revision (a window without a Trash), but a request the learner made on a view the host has since left is refused with a line and never answered, and the pane cannot tell which of the two happened to its request; a second listing costs little, a request that is never answered would leave the disclosure at "Listing this study's files…".
    * @param message - The current Study message.
    * @param studyId - The entry the disclosure is offered for.
    * @example isFilesRequestOpen(message, entry.id) // => true right after the learner opened the disclosure

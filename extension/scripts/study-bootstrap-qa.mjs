@@ -5626,7 +5626,7 @@ async function check(page, options, collected) {
     studyFiles: othersFiles,
   })
   const askedAtRetry = await removalControl()
-  // The host renders again before it answers: it refuses a request of a revision it has left, and answers nothing.
+  // The host renders again before the pane has an answer: under the new revision the pane asks again. (The host answers a request the pane sent by itself, like this one, also after it rendered again; a request the learner made on the old view it refuses with a line and never answers. The pane cannot tell the two apart from here and asks again in both.)
   await library(studiesWithOther, otherStudy.id, {
     ...withoutTrash,
     studyRemoval: anotherPanesAnswer(2),
