@@ -1640,24 +1640,31 @@ test("the fake editor of a closed harness does not report its active text editor
   assert.equal(owedAfterClose, 0)
 })
 
-// Value: protects=a finished reader test leaving nothing behind in its fake editor when it ended while the Variables view still owed the load of a stop it had missed: the load does not run after the harness's close; fails_when=the view's deferred refresh is not among the fake editor's pending timers, so 400 ms after a test ended it lists the values and tells that test's historical debuggers; why_new=Cycle 0046 row 89, found beside it: the Variables view's two timers were the last later changes of the fake editor outside pendingEditorTimers; seam=the fake editor's pending timers, hideNativeVariables and the editor's command that shows the Variables view
-test("the fake editor of a closed harness does not load its Variables view late: the refresh a hidden view owed is dropped with the harness's close", async () => {
-  // Arrange: the Variables view missed the stop while it was hidden; shown again, it loads the stop 400 ms later.
-  const harness = await workspaceHarness(false)
-  harness.hideNativeVariables('missed-the-stop')
+for (const [hiding, owed] of [
+  [
+    'missed-the-stop',
+    'the refresh that loads the stop it missed, 400 ms later',
+  ],
+  ['never-opened', 'the first rows of its tree, 60 ms later'],
+] as const)
+  // Value: protects=a finished reader test leaving nothing behind in its fake editor when it ended while the Variables view still owed a later step: that step does not run after the harness's close; fails_when=the view's timer is not among the fake editor's pending timers, so after a test ended it changes the view, lists the values and tells that test's historical debuggers; why_new=Cycle 0046 row 89, found beside it: the Variables view's two timers were the last later changes of the fake editor outside pendingEditorTimers; seam=the fake editor's pending timers, hideNativeVariables and the editor's command that shows the Variables view
+  test(`the fake editor of a closed harness does not finish showing its Variables view late: ${owed}, is dropped with the harness's close`, async () => {
+    // Arrange: the Variables view was hidden in the way the case names; shown again, it owes one later step.
+    const harness = await workspaceHarness(false)
+    harness.hideNativeVariables(hiding)
 
-  // Act: the view is shown, and the harness closes while that refresh is still owed.
-  await harness.editor.commands.executeCommand(
-    'workbench.debug.action.focusVariablesView',
-  )
-  const owedAfterCommand = harness.pendingEditorTimerCount()
-  await harness.close()
-  const owedAfterClose = harness.pendingEditorTimerCount()
+    // Act: the view is shown, and the harness closes while that step is still owed.
+    await harness.editor.commands.executeCommand(
+      'workbench.debug.action.focusVariablesView',
+    )
+    const owedAfterCommand = harness.pendingEditorTimerCount()
+    await harness.close()
+    const owedAfterClose = harness.pendingEditorTimerCount()
 
-  // Assert
-  assert.equal(owedAfterCommand, 1)
-  assert.equal(owedAfterClose, 0)
-})
+    // Assert
+    assert.equal(owedAfterCommand, 1)
+    assert.equal(owedAfterClose, 0)
+  })
 
 // Value: protects=reader tests meeting Cursor as it answers the command that focuses the first editor group while the chat input has the keyboard and the editor names a group of the main editor: a pane in the first group is not reported as focused and the named group stays the named one; fails_when=the fake reports the pane's focus in that state, which Cursor does not, so a measurement that waits for that report passes in the tests and ends after five seconds in the editor; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: a recording opened from the chat input while the editor named the captured source's group was never read; the wait for the first group's focus ran out); seam=the fake editor with a separate editor part, leavePaneFocusUnreportedBesideChat and its panes
 test("the fake Cursor reports no focus of a pane in the first group while the chat input has the keyboard and the editor names the captured source's group", async () => {
