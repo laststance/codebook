@@ -362,7 +362,7 @@ test('the packaged README says that a VS Code update sends its request into a ne
 })
 
 // Value: protects=a learner reading, before they press Update LLM Wiki, what the editor's confirmation will tell them: a new chat starts, the open chat keeps its place, a draft in an empty chat is replaced; fails_when=the README quotes another confirmation than the product shows, or says nothing about the command, which starts without one; why_new=Cycle 0046 rows 197 and 198; seam=none
-test('the packaged README quotes the confirmation of a VS Code update word for word and says that the command starts without it', async () => {
+test('the packaged README quotes the confirmation of a VS Code update word for word and says what the command, which asks nothing, does to the chat and to a draft', async () => {
   // Arrange
   const readme = await readPackagedReadme()
   const confirmation = describeWikiChatHandOver([
@@ -372,7 +372,7 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
 
   // Act
   const delivered = heldSentences(readme, [
-    `The button asks for confirmation in the editor first; in VS Code the confirmation says where the request goes: \`${confirmation}\` The command starts at once, without that confirmation, and does the same.`,
+    `The button asks for confirmation in the editor first; in VS Code the confirmation says where the request goes: \`${confirmation}\` The command starts at once and asks nothing: its request goes into a new chat in the same way and replaces a draft in an empty chat in the same way, and the notification that watches the update says where the request is.`,
   ])
 
   // Assert
