@@ -760,6 +760,72 @@ test('Close Study Workspace after a Read whose secondary side bar could not be m
   }
 })
 
+for (const read of [
+  { action: 'read-app', pane: 'the Application pane' },
+  { action: 'read-source', pane: 'the captured source' },
+  { action: 'read-context', pane: 'the Explanation pane' },
+] as const)
+  // Value: protects=the keyboard of a learner after a Restore of a Read, as far as the reader decides it: the Restore runs the editor's Expand, shows the side bars the Read hid, gives the active editor group the keyboard again and applies the Study layout, and runs no command or reveal that names another pane, so the pane that was read keeps the keyboard in an editor that moves none by itself; fails_when=a Restore of a Read reveals or focuses another pane than the one that was read, so the learner who read the explanation finds the keyboard in the Application pane; why_new=Cycle 0046 row 325 (native round in VS Code 1.140.0, check V-05, fourth step: after Read Explanation and Restore the Application pane had the keyboard; this test shows that no command of the reader moves it there, see the row's record for what is still open); seam=the workspace harness's side bar model, focusedPanel, active text editor, command log and panel reveals
+  test(`a Restore after a Read of ${read.pane} runs no command and no reveal that gives another pane the keyboard: ${read.pane} keeps it in an editor that moves none by itself`, async () => {
+    // Arrange: the primary side bar is open; the learner reads one pane enlarged, which hides the bar.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars({ primary: true, auxiliary: false })
+    const keyboardHolder = (): string | undefined =>
+      harness.focusedPanel() ??
+      (harness.editor.window.activeTextEditor?.viewColumn === 2
+        ? 'the captured source'
+        : undefined)
+    try {
+      await harness.reader.open()
+      await harness.reader.action(read.action)
+      const duringRead = keyboardHolder()
+      const commandsBefore = harness.commands.length,
+        revealsBefore = harness.panelReveals().length
+      const state = harness.reader.presentationState()
+
+      // Act: the Restore of the public presentation action.
+      await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'restore',
+      })
+
+      // Assert
+      const expectedHolder = {
+        'read-app': 'codebook.scopedBrowser',
+        'read-source': 'the captured source',
+        'read-context': 'codebook.studyContext',
+      }[read.action]
+      assert.equal(duringRead, expectedHolder)
+      assert.deepEqual(
+        {
+          commands: harness.commands.slice(commandsBefore),
+          reveals: harness.panelReveals().slice(revealsBefore),
+          keyboardHolder: keyboardHolder(),
+          layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        },
+        {
+          commands: [
+            'workbench.action.minimizeOtherEditors',
+            'workbench.action.focusSideBar',
+            'workbench.action.focusActiveEditorGroup',
+            'vscode.getEditorLayout',
+            'runCommands',
+            'vscode.setEditorLayout',
+            'vscode.getEditorLayout',
+          ],
+          reveals: [],
+          keyboardHolder: expectedHolder,
+          layoutConfirmed: true,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the learner's primary side bar when the editor answers the Read's first layout read and refuses the one after the measurement hid that bar: the Restore shows it again; fails_when=the reading keeps no record that its measurement hid the bar, so the Restore, Close and a refused Read show nothing and the file explorer stays away; why_new=Cycle 0046 row 33 (PL-25 of Cycle 0045: the second read's failure left the measurement undefined); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command and failNextCommand on the layout read after it
 test('a Restore after a Read whose layout read failed once the primary side bar was hidden for the measurement shows the primary side bar again', async () => {
   // Arrange: both side bars are open; the editor answers the Read's first layout read and rejects the one after the primary side bar was hidden.

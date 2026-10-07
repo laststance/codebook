@@ -1843,7 +1843,14 @@ export class StudyWorkspace {
     return checking
   }
 
-  /** Repairs an existing Study grid without replacing its evidence panes; Restore uses it after focused reading. @example await this.restoreStudyArrangement(intent) */
+  /**
+   * Repairs an existing Study grid without replacing its evidence panes; called by {@link admitPresentation} for a Restore or a selection of the three-pane Study workspace whose layout is not confirmed while one of the reader's panes or the captured source is the active editor, which is the state a Read leaves.
+   * The keyboard: this path takes no note of where the keyboard is and gives nothing back ({@link capturePresentationFocus} is asked only on the path behind it). It ends the Read's maximization with the editor's Expand, shows the side bars the Read hid, after which the active editor group has the keyboard again ({@link showSideBarsHiddenByRead}), and applies the Study layout; it reveals no pane and runs no focus command that names one. Where the keyboard is afterwards is therefore what the editor makes of those commands. In VS Code 1.140.0 for Linux the captured source and the Application pane kept it, and after a Read of the Explanation pane the Application pane had it (measured natively on 2026-10-07; which of the editor's steps moves it there is not established).
+   * @param input - The admitted Restore or selection.
+   * @returns The state after the arrangement, `'open'`.
+   * @throws When the window lost the focus, the learner changed the focus or the panes, or the evidence changed during the Restore; the reason is published as the presentation's reason.
+   * @example await this.restoreStudyArrangement(intent)
+   */
   private restoreStudyArrangement(
     input: PresentationIntent,
   ): Promise<PresentationState> {
