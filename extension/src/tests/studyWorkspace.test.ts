@@ -17,6 +17,7 @@ import {
   saveOneStopNodeHistory,
   readerSeams,
   recordedReaderHarness,
+  openRetainedStudy,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
@@ -4538,6 +4539,7 @@ test("the chat that took the keyboard from the Application pane has it again at 
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.useHostAppName('Cursor')
   const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
@@ -4548,6 +4550,12 @@ test("the chat that took the keyboard from the Application pane has it again at 
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
     const paneBeforeClick = harness.focusedPanel()
     // The learner clicks into the chat: the tab and group events arrive while the pane's flag still reads active, and the pane's view state after them.
     const heldFlag = harness.holdPaneDeactivation('codebook.scopedBrowser')
@@ -4577,6 +4585,7 @@ test("the chat that took the keyboard from the Application pane has it again at 
     )
     assert.deepEqual(harness.informationMessages, [])
   } finally {
+    live?.close()
     await harness.close()
   }
 })
@@ -4687,6 +4696,43 @@ test('the chat that had the keyboard before a pause of a live run has it again w
     assert.deepEqual(harness.informationMessages, [])
   } finally {
     live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner in Cursor who debugs a program of their own beside the Agent chat's tab while the Study workspace shows a saved study and no run is live: when the reader shows that study's captured source, the keyboard is not sent to the chat; fails_when=the return at a render asks only that no recording is open, while the return at a pause's end asks for a live run, so with a paused session of the learner's own every render that leaves the keyboard where it is runs the chat's focus command; why_new=Cycle 0046 row 254 (delegated review, finding 7: both returns run only beside a live run); seam=workspace harness with a retained study, addSeparateEditorPart, focusMutableDraft, pauseDebugger for a session of the learner's own, the reader's Retry
+test("a render of a saved study while a debug session of the learner's own is paused, with no live run of Codebook, does not send the keyboard to Cursor's chat", async () => {
+  // Arrange: Cursor with the Agent chat as a tab of another editor part; the Study workspace shows a saved study and no run is live; the learner typed in the chat, and a breakpoint of the learner's own session opened its file with the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  try {
+    await openRetainedStudy(harness)
+    chat.focusTab()
+    const pausedFile = harness.focusMutableDraft('server.ts', 1)
+    harness.pauseDebugger({ session: 'learners-own-session' })
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the reader renders the saved study once more, leaving the keyboard where it is.
+    await harness.reader.action('retry')
+
+    // Assert: the source was shown without the keyboard, and no chat command ran.
+    assert.equal(
+      harness.textDocumentShows().length > showsBefore &&
+        harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .every((shown) => shown.preserveFocus),
+      true,
+    )
+    assert.equal(chat.focused(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.toString(),
+      pausedFile.document.uri.toString(),
+    )
+    assert.equal(harness.commands.includes('composer.focusComposer'), false)
+  } finally {
     await harness.close()
   }
 })
@@ -5644,6 +5690,7 @@ test("the chat that had the keyboard gets it back at a pause of a live run when 
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.useHostAppName('Cursor')
   const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
@@ -5654,6 +5701,12 @@ test("the chat that had the keyboard gets it back at a pause of a live run when 
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
     chat.focusTab()
     // The pause, on a held clock: the debugger opens the paused file with the keyboard, and Run and Debug names the stack item exactly 1,000 ms later.
     let clockMs = Math.floor(performance.now())
@@ -5682,6 +5735,7 @@ test("the chat that had the keyboard gets it back at a pause of a live run when 
     )
     assert.deepEqual(harness.informationMessages, [])
   } finally {
+    live?.close()
     await harness.close()
   }
 })
@@ -6068,6 +6122,7 @@ test("a frame selected at a pause while the learner types in Cursor's chat tab l
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.useHostAppName('Cursor')
   const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
@@ -6078,6 +6133,12 @@ test("a frame selected at a pause while the learner types in Cursor's chat tab l
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
     chat.focusTab()
     harness.focusMutableDraft('actions.ts', 2)
     harness.pauseDebugger()
@@ -6118,6 +6179,7 @@ test("a frame selected at a pause while the learner types in Cursor's chat tab l
     )
     assert.deepEqual(harness.informationMessages, [])
   } finally {
+    live?.close()
     await harness.close()
   }
 })

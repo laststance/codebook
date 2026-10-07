@@ -2869,7 +2869,7 @@ export class StudyWorkspace {
 
   /**
    * Says whether the file the editor's debugger opened at a break still has the keyboard beside a live run; asked by {@link choseEditorAtPause}.
-   * Only beside a live run of Codebook (its Application pane's lease exists): in a debug session of the learner's own the reader moves no keyboard.
+   * Only beside a live run of Codebook ({@link hasLiveRun}): in a debug session of the learner's own the reader moves no keyboard.
    * @param openedByDebugger - The document that was the active text editor when the pause's frame was reported, if any.
    * @returns `true` when a live run's viewport exists and that document is the active text editor now; `false` for another document, for none, and without a live run.
    * @example this.holdsKeyboardSinceBreak(pause.openedByDebugger)
@@ -2877,10 +2877,17 @@ export class StudyWorkspace {
   private holdsKeyboardSinceBreak(
     openedByDebugger: string | undefined,
   ): boolean {
-    return (
-      this.viewport !== undefined &&
-      this.holdsDebuggersFileOfPause(openedByDebugger)
-    )
+    return this.hasLiveRun() && this.holdsDebuggersFileOfPause(openedByDebugger)
+  }
+
+  /**
+   * Says whether a live run of Codebook exists, which is the only time the reader gives the keyboard back to a chat; asked by {@link holdsKeyboardSinceBreak} for the return at a pause's end and by {@link owedPauseOf} for the return at a reveal.
+   * A live run holds the lease of its Application pane from its start to its end, also while the Study workspace is closed. Without one, a paused debug session is the learner's own, or the reader shows a saved study: the reader moves no keyboard then.
+   * @returns `true` while a run's viewport exists.
+   * @example this.hasLiveRun() // => false while the Study workspace shows a saved study and no run was started
+   */
+  private hasLiveRun(): boolean {
+    return this.viewport !== undefined
   }
 
   /**
@@ -2907,12 +2914,12 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the debugger stopped beside a live run and the frame of that stop is still the one the editor reports; asked by {@link owedPauseOf} and {@link replacesEditorFocusedByPause}, which act on the keyboard the editor's debugger gave the paused file.
+   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link owedPauseOf}, which also asks for a live run ({@link hasLiveRun}), and by {@link replacesEditorFocusedByPause}, which acts on the keyboard the editor's debugger gave the paused file whoever started that session.
    * A pause is told by a stack frame ({@link isStackFrameItem}): once the session runs again the editor reports its thread, which is no pause. The frame must have come with a stop ({@link cameWithStop}): for a frame the learner selected in the Call Stack view the editor opened the file without the keyboard. While a recording is open the frame is the historical debugger's, which opens no file with the keyboard for a new pause.
    * @returns `true` while Run and Debug's active stack item is a frame that came with a stop and no recording is open.
-   * @example this.isPausedBesideLiveRun() // => false while the debugged program runs, after the learner selected another frame, and while a recording is replayed
+   * @example this.isStoppedOutsideRecording() // => false while the debugged program runs, after the learner selected another frame, and while a recording is replayed
    */
-  private isPausedBesideLiveRun(): boolean {
+  private isStoppedOutsideRecording(): boolean {
     return (
       !this.recordingActive &&
       this.frameCameWithStop &&
@@ -3010,7 +3017,7 @@ export class StudyWorkspace {
   /**
    * Finds the pause of the chat's record whose one return is still owed; asked by {@link returnsKeyboardToChatAtPause}, which marks that return as running and then as done.
    * @param remembered - The record.
-   * @returns The pause, when the record notes one beside a live run that no reveal of the reader settled yet; `undefined` between pauses, while a recording is open, and for a pause whose return runs or is done.
+   * @returns The pause, when the record notes one beside a live run that no reveal of the reader settled yet; `undefined` without a live run (a debug session of the learner's own, a saved study), between pauses, while a recording is open, and for a pause whose return runs or is done.
    * @example const pause = this.owedPauseOf(remembered)
    */
   private owedPauseOf(
@@ -3018,7 +3025,9 @@ export class StudyWorkspace {
   ): KeyboardPauseOfRecord | undefined {
     const pause = remembered.pause
     if (!pause || pause.state !== 'unsettled') return undefined
-    return this.isPausedBesideLiveRun() ? pause : undefined
+    return this.hasLiveRun() && this.isStoppedOutsideRecording()
+      ? pause
+      : undefined
   }
 
   /**
@@ -9089,7 +9098,7 @@ export class StudyWorkspace {
     source: vscode.Uri,
   ): boolean {
     return (
-      this.isPausedBesideLiveRun() &&
+      this.isStoppedOutsideRecording() &&
       this.isFocusedGroupShowingOtherText(column, source) &&
       this.hasEditorFocusedOnBreak(column)
     )
