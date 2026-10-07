@@ -93,7 +93,7 @@ export class OwnedNodeTestRun {
     private readonly configuration: NodeTestConfiguration,
     private readonly node: string,
     private readonly record: (type: string, detail?: unknown) => unknown,
-    /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run while the editor holds other text for one of them. A trial without an article gives none. */
+    /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run, and {@link captureStop} ends it at a stop, while the editor holds other text for one of them. A trial without an article gives none. */
     private readonly citedSources: ConfiguredDescriptor['sources'],
   ) {
     this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
@@ -443,7 +443,7 @@ export class OwnedNodeTestRun {
    * @param index - Declared stop to capture.
    * @param fromIndex - First native pause that can belong to this stop.
    * @returns The accepted stop.
-   * @throws When the session ends, the owned breakpoint pauses elsewhere in the declared source, the running test exceeds the budget, or capture fails.
+   * @throws When the session ends, the owned breakpoint pauses elsewhere in the declared source, the running test exceeds the budget, or capture fails; a `SOURCE_CHANGED` {@link StudyError} when the editor holds other text for a cited source than the article cites at the pause.
    * @example
    * ```ts
    * await this.captureStop(0, this.stops.length) // => { index: 0, frame: { line: 217, column: 21, ... }, facts: [...], ... }
@@ -608,6 +608,12 @@ export class OwnedNodeTestRun {
       throw new Error(
         'Node test source changed during historical debugger capture.',
       )
+    // The file is the cited one; a document the learner changed without saving since the start would still make the editor's debugger mark another line than the test executes at this pause.
+    assertConfiguredSourceDocuments(
+      this.workspace,
+      this.citedSources,
+      vscode.workspace.textDocuments,
+    )
     this.record('node-test.snapshot-started', {
       index,
       elapsedMs: this.owned?.elapsedMs() ?? 0,

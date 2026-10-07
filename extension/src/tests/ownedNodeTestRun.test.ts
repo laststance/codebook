@@ -41,7 +41,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
- * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts`, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open.
+ * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  *
  * @example
  * ```ts
@@ -146,6 +146,25 @@ async function nodeRunHarness({
     debugStartOptions: (vscode.DebugSessionOptions | undefined)[] = []
   // How often the run began to check and seal its test, the step that asks Vitest for its files: nothing of the test is listed, launched or attached before it.
   let launchPreparations = 0
+  // The text the editor holds for the cited source, and the editor's open documents: the cited source's document once it has a text.
+  let documentText = ''
+  const textDocuments: Array<{
+    uri: { scheme: string; fsPath: string }
+    isDirty: boolean
+    getText: () => string
+  }> = []
+  /** Opens the cited source's document with this text, or replaces its text, as a learner who types and does not save. */
+  const typeIntoCitedSource = (text: string): void => {
+    // The first typing opens the document; later typing only changes what it holds.
+    if (!textDocuments.length)
+      textDocuments.push({
+        uri: { scheme: 'file', fsPath: sourceFile },
+        isDirty: true,
+        getText: () => documentText,
+      })
+    documentText = text
+  }
+  if (openDocumentText !== undefined) typeIntoCitedSource(openDocumentText)
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
     continued = 0,
@@ -399,19 +418,7 @@ async function nodeRunHarness({
     Position,
     Location,
     SourceBreakpoint,
-    workspace: {
-      getWorkspaceFolder: () => undefined,
-      textDocuments:
-        openDocumentText === undefined
-          ? []
-          : [
-              {
-                uri: { scheme: 'file', fsPath: sourceFile },
-                isDirty: true,
-                getText: () => openDocumentText,
-              },
-            ],
-    },
+    workspace: { getWorkspaceFolder: () => undefined, textDocuments },
     debug: {
       breakpoints: editorBreakpoints,
       addBreakpoints(added: SourceBreakpoint[]): void {
@@ -593,6 +600,7 @@ async function nodeRunHarness({
     events,
     debugStartOptions,
     launchPreparations: (): number => launchPreparations,
+    typeIntoCitedSource,
     launch,
     reportDirectory,
     sourceFile,
@@ -1627,6 +1635,45 @@ test('a Node test run whose cited source is marked as modified in the editor wit
     // Assert
     assert.equal(firstStop.index, 0)
     assert.equal(harness.launchPreparations(), 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 322): red while a Node test run compared the editor's documents at its start only: after a change the learner did not save, the next stop was captured although the editor's debugger marked a line of the unsaved text, not the line the test executed.
+test('a Node test run whose cited source the learner changes in the editor without saving between two stops ends at the next stop with the sentence that names the file, and that stop is not captured', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 })
+  try {
+    await harness.run.prepare()
+    harness.typeIntoCitedSource(
+      '// a line the learner typed\nexport const nextTheme = "dark";\n',
+    )
+
+    // Act
+    const refusal: unknown = await harness.run
+      .advance()
+      .catch((error: unknown) => error)
+
+    // Assert
+    assert.deepEqual(
+      refusal instanceof Error && 'code' in refusal
+        ? { code: refusal.code, message: refusal.message }
+        : refusal,
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
+    )
+    assert.equal(
+      harness.events.filter(
+        (event) => event.type === 'node-test.source-stopped',
+      ).length,
+      1,
+    )
+    assert.equal(harness.calls.includes('stop-debugging'), true)
   } finally {
     await harness.run.stop()
     await harness.cleanup()
