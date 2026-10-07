@@ -1024,6 +1024,134 @@ test('a module that a comment or a docstring of a test file only quotes is not a
   }
 })
 
+/**
+ * The kinds of test the Windows job runs, as the test execution guide and the workflow's header name them, each with its test files; for the pin below.
+ * The two documents name kinds and no files, so a test file added to a kind they already name changes neither of them: it is added here, under its kind. A file of a kind they do not name fails the pin, which then asks for the kind's name in both.
+ */
+const WINDOWS_JOB_TEST_KINDS = [
+  {
+    kind: "the storage lock and its owner's identity",
+    tests: [
+      'withStorageLock',
+      'isProcessGone',
+      'currentStorageOwner',
+      'isFromEarlierBoot',
+      'isSameStorageMachine',
+      'readBootIdentity',
+      'readProcessStart',
+      'isRecordedOwnerGone',
+      'readRecordedOwner',
+      'removeStaleStorageLock',
+      'removeStaleStorageClaims',
+      'canJudgeOwnerHere',
+      'processStartFormHere',
+      'namesMachineInClear',
+    ],
+  },
+  {
+    kind: 'the Wiki update marker and its claim',
+    tests: ['claimWikiUpdateMarker', 'readLiveWikiUpdateMarker'],
+  },
+  {
+    kind: 'the reader of Wiki metadata files',
+    tests: ['readWikiRegularFile'],
+  },
+  { kind: 'the opener that refuses a link', tests: ['openWithoutFollowing'] },
+  { kind: 'the file hash', tests: ['hashFileSha256'] },
+  {
+    kind: "the Cursor MCP catalog's opens and file ids",
+    tests: ['refreshCursorMcpCatalogFileIdentity'],
+  },
+  {
+    kind: 'the recovery that puts a moved file back',
+    tests: ['dropSecondNameOfMovedFile'],
+  },
+  { kind: 'the process listing', tests: ['listProcesses'] },
+  { kind: 'the removal walk', tests: ['removeWithoutFollowing'] },
+  { kind: 'the folder listing', tests: ['listFolderTreeWithoutFollowing'] },
+]
+
+// Value: protects=a maintainer who reads in the guide, or at the head of the workflow, what the Windows job tests, how it runs and which files its filter leaves out; fails_when=the job gains a test file of a kind neither document names, a kind they name has no test file in the job any more, the two documents name different kinds, or the guide states another way of running or other left-out files than the workflow has; why_new=Cycle 0046 row 237: the guide named three kinds and one left-out file while the job ran twenty-four files of ten kinds and left out two; seam=none
+test('the test execution guide and the header of the Windows workflow name every kind of test the job runs, every test file of its run command belongs to a kind they name, and the guide states how the job runs and which two files its filter leaves out', async () => {
+  // Arrange
+  const guide = await repositoryText('docs/qa/test-execution.md')
+  const workflow = await repositoryText(
+    '.github/workflows/storage-locks-windows.yml',
+  )
+
+  // Act: the guide's section, the workflow's header comment as one text, the test files of the run command, and what the filter leaves out of what they load.
+  const section =
+    guide.split(/^## /m).find((part) => part.startsWith('The Windows job\n')) ??
+    ''
+  const header = workflow
+    .slice(0, workflow.indexOf('\non:\n'))
+    .split('\n')
+    .filter((line) => line.startsWith('# '))
+    .map((line) => line.slice('# '.length))
+    .join(' ')
+  const kindsSentence =
+    /It runs the tests of (.+?)\.(?: |$)/m.exec(section)?.[1] ?? ''
+  const kindsOfGuide = kindsSentence.split(/, of | and of /)
+  const testsOfCommand = testSourcesRunBy(workflow).map((path) =>
+    path.slice('extension/src/tests/'.length, -'.test.ts'.length),
+  )
+  const testsOfKinds = WINDOWS_JOB_TEST_KINDS.flatMap(({ tests }) => tests)
+  const [pushFilter] = pathFiltersOf(workflow)
+  const leftOutOfFilter = (
+    await sourcesLoadedBy(testSourcesRunBy(workflow))
+  ).filter((path) => !pushFilter.includes(path))
+
+  // Assert: the kinds in both documents, in the same words; no file without a kind and no kind without a file.
+  assert.equal(
+    kindsSentence,
+    "the storage lock and its owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk and of the folder listing",
+  )
+  assert.deepEqual(
+    kindsOfGuide,
+    WINDOWS_JOB_TEST_KINDS.map(({ kind }) => kind),
+  )
+  assert.equal(
+    header.includes(`This job runs the tests of ${kindsSentence}`),
+    true,
+    "the header of the workflow does not name the kinds of test in the guide's words",
+  )
+  assert.deepEqual(
+    testsOfCommand.filter((name) => !testsOfKinds.includes(name)),
+    [],
+    'a test file of the run command belongs to no kind: add it to its kind in WINDOWS_JOB_TEST_KINDS, or name a new kind there, in the guide and in the header of the workflow',
+  )
+  assert.deepEqual(
+    testsOfKinds.filter((name) => !testsOfCommand.includes(name)),
+    [],
+    'a test file listed under a kind is not in the run command',
+  )
+  // How the job runs, and what its filter leaves out, as the workflow has them.
+  assert.equal(
+    section.includes(
+      'It runs one test file at a time (`--test-concurrency=1`): these tests start PowerShell and read real process starts, which the product bounds at 3 seconds, and with several files side by side such a read went past that bound on the runner.',
+    ),
+    true,
+  )
+  assert.equal(
+    runCommandsOf(workflow)
+      .filter((command) => command.startsWith('node --test '))
+      .every((command) =>
+        command.startsWith('node --test --test-concurrency=1 '),
+      ),
+    true,
+  )
+  assert.equal(
+    section.includes(
+      "The filter leaves out two files those tests load, `extension/src/constants.ts` and `extension/src/runtimeSupport/constants.ts`, because they change with most pull requests, although the first holds the lock's times, its path and its file modes.",
+    ),
+    true,
+  )
+  assert.deepEqual(leftOutOfFilter, [
+    'extension/src/constants.ts',
+    'extension/src/runtimeSupport/constants.ts',
+  ])
+})
+
 // Value: protects=the Windows run of the storage lock tests after a change the path filter leaves out (extension/src/constants.ts holds the lock's grace time, its boot time tolerance, its path and its file modes; most pull requests change that file); fails_when=the job starts for the filtered paths only, so a pull request that changes when a lock is taken over never runs on Windows; why_new=Cycle 0045 local review other-1 #1; seam=none
 test('the Windows storage lock job also runs once a week and for a new Node release, so a change the path filter leaves out is seen on Windows', async () => {
   // Arrange
