@@ -13,12 +13,17 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+import type * as startBlockModule from '../utils/findWikiUpdateStartBlock'
 import { findWikiUpdateStartBlock } from '../utils/findWikiUpdateStartBlock'
+import type * as lookModule from '../utils/isFolderOfItsOwn'
+import type * as listingModule from '../utils/listFolderTreeWithoutFollowing'
 
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 
 test('a generated page the learner edited by hand blocks the start and is named, as the real publisher refuses it too', async () => {
@@ -364,6 +369,105 @@ test('a file at the Wiki folder’s own path refuses the update at its start wit
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner who presses Update while a publish is finishing and the Wiki folder's path comes to hold a link in that moment (the start check waits up to two seconds for the publish before it lists the folder); fails_when=the check looks at the folder once, before its wait, and lists with a listing of its own after it, so a link that took the folder's place meanwhile is listed through and the files behind it are reported as the Wiki's (row 230); why_new=Cycle 0046 row 230: the start check lists through the utility, whose look and listing are adjacent; seam=the check's wait for a publish that is finishing, during which the folder is replaced
+test('a link that takes the Wiki folder’s place after the start check first looked at it is not listed through: the check answers that the Wiki folder is no folder of its own', async () => {
+  // Arrange: a publish wrote its journal a moment ago, so the check waits; during the wait the publish ends and a link to the Wiki, moved aside, stands at the Wiki folder's path. The folder behind the link holds a link of its own, which a listing through the first link would report.
+  const wiki = await publishedWikiFixture()
+  const journalPath = `${wiki.outputDirectory}.publish-journal.json`
+  const movedAside = join(wiki.projectRoot, 'wiki-moved-aside')
+  await writeFile(journalPath, '{}')
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory, {
+      wait: async () => {
+        await rm(journalPath)
+        await rename(wiki.outputDirectory, movedAside)
+        await symlink(
+          wiki.projectRoot,
+          join(movedAside, 'a-link-inside'),
+          'junction',
+        )
+        await symlink(movedAside, wiki.outputDirectory, 'junction')
+      },
+    })
+
+    // Assert
+    assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner whose Wiki folder's path holds an entry that the look without following calls a directory although it leads elsewhere (on Windows a junction whose target is a volume); fails_when=the start check trusts that look, lists the folder behind the entry and reports its files as the Wiki's, or passes and asks an agent whose publisher refuses (rows 227 and 230); why_new=Cycle 0046 row 227: the start check looks and lists through the same rule as every listing; seam=a file system whose lstat calls a link a directory
+test('an entry at the Wiki folder’s path that the look calls a directory although it leads elsewhere refuses the update as no folder of its own, and nothing behind it is listed', async () => {
+  // Arrange: the published Wiki moved aside, with a link of its own inside, and a link to it at the Wiki folder's path, on a file system whose look is wrong about links.
+  const wiki = await publishedWikiFixture()
+  const movedAside = join(wiki.projectRoot, 'wiki-moved-aside')
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const listing = await loadModule<typeof listingModule>(
+    resolve(__dirname, '../utils/listFolderTreeWithoutFollowing.js'),
+    { 'node:fs/promises': wrongLook.fileSystem, './isFolderOfItsOwn': look },
+  )
+  const { findWikiUpdateStartBlock: findBlockWhereTheLookIsWrong } =
+    await loadModule<typeof startBlockModule>(
+      resolve(__dirname, '../utils/findWikiUpdateStartBlock.js'),
+      {
+        'node:fs/promises': wrongLook.fileSystem,
+        './isFolderOfItsOwn': look,
+        './listFolderTreeWithoutFollowing': listing,
+      },
+    )
+  try {
+    await rename(wiki.outputDirectory, movedAside)
+    await symlink(
+      wiki.projectRoot,
+      join(movedAside, 'a-link-inside'),
+      'junction',
+    )
+    await symlink(movedAside, wiki.outputDirectory, 'junction')
+
+    // Act
+    const block = await findBlockWhereTheLookIsWrong(wiki.outputDirectory)
+
+    // Assert: the block comes from a module loaded apart, so it is compared by its text.
+    assert.deepEqual(
+      { block: JSON.stringify(block), listings: wrongLook.listed },
+      { block: '{"cause":"not-a-folder","paths":["wiki"]}', listings: [] },
+    )
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner whose Wiki folder is a link while a journal of an earlier publish lies beside it; fails_when=the start check names the journal first and tells the learner to ask the chat for the publisher's recovery, which refuses the linked folder before it reads any journal (rows 185 and 230); why_new=Cycle 0046 row 230: the check's first look is the only thing that puts the folder before the journal, and no test held that order; seam=none (a junction on Windows)
+test('a Wiki folder that is a link is named before the journal of an unfinished publish beside it, as the real publisher refuses the folder before it reads the journal', async () => {
+  // Arrange: a journal written long ago, and a link to the Wiki, moved aside, at the Wiki folder's path.
+  const wiki = await publishedWikiFixture()
+  const movedAside = join(wiki.projectRoot, 'wiki-moved-aside')
+  try {
+    await rename(wiki.outputDirectory, movedAside)
+    await symlink(movedAside, wiki.outputDirectory, 'junction')
+    await writeFile(`${wiki.outputDirectory}.publish-journal.json`, '{}')
+
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory, {
+      now: () => Date.now() + 60_000,
+    })
+
+    // Assert
+    assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
+    await assert.rejects(wiki.prepare(), /The Wiki directory must be regular/)
   } finally {
     await wiki.cleanup()
   }

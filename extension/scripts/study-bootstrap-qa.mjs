@@ -5626,7 +5626,7 @@ async function check(page, options, collected) {
     studyFiles: othersFiles,
   })
   const askedAtRetry = await removalControl()
-  // The host renders again before it answers: it refuses a request of a revision it has left, and answers nothing.
+  // The host renders again before the pane has an answer: under the new revision the pane asks again. (The host answers a request the pane sent by itself, like this one, also after it rendered again; a request the learner made on the old view it refuses with a line and never answers. The pane cannot tell the two apart from here and asks again in both.)
   await library(studiesWithOther, otherStudy.id, {
     ...withoutTrash,
     studyRemoval: anotherPanesAnswer(2),
@@ -5711,6 +5711,122 @@ async function check(page, options, collected) {
       JSON.stringify(listedAtLast.removeByHand.files) ===
         JSON.stringify([otherStudyFile]) &&
       requests(listedAtLast) === requests(askedUnderNewRevision),
+  })
+
+  // Arrange: Remove by hand opened for a study whose files the host cannot list (row 251).
+  const listingFailed =
+    "Codebook could not list this study's files. Press Retry storage / refresh to try again. EACCES: permission denied, lstat '/library/recordings.v2'"
+  // Another study is shown first, so the disclosure is offered closed for the study the learner then looks at.
+  await library(studiesWithOther, shownStudy.id, withoutTrash)
+  await library(studiesWithOther, otherStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  // Act: the host answers the request with the listing's failure; the learner presses Retry storage / refresh, and the host lists the file for the request that follows.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listingFailed,
+    }),
+  })
+  const listingFailure = await removalControl()
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    saving: true,
+  })
+  const askedAfterFailure = await removalControl()
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { [otherStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterFailure = await removalControl()
+  // Assert
+  cases.push({
+    name: 'when the host could not list a study’s files, Remove by hand shows the host’s reason as an error with Retry storage / refresh and no Copy paths, and a press on Retry asks again and lists the files',
+    actual: { listingFailure, askedAfterFailure, listedAfterFailure },
+    passed:
+      listingFailure.removeByHand.note === listingFailed &&
+      listingFailure.removeByHand.noteIsError &&
+      listingFailure.removeByHand.retryVisible &&
+      !listingFailure.removeByHand.copyVisible &&
+      listingFailure.removeByHand.files.length === 0 &&
+      askedAfterFailure.deletes.length === listingFailure.deletes.length + 1 &&
+      askedAfterFailure.removeByHand.note === "Listing this study's files…" &&
+      listedAfterFailure.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterFailure.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]),
+  })
+
+  // Arrange: Remove by hand opened for the third study and closed again before the host has answered (row 252).
+  await library(studiesWithOther, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const askedThenClosed = await removalControl()
+  await toggleByKeyboard('study-files')
+  // Act: the host's refusal arrives while the disclosure is closed, and another pane's answer then takes its place in the message; the learner opens the disclosure again, and the host lists the file.
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listingFailed,
+    }),
+  })
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(3),
+    studyFiles: othersFiles,
+  })
+  const closedWithAnswer = await removalControl()
+  await toggleByKeyboard('study-files')
+  await page
+    .waitForFunction(
+      (requestsBefore) =>
+        window.sent.filter((message) => message.type === 'delete-study')
+          .length > requestsBefore,
+      closedWithAnswer.deletes.length,
+      { timeout: 2_000 },
+    )
+    .catch(() => undefined)
+  const reopened = await removalControl()
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { ...othersFiles, [thirdStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterReopening = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a refusal that arrives while Remove by hand is closed does not leave the disclosure waiting: opened again, it asks the host again and shows the files, not Listing this study’s files… with no button',
+    actual: {
+      askedThenClosed,
+      closedWithAnswer,
+      reopened,
+      listedAfterReopening,
+    },
+    passed:
+      closedWithAnswer.removeByHand.open === false &&
+      closedWithAnswer.deletes.length === askedThenClosed.deletes.length &&
+      // Opening again sends one new request, marked as the learner's own.
+      reopened.deletes.length === askedThenClosed.deletes.length + 1 &&
+      reopened.deletes.at(-1)[0] === thirdStudy.id &&
+      reopened.removeByHand.note === "Listing this study's files…" &&
+      listedAfterReopening.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterReopening.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      listedAfterReopening.removeByHand.retryVisible,
   })
 
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).

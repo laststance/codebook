@@ -4704,6 +4704,113 @@ for (const [situation, isRestSelected] of [
     }
   })
 
+// Value: protects=Retry storage / refresh saving the study of a stopped run whose archive could not be written: the button the learner is told to press writes the archive, and the run answers its history and evidence; fails_when=the reader takes the entry the library lists for the run's finished recording (it has no archive yet) for a study whose files were removed by hand, forgets the study with its pending archive and excludes the run, so the press discards the study and an agent reads that its files were removed by hand; why_new=Cycle 0046 row 248 (row 181 counted every entry without an archive as removed); seam=the library's study save, which fails until the disk is writable again
+test('after the archive of a stopped run could not be saved, Retry storage / refresh writes it, lists the study and lets an agent read the run’s history and evidence; the study is not taken for one whose files were removed by hand', async (context) => {
+  // Arrange: a recorded run of this window whose every archive save fails; it is stopped, and the library lists what exists of it: its recording.
+  const saveStudy = LearningLibrary.prototype.saveStudy
+  let isDiskWritable = false
+  context.mock.method(
+    LearningLibrary.prototype,
+    'saveStudy',
+    function (
+      this: LearningLibrary,
+      study: Parameters<LearningLibrary['saveStudy']>[0],
+    ) {
+      return isDiskWritable
+        ? saveStudy.call(this, study)
+        : Promise.reject(new Error('disk is read-only'))
+    },
+  )
+  const harness = await workspaceHarness(true, true)
+  try {
+    // A run records only for a build whose source is identified.
+    harness.service.environment.build.sourceHash = sha256('recorded-build')
+    harness.acknowledgeContext()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = [...harness.service.records.values()][0]!
+    await record.preparation
+    record.recording!.frame({
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(100)
+    await harness.reader.action('click').catch(() => undefined)
+    harness.clock(200)
+    await harness.reader.action('stop').catch(() => undefined)
+    const studyId = `${harness.service.instanceId}_${record.id}`,
+      library = await harness.reader.learningStorage(),
+      archive = join(
+        harness.reader.inspect().libraryDirectory!,
+        `${studyId}.study.v3.json`,
+      )
+    await readerSeams(harness).refresh()
+    const beforeRetry = structuredClone({
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      errorLines: readerSeams(harness).errorLines(),
+      history: harness.service.state(record).historyOutcome.status,
+    })
+    // Act: the learner presses Retry storage / refresh while the disk still refuses, which lists the library again, and once more when the disk is writable; an agent reads the run and its events.
+    await harness.reader.action('retry')
+    const historyAfterFailedRetry =
+      harness.service.state(record).historyOutcome.status
+    isDiskWritable = true
+    await harness.reader.action('retry')
+    const run = await readResource(
+      harness.service,
+      harness.service.uri(record.id),
+    )
+    const events = await readResource(
+      harness.service,
+      harness.service.uri(record.id, 'events/0'),
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError ? [error.code, error.message] : error,
+    )
+    // Assert
+    assert.deepEqual(beforeRetry, {
+      listed: [[studyId, 'archive-missing']],
+      // The archive's line, and the line of Stop, whose own checkpoint could not be written.
+      errorLines: [
+        'Error: History not saved: Error: disk is read-only',
+        'Error: disk is read-only',
+      ],
+      history: 'failed',
+    })
+    assert.equal(historyAfterFailedRetry, 'failed')
+    assert.deepEqual(
+      (await library.list()).map((entry) => [
+        entry.id,
+        entry.format,
+        entry.metadata,
+      ]),
+      [[studyId, 'v3', 'validated']],
+    )
+    assert.equal((await readFile(archive)).length > 0, true)
+    assert.ok('text' in run)
+    assert.equal(JSON.parse(run.text).historyOutcome.status, 'saved')
+    assert.equal(events, 'answered')
+    assert.equal(
+      readerSeams(harness)
+        .errorLines()
+        .some((line) => line.includes('History not saved')),
+      false,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=a removal by hand that took the archive of a study of this window's own stopped run: Retry storage / refresh does not write the archive again, so the learner can remove what is left; fails_when=the reader still takes the run's study for listed, and the forced checkpoint of Retry captures the run again and writes a new archive beside the rest; why_new=Cycle 0046 row 181 (read from the code by the library's fixer, not measured there); seam=the file system, on which the test removes the archive
 test('after the archive of the study of this window’s own stopped run was removed by hand, Retry storage / refresh does not write that archive again and lists what is left', async () => {
   // Arrange: a recorded run of this window that was stopped and saved.
@@ -5026,6 +5133,84 @@ test('in a window with a Trash a delete request marked as sent by the pane keeps
     assert.deepEqual(harness.trashMoves, [])
     assert.equal(harness.reader.inspect().view!.studyRemoval, undefined)
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner of a window without a Trash who opens "Remove by hand" for a study whose files cannot be listed: the disclosure says so with its reason and offers Retry storage / refresh; fails_when=the listing's failure is thrown, becomes a control line, and no answer with the request's number is published, so the pane stays at "Listing this study's files…" with no button and asks nothing again; why_new=Cycle 0046 row 251; seam=the library's listing of a study's files, which rejects once, and the Study pane's webview
+test('in a window without a Trash a request for a study’s files whose listing fails is answered with a refusal that carries the request’s number and the reason, without an error line, and the next request lists the files', async (context) => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the listing of a study's files rejects once.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const studyFiles = LearningLibrary.prototype.studyFiles
+    let isListingRefused = true
+    context.mock.method(
+      LearningLibrary.prototype,
+      'studyFiles',
+      function (
+        this: LearningLibrary,
+        ...listed: Parameters<LearningLibrary['studyFiles']>
+      ) {
+        if (!isListingRefused) return studyFiles.apply(this, listed)
+        isListingRefused = false
+        return Promise.reject(
+          new Error(
+            "EACCES: permission denied, lstat '/library/recordings.v2'",
+          ),
+        )
+      },
+    )
+    /** Sends the pane's request and waits until the reader has answered it or told a line. */
+    const ask = async (removalRequest: number) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: study.id,
+        removalRequest,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answer: harness.reader.inspect().view!.studyRemoval,
+        errorLines: readerSeams(harness).errorLines(),
+      })
+    }
+    // Act: the request whose listing fails, and the next one.
+    const whileListingFails = await ask(1)
+    const afterwards = await ask(2)
+    // Assert
+    assert.deepEqual(whileListingFails, {
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: "Codebook could not list this study's files. Press Retry storage / refresh to try again. EACCES: permission denied, lstat '/library/recordings.v2'",
+        request: 1,
+      },
+      errorLines: [],
+    })
+    assert.deepEqual(afterwards, {
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+        files: [study.archive],
+        request: 2,
+      },
+      errorLines: [],
+    })
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
