@@ -224,10 +224,60 @@ test('the test execution guide names the browser session of each Reader DOM chec
   // Assert
   assert.equal(
     paragraph,
-    "**Runs side by side.** Each check names its browser session after itself, its mode and a digest of its output folder's path: `cb-bootstrap-<mode>-<digest>` and `cb-wiki-reader-<mode>-<digest>` (`extension/scripts/utils/readerDomSessionName.mjs`). Two runs on one machine keep their own browsers when their output folders differ: the two checks of one checkout, one check in two checkouts, or one check started twice from one checkout with two folders. Two runs into the same folder share one session: the later one closes the earlier one's browser, and they overwrite each other's files. Until Cycle 0046 the name held the mode alone, so one check running in two checkouts at once closed the other run's browser, and that run ended as a failure for no defect.",
+    "**Runs side by side.** Each check names its browser session after itself, its mode and a digest of its output folder's path: `cb-bootstrap-<mode>-<digest>`, `cb-wiki-reader-<mode>-<digest>`, `cb-reading-pose-<mode>-<digest>`, `cb-understanding-<mode>-<digest>` and `cb-repository-pane-<mode>-<digest>` (`extension/scripts/utils/readerDomSessionName.mjs`). Two runs on one machine keep their own browsers when their output folders differ: the checks of one checkout, one check in two checkouts, or one check started twice from one checkout with two folders. Two runs into the same folder share one session: the later one closes the earlier one's browser, and they overwrite each other's files. Until Cycle 0046 the name held the mode alone, so one check running in two checkouts at once closed the other run's browser, and that run ended as a failure for no defect.",
   )
   assert.deepEqual(
     { study: namedCheckOf(studyCheck), wiki: namedCheckOf(wikiCheck) },
     { study: 'bootstrap', wiki: 'wiki-reader' },
   )
+})
+
+// Value: protects=a developer who runs one of the three later checks locally from the guide, and one who reads a failed Reader DOM job; fails_when=the guide's command or folder for one of the three differs from what the CI job runs, the guide stops saying what each of them checks, or it stops saying that a check outside every workflow fails a script test; why_new=Cycle 0046 row 333: the three checks ran by hand only, their folders were named after old cycles, and nothing said what they checked or that two of them could not start; seam=none
+test('the test execution guide gives the commands of the reading pose, the understanding checkbox and the Repository Wiki pane checks as the CI job runs them, and says what each checks and that a browser check outside every workflow fails a script test', async () => {
+  // Arrange: the guide and the CI job.
+  const guide = await readFile(
+    new URL('../../../docs/qa/test-execution.md', import.meta.url),
+    'utf8',
+  )
+  const job = await readFile(
+    new URL('../../../.github/workflows/reader-dom.yml', import.meta.url),
+    'utf8',
+  )
+
+  // Act: the paragraph of the section "Reader DOM check" about the three checks, and which of its commands the job runs.
+  const paragraph =
+    guide
+      .split(/^## /m)
+      .find((part) => part.startsWith('Reader DOM check\n'))
+      ?.split('\n\n')
+      .find((part) =>
+        part.startsWith(
+          '**The reading pose, the understanding checkbox and the Repository Wiki pane.**',
+        ),
+      ) ?? ''
+  const jobCommands = runCommandsOf(job)
+  const commandsOfGuideAndJob = [
+    'node extension/scripts/study-reading-pose-qa.mjs verify artifacts/reading-pose-dom',
+    'node extension/scripts/understanding-focus-qa.mjs verify artifacts/understanding-dom',
+    'node extension/scripts/repository-return-qa.mjs verify artifacts/repository-pane-dom',
+  ].filter(
+    (command) =>
+      paragraph.includes(`\`${command}\``) && jobCommands.includes(command),
+  )
+  const said = [
+    "checks the Study reader's reading pose: what the reader captures before the host replaces its document (the reading position, the open disclosures, the visited links, the focused control) and restores in the new one;",
+    'checks the understanding checkbox of the Study reader and of the Repository Wiki pane under real key and pointer input: two immediate presses ask for one save, the checkbox keeps the focus while a save is pending and after it failed,',
+    "checks the Repository Wiki pane: the place a Return from a study restores against the place the pane saved itself, and where the keyboard stands when the learner leaves the pane and returns. The leaving is done the way the editor's webview does it (the control loses the focus, then the window):",
+    "Each step runs under the condition of the Wiki reader's step, so one push shows the failures of all five checks.",
+    "a script test (`extension/scripts/tests/workflowPins.test.mjs`) fails when a `*-qa.mjs` script of `extension/scripts` is run by no workflow and is not named in that test's list of retired checks.",
+    'No editor takes part, so a green run earns no native acceptance credit either;',
+  ].map((sentence) => paragraph.includes(sentence))
+
+  // Assert
+  assert.deepEqual(commandsOfGuideAndJob, [
+    'node extension/scripts/study-reading-pose-qa.mjs verify artifacts/reading-pose-dom',
+    'node extension/scripts/understanding-focus-qa.mjs verify artifacts/understanding-dom',
+    'node extension/scripts/repository-return-qa.mjs verify artifacts/repository-pane-dom',
+  ])
+  assert.deepEqual(said, [true, true, true, true, true, true])
 })

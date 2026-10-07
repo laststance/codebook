@@ -85,6 +85,39 @@ function stepLines(workflow, name) {
 }
 
 /**
+ * The browser checks that were retired: the script's file name, and for each of its cases the place that checks it now.
+ * A browser check (`*-qa.mjs`) stays in `extension/scripts` only while a workflow runs it: outside every workflow nothing notices when it stops passing, or stops starting. One that leaves its workflow is named here, case by case, in the change that takes it out.
+ * None is retired at present: Cycle 0046 row 333 found three checks outside every workflow, two of which could not start any more, and brought all three back into the Reader DOM job.
+ */
+const RETIRED_BROWSER_CHECKS = new Map()
+
+/**
+ * Lists the browser checks of `extension/scripts` that no workflow runs and no list of retired checks names, for the pin that keeps every such check in a job.
+ * A check counts as run when a command of a workflow or of a composite action names its file as one of its words; a comment or a step's name does not run it.
+ * @param retiredChecks - The retired checks by file name ({@link RETIRED_BROWSER_CHECKS}).
+ * @param root - The folder that holds `.github` and `extension`; the repository unless a test of this helper hands a folder of its own.
+ * @returns The file names of the checks left out, sorted; empty when every check is run or retired.
+ * @example
+ * await browserChecksLeftOut(new Map()) // => [] while every `*-qa.mjs` has its step in a workflow
+ */
+async function browserChecksLeftOut(retiredChecks, root = repositoryRoot) {
+  const checks = (await readdir(join(root, 'extension/scripts')))
+    .filter((name) => name.endsWith('-qa.mjs'))
+    .toSorted()
+  const commandWords = (await ciDefinitions(root)).flatMap(({ text }) =>
+    runCommandsOf(text).flatMap((command) => command.split(/\s+/)),
+  )
+  return checks.filter(
+    (name) =>
+      !retiredChecks.has(name) &&
+      !commandWords.some(
+        (word) =>
+          word === `extension/scripts/${name}` || word === `scripts/${name}`,
+      ),
+  )
+}
+
+/**
  * Lists the path filters of a workflow's triggers, one list per `paths` key, so a pin can compare what starts a job with what the job runs.
  * A list written once under a YAML anchor (`paths: &name`) and reused by its alias (`paths: *name`) is returned for both keys.
  * @param workflow - The workflow's text.
@@ -462,8 +495,8 @@ test('the Reader DOM job runs the Wiki reader DOM cases after the Study readerâ€
       script,
     )?.[1]
 
-  // Assert
-  assert.deepEqual(checks, [
+  // Assert: the two readers' checks come first; the checks after them have a pin of their own below.
+  assert.deepEqual(checks.slice(0, 2), [
     'node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom',
     'node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom',
   ])
@@ -487,6 +520,9 @@ test('the Reader DOM job runs the Wiki reader DOM cases after the Study readerâ€
     'path: |',
     'artifacts/reader-dom',
     'artifacts/wiki-reader-dom',
+    'artifacts/reading-pose-dom',
+    'artifacts/understanding-dom',
+    'artifacts/repository-pane-dom',
     'if-no-files-found: ignore',
   ])
   // Each check names its session after itself, its mode and its output folder (readerDomSessionName), and the two name themselves differently.
@@ -516,6 +552,170 @@ test('the Wiki reader DOM cases also run after the Study readerâ€™s cases failed
     wikiCondition,
     "if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}",
   )
+})
+
+// Value: protects=the cases of the Study reader's reading pose, of the understanding checkbox in both panes and of the Repository Wiki pane in CI, where a regression of them is seen (until Cycle 0046 the three checks ran by hand only); fails_when=the Reader DOM job stops running one of the three, runs it into another check's folder or only after a passed Study step, no longer keeps its folder after a failure, or two of the five checks name the same browser session, so two of them on one machine close each other's browser; why_new=Cycle 0046 rows 331 to 333; seam=none
+test('the Reader DOM job runs the reading pose, the understanding checkbox and the Repository Wiki pane cases after the two readersâ€™ checks, each under the Wiki readerâ€™s condition, into a folder of its own that is kept after a failure, under a browser session of its own', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/reader-dom.yml')
+  const sessionNameOf = async (script) =>
+    /\bsession = readerDomSessionName\('([a-z-]+)', mode, output\)/.exec(
+      await repositoryText(`extension/scripts/${script}`),
+    )?.[1]
+
+  // Act: the checks the job runs, in their order; the three later steps; the folders the job keeps; the session each of the five scripts names.
+  const checks = runCommandsOf(workflow).filter((command) =>
+    command.includes('-qa.mjs'),
+  )
+  const laterSteps = [
+    'Run the reading pose cases of the Study reader',
+    'Run the understanding checkbox cases of both panes',
+    'Run the Repository Wiki pane cases',
+  ].map((name) => stepLines(workflow, name))
+  const keptFolders = stepLines(
+    workflow,
+    'Keep the DOM reports, screenshots and video after a failure',
+  ).filter((line) => line.startsWith('artifacts/'))
+  const sessionNames = {
+    'study-bootstrap-qa.mjs': await sessionNameOf('study-bootstrap-qa.mjs'),
+    'wiki-reader-dom-qa.mjs': await sessionNameOf('wiki-reader-dom-qa.mjs'),
+    'study-reading-pose-qa.mjs': await sessionNameOf(
+      'study-reading-pose-qa.mjs',
+    ),
+    'understanding-focus-qa.mjs': await sessionNameOf(
+      'understanding-focus-qa.mjs',
+    ),
+    'repository-return-qa.mjs': await sessionNameOf('repository-return-qa.mjs'),
+  }
+
+  // Assert
+  assert.deepEqual(checks, [
+    'node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom',
+    'node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom',
+    'node extension/scripts/study-reading-pose-qa.mjs verify artifacts/reading-pose-dom',
+    'node extension/scripts/understanding-focus-qa.mjs verify artifacts/understanding-dom',
+    'node extension/scripts/repository-return-qa.mjs verify artifacts/repository-pane-dom',
+  ])
+  assert.deepEqual(laterSteps, [
+    [
+      '- name: Run the reading pose cases of the Study reader',
+      "if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}",
+      'run: node extension/scripts/study-reading-pose-qa.mjs verify artifacts/reading-pose-dom',
+    ],
+    [
+      '- name: Run the understanding checkbox cases of both panes',
+      "if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}",
+      'run: node extension/scripts/understanding-focus-qa.mjs verify artifacts/understanding-dom',
+    ],
+    [
+      '- name: Run the Repository Wiki pane cases',
+      "if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}",
+      'run: node extension/scripts/repository-return-qa.mjs verify artifacts/repository-pane-dom',
+    ],
+  ])
+  assert.deepEqual(keptFolders, [
+    'artifacts/reader-dom',
+    'artifacts/wiki-reader-dom',
+    'artifacts/reading-pose-dom',
+    'artifacts/understanding-dom',
+    'artifacts/repository-pane-dom',
+  ])
+  assert.deepEqual(sessionNames, {
+    'study-bootstrap-qa.mjs': 'bootstrap',
+    'wiki-reader-dom-qa.mjs': 'wiki-reader',
+    'study-reading-pose-qa.mjs': 'reading-pose',
+    'understanding-focus-qa.mjs': 'understanding',
+    'repository-return-qa.mjs': 'repository-pane',
+  })
+})
+
+// Value: protects=every browser check being able to start whatever the size of the page it loads (Cycle 0046 row 333: two checks handed their flow and the Study pane's page to the browser CLI as one command argument, which the system refuses above 131,072 bytes, `spawn E2BIG`); fails_when=a `*-qa.mjs` script hands its flow over as an argument again, or runs it outside the case keeper, so a step that throws leaves a report without a case; why_new=Cycle 0046 row 333; seam=none
+test('every browser check of extension/scripts hands its flow to the browser as a file written by readerDomFlowText, and none as a command argument', async () => {
+  // Arrange: the browser checks, read as text (loading one starts its browser).
+  const names = (await readdir(join(repositoryRoot, 'extension/scripts')))
+    .filter((name) => name.endsWith('-qa.mjs'))
+    .toSorted()
+
+  // Act: how each script hands its flow over.
+  const handOver = {}
+  for (const name of names) {
+    const script = await repositoryText(`extension/scripts/${name}`)
+    handOver[name] = {
+      writesTheFlowFile: /readerDomFlowText\(\s*check,/.test(script),
+      runsTheFlowFile: script.match(
+        /command\(\['run-code', `--filename=\$\{flowPath\}`\], 'flow'\)/g,
+      )?.length,
+      flowsAsArgument: script.match(/\.toString\(\)\}\)\(page\b/g),
+    }
+  }
+
+  // Assert
+  const asFile = {
+    writesTheFlowFile: true,
+    runsTheFlowFile: 1,
+    flowsAsArgument: null,
+  }
+  assert.deepEqual(handOver, {
+    'repository-return-qa.mjs': asFile,
+    'study-bootstrap-qa.mjs': asFile,
+    'study-reading-pose-qa.mjs': asFile,
+    'understanding-focus-qa.mjs': asFile,
+    'wiki-reader-dom-qa.mjs': asFile,
+  })
+})
+
+// Value: protects=every browser check of the panes and readers being run where a regression is seen (Cycle 0046 row 333: three checks lay in `extension/scripts` outside every workflow, and two of them could not start any more without anyone noticing); fails_when=a `*-qa.mjs` script of `extension/scripts` is run by no workflow and named in no list of retired checks; why_new=Cycle 0046 row 333; seam=none
+test('every browser check of extension/scripts is run by a workflow or named among the retired checks', async () => {
+  // Arrange / Act
+  const leftOut = await browserChecksLeftOut(RETIRED_BROWSER_CHECKS)
+
+  // Assert: a check that is listed here either gets its step in `.github/workflows/reader-dom.yml`, or is deleted and named in RETIRED_BROWSER_CHECKS with the place that checks each of its cases now.
+  assert.deepEqual(leftOut, [])
+})
+
+// Value: protects=the pin above being able to fail; fails_when=a check that no workflow runs passes the pin because its name appears in a comment or in a step's name, or a retired check is reported, or a check run from the `extension` folder is reported; why_new=Cycle 0046 row 333; seam=none
+test('a browser check that no workflow runs and no list of retired checks names fails the pin by its file name, while one a workflow runs and one that is named as retired pass', async () => {
+  // Arrange: four checks; a workflow runs the first from the repository root and the second from the extension folder, and only names the third in a comment and in a step's name.
+  const root = await mkdtemp(join(tmpdir(), 'codebook-browser-checks-'))
+  try {
+    await mkdir(join(root, '.github/workflows'), { recursive: true })
+    await mkdir(join(root, '.github/actions'), { recursive: true })
+    await mkdir(join(root, 'extension/scripts'), { recursive: true })
+    for (const name of [
+      'pane-qa.mjs',
+      'reader-qa.mjs',
+      'forgotten-qa.mjs',
+      'older-qa.mjs',
+      'build-fast.mjs',
+    ])
+      await writeFile(join(root, 'extension/scripts', name), '')
+    await writeFile(
+      join(root, '.github/workflows/reader-dom.yml'),
+      [
+        'jobs:',
+        '  reader-dom:',
+        '    steps:',
+        '      # forgotten-qa.mjs is not run.',
+        '      - name: Run pane-qa.mjs and not forgotten-qa.mjs',
+        '        run: node extension/scripts/pane-qa.mjs verify artifacts/pane',
+        '      - name: Run the reader cases',
+        '        working-directory: extension',
+        '        run: node scripts/reader-qa.mjs verify artifacts/reader',
+        '',
+      ].join('\n'),
+    )
+
+    // Act
+    const leftOut = await browserChecksLeftOut(
+      new Map([['older-qa.mjs', 'every case is a case of pane-qa.mjs now']]),
+      root,
+    )
+
+    // Assert
+    assert.deepEqual(leftOut, ['forgotten-qa.mjs'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('the Reader DOM job keeps the video encoder between runs under a key that names the pinned playwright-cli release', async () => {
