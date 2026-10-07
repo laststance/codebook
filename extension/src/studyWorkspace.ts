@@ -12525,7 +12525,15 @@ export class StudyWorkspace {
     })
   }
 
-  /** Retains actual accepted layout effects for newer navigation while {@link close} invalidates the owner. @example await this.rememberLayout('study', lifetime, groups) */
+  /**
+   * Retains actual accepted layout effects for newer navigation while {@link close} invalidates the owner; called by {@link arrange} right after its layout command.
+   * It reads the editor's layout until it has the arrangement's proportions, and takes that read as the receipt. A Study layout the editor answered with the Study's groups at other sizes gets one more step here ({@link studyLayoutPixelPass}): {@link arrange} has to send proportions when the grid it measured gave one axis only, both editors can answer proportions with every group but the last of its siblings at one pixel, and the grid that answer made has the nested split whose two axes give the pixels.
+   * @param mode - The arrangement that was applied.
+   * @param lifetime - The reader lifetime the arrangement belongs to.
+   * @param retainedGroups - The main editor's groups the arrangement kept.
+   * @returns The receipt of a layout the editor kept, also stored as {@link layoutReceipt}; `undefined` when the groups or panes changed while the grid settled, when the grid never had the proportions (the reason is reported and kept in {@link layoutReceiptFailure}), and when it stayed at other sizes with the Study's groups for {@link STUDY_LAYOUT_STABLE_MISMATCH_MS}.
+   * @example await this.rememberLayout('study', lifetime, groups)
+   */
   private async rememberLayout(
     mode: 'study' | 'repository',
     lifetime: number,
@@ -12533,6 +12541,7 @@ export class StudyWorkspace {
   ): Promise<StudyWorkspace['layoutReceipt']> {
     this.assertLifetime(lifetime)
     this.layoutReceiptFailure = undefined
+    const appliesPixelsOnce = this.studyLayoutPixelPass()
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
       column: group.viewColumn,
@@ -12565,6 +12574,8 @@ export class StudyWorkspace {
           mode === 'study' &&
           editorLayoutGroupCount(actual) === this.studyGroupCount()
         ) {
+          // The grid has the Study's groups at other sizes: the layout is applied once more, in the pixels this grid measures.
+          if (await appliesPixelsOnce(actual)) return false
           if (
             stableMismatch?.signature === signature &&
             nowMs - stableMismatch.sinceMs >= STUDY_LAYOUT_STABLE_MISMATCH_MS
@@ -12609,6 +12620,29 @@ export class StudyWorkspace {
             panes: this.studyPanePositions(),
           }
         : undefined)
+  }
+
+  /**
+   * Makes the step that applies the Study layout a second time in pixels, at most once for one arrangement; called by {@link rememberLayout}, which asks it for every read that has the Study's groups without its proportions.
+   * {@link arrange} sends pixels when the grid it measured has a nested split, whose two axes give the editor area ({@link toPixelEditorLayout}). A flat grid gives one axis only: the learner's two groups side by side with the Study pane's new group beside them are three columns, and the layout goes out in proportions. Both editors then left the Application group at one pixel and the split was never confirmed, so the Open went on to a Read of the explanation (measured natively on 2026-10-07 in VS Code 1.140.0 for Linux, three takes: a first column of 1 px with rows of 1 and 687 px beside 1269 px; Cursor 3.23.12: 1 px with rows of 1 and 657 px beside 659 px). The grid that answer made is nested, so its read gives both axes.
+   * A grid the editor really cannot give the proportions (a window too narrow for three groups) gets the same one step, to no effect, and is then taken as it is.
+   * @returns A function that takes a layout read and answers `true` when it applied the Study layout in that read's pixels; `false` on every later call, and when the read measures no pixels.
+   * @example
+   * ```ts
+   * const appliesPixelsOnce = this.studyLayoutPixelPass()
+   * if (await appliesPixelsOnce(actual)) return false // read the grid again
+   * ```
+   */
+  private studyLayoutPixelPass(): (actual: unknown) => Promise<boolean> {
+    let isStillOwed = true
+    return async (actual: unknown): Promise<boolean> => {
+      if (!isStillOwed) return false
+      isStillOwed = false
+      const pixels = toPixelEditorLayout(this.studyLayout(), actual)
+      if (!pixels) return false
+      await vscode.commands.executeCommand('vscode.setEditorLayout', pixels)
+      return true
+    }
   }
 
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */

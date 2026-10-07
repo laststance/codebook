@@ -1837,6 +1837,113 @@ test("a Restore after a Read of the application beside a fourth group of the lea
   }
 })
 
+for (const editor of [
+  {
+    name: 'VS Code',
+    sideBars: { primary: true, auxiliary: false },
+    sideBarWidthsPx: { primary: 65, auxiliary: 461 },
+    areaPx: { width: 1270, height: 688 },
+    split: {
+      orientation: 0,
+      groups: [
+        { size: 699, groups: [{ size: 344 }, { size: 344 }] },
+        { size: 572 },
+      ],
+    },
+  },
+  {
+    name: 'Cursor',
+    sideBars: { primary: true, auxiliary: true },
+    sideBarWidthsPx: { primary: 214, auxiliary: 461 },
+    areaPx: { width: 660, height: 658 },
+    split: {
+      orientation: 0,
+      groups: [
+        { size: 363, groups: [{ size: 329 }, { size: 329 }] },
+        { size: 297 },
+      ],
+    },
+  },
+] as const)
+  // Value: protects=the learner who runs Open Study Workspace with two editor groups side by side: the Open ends in the confirmed three-pane split, with no pane maximized and no side bar hidden; fails_when=the grid of columns gives the reader no height to measure, the layout goes out in proportions, the editor answers them as single pixels (the Application pane at one pixel), the split is never confirmed, and the Open goes on to a Read of the explanation, which hides both side bars and maximizes that pane; why_new=Cycle 0046 row 340 (native round: VS Code 1.140.0, three takes, and Cursor 3.23.12, where the Application pane stood at 1x1 px); seam=the workspace harness's answerProportionsAsPixels (the editors' answer to proportions over a grid of columns, with each editor's measured area), a native layout of two columns, command log, the fake editor's maximized group and layout read
+  test(`Open Study Workspace from the learner's two groups side by side ends in the confirmed three-pane split in ${editor.name}, with no pane maximized and no side bar hidden`, async () => {
+    // Arrange: the learner has two editor groups side by side in a window of 1335 px, whose side bars leave the editor area ${editor.name} had; the editor answers a layout given in proportions as single pixels, as ${editor.name} did.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.modelSideBars(editor.sideBars, editor.sideBarWidthsPx)
+    harness.answerProportionsAsPixels(editor.areaPx)
+    try {
+      const commandsBefore = harness.commands.length
+
+      // Act
+      await harness.reader.open()
+
+      // Assert: the split is confirmed in the pixels of the editor area, and the Open ran no command of a Read.
+      const state = harness.reader.presentationState()
+      assert.deepEqual(
+        {
+          readCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) =>
+              /closeSidebar|maximizeEditorHideSidebar|minimizeOtherEditors|toggleMaximizeEditorGroup/.test(
+                command,
+              ),
+            ),
+          maximized: harness.maximizedEditorGroup(),
+          sideBars: harness.sideBars(),
+          layoutConfirmed: state.layoutConfirmed,
+          reason: state.reason,
+          errorLines: [...harness.reader.inspect().view!.errors],
+          layout: harness.editorLayout(),
+        },
+        {
+          readCommands: [],
+          maximized: false,
+          sideBars: { ...editor.sideBars, hasKeyboard: false },
+          layoutConfirmed: true,
+          reason: undefined,
+          errorLines: [],
+          layout: editor.split,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the Open in a window too narrow for the three-pane split: the reader applies the layout in the grid's measured pixels once for each arrangement and then takes the grid as it is, and the Open still ends in the readable explanation; fails_when=the step that applies the layout in pixels is repeated at every read of a grid that cannot take the proportions, so the editor is given the same layout many times a second while the split is waited for, or the step replaces the readable explanation the compact Open ends in; why_new=Cycle 0046 row 340 (the bound of the pixel step); seam=the workspace harness's constrainStudyGrid (every three-group layout is answered at the groups' minimum sizes), command log, the fake editor's maximized group and the presentation's reason
+test('Open Study Workspace in a window too narrow for the split applies the layout in measured pixels once for each of its two arrangements and still ends in the readable explanation', async () => {
+  // Arrange: the editor answers every three-group layout with the groups at their minimum sizes.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.constrainStudyGrid()
+  try {
+    const commandsBefore = harness.commands.length
+
+    // Act: the Open reserves its groups with one arrangement and arranges once more when the panes exist.
+    await harness.reader.open()
+
+    // Assert: each arrangement sent its layout and one more in pixels.
+    assert.deepEqual(
+      {
+        layoutsApplied: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => command === 'vscode.setEditorLayout').length,
+        maximized: harness.maximizedEditorGroup(),
+        reason: harness.reader.presentationState().reason,
+      },
+      {
+        layoutsApplied: 4,
+        maximized: true,
+        reason:
+          'Focused explanation. The three-pane Study split is not confirmed. Use the pane controls or Restore layout.',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's primary side bar when the editor answers the Read's first layout read and refuses the one after the measurement hid that bar: the Restore shows it again; fails_when=the reading keeps no record that its measurement hid the bar, so the Restore, Close and a refused Read show nothing and the file explorer stays away; why_new=Cycle 0046 row 33 (PL-25 of Cycle 0045: the second read's failure left the measurement undefined); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command and failNextCommand on the layout read after it
 test('a Restore after a Read whose layout read failed once the primary side bar was hidden for the measurement shows the primary side bar again', async () => {
   // Arrange: both side bars are open; the editor answers the Read's first layout read and rejects the one after the primary side bar was hidden.

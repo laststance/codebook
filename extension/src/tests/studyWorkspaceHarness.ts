@@ -568,6 +568,8 @@ export async function workspaceHarness(
   let nextLayoutResponse: { wait: Promise<void>; entered(): void } | undefined
   const commands: string[] = []
   let constrainStudyGrid = false
+  /** The editor area in which the fake editor answers a layout given in proportions as pixels; see `answerProportionsAsPixels`. `undefined`: such a layout is kept as it was given. */
+  let proportionsAnsweredInPx: { width: number; height: number } | undefined
   let hideGridWhileMaximized = false
   let editorLayout: unknown = { orientation: 0, groups: [{}] }
   let nextMovedPanelLayout: unknown
@@ -883,6 +885,44 @@ export async function workspaceHarness(
   }
   const layoutSize = (node: unknown): number =>
     Number(Reflect.get(Object(node), 'size') ?? 1)
+  /**
+   * Answers a layout as both editors were seen to answer one that is given in proportions over a grid of three columns (Cycle 0046 row 340): every size below one pixel stays what it is, so each group but the last of its siblings is one pixel and the last one has the rest of the area. A layout with a size above one pixel is given back as it is.
+   * @example proportionsAsPixels({ orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] }, { width: 1270, height: 688 })
+   * // => { orientation: 0, groups: [{ size: 1, groups: [{ size: 1 }, { size: 687 }] }, { size: 1269 }] }
+   */
+  function proportionsAsPixels(
+    layout: unknown,
+    areaPx: { width: number; height: number },
+  ): unknown {
+    const isProportion = (node: unknown): boolean =>
+      layoutSize(node) <= 1 &&
+      (layoutChildren(node) ?? []).every((child) => isProportion(child))
+    const top = layoutChildren(layout)
+    if (!top?.every((child) => isProportion(child))) return layout
+    const horizontal = Number(Reflect.get(Object(layout), 'orientation')) === 0
+    const sized = (
+      siblings: unknown[],
+      totalPx: number,
+      otherTotalPx: number,
+    ): unknown[] =>
+      siblings.map((sibling, index) => {
+        const children = layoutChildren(sibling)
+        return {
+          size:
+            index < siblings.length - 1 ? 1 : totalPx - (siblings.length - 1),
+          ...(children
+            ? { groups: sized(children, otherTotalPx, totalPx) }
+            : {}),
+        }
+      })
+    return {
+      orientation: horizontal ? 0 : 1,
+      groups: horizontal
+        ? sized(top, areaPx.width, areaPx.height)
+        : sized(top, areaPx.height, areaPx.width),
+    }
+  }
+
   /**
    * Projects the measured layout as a hidden editor area reports it: an area without height clamps every stacked group to its minimum height.
    * @example collapsedLayout({ orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] })
@@ -2584,6 +2624,9 @@ export async function workspaceHarness(
               separateEditorPart.layout = structuredClone(layout)
               return
             }
+            // Both editors take the sizes as they are given: proportions over a grid of columns end as single pixels.
+            if (proportionsAnsweredInPx)
+              layout = proportionsAsPixels(layout, proportionsAnsweredInPx)
             // A layout given to the main grid brings a hidden editor area back; the given layout replaces the sizes of that return.
             returnHiddenEditorArea()
             settledLayout =
@@ -4048,6 +4091,14 @@ export async function workspaceHarness(
     },
     constrainStudyGrid(): void {
       constrainStudyGrid = true
+    },
+    /**
+     * Makes the fake editor answer a layout that is given in proportions as both editors answered it natively when the reader applied the three-pane layout over the learner's two columns and the Study pane's new column: each group but the last of its siblings at one pixel, the last with the rest (VS Code 1.140.0: a first column of 1 px with rows of 1 and 687 px beside 1269 px; Cursor 3.23.12: 1 px with rows of 1 and 657 px beside 659 px; Cycle 0046 row 340). A layout given in pixels is kept as given. The workbench bundles take every given size as it is and scale none, and show nothing that treats a grid of columns differently; that the same proportions give the split over a single group is what the running editors do.
+     * @param areaPx - The editor area the last siblings fill.
+     * @example harness.answerProportionsAsPixels({ width: 1270, height: 688 })
+     */
+    answerProportionsAsPixels(areaPx: { width: number; height: number }): void {
+      proportionsAnsweredInPx = { ...areaPx }
     },
     hideGridWhileMaximized(): void {
       hideGridWhileMaximized = true
