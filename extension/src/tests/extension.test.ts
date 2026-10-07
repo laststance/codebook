@@ -19,6 +19,7 @@ import { connectionSchema } from '../client'
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import * as cursorSkillDeployment from '../cursorSkillDeployment'
 import type * as ExtensionModule from '../extension'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 import type { StudyService } from '../service'
 import {
@@ -2593,6 +2594,240 @@ test('a workspace folder change whose cleanup error quotes a command link shows 
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
+  }
+})
+
+/** What the extension did to one fake Study reader of {@link activateOverRecordedReaders}. */
+interface RecordedStudyReader {
+  /** 1 for the reader made at activation, 2 for the one made after it, and so on. */
+  number: number
+  /** The services the extension attached to this reader. */
+  attachedServices: StudyService[]
+  /** The services the extension retired on this reader. */
+  retiredServices: StudyService[]
+  isDisposed: boolean
+}
+
+/**
+ * Activates the extension over fake readers that record what the extension does with them, with the listener of changed workspace folders and the commands reachable, and with the real agent server over a temporary project.
+ * No other test of this file reaches the extension's handling of a changed workspace folder with a server: the fakes here are what that needs.
+ * @param behavior - `disposeStudyReader` runs inside every dispose of a Study reader, before the reader counts as disposed: a test holds it open, as while the reader's panes close, or throws from it.
+ * @returns The commands by name, `changeWorkspaceFolders` (the editor's event), every Study reader the extension made, what happened in order (`events`), how many environments a server start has built, the error notices, and `close`, which deactivates the extension and removes the temporary project.
+ * @example
+ * const editor = await activateOverRecordedReaders()
+ * editor.changeWorkspaceFolders()
+ * await waitUntil(() => editor.readers.length === 2, 'the reader made again', 1_000)
+ */
+async function activateOverRecordedReaders(
+  behavior: {
+    disposeStudyReader?: (reader: RecordedStudyReader) => Promise<void>
+  } = {},
+) {
+  const harness = await createHarness(),
+    commands = new Map<string, () => Promise<string | void>>(),
+    readers: RecordedStudyReader[] = [],
+    events: string[] = [],
+    errors: string[] = []
+  let changeWorkspaceFolders: (() => void) | undefined,
+    repositoryReaders = 0,
+    environments = 0
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<string | void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: (listener: () => void) => {
+            changeWorkspaceFolders = listener
+            return { dispose(): void {} }
+          },
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          private readonly number = ++repositoryReaders
+          constructor() {
+            events.push(`Repository reader ${this.number} made`)
+          }
+          async storage() {
+            return undefined
+          }
+          async dispose(): Promise<void> {
+            events.push(`Repository reader ${this.number} disposed`)
+          }
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class implements RecordedStudyReader {
+          readonly number = readers.length + 1
+          readonly attachedServices: StudyService[] = []
+          readonly retiredServices: StudyService[] = []
+          isDisposed = false
+          presentation = undefined
+          constructor() {
+            readers.push(this)
+            events.push(`Study reader ${this.number} made`)
+          }
+          async attach(service: StudyService): Promise<void> {
+            this.attachedServices.push(service)
+          }
+          async retire(service: StudyService): Promise<void> {
+            this.retiredServices.push(service)
+          }
+          async dispose(): Promise<void> {
+            events.push(`Study reader ${this.number}: dispose started`)
+            await behavior.disposeStudyReader?.(this)
+            this.isDisposed = true
+            events.push(`Study reader ${this.number} disposed`)
+          }
+        },
+      },
+      './environment': {
+        requireWorkspace: () => harness.directory,
+        createEnvironment: async () => {
+          environments += 1
+          return { ...harness.service.environment, dispose(): void {} }
+        },
+      },
+      './server': {
+        startServer: async (service: StudyService) => {
+          service.repository = harness.service.repository
+          return startServer(service)
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: harness.directory },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  assert.ok(changeWorkspaceFolders)
+  return {
+    commands,
+    changeWorkspaceFolders,
+    readers,
+    events,
+    environments: (): number => environments,
+    errors,
+    async close(): Promise<void> {
+      await boundary.deactivate()
+      await harness.close()
+    },
+  }
+}
+
+// Value: protects=a server the learner starts while the workspace's folders change serving the Study reader that lives: its runs are shown, checkpointed and presented by that reader; fails_when=the start runs while the old reader is being disposed, so its service is attached to the disposed reader and the reader made after it has no service until the next stop; why_new=Cycle 0046 row 279 (read in the code while working on row 267); seam=the listener of changed workspace folders and the Start Agent Server command over fake readers (activateOverRecordedReaders), with the first reader's dispose held open as while its panes close
+test('a server started while a change of the workspace’s folders is handled waits for the readers to be replaced and is attached to the Study reader that lives, not to the one being disposed', async () => {
+  // Arrange: the workspace's folders changed, and the dispose of the first Study reader is still closing its panes.
+  let finishDispose!: () => void
+  const disposeHeld = new Promise<void>((resolveHeld) => {
+    finishDispose = resolveHeld
+  })
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: (reader) =>
+      reader.number === 1 ? disposeHeld : Promise.resolve(),
+  })
+  try {
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Study reader 1: dispose started'),
+      'the dispose of the first Study reader',
+      1_000,
+    )
+    // Act: the learner runs Start Agent Server meanwhile; then the panes have closed.
+    const starting = editor.commands.get('codebook.startAgentServer')!()
+    // A start that does not wait for the readers has built its environment and attached its service well within this time.
+    await Promise.race([
+      starting.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolveGrace) => setTimeout(resolveGrace, 150)),
+    ])
+    const environmentsBuiltMeanwhile = editor.environments()
+    finishDispose()
+    const descriptorPath = await starting
+    // The learner's next action works: Stop Agent Server retires the service on the reader it was attached to.
+    await editor.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.deepEqual(
+      editor.readers.map((reader) => ({
+        number: reader.number,
+        isDisposed: reader.isDisposed,
+        attached: reader.attachedServices.length,
+        retired: reader.retiredServices.length,
+      })),
+      [
+        { number: 1, isDisposed: true, attached: 0, retired: 0 },
+        { number: 2, isDisposed: false, attached: 1, retired: 1 },
+      ],
+    )
+    // The start built nothing before the readers were replaced, and then answered as every start does.
+    assert.equal(environmentsBuiltMeanwhile, 0)
+    assert.equal(typeof descriptorPath, 'string')
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    finishDispose()
+    await editor.close()
+  }
+})
+
+// Value: protects=two changes of the workspace's folders in a row each replacing the readers in full: every reader is disposed once before the next is made; fails_when=the second change is handled while the first still disposes, so both dispose the same Study reader and the later one clears a reader the earlier one had just made, without disposing it; why_new=Cycle 0046 row 279 (the changes are handled one after the other, which a waiting start relies on); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), with the first Study reader's dispose held open
+test('a second change of the workspace’s folders that arrives while the first is handled is handled after it, so no reader is disposed twice or cleared without being disposed', async () => {
+  // Arrange: the first change is disposing the first Study reader.
+  let finishDispose!: () => void
+  const disposeHeld = new Promise<void>((resolveHeld) => {
+    finishDispose = resolveHeld
+  })
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: (reader) =>
+      reader.number === 1 ? disposeHeld : Promise.resolve(),
+  })
+  try {
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Study reader 1: dispose started'),
+      'the dispose of the first Study reader',
+      1_000,
+    )
+    // Act: the folders change again, and then the first reader's panes have closed.
+    editor.changeWorkspaceFolders()
+    await new Promise<void>((resolveTask) => setImmediate(resolveTask))
+    finishDispose()
+    // Changes handled at once make no third Repository reader: the events below then say what happened instead.
+    await waitUntil(
+      () => editor.events.includes('Repository reader 3 made'),
+      'the readers of the second change',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.deepEqual(editor.events, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+      'Repository reader 2 made',
+      'Repository reader 2 disposed',
+      'Repository reader 3 made',
+    ])
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    finishDispose()
+    await editor.close()
   }
 })
 

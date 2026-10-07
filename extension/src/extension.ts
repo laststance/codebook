@@ -187,6 +187,8 @@ export function activate(
   }
   let reader: StudyWorkspace | undefined
   let repositoryReader: RepositoryReader | undefined
+  /** Set while a change of the workspace's folders is handled, and settled when the readers have been replaced; it never rejects. Each change is handled after the one before it, and {@link start} waits for it: a server made meanwhile would be attached to the Study reader that is being disposed. */
+  let replacingReaders: Promise<void> | undefined
   let deepWikiReader: DeepWikiReader | undefined
   let wikiUpdate: Promise<void> | undefined
   // One update run per window, shared by the command, the `/update` link and the browser button.
@@ -258,6 +260,8 @@ export function activate(
         workspace().openRepositoryEvidence(binding, recording, signal, origin),
     }))
   const start = async () => {
+    // A start asked for while the readers are replaced waits for the reader that will live; nothing is awaited otherwise, so a stop that follows a start at once still finds it.
+    while (replacingReaders) await replacingReaders
     requireWorkspace()
     if (stopping)
       throw new Error(
@@ -1728,26 +1732,44 @@ export function activate(
       ),
     ),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      void (async () => {
-        try {
-          await context.workspaceState.update('codebook.aiChatSetup', undefined)
-        } finally {
-          const closingReader = deepWikiReader
-          deepWikiReader = undefined
+      // One change is handled after the one before it: handled at once, the second would clear the readers the first had just made, without disposing them.
+      const replacement = (replacingReaders ?? Promise.resolve()).then(
+        async () => {
           try {
-            await stop()
-            await repositoryReader?.dispose()
-            repositoryReader = undefined
-            await reader?.dispose()
-            reader = undefined
-            repository()
+            await context.workspaceState.update(
+              'codebook.aiChatSetup',
+              undefined,
+            )
           } finally {
-            await closingReader?.close()
+            const closingReader = deepWikiReader
+            deepWikiReader = undefined
+            try {
+              await stop()
+              await repositoryReader?.dispose()
+              repositoryReader = undefined
+              await reader?.dispose()
+              reader = undefined
+              repository()
+            } finally {
+              await closingReader?.close()
+            }
           }
-        }
-      })().catch((error) =>
-        showNotice('error', `Codebook cleanup incomplete: ${String(error)}`),
+        },
       )
+      /** Ends the mark of this change, unless a later change has chained itself to it and keeps the mark. */
+      const endReplacement = (): void => {
+        if (replacingReaders === settled) replacingReaders = undefined
+      }
+      const settled: Promise<void> = replacement
+        .catch((error: unknown) => {
+          // The notice stays until the learner closes it, so it is not waited for.
+          void showNotice(
+            'error',
+            `Codebook cleanup incomplete: ${String(error)}`,
+          )
+        })
+        .then(endReplacement, endReplacement)
+      replacingReaders = settled
     }),
   )
   // Register lazy readers before restored captured documents or contributed views request their providers.
