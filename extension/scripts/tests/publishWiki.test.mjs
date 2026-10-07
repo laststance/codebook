@@ -2603,6 +2603,70 @@ for (const [place, content, sentence] of [
     }
   })
 
+// Value: protects=a page that uses a custom element whose name starts with the name of an element a page must not hold; fails_when=the check takes the hyphen for the end of the name again, so `<link-card>`, `<main-nav>`, `<template-part>` or `<svg-icon>` is refused as a link, a main, a template or authored SVG; why_new=Cycle 0046 row 207 (the names ended at a word boundary, and a hyphen is one); seam=none
+test('a page with custom elements whose names start with the name of an element a page must not hold is published: a name is matched whole', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-custom-element-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<h2 id="flow">Source flow</h2><link-card>A card</link-card><main-nav>Parts</main-nav><template-part>One part</template-part><svg-icon></svg-icon>'
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the rule that a page holds no document part, link or authored SVG, however the tag goes on after its name; fails_when=matching a name whole lets through a tag whose name is followed by a slash, a line end or the tag's end; why_new=Cycle 0046 row 207; seam=none
+for (const [element, sentence] of [
+  [
+    '<main>',
+    'Wiki page index.html must contain article sections, not a document, form or script.',
+  ],
+  [
+    '<link/>',
+    'Wiki page index.html must contain article sections, not a document, form or script.',
+  ],
+  [
+    '<svg\nwidth="10">',
+    'Wiki page index.html must use diagram records and figure slots instead of authored SVG.',
+  ],
+])
+  test(`a page that holds ${JSON.stringify(element)} is still refused: the name is whole there`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-whole-name-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
 // Value: protects=a page that writes about such elements in an escaped code example, as the bundled skill asks for source code; fails_when=the raw-text check takes escaped text for a tag, so an article about a form or a script can no longer be published; why_new=Cycle 0046 row 192; seam=none
 test('a page that shows a form, a script and authored SVG as escaped text is published with the text as authored', async () => {
   // Arrange
