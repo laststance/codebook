@@ -1237,6 +1237,8 @@ export function activate(
           if (activeWikiRun === tracked) activeWikiRun = undefined
         })
       }
+      // Ends the opening of a VS Code start: the closing window no longer finds it and stops waiting for it. Nothing to end before the opening began, and for Cursor.
+      let endOpening = (): void => {}
       // Every step from the run's begin to the hand-over is guarded: one that throws ends the run as failed with what was thrown, so this window does not stay "already updating" with its marker in place.
       try {
         wikiUpdateRun.begin(
@@ -1267,61 +1269,62 @@ export function activate(
           }),
         }
         activeWikiRun = opening
-        let watchedChat: WatchedWikiChat
-        try {
-          // The request gets a chat session of its own; only what the update's own steps name counts as a sign that the chat works on it, and a request without a sign within the bound is taken back.
-          const chatStart = await startWikiChatUpdate({
-            query,
-            // A command without an argument is run without one: the editor reads an argument that is `undefined` as a given one.
-            runCommand: (command, ...argument) =>
-              vscode.commands.executeCommand(command, ...argument),
-            watchSigns: (reportSign) =>
-              watchWikiUpdateSigns(
-                {
-                  onDidOpenTextDocument: vscode.workspace.onDidOpenTextDocument,
-                  onDidStartTerminalShellExecution:
-                    vscode.window.onDidStartTerminalShellExecution,
-                },
-                {
-                  outputDirectory,
-                  skillDirectory: join(
-                    context.extensionPath,
-                    'skills',
-                    'codebook',
-                  ),
-                },
-                reportSign,
-              ),
-            readOutputStamp: () => readWikiWatchStamp(outputDirectory),
-            signal: run.controller.signal,
-            bounds: {
-              sessionStartMs: WIKI_CHAT_SESSION_START_TIMEOUT_MS,
-              answerMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
-              withdrawSettleMs: WIKI_CHAT_WITHDRAW_SETTLE_MS,
-              outputPollMs: WIKI_UPDATE_WATCH_POLL_MS,
-            },
-          })
-          // Only a chat that works on the request is watched; a window that began to close meanwhile starts no watch that its shutdown no longer finds.
-          const startEnd = endOfWikiChatStart(
-            chatStart,
-            WIKI_CHAT_OPEN_TIMEOUT_MS,
-            isExtensionStopping || run.controller.signal.aborted,
-          )
-          if (startEnd) {
-            await finishWikiUpdate(run, startEnd)
-            return
-          }
-          watchedChat = chatStart
-        } finally {
+        endOpening = (): void => {
           if (activeWikiRun === opening) activeWikiRun = undefined
           reportOpeningEnded()
         }
-        // A chat that works says nothing more until its reply ends, so the extension watches for the publish itself and for that end; the watch outlives this call.
-        void track(watchVsCodeWikiUpdate(run, watchedChat))
+        // The request gets a chat session of its own; only what the update's own steps name counts as a sign that the chat works on it, and a request without a sign within the bound is taken back.
+        const chatStart = await startWikiChatUpdate({
+          query,
+          // A command without an argument is run without one: the editor reads an argument that is `undefined` as a given one.
+          runCommand: (command, ...argument) =>
+            vscode.commands.executeCommand(command, ...argument),
+          watchSigns: (reportSign) =>
+            watchWikiUpdateSigns(
+              {
+                onDidOpenTextDocument: vscode.workspace.onDidOpenTextDocument,
+                onDidStartTerminalShellExecution:
+                  vscode.window.onDidStartTerminalShellExecution,
+              },
+              {
+                outputDirectory,
+                skillDirectory: join(
+                  context.extensionPath,
+                  'skills',
+                  'codebook',
+                ),
+              },
+              reportSign,
+            ),
+          readOutputStamp: () => readWikiWatchStamp(outputDirectory),
+          signal: run.controller.signal,
+          bounds: {
+            sessionStartMs: WIKI_CHAT_SESSION_START_TIMEOUT_MS,
+            answerMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
+            withdrawSettleMs: WIKI_CHAT_WITHDRAW_SETTLE_MS,
+            outputPollMs: WIKI_UPDATE_WATCH_POLL_MS,
+          },
+        })
+        // Only a chat that works on the request is watched; a window that began to close meanwhile starts no watch that its shutdown no longer finds.
+        const startEnd = endOfWikiChatStart(
+          chatStart,
+          WIKI_CHAT_OPEN_TIMEOUT_MS,
+          isExtensionStopping || run.controller.signal.aborted,
+        )
+        if (startEnd) {
+          await finishWikiUpdate(run, startEnd)
+          return
+        }
+        // The opening has ended; the watch takes the run over. A chat that works says nothing more until its reply ends, so the extension watches for the publish itself and for that end; the watch outlives this call.
+        endOpening()
+        void track(watchVsCodeWikiUpdate(run, chatStart))
       } catch (error) {
         // A run whose end was recorded has nothing left to end; what was thrown is the caller's.
         if (!wikiUpdateRun.isRunning()) throw error
         await finishWikiUpdate(run, { failure: thrownMessage(error) })
+      } finally {
+        // Only now does the run count as settled: a closing window waits until the end was recorded and the marker released, also the failed end of a step that threw.
+        endOpening()
       }
     })()
     wikiUpdate = attempt

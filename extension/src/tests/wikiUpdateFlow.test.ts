@@ -1065,6 +1065,54 @@ test('a window that closes while the VS Code chat is still opening waits until t
   }
 })
 
+// Value: protects=what a window leaves beside the Wiki when it closes while the failed end of a start that threw is being recorded; fails_when=the run counts as settled before that end is recorded, so the closing window finds no run, does not wait, and the marker stays on disk until another window takes it over; why_new=Cycle 0046 row 260; seam=the editor's registration of a listener, which throws, and the read of the publish token the run's end begins with, which is kept open
+test('a window that closes while the failed end of a start that threw is being recorded waits for it, and the marker is gone when the close returns', async () => {
+  // Arrange: the editor refuses the listener for opened documents, so the start throws; the start checks read the publish token twice, and the third read, the one the run's end begins with, is kept open.
+  const wiki = await openWikiWindow({
+    signWatchFails: 'The editor refused the listener.',
+  })
+  try {
+    const firstCheck = wiki.hold('publish-token-read')
+    const click = wiki.clickUpdate()
+    await firstCheck.started
+    firstCheck.release()
+    const lastCheck = wiki.hold('publish-token-read')
+    await lastCheck.started
+    lastCheck.release()
+    const endOfTheRun = wiki.hold('publish-token-read')
+    await endOfTheRun.started
+
+    // Act: the window closes; the close is given a tenth of a second in which it must not return.
+    const closing = wiki.closeWindow()
+    const closeWhileTheEndIsRecorded = await Promise.race([
+      closing.then(() => 'the close returned'),
+      new Promise((resolveWait) =>
+        setTimeout(() => resolveWait('the close waits'), 100),
+      ),
+    ])
+    endOfTheRun.release()
+    await closing
+    const markerWhenClosed = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    await click
+
+    // Assert
+    assert.equal(closeWhileTheEndIsRecorded, 'the close waits')
+    assert.equal(markerWhenClosed, 'gone')
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The editor refused the listener.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test(
   'a Cursor agent that does not stop is not waited for longer than the termination grace when the window closes',
   { timeout: 5_000 },
