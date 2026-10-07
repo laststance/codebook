@@ -7636,7 +7636,7 @@ export class StudyWorkspace {
         this.giveUpSelectionOfRest()
         const id = this.firstShownStudyId()
         if (id) {
-          this.selectedArchive = await this.readSavedArchive(id)
+          this.selectedArchive = await this.firstShownArchive(id)
           this.selectArchive(this.selectedArchive)
         }
       } catch (error) {
@@ -7676,11 +7676,32 @@ export class StudyWorkspace {
 
   /**
    * Gives up a saved selection that names what is left of a study without its archive, so a fresh reader does not try to read it and report "Study archive is unavailable."; called by {@link initialize} in the turn the catalog was listed, before {@link firstShownStudyId}.
+   * The selection of a study whose archive waits in this reader ({@link awaitsArchiveOfThisWindow}) is kept: {@link firstShownArchive} shows that archive, and Retry storage / refresh writes it.
    * @example this.giveUpSelectionOfRest()
    */
   private giveUpSelectionOfRest(): void {
     const selected = this.selection.studyId
-    if (selected && this.isRestWithoutArchive(selected)) this.selectNoStudy()
+    // A handed-over archive keeps its learning selection while its disk save waits.
+    if (
+      selected &&
+      this.isRestWithoutArchive(selected) &&
+      !this.awaitsArchiveOfThisWindow(selected)
+    )
+      this.selectNoStudy()
+  }
+
+  /**
+   * Gives the archive of the study a fresh reader shows first; called by {@link initialize} with what {@link firstShownStudyId} named.
+   * @param studyId - The study to show.
+   * @returns The archive that waits in this reader for Retry storage / refresh when one does (the library then holds an older one, or none), else the one the library holds.
+   * @throws What {@link readSavedArchive} throws when the library's archive cannot be read.
+   * @example this.selectedArchive = await this.firstShownArchive(id)
+   */
+  private async firstShownArchive(studyId: string): Promise<RetainedStudy> {
+    return (
+      this.pendingArchives.get(studyId)?.archive ??
+      (await this.readSavedArchive(studyId))
+    )
   }
 
   /**
@@ -14100,19 +14121,18 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a study is the one of a run of this window whose archive this window still has to write; asked by {@link hasLeftLibrary} for a study of which the library lists no archive.
-   * The library lists the finished recording of such a run like what is left of a study whose archive was removed. The two are told apart by the run's own receipt: an archive that was removed had been saved (the receipt says `saved` and no write is waiting), while one that could not be written has a failed or pending receipt, or a write that waits for Retry storage / refresh.
+   * Says whether a study is one whose archive this window still has to write; asked by {@link hasLeftLibrary} and {@link giveUpSelectionOfRest} for a study of which the library lists no archive.
+   * The library lists the finished recording of such a study like what is left of a study whose archive was removed. The two are told apart by what this window holds: an archive that was removed had been saved (the run's receipt says `saved` and no write is waiting), while one that could not be written has a write that waits for Retry storage / refresh, or a run with a failed or pending receipt.
+   * A write waits also for a study of no run of this reader: the archive a disposed reader could not save and handed over ({@link queueHandedOverArchives}). Its run ended with the service of that reader, so only the waiting archive says that the study is awaited.
    * @param studyId - The study of which no archive is listed.
-   * @returns `true` for a run of this window whose last archive write did not end as `saved`, or whose archive waits to be written; `false` for a study of no run of this window, and for a run whose archive this window had saved.
-   * @example this.awaitsArchiveOfThisWindow(studyId) // => true after "History not saved: …" for a stopped run
+   * @returns `true` for a study whose archive waits to be written or is being written, and for a run of this window whose last archive write did not end as `saved`; `false` for a study of no run of this window without a waiting archive, and for a run whose archive this window had saved.
+   * @example this.awaitsArchiveOfThisWindow(studyId) // => true after "History not saved: …" for a stopped run, and for an archive a disposed reader handed over
    */
   private awaitsArchiveOfThisWindow(studyId: string): boolean {
+    // A waiting archive needs no run in this reader to be awaited.
+    if (!this.hasNoArchiveWriteOutstanding(studyId)) return true
     const record = this.recordOfStudy(studyId)
-    if (!record) return false
-    return (
-      record.historyReceipt?.status !== 'saved' ||
-      !this.hasNoArchiveWriteOutstanding(studyId)
-    )
+    return record !== undefined && record.historyReceipt?.status !== 'saved'
   }
 
   /**
