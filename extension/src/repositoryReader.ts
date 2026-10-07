@@ -555,15 +555,23 @@ export class RepositoryReader {
     panel?.dispose()
     this.clearWatchers()
   }
-  /** Drains publication and shared learner writes while disposing only this reader's UI ownership. @example await reader.dispose() */
+  /**
+   * Drains publication and shared learner writes while disposing only this reader's UI ownership; called when the window closes and when a change of the workspace's folders replaces the reader.
+   * What the reader registered with the editor (its source provider, its Repository Wiki view and its listeners) is released whatever closing and draining did: kept after a failure, it would be shared with the reader made in its place.
+   * @throws What closing the pane or draining the writes threw, after the registrations were released.
+   * @example await reader.dispose()
+   */
   async dispose(): Promise<void> {
     this.disposed = true
-    this.close()
-    await this.initializing?.catch(() => undefined)
-    await this.store?.dispose()
-    await this.store?.library.flush()
-    this.disposables.forEach((value) => value.dispose())
-    this.changes.dispose()
+    try {
+      this.close()
+      await this.initializing?.catch(() => undefined)
+      await this.store?.dispose()
+      await this.store?.library.flush()
+    } finally {
+      this.disposables.forEach((value) => value.dispose())
+      this.changes.dispose()
+    }
   }
   /** Tells the Study workspace whether this reader owns its Repository Wiki panel, so the live pane is never taken for one an earlier extension host left behind. @example reader.panelOpen() // false until an article is opened */
   panelOpen(): boolean {
