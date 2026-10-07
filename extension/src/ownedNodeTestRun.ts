@@ -93,7 +93,7 @@ export class OwnedNodeTestRun {
     private readonly configuration: NodeTestConfiguration,
     private readonly node: string,
     private readonly record: (type: string, detail?: unknown) => unknown,
-    /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run, and {@link captureStop} ends it at a stop, while the editor holds other text for one of them. A trial without an article gives none. */
+    /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run, and {@link advance} and {@link captureStop} end it at a continuation or at a stop, while the editor holds other text for one of them. A trial without an article gives none. */
     private readonly citedSources: ConfiguredDescriptor['sources'],
   ) {
     this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
@@ -381,7 +381,15 @@ export class OwnedNodeTestRun {
     )
   }
 
-  /** Retires the last owned breakpoint, arms the next declared stop and captures its actual paused state. @example const next = await run.advance() */
+  /**
+   * Retires the last owned breakpoint, arms the next declared stop, resumes the test and captures the stop's actual paused state; called by the service for a continuation that has a next declared stop.
+   * @returns The next declared stop, captured at its native pause.
+   * @throws When no next stop can be captured, the accepted pause changed, the next breakpoint is not bound as declared or the capture fails; a `SOURCE_CHANGED` {@link StudyError}, without a resume, while the editor holds other text for a cited source than the article cites. Every failure releases the run.
+   * @example
+   * ```ts
+   * const next = await run.advance() // => { index: 1, frame: { line: 1, column: 14, ... }, ... }
+   * ```
+   */
   async advance(): Promise<NodeTestSourceStop> {
     const previous = this.acceptedStop,
       bound = this.bound,
@@ -421,6 +429,12 @@ export class OwnedNodeTestRun {
       this.assertNotMovedByNews(next.source)
       // The learner can resume or step while retirement and registration are awaited.
       await this.assertAcceptedPause(previous, 'the next declared stop')
+      // Nor is the test resumed on a cited source the learner changed in the editor without saving: the next pause would mark a line of that text. Compared last, so nothing is awaited between this and the resume.
+      assertConfiguredSourceDocuments(
+        this.workspace,
+        this.citedSources,
+        vscode.workspace.textDocuments,
+      )
       const fromIndex = this.stops.length
       await bound.session.customRequest('continue', {
         threadId: previous.threadId,

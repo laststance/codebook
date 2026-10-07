@@ -4991,7 +4991,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Reserves the exact pause before source revalidation, then arms the next declared stop and reads the other participant's earlier pauses before it requests the resume; only an owned, retired breakpoint leads to an acknowledged continuation.
    * @param name - The participant whose committed pause is continued.
    * @param pause - The pause identity the caller copied from the run's view.
-   * @throws `conflict: stale, foreign or unverified pause` without ending the run; every later failure ends the run and is thrown on. The run's reason is "Next declared stop was not armed and no resume was sent: …" or "Next declared stop could not be continued to: … and no resume was sent. …" for the two steps that come before the resume, and "Continue uncertain: …" otherwise.
+   * @throws `conflict: stale, foreign or unverified pause` without ending the run; every later failure ends the run and is thrown on. The run's reason is "Sources were not confirmed before the continuation and no resume was sent: …", "Next declared stop was not armed and no resume was sent: …" or "Next declared stop could not be continued to: … and no resume was sent. …" for the three steps that come before the resume, and "Continue uncertain: …" otherwise.
    * @example
    * ```ts
    * await run.continue('browser', pause)
@@ -5012,7 +5012,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       throw new Error('conflict: stale, foreign or unverified pause')
     try {
-      await this.verifySources()
+      await this.confirmSourcesBeforeResume()
       this.alive()
       if (
         participant.gate.phase !== 'resume-requested' ||
@@ -5068,6 +5068,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.beginAfter(continuation)
     } catch (error) {
       this.fail(`Continue uncertain: ${String(error)}`)
+      throw error
+    }
+  }
+  /**
+   * Revalidates the cited sources and the editor's documents of them as the first step of {@link continue}, before anything is armed or resumed, so that a refusal there is recorded as what it is.
+   * @throws What {@link verifySources} failed with (a `SOURCE_CHANGED` {@link StudyError} for a changed file or a changed document), after the run was failed with a sentence that says that no resume was sent: this check comes before the resume is requested, so its failure is never an uncertain continuation.
+   * @example
+   * ```ts
+   * await this.confirmSourcesBeforeResume() // run.view().failures[0] === 'Sources were not confirmed before the continuation and no resume was sent: The cited source src/theme.ts is open in the editor with text that differs ...'
+   * ```
+   */
+  private async confirmSourcesBeforeResume(): Promise<void> {
+    try {
+      await this.verifySources()
+    } catch (error) {
+      // Nothing has been armed or resumed yet, so the record says exactly that, as for a next stop that could not be armed.
+      this.fail(
+        `Sources were not confirmed before the continuation and no resume was sent: ${thrownMessage(error)}`,
+      )
       throw error
     }
   }

@@ -41,6 +41,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
+ * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  *
  * @example
@@ -67,6 +68,7 @@ async function nodeRunHarness({
   declaredColumn = 14,
   verifiedByNews,
   openDocumentText,
+  typedWhileRunning,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -107,6 +109,7 @@ async function nodeRunHarness({
       | 'after the continuation'
   }
   openDocumentText?: string
+  typedWhileRunning?: { continueRequest: number; text: string }
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -165,6 +168,8 @@ async function nodeRunHarness({
     documentText = text
   }
   if (openDocumentText !== undefined) typeIntoCitedSource(openDocumentText)
+  // How many continue requests Codebook has sent to the session.
+  let continueRequests = 0
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
     continued = 0,
@@ -234,6 +239,9 @@ async function nodeRunHarness({
       clientRequest(command)
       if (command === 'continue') {
         calls.push('continue')
+        // The test runs again: a learner who types now does so between the resume and the next stop.
+        if (++continueRequests === typedWhileRunning?.continueRequest)
+          typeIntoCitedSource(typedWhileRunning.text)
         // A cited test that Vitest skipped never reaches the source: its process exits and the owned session ends.
         if (exitAfterEntry) {
           queueMicrotask(() => terminate?.(session))
@@ -1641,15 +1649,19 @@ test('a Node test run whose cited source is marked as modified in the editor wit
   }
 })
 
-// Cycle 0046 (row 322): red while a Node test run compared the editor's documents at its start only: after a change the learner did not save, the next stop was captured although the editor's debugger marked a line of the unsaved text, not the line the test executed.
-test('a Node test run whose cited source the learner changes in the editor without saving between two stops ends at the next stop with the sentence that names the file, and that stop is not captured', async () => {
-  // Arrange
-  const harness = await nodeRunHarness({ declaredStops: 2 })
+// Cycle 0046 (row 322): red while a Node test run compared the editor's documents at its start only: after a change the learner did not save, the next stop was captured although the editor's debugger marked a line of the unsaved text, not the line the test executed. Since row 324 a change made before the continuation ends the run before the resume (the next test), so this one types after the resume.
+test('a Node test run whose cited source the learner changes in the editor without saving while the test runs to its next stop ends at that stop with the sentence that names the file, and that stop is not captured', async () => {
+  // Arrange: the learner types right after the continuation of the first stop was requested.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    typedWhileRunning: {
+      continueRequest: 2,
+      text: '// a line the learner typed\nexport const nextTheme = "dark";\n',
+    },
+  })
   try {
     await harness.run.prepare()
-    harness.typeIntoCitedSource(
-      '// a line the learner typed\nexport const nextTheme = "dark";\n',
-    )
+    harness.calls.length = 0
 
     // Act
     const refusal: unknown = await harness.run
@@ -1673,7 +1685,53 @@ test('a Node test run whose cited source the learner changes in the editor witho
       ).length,
       1,
     )
-    assert.equal(harness.calls.includes('stop-debugging'), true)
+    assert.deepEqual(harness.calls, [
+      'retire',
+      'arm',
+      'continue',
+      'remove',
+      'stop-debugging',
+    ])
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 324): red while a Node test run compared the editor's documents only when a stop was captured: after a change the learner did not save, the continuation resumed the test once more and the editor's debugger showed the next pause, on a line of the unsaved text, for the moment of a capture that was then thrown away.
+test('a Node test run whose cited source the learner changes in the editor without saving between two stops is ended by the continuation with the sentence that names the file, and the test is not resumed', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 })
+  try {
+    await harness.run.prepare()
+    harness.calls.length = 0
+    harness.typeIntoCitedSource(
+      '// a line the learner typed\nexport const nextTheme = "dark";\n',
+    )
+
+    // Act
+    const refusal: unknown = await harness.run
+      .advance()
+      .catch((error: unknown) => error)
+
+    // Assert: no continue request was sent, so the test stayed paused until the run released it.
+    assert.deepEqual(
+      refusal instanceof Error && 'code' in refusal
+        ? { code: refusal.code, message: refusal.message }
+        : refusal,
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
+    )
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 0)
+    assert.equal(harness.calls.at(-1), 'stop-debugging')
+    assert.equal(
+      harness.events.filter((event) => event.type === 'node-test.dap-stopped')
+        .length,
+      2,
+    )
   } finally {
     await harness.run.stop()
     await harness.cleanup()
