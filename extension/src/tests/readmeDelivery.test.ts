@@ -565,8 +565,8 @@ test('the packaged README quotes the notice of a Codebook pane that took the key
 
   // Act
   const delivered = heldSentences(readme, [
-    'Codebook also takes the keyboard to be in a file when you click or press a key in it. A Codebook pane that then comes to the front over that file takes the keyboard, because a hidden file cannot keep it, and the first time in an editor session Codebook says where it is: `A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.`',
-    "That holds at a pause for a frame you selected in the Call Stack view and for a stop while the editor's `debug.focusEditorOnBreak` setting is off, where a file you go to and a frame's file you open with a double click count too, and while the debugged program runs, where only a click or a key press of the last three seconds counts.",
+    'Codebook also takes the keyboard to be in a file when a click or a key press of yours moves the caret or changes the selection in it, which is all the editor reports to Codebook of a click or a key press. A Codebook pane that then comes to the front over that file takes the keyboard, because a hidden file cannot keep it, and the first time in an editor session Codebook says where it is: `A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.`',
+    "That holds at a pause for a frame you selected in the Call Stack view and for a stop while the editor's `debug.focusEditorOnBreak` setting is off, where a file you go to and a frame's file you open with a double click count too, and while the debugged program runs, where only such a click or key press of the last three seconds counts.",
   ])
 
   // Assert: the README holds both sentences, the reader shows the sentence it quotes, and the three seconds are the reader's.
@@ -578,20 +578,21 @@ test('the packaged README quotes the notice of a Codebook pane that took the key
   assert.equal(LEARNER_SIGN_FRESH_MS, 3_000)
 })
 
-// Value: protects=a learner whose keyboard is on no element after a Codebook pane covered a frame's file finding in the README which three gestures lead there and what to do; fails_when=the README loses the stated limit, names other gestures than the three the editor reports nothing for, or no longer says to press a key in the file first or to click afterwards; why_new=Cycle 0046 row 292 (what rows 263 and 273 could not close is a stated limit: the Call Stack view and the navigation commands look alike to an extension); seam=none
-test('the packaged README names the three Call Stack gestures after which a Codebook pane leaves the keyboard on no element, and what the learner does', async () => {
+// Value: protects=a learner whose keyboard is on no element after a Codebook pane covered a frame's file finding in the README which three gestures lead there and what to do; fails_when=the README loses the stated limit, names other gestures than the three the editor reports nothing for, leaves out the click on the place where the caret already stands (Cycle 0046 row 320: natively the pane came over the file 0.5 s after such a click without the keyboard and with no notice), or no longer says to move the caret in the file first or to click afterwards; why_new=Cycle 0046 row 292 (what rows 263 and 273 could not close is a stated limit: the Call Stack view and the navigation commands look alike to an extension); seam=none
+test('the packaged README names the three Call Stack gestures and the click that moves no caret after which a Codebook pane leaves the keyboard on no element, and what the learner does', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
     "Three gestures at a pause give a frame's file the keyboard without the editor telling Codebook: the editor's **Navigate Up Call Stack** and **Navigate Down Call Stack** commands by themselves (and the two that go to the top and to the bottom of the call stack), a double click or Enter on a frame whose file is already open as a kept tab, and Enter on a row of the Call Stack view that is not the selected frame yet.",
-    'After one of them, the next Codebook pane (the Application pane or the captured source) that comes to the front over that file comes without the keyboard, which is then on no element.',
-    'Press a key in the file before that, so that Codebook knows you work there, or click where you want to type afterwards.',
+    'A click on the place where the caret already stands moves nothing, so the editor reports nothing of it and it does not count, at a pause and while the program runs.',
+    'After one of these, the next Codebook pane (the Application pane or the captured source) that comes to the front over that file comes without the keyboard, which is then on no element.',
+    'Move the caret in the file before that (press an arrow key, or click on another place than the caret stands), so that Codebook knows you work there, or click where you want to type afterwards.',
   ])
 
   // Assert
-  assert.deepEqual(delivered, [true, true, true])
+  assert.deepEqual(delivered, [true, true, true, true])
 })
 
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.
