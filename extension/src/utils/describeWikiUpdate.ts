@@ -487,19 +487,31 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
+   * Words what became of the site when a run stopped before it would overwrite the learner's own files; called by {@link describeConflict} for {@link describeOverwriteStop}.
+   * @param replaced - Whether the site on disk changed during the run.
+   * @returns That the site changed, with the freshness label to check; otherwise that nothing was replaced, in the past tense of the stop, which a later publish of a chat that goes on leaves true.
+   * @example siteAtOverwriteStop(false) // => 'Nothing was replaced.'
+   */
+  const siteAtOverwriteStop = (replaced: boolean): string =>
+    replaced
+      ? 'The site on disk changed during the run; ' + freshnessStep
+      : 'Nothing was replaced.'
+  /**
    * Words a run that stopped before it would overwrite the learner's own files; called by {@link describeConflict} for a cause that did not refuse the start.
    * @param at - When the run stopped, as the learner's local time.
-   * @param replaced - Whether the site on disk changed during the run.
+   * @param site - What became of the site, as {@link siteAtOverwriteStop} words it.
    * @param named - The paths as the sentence names them.
    * @param many - Whether more than one file is in the way.
+   * @param isChatStillThere - Whether the agent was not stopped with the run (VS Code's chat, which Codebook only stopped watching): the next step then names that chat and its two ways on, to answer it so that it publishes, or to stop it and press, which Codebook answers with the wait for it. The step is kept short: with twelve long paths the sentence must still fit the rail's bound of 45vh at 960 x 600.
    * @returns The rest of the sentence after "Update stopped", with the next step.
-   * @example describeOverwriteStop('21:10', false, 'notes.md', false) // => ' at 21:10: it would overwrite your own file in the Wiki folder (notes.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.'
+   * @example describeOverwriteStop('21:10', 'Nothing was replaced.', 'notes.md', false, false) // => ' at 21:10: it would overwrite your own file in the Wiki folder (notes.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.'
    */
   const describeOverwriteStop = (
     at: string,
-    replaced: boolean,
+    site: string,
     named: string,
     many: boolean,
+    isChatStillThere: boolean,
   ): string =>
     ' at ' +
     at +
@@ -508,18 +520,18 @@ export function describeWikiUpdate(
     ' in the Wiki folder (' +
     named +
     '). ' +
-    (replaced
-      ? 'The site on disk changed during the run; ' + freshnessStep
-      : 'Nothing was replaced.') +
+    site +
     ' Move or rename ' +
     (many ? 'them' : 'the file') +
-    ', then press Update LLM Wiki again.'
+    (isChatStillThere
+      ? '. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.'
+      : ', then press Update LLM Wiki again.')
   /**
    * Words an update that paths in the Wiki folder kept from starting or from finishing; called by {@link describeStoppedRun} for the state `conflict`.
    * @param conflict - The conflict state.
    * @param at - When the conflict was found, as the learner's local time.
    * @param replaced - Whether the site on disk changed during the run.
-   * @returns The description: "Update not started" for a cause that refused the start, "Update stopped" otherwise (also for a cause this version does not know); `detail` holds all paths when the sentence names only the first.
+   * @returns The description: "Update not started" for a cause that refused the start, "Update stopped" otherwise (also for a cause this version does not know), with the chat named for VS Code, where it was not stopped; `detail` holds all paths when the sentence names only the first.
    * @example describeConflict(conflict, '21:10', false).lead // => 'Update not started'
    */
   const describeConflict = (
@@ -535,9 +547,17 @@ export function describeWikiUpdate(
       describeRecoveryRefusal(conflict.cause, named)
     if (refusal !== undefined)
       return describe('Update not started', ' (' + at + '): ' + refusal, detail)
+    // Only a Cursor agent is stopped with its run; VS Code's chat goes on after the watch.
+    const isChatStillThere = conflict.host !== 'cursor'
     return describe(
       'Update stopped',
-      describeOverwriteStop(at, replaced, named, many),
+      describeOverwriteStop(
+        at,
+        siteAtOverwriteStop(replaced),
+        named,
+        many,
+        isChatStillThere,
+      ),
       detail,
     )
   }

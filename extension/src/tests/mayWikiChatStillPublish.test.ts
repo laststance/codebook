@@ -87,3 +87,35 @@ test('the chat of a VS Code watch that broke off may still publish when its run 
     brokenCursorRun: false,
   })
 })
+
+// Value: protects=the learner and every other window after a VS Code watch ended because a file of the learner's is in the way: the chat that staged the site was not stopped and publishes once the file is moved; fails_when=such a run counts as one whose chat is gone, so the press the sentence names starts a second chat beside the first and no reservation tells other windows, or a Cursor run, whose agent has ended, or a closing window is held back; why_new=Cycle 0046 row 343; seam=none
+test('the chat of a VS Code watch that ended on a learner’s file may still publish in a window that stays open, and a Cursor run that ended the same way or a closing window does not hold the next press back', () => {
+  // Act
+  const answers = {
+    conflictOfAWatch: mayWikiChatStillPublish(
+      'vscode',
+      'conflict',
+      false,
+      false,
+    ),
+    conflictOfAWatchInAClosingWindow: mayWikiChatStillPublish(
+      'vscode',
+      'conflict',
+      true,
+      false,
+    ),
+    conflictOfACursorRun: mayWikiChatStillPublish(
+      'cursor',
+      'conflict',
+      false,
+      false,
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    conflictOfAWatch: true,
+    conflictOfAWatchInAClosingWindow: false,
+    conflictOfACursorRun: false,
+  })
+})

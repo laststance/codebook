@@ -420,6 +420,21 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
   assert.deepEqual(delivered, [true])
 })
 
+// Value: protects=a learner reading in the README what to do when an update stopped on a file of their own; fails_when=the row tells a VS Code learner only to move the file and update again, although the chat was not stopped and that press is answered with the wait for it, or no longer says that the chat can still publish; why_new=Cycle 0046 row 343; seam=none
+test('the packaged README says for an update that stopped on a file of the learner’s that in VS Code the chat was not stopped and can still publish, and what to do with it before updating again', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "The new site would overwrite a file of your own in the Wiki folder. In VS Code only Codebook's watch stopped: the chat that prepared the site was not stopped and can still publish once the file is out of the way.",
+    'Move or rename the file. Cursor: update again. VS Code: answer the chat if it waits for you, or stop it. To start again, update again and press **Update anyway** if Codebook still waits for that chat.',
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true, true])
+})
+
 // Value: protects=a learner reading in the README what a failed update says of the site when a chat or another window can still publish, and what a watch that broke off says; fails_when=the README says of every failed end that the last usable site is kept, quotes another sentence of a broken watch than the product prints, or leaves out that the next update is then answered with Update anyway; why_new=Cycle 0046 row 341; seam=none
 test('the packaged README says which failed ends say that nothing had been replaced by then in place of a kept site, and quotes the sentence of a watch that broke off', async () => {
   // Arrange

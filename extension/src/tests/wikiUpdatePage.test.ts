@@ -1097,7 +1097,7 @@ test('a conflict over twelve files names three in the sentence and lists all twe
   const detail = page.find('[data-codebook-update-detail]')
   assert.equal(
     status?.textContent,
-    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them, then press Update LLM Wiki again. The full list is below.',
+    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it. The full list is below.',
   )
   assert.equal(detail?.tagName, 'details')
   assert.equal(detail?.parentNode, status?.parentNode)
