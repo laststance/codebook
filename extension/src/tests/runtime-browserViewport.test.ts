@@ -232,13 +232,13 @@ async function viewportHarness(
             released(): void {
               leaseReleases++
             },
-            tookKeyboardAtPause(): void {
+            tookKeyboardFromEditor(): void {
               keyboardTakesAtPause++
             },
             ...(ownerReturnsKeyboard === undefined
               ? {}
               : {
-                  async keepsKeyboardAtPause(): Promise<boolean> {
+                  async comesWithoutKeyboard(): Promise<boolean> {
                     revealsWhenOwnerAsked.push(renderer.reveals.length)
                     if (ownerReturnsKeyboard === 'fails')
                       throw new Error('The chat could not be focused.')
