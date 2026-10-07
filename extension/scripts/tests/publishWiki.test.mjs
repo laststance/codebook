@@ -2799,8 +2799,8 @@ for (const [form, element] of [
     }
   })
 
-// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot again, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only); seam=none
-test('reader refuses a slot inside a comment that never ends instead of generating the figure into the comment', async () => {
+// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only), and row 194, since which such a page is refused for its comment before any diagram is read; seam=none
+test('a slot inside a comment that never ends is not rendered into the comment: the page is refused for its comment', async () => {
   // Arrange: the page's only slot stands after the start of a comment that has no end.
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-open-comment-')),
@@ -2816,7 +2816,78 @@ test('reader refuses a slot inside a comment that never ends instead of generati
         projectRoot: root,
         outputDirectory: join(root, '.codebook/wiki'),
       }),
-      { message: 'Diagram figure slots must not be inside HTML comments.' },
+      {
+        message:
+          'Wiki page index.html has a comment that never ends; close it with -->.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page's question form, rail and script, which stand after the article; fails_when=a page whose content holds a comment that never ends is published: a browser reads the rest of the article and everything after it as comment, so the page has no question form, no rail and runs no script (observed in the DOM check's browser on the page as published before); why_new=Cycle 0046 row 194; seam=none
+for (const [form, comment] of [
+  ['has no end', '<!-- to do'],
+  ['has a space inside its end', '<!-- to do -- >'],
+  ['has another character inside its end', '<!-- to do --!->'],
+])
+  test(`a page whose comment ${form} is refused with the sentence that says how to close it`, async () => {
+    // Arrange: the comment stands after the page's last paragraph.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-endless-comment-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2><p>Explained from source.</p>${comment}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html has a comment that never ends; close it with -->.',
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a page with comments in every form a browser ends, and the headings after them; fails_when=the publisher takes a comment that ends with "--!>", or the comments "<!-->" and "<!--->", or a "<!--" inside an attribute value for a comment that runs on, so it refuses a page a browser reads whole, or no longer sees the anchors after such a place; why_new=Cycle 0046 row 194 (each form was run in the DOM check's browser); seam=none
+test('a page whose comments end is published in every form a browser takes for the end of a comment, and the anchors after each are read', async () => {
+  // Arrange: a comment that ends with -->, one that ends with --!>, the comments <!--> and <!--->, and a title that only shows the start of a comment; a heading follows each.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-closed-comments-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<!-- one --><h2 id="one">One</h2><!-- two --!><h2 id="two">Two</h2>' +
+      '<!--><h2 id="three">Three</h2><!---><h2 id="four">Four</h2>' +
+      '<p title="<!--">A title that shows the start of a comment.</p><h2 id="five">Five</h2>'
+    manifest.pages[0].contentHtml = content
+    manifest.pages[0].outline = ['one', 'two', 'three', 'four', 'five'].map(
+      (id) => ({ id, label: `Part ${id}` }),
+    )
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+    assert.ok(
+      html.includes(
+        '<ul class="outline"><li><a href="#one">Part one</a></li><li><a href="#two">Part two</a></li><li><a href="#three">Part three</a></li><li><a href="#four">Part four</a></li><li><a href="#five">Part five</a></li></ul>',
+      ),
     )
   } finally {
     await rm(root, { recursive: true, force: true })

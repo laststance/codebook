@@ -474,6 +474,25 @@ test('a link after a bare attribute value that holds <!-- gets the scheme of the
   )
 })
 
+// Value: protects=the links of a page that stand after a comment a browser ends in one of its less usual ways; fails_when=the reader knows "-->" alone as the end of a comment, so after a comment that ends with "--!>" or is "<!-->" or "<!--->" it passes over the links that follow and serves them with the scheme the page was published with; why_new=Cycle 0046 row 194 (the forms were run in a browser); seam=none
+test('a link after a comment that ends with --!>, and after the comments <!--> and <!--->, gets the scheme of the editor that serves the page', () => {
+  // Arrange: three comments, each followed by a source link; no "-->" stands anywhere in the page.
+  const link = (line: number, scheme: string): string =>
+    `<a href="${scheme}://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=${line}">a.ts:${line}</a>`
+  const page = `<!-- one --!>${link(1, 'vscode')}<!-->${link(2, 'vscode')}<!--->${link(3, 'vscode')}`
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<!-- one --!><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a.ts:1</a>' +
+      '<!--><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=2">a.ts:2</a>' +
+      '<!---><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=3">a.ts:3</a>',
+  )
+})
+
 // Value: protects=the rail entry of a page whose link has an address without a query; fails_when=the reader reads the whole address as a query again, so an entry whose address is "path=a.ts&line=3" gets the invented target a.ts:3; why_new=Cycle 0046 row 135; seam=none
 test('an entry whose address has no query gets no target', () => {
   // Arrange: an entry in the shape of 0.2.29.0 whose address is no Codebook address and has no question mark.

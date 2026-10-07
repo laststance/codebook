@@ -174,8 +174,10 @@ function sequenceSvg(diagram, prefix) {
   return { width, height: y + LAYOUT.margin, content: participants + messages };
 }
 
-/** A comment of authored HTML, also one that never ends: a browser reads everything after its start as comment then. */
-const COMMENT = /<!--[\s\S]*?(?:-->|$)/;
+/** A comment of authored HTML as a browser reads it: it ends at `-->` or at `--!>`, at once when it is `<!-->` or `<!--->`, and otherwise never: a browser then reads everything after its start as comment, up to the end of the document. */
+const COMMENT = /<!--(?:-?>|[\s\S]*?(?:--!?>|$))/;
+/** A comment that has an end, the whole of what {@link COMMENT} matched. */
+const CLOSED_COMMENT = /^<!--(?:-?>|[\s\S]*?--!?>)$/;
 /** A start tag of authored HTML, read up to the `>` that ends it as a browser reads it: a quoted attribute value may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
 const START_TAG = /<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/;
 /** A comment or a start tag of authored HTML, the two things {@link withAttributeValues} tells apart from text. A comment is passed over whole, so an element inside it is no element of the page. */
@@ -185,6 +187,8 @@ const ATTRIBUTE = /([\s/]*)([^\s"'<>/=]+)(?:(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\
 /** A character reference in an attribute value: decimal, hexadecimal, or one of the five named ones an author writes into an address or an id. */
 const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g;
 const NAMED_CHARACTERS = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+/** Says whether authored HTML holds a comment that never ends. In a published page such a comment takes everything after it, the reader's question form, rail and script included, so the page renderer refuses the page. A `<!--` inside a quoted attribute value or in a bare one is a character of its tag and starts no comment. @example hasEndlessComment('<p>Explained.</p><!-- to do') // => true; hasEndlessComment('<!-- done --!><p title="<!--">Explained.</p>') // => false */
+export const hasEndlessComment = html => [...html.matchAll(COMMENT_OR_START_TAG)].some(([markup]) => markup.startsWith('<!--') && !CLOSED_COMMENT.test(markup));
 /** The character a numeric reference names; the replacement character for a number that names none. Called by {@link attributeText}. @example referencedCharacter('45', 10) // => '-' */
 const referencedCharacter = (digits, radix) => { const codePoint = Number.parseInt(digits, radix); return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '�'; };
 /** Reads an attribute value as a browser does: every character reference becomes its character, so an id or an address written with an entity compares as the text it means. Called by {@link withAttributeValues}. @example attributeText('a&amp;b.html#qa&#45;form') // => 'a&b.html#qa-form' */
