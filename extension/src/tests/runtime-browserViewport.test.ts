@@ -164,7 +164,7 @@ async function viewportHarness(
   const exports: Partial<typeof ViewportModule> = {}
   const { panel } = renderer
   let leaseReleases = 0,
-    keyboardTakesAtPause = 0
+    keyboardTakes = 0
   /** How many reveals the pane had seen each time the viewport asked the owner to give the keyboard back. */
   const revealsWhenOwnerAsked: number[] = []
   /** Answers the owner's held answer; see `ownerReturnsKeyboard`. */
@@ -233,7 +233,7 @@ async function viewportHarness(
               leaseReleases++
             },
             tookKeyboardFromEditor(): void {
-              keyboardTakesAtPause++
+              keyboardTakes++
             },
             ...(ownerReturnsKeyboard === undefined
               ? {}
@@ -260,7 +260,7 @@ async function viewportHarness(
     failures,
     counts: () => ({ panelDisposals: renderer.disposals(), leaseReleases }),
     /** How often the viewport told its lease's owner that the pane took the keyboard from the file the debugger focused at a pause. */
-    keyboardTakesAtPause: () => keyboardTakesAtPause,
+    keyboardTakes: () => keyboardTakes,
     /** For each time the viewport asked its lease's owner to give the keyboard back at a pause: how many reveals the pane had seen by then. */
     revealsWhenOwnerAsked: () => [...revealsWhenOwnerAsked],
     /** Lets an owner whose answer is held (`ownerReturnsKeyboard: 'held'`) answer now. @example harness.answerOwner(false) */
@@ -1922,7 +1922,7 @@ test('the Application pane tells its owner once when it took the keyboard from t
 
   // Assert
   assert.deepEqual(harness.reveals, [{ preserveFocus: false }])
-  assert.equal(harness.keyboardTakesAtPause(), 1)
+  assert.equal(harness.keyboardTakes(), 1)
   harness.viewport.close()
 })
 
@@ -1963,7 +1963,7 @@ for (const [ownerAnswer, revealPreservesFocus, takesTold] of [
     // Assert: the owner was asked once, before any reveal.
     assert.deepEqual(harness.revealsWhenOwnerAsked(), [0])
     assert.deepEqual(harness.reveals, [{ preserveFocus: revealPreservesFocus }])
-    assert.equal(harness.keyboardTakesAtPause(), takesTold)
+    assert.equal(harness.keyboardTakes(), takesTold)
     harness.viewport.close()
   })
 
@@ -1999,7 +1999,7 @@ test('a reveal of the Application pane that is aborted while its owner is asked 
   // Assert
   assert.equal(outcome, 'Error: The presentation was replaced.')
   assert.deepEqual(harness.reveals, [])
-  assert.equal(harness.keyboardTakesAtPause(), 0)
+  assert.equal(harness.keyboardTakes(), 0)
   harness.viewport.close()
 })
 
@@ -2037,7 +2037,7 @@ test('the Application pane takes the keyboard and tells its owner two seconds af
   assert.deepEqual(harness.revealsWhenOwnerAsked(), [0])
   assert.equal(revealsBeforeTheBound, 0)
   assert.deepEqual(revealsAfterTheBound, [{ preserveFocus: false }])
-  assert.equal(harness.keyboardTakesAtPause(), 1)
+  assert.equal(harness.keyboardTakes(), 1)
   harness.viewport.close()
 })
 
@@ -2075,7 +2075,7 @@ for (const [situation, pausedFile] of [
     // Assert
     assert.deepEqual(harness.reveals, [{ preserveFocus: true }])
     // A pane that left the keyboard where it was has nothing to tell its owner, and nothing to ask it.
-    assert.equal(harness.keyboardTakesAtPause(), 0)
+    assert.equal(harness.keyboardTakes(), 0)
     assert.deepEqual(harness.revealsWhenOwnerAsked(), [])
     harness.viewport.close()
   })
@@ -2127,6 +2127,6 @@ for (const [situation, pausedFile] of [
       assert.deepEqual(harness.reveals, [
         { preserveFocus: revealPreservesFocus },
       ])
-      assert.equal(harness.keyboardTakesAtPause(), takesTold)
+      assert.equal(harness.keyboardTakes(), takesTold)
       harness.viewport.close()
     })

@@ -2902,7 +2902,7 @@ export class StudyWorkspace {
 
   /**
    * Takes a sign that the learner works in the active text editor, while the editor shows a frame whose file it opened without the keyboard ({@link showsFrameOpenedWithoutKeyboard}); called by the listeners of {@link watchKeyboardOutsideEditors} with what the second or the third sign answered, and by {@link noteLearnersSelection} for the first.
-   * For such a frame nothing the editor reports says where the keyboard went afterwards: a click of the mouse into the Call Stack view, a double click or Enter there (which give the file the keyboard) and the editor's "Navigate Up/Down Call Stack" commands (which do too) all report the file's opening and then the frame, in that order. So the reader does not decide by the gesture. It takes what the editor reports after the frame: the learner clicked or typed in the active text editor ({@link isLearnersSelection}), a text editor became the active one ({@link isLearnersEditor}), or the frame's preview tab was kept open ({@link keptPreviewTabOfFrame}). From then on {@link replacesEditorFocusedByPause} and {@link keepsKeyboardFromPaneAtPause} treat the covered editor as one that has the keyboard. Without a sign the keyboard is taken to be where the learner had it.
+   * For such a frame nothing the editor reports says where the keyboard went afterwards: a click of the mouse into the Call Stack view, a double click or Enter there (which give the file the keyboard) and the editor's "Navigate Up/Down Call Stack" commands (which do too) all report the file's opening and then the frame, in that order. So the reader does not decide by the gesture. It takes what the editor reports after the frame: the learner clicked or typed in the active text editor ({@link isLearnersSelection}), a text editor became the active one ({@link isLearnersEditor}), or the frame's preview tab was kept open ({@link keptPreviewTabOfFrame}). From then on {@link replacesEditorFocusedByPause} and {@link keepsKeyboardFromPane} treat the covered editor as one that has the keyboard. Without a sign the keyboard is taken to be where the learner had it.
    * @param given - Whether the sign was given.
    * @example this.noteLearnersSignAtFrame(this.isLearnersEditor(editor))
    */
@@ -2938,7 +2938,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the editor's debugger gave the file of the frame it shows the keyboard; asked by {@link showsFrameOpenedWithoutKeyboard}, {@link keepsKeyboardFromPaneAtPause}, {@link holdsKeyboardInActiveEditor} and {@link tellPaneTookKeyboard}.
+   * Says whether the editor's debugger gave the file of the frame it shows the keyboard; asked by {@link showsFrameOpenedWithoutKeyboard}, {@link keepsKeyboardFromPane}, {@link holdsKeyboardInActiveEditor} and {@link tellPaneTookKeyboard}.
    * @returns `true` while the frame of a stop is shown ({@link frameCameWithStop}) and `debug.focusEditorOnBreak` is not turned off; `false` for a frame without a stop, with that setting off, for a thread and without an item.
    * @example this.debuggerGaveEditorKeyboard() // => false at a stop of a learner who turned "debug.focusEditorOnBreak" off
    */
@@ -2952,7 +2952,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the learner gave a sign of working in the active text editor that still holds; asked by {@link keepsKeyboardFromPaneAtPause} and {@link holdsKeyboardInActiveEditor}.
+   * Says whether the learner gave a sign of working in the active text editor that still holds; asked by {@link keepsKeyboardFromPane} and {@link holdsKeyboardInActiveEditor}.
    * @returns At a frame, what {@link noteLearnersSignAtFrame} noted since that frame; while no frame is shown, whether the learner clicked or pressed a key in the active text editor a moment ago ({@link workedInEditorJustNow}).
    * @example if (this.learnerWorksInActiveEditor()) return false
    */
@@ -3194,7 +3194,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Gives the keyboard back to the chat that had it just before a pause, once for each pause; the first step of {@link settleKeyboardAtPause}, and the second half of {@link keepsKeyboardFromPaneAtPause}, which answers the Application pane's viewport before it reveals the pane over the paused file.
+   * Gives the keyboard back to the chat that had it just before a pause, once for each pause; the first step of {@link settleKeyboardAtPause}, and the second half of {@link keepsKeyboardFromPane}, which answers the Application pane's viewport before it reveals the pane over the paused file.
    * A pause is settled at the reader's first reveal after its frame was reported ({@link owedPauseOf}): a later render of the same pause runs nothing, so a file, the captured source or a pane the learner chose meanwhile keeps the keyboard, and such a choice ends the record when the pause ends ({@link endsPauseOfRecord}) or, for a stop that follows without an end, by the time it was made ({@link judgeKeyboardAtPauseBegin}). The keyboard is taken from a text editor only: the paused file the editor's debugger opened, or the captured source shown in its place. While no text editor is active it is not known to have left the chat, and nothing is run.
    * @returns
    * - `true` when the function {@link retainForeignTabFocus} answered ran the chat's focus command, now or for an earlier asker of the same pause ({@link returnMadeAtPause}).
@@ -3274,9 +3274,9 @@ export class StudyWorkspace {
    * - `true` without such a sign whenever the debugger did not give that editor the keyboard ({@link debuggerGaveEditorKeyboard}): at a frame without a stop, at a stop with `debug.focusEditorOnBreak` off, and while no frame is shown. The keyboard stays where the learner has it.
    * - `true` when the chat that had the keyboard before the stop got it back now ({@link returnsKeyboardToChatAtPause}).
    * - `false` when the debugger gave the covered file the keyboard and the reader knows of nobody to give it back to: the pane takes it.
-   * @example comesWithoutKeyboard: () => this.keepsKeyboardFromPaneAtPause()
+   * @example comesWithoutKeyboard: () => this.keepsKeyboardFromPane()
    */
-  private async keepsKeyboardFromPaneAtPause(): Promise<boolean> {
+  private async keepsKeyboardFromPane(): Promise<boolean> {
     if (this.learnerWorksInActiveEditor()) return false
     if (!this.debuggerGaveEditorKeyboard()) return true
     return this.returnsKeyboardToChatAtPause()
@@ -5705,7 +5705,7 @@ export class StudyWorkspace {
         {
           panel,
           // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
-          comesWithoutKeyboard: () => this.keepsKeyboardFromPaneAtPause(),
+          comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
           tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
           released: () => {
             // A retired runtime cannot close or replace the panel attached to a newer lease.

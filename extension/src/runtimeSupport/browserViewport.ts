@@ -444,7 +444,7 @@ export class BrowserViewport {
     this.suspendRenderer()
     // Refresh a visible renderer without reselecting its native tab over the learner's Study focus.
     if (!this.panel.visible) {
-      const takesKeyboard = this.takesKeyboardAtPause()
+      const takesKeyboard = this.takesKeyboardAtReveal()
       // Only an owner that was asked is waited for: every other reveal stays in this turn.
       if (typeof takesKeyboard === 'boolean') this.revealPanel(takesKeyboard)
       else await this.revealPanelOnceOwnerAnswered(takesKeyboard, signal)
@@ -474,9 +474,9 @@ export class BrowserViewport {
    * - `false` at once when the pane covers no active text editor.
    * - At once what {@link showsFocusingPause} says, when the lease has no owner to ask.
    * - Otherwise a promise of whether the pane has to take the keyboard by the owner's answer ({@link takesKeyboardByOwnersAnswer}).
-   * @example const takesKeyboard = this.takesKeyboardAtPause()
+   * @example const takesKeyboard = this.takesKeyboardAtReveal()
    */
-  private takesKeyboardAtPause(): boolean | Promise<boolean> {
+  private takesKeyboardAtReveal(): boolean | Promise<boolean> {
     if (!this.coversActiveTextEditor()) return false
     const asked = this.lease?.comesWithoutKeyboard?.()
     if (!asked) return this.showsFocusingPause()
@@ -484,7 +484,7 @@ export class BrowserViewport {
   }
 
   /**
-   * Waits for the owner's answer about the keyboard, for at most {@link KEYBOARD_OWNER_ANSWER_TIMEOUT_MS}; the step of {@link takesKeyboardAtPause} for a lease whose owner was asked.
+   * Waits for the owner's answer about the keyboard, for at most {@link KEYBOARD_OWNER_ANSWER_TIMEOUT_MS}; the step of {@link takesKeyboardAtReveal} for a lease whose owner was asked.
    * @param asked - The owner's pending answer: `true` when the pane is to come without the keyboard.
    * @returns `false` when the owner answered in time that the pane must not take the keyboard, and `true` when it answered that the pane has to take it. When its answer failed or did not come within the bound, what the viewport reads itself ({@link showsFocusingPause}), `true` at a pause that gave the covered file the keyboard: the reveal then goes on as if the keyboard had been given to nobody, so that one command the editor does not answer cannot hold the reveal and every placement behind it.
    * @example return this.takesKeyboardByOwnersAnswer(asked)
@@ -508,7 +508,7 @@ export class BrowserViewport {
 
   /**
    * Brings the pane to the front once its owner answered about the keyboard, unless the reveal was called off meanwhile; the step of {@link revealNow} for a reveal that had to ask.
-   * @param takesKeyboard - What {@link takesKeyboardAtPause} is waiting for.
+   * @param takesKeyboard - What {@link takesKeyboardAtReveal} is waiting for.
    * @param signal - The reveal's cancellation.
    * @throws The signal's reason when the reveal was aborted while its owner was asked: the pane then stays as it is, takes no keyboard and tells nothing. "Owned viewport is closed" when the viewport was closed meanwhile.
    * @example await this.revealPanelOnceOwnerAnswered(takesKeyboard, signal)
@@ -525,7 +525,7 @@ export class BrowserViewport {
   /**
    * Brings the pane to the front of its group for {@link revealNow}, with or without the keyboard, and tells the lease's owner when the pane took it.
    * A pane without a lease is the run's own tab in the first group and takes the focus as before.
-   * @param takesKeyboard - What {@link takesKeyboardAtPause} answered.
+   * @param takesKeyboard - What {@link takesKeyboardAtReveal} answered.
    * @throws "Owned viewport is closed" when the viewport was closed while its owner was asked.
    * @example this.revealPanel(false) // a leased pane comes to the front and the keyboard stays where it is
    */
@@ -540,7 +540,7 @@ export class BrowserViewport {
   }
 
   /**
-   * Says whether revealing the leased pane would hide the active text editor; called by {@link takesKeyboardAtPause}.
+   * Says whether revealing the leased pane would hide the active text editor; called by {@link takesKeyboardAtReveal}.
    * A text editor in front of the pane's group that is the active text editor, in a window that has the focus, may have the keyboard: the editor's debugger gives the paused file the keyboard at a breakpoint (`debug.focusEditorOnBreak`, on by default), in the active group, and a learner clicks and types in files. Revealing the pane while preserving the focus then hides the focused editor without focusing anything, and the keyboard falls to the document body until the learner clicks (native run of 2026-10-04, after every committed capture).
    * @returns `true` while the window is focused and the pane's group is the active group showing a text editor that is the active text editor.
    * @example if (!this.coversActiveTextEditor()) return false
@@ -551,7 +551,7 @@ export class BrowserViewport {
   }
 
   /**
-   * Says whether the editor's debugger gave the file of the frame it shows the keyboard, as far as the viewport can read it; the judgment of {@link takesKeyboardAtPause} for a lease without an owner, and of {@link takesKeyboardByOwnersAnswer} for an owner that does not answer.
+   * Says whether the editor's debugger gave the file of the frame it shows the keyboard, as far as the viewport can read it; the judgment of {@link takesKeyboardAtReveal} for a lease without an owner, and of {@link takesKeyboardByOwnersAnswer} for an owner that does not answer.
    * The viewport cannot tell an editor that holds the keyboard from one that is merely the active editor while the learner types in a side-view chat (VS Code's, and Cursor's Agent pane in the secondary side bar). At a pause the debugger gave the paused file the keyboard, whoever had it before. A pause is told by a frame only ({@link isStackFrameItem}): once the session runs again the editor reports its thread. What the learner did since (a frame selected in the Call Stack view, a click into a file) only the lease's owner knows.
    * @returns `true` only while Run and Debug's active stack item is a frame and `debug.focusEditorOnBreak` is not turned off.
    * @example if (!asked) return this.showsFocusingPause()
