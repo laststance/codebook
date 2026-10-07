@@ -195,6 +195,33 @@ const referencedCharacter = (digits, radix) => { const codePoint = Number.parseI
 const attributeText = value => value.replace(CHARACTER_REFERENCE, (_reference, decimal, hexadecimal, name) => NAMED_CHARACTERS[name] ?? referencedCharacter(decimal ?? hexadecimal, decimal === undefined ? 16 : 10));
 /** An attribute's value as written, in whichever of the three forms {@link ATTRIBUTE} matched it. Called by {@link withAttributeValues}. @example writtenValue(undefined, 'a', undefined) // => 'a' */
 const writtenValue = (double, single, bare) => double ?? single ?? bare;
+/** What the publisher reads exactly as a browser does at a `<` of authored HTML, tried at that `<` alone: a comment that ends; an end tag; a start tag (the one group) whose attributes are separated by spaces or follow a closing quote and whose values are quoted, or bare without a character a browser takes for an error there (a quotation mark, `<`, `=` or a backtick); or a `<` before a character that starts no tag, which is text. Anything else at a `<` (`<?`, `<!` without `--`, a CDATA section, a quote that is no attribute's value, a tag or a quoted value that never ends, an end tag with an attribute) a browser reads by rules this publisher does not follow. */
+const READ_EXACTLY = /<!--(?:-?>|[\s\S]*?--!?>)|<\/[A-Za-z][A-Za-z0-9:._-]*\s*>|(<[A-Za-z][A-Za-z0-9:._-]*(?:(?:\s+|(?<=["']))[^\s"'<>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>=`]+))?)*\s*\/?>)|<(?![A-Za-z!/?])/y;
+/** The attributes of a start tag as {@link ATTRIBUTE} reads them: for each its name in lower case and its value as written (an empty text without one). Called by {@link isTagReadExactly}. @example attributesOf('<h2 id="a" hidden>') // => [['id', 'a'], ['hidden', '']] */
+const attributesOf = tag => [...tag.slice(tag.search(/[\s/>]/)).matchAll(ATTRIBUTE)].map(([, , name, , double, single, bare]) => [name.toLowerCase(), writtenValue(double, single, bare) ?? '']);
+/** Whether an id is written so that the publisher reads the text a browser reads: plain, or with the character references {@link attributeText} reads. Another reference (`&lowbar;`, or `&#45` without its semicolon) a browser turns into a character the publisher would not see. Called by {@link isTagReadExactly}. @example isIdReadExactly('qa&#45;form') // => true; isIdReadExactly('qa&#45form') // => false */
+const isIdReadExactly = id => !/&[#A-Za-z0-9]/.test(id.replace(CHARACTER_REFERENCE, ''));
+/** Whether a start tag that {@link READ_EXACTLY} matched carries what the publisher reads as a browser does: each attribute once (a browser keeps the first of two and drops the other) and an id read exactly. Called by {@link unreadMarkupOf}. @example isTagReadExactly('<h2 id="a" id="qa-form">') // => false */
+const isTagReadExactly = tag => {
+  const attributes = attributesOf(tag), names = attributes.map(([name]) => name);
+  return new Set(names).size === names.length && attributes.every(([name, value]) => name !== 'id' || isIdReadExactly(value));
+};
+/** How many characters the publisher reads exactly as a browser does at one `<` of authored HTML; 0 when it cannot. Called by {@link unreadMarkupOf}. @example readLengthAt('a <b> c', 2) // => 3; readLengthAt('a <? c', 2) // => 0 */
+const readLengthAt = (html, index) => {
+  READ_EXACTLY.lastIndex = index;
+  const read = READ_EXACTLY.exec(html);
+  // The one group is a start tag; a comment, an end tag and a `<` of the text need no second look.
+  return read && (read[1] === undefined || isTagReadExactly(read[1])) ? read[0].length : 0;
+};
+/** Finds the first place of authored HTML that the publisher cannot read exactly as a browser does, so the page renderer can refuse the page instead of reading tags and ids there that a browser reads differently. Every `<` is looked at once; what a tag or a comment holds is passed over with it. @returns The first 40 characters of that place with its white space as single spaces; undefined when every `<` is read exactly. @example unreadMarkupOf('<p>1 < 2</p><? <h2 id="a">') // => '<? <h2 id="a">' */
+export const unreadMarkupOf = html => {
+  for (let index = html.indexOf('<'); index !== -1;) {
+    const length = readLengthAt(html, index);
+    if (length === 0) return html.slice(index, index + 40).replace(/\s+/g, ' ');
+    index = html.indexOf('<', index + length);
+  }
+  return undefined;
+};
 /** The quote an attribute's value stands in, by which of the two quoted forms {@link ATTRIBUTE} matched; none for a bare value. Called by {@link withAttributeValues}. @example quoteOf(undefined, 'a') // => "'" */
 const quoteOf = (double, single) => double !== undefined ? '"' : single !== undefined ? "'" : '';
 /** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped, in the quotes the author used. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
