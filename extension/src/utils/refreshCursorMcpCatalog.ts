@@ -20,7 +20,9 @@ import {
   PRIVATE_FILE_MODE,
 } from '../constants'
 
+import { areNamesOfOneFile } from './areNamesOfOneFile'
 import { atomicPrivateWrite } from './atomicPrivateWrite'
+import { dropSecondNameOfMovedFile } from './dropSecondNameOfMovedFile'
 import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
@@ -288,6 +290,38 @@ async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
 }
 
 /**
+ * Opens the config right after Codebook published it, or after another writer's file took its path, for {@link refreshCursorMcpCatalog}; a config that is gone by then changed while it was refreshed.
+ * @param targetPath - The config's path.
+ * @returns The open file ({@link openConfigForRefresh}).
+ * @throws With {@link CONFIG_CHANGED_SENTENCE} when the path holds nothing any more, and with the sentence {@link openConfigForRefresh} gives for a link, a path that is no regular file or a replaced file.
+ * @example const handle = await openPublishedConfig('/home/user/.cursor/mcp.json')
+ */
+async function openPublishedConfig(targetPath: string): Promise<FileHandle> {
+  return openConfigForRefresh(targetPath).catch((error: unknown) => {
+    throw isMissing(error)
+      ? new Error(CONFIG_CHANGED_SENTENCE, { cause: error })
+      : error
+  })
+}
+
+/**
+ * Turns a failure to link Codebook's new config into place into a sentence, for {@link refreshCursorMcpCatalog} when the link fails for another reason than a file that is already there: no config changed then, the file system refused the new name (a folder that allows no new files, a file system without hard links, a staged file that is gone).
+ * @param error - What `link` threw.
+ * @param targetPath - The config's path.
+ * @returns An error that names the path and the file system's code, with the failure as its cause; a failure without a code itself.
+ * @example throw refusalOfConfigLink(Object.assign(new Error('EPERM'), { code: 'EPERM' }), '/home/user/.cursor/mcp.json')
+ */
+function refusalOfConfigLink(error: unknown, targetPath: string): unknown {
+  const code = systemErrorCode(error)
+  return code
+    ? new Error(
+        `Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${targetPath} (${code}). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+        { cause: error },
+      )
+    : error
+}
+
+/**
  * Turns a failure to open or change the config for its times into the sentence that fits it, for {@link openConfigForItsTimes} and {@link setTimesThroughWritableFile}.
  * @param error - What the open or the change threw.
  * @returns An error with {@link CONFIG_NOT_WRITABLE_SENTENCE} for a file this user may not write, one with {@link CONFIG_CHANGED_SENTENCE} for a path that no longer holds the file, each with the failure as its cause; every other failure itself.
@@ -430,12 +464,40 @@ async function recoverCreation(
       owner,
       CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
     )
-  if (staged) await unlink(record.stagedPath)
+  // A config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
+  if (staged || (await areNamesOfOneFile(targetPath, record.stagedPath)))
+    await unlink(record.stagedPath)
   // A changed target remains user-owned; only the exact staged inode is discarded.
   await unlink(pendingPath)
 }
 
-/** Completes a journaled retirement before {@link refreshCursorMcpCatalog} can create another config. @example await recoverRemoval(pending, receipt, target, storage) */
+/**
+ * Leaves a config that is not the one Codebook created at its own path and takes away what a removal's move left of it, for {@link recoverRemoval} and for {@link removeOwnedCursorMcpCatalog} when the config changed between its ownership check and its move ({@link dropSecondNameOfMovedFile}: the config is linked back where its path holds nothing, and its second name in Codebook's storage is removed once it stands at its path).
+ * @param targetPath - The config's path.
+ * @param retiredPath - The name in Codebook's storage that the removal moved the config to.
+ * @param pendingPath - The removal's recovery record, which the caller removes afterwards.
+ * @throws When the config's path holds another file than the one that was moved away: both files and the record stay, and the sentence names the kept file and what the learner does next.
+ * @example await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath)
+ */
+async function leaveChangedConfigInPlace(
+  targetPath: string,
+  retiredPath: string,
+  pendingPath: string,
+): Promise<void> {
+  if ((await dropSecondNameOfMovedFile(targetPath, retiredPath)) === 'kept')
+    throw new Error(
+      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+    )
+}
+
+/**
+ * Completes a journaled retirement before {@link refreshCursorMcpCatalog} can create another config, and ends one whose config turned out not to be Codebook's.
+ * @returns
+ * - `removed`: the config Codebook created stands under its retired name; the receipt now says so
+ * - undefined: nothing to finish (no record), or the record is dropped: the config Codebook created is still at its path, or the config changed under the removal and stays in place as the learner's ({@link leaveChangedConfigInPlace})
+ * @throws For an invalid record, and when the config's path and the retired name hold two different files of which neither is the config Codebook created.
+ * @example await recoverRemoval(pending, receipt, target, storage)
+ */
 async function recoverRemoval(
   pendingPath: string,
   receiptPath: string,
@@ -468,10 +530,9 @@ async function recoverRemoval(
     await unlink(pendingPath)
     return 'removed'
   }
+  // Neither name holds the config Codebook created: it changed under the removal and stays the learner's.
   if (!(await ownedFile(targetPath, owner)))
-    throw new Error(
-      'Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record.',
-    )
+    await leaveChangedConfigInPlace(targetPath, record.retiredPath, pendingPath)
   await unlink(pendingPath)
   return undefined
 }
@@ -571,24 +632,21 @@ export async function refreshCursorMcpCatalog(
         try {
           await link(stagedPath, targetPath)
         } catch (createError) {
-          if (!(
-            createError instanceof Error &&
-            'code' in createError &&
-            createError.code === 'EEXIST'
-          ))
-            throw createError
+          // Only a file that is already there is another writer's publication; every other refusal gets its sentence.
+          if (systemErrorCode(createError) !== 'EEXIST')
+            throw refusalOfConfigLink(createError, targetPath)
           await recoverCreation(
             pendingCreationPath,
             receiptPath,
             targetPath,
             cursorDirectory,
           )
-          handle = await openConfigForRefresh(targetPath)
+          handle = await openPublishedConfig(targetPath)
         }
         if (!handle) {
           if (!(await ownedFile(targetPath, owner)))
             throw new Error(
-              'Cursor MCP config changed during publication; Codebook preserved it and its recovery record.',
+              'Cursor MCP config changed during publication; Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.',
             )
           await atomicPrivateWrite(
             receiptPath,
@@ -597,7 +655,7 @@ export async function refreshCursorMcpCatalog(
           )
           await unlink(stagedPath)
           await unlink(pendingCreationPath)
-          handle = await openConfigForRefresh(targetPath)
+          handle = await openPublishedConfig(targetPath)
         }
       }
       try {
@@ -709,10 +767,10 @@ export async function removeOwnedCursorMcpCatalog(
       )
       await rename(targetPath, retiredPath)
       if (!(await ownedFile(retiredPath, owner))) {
-        await link(retiredPath, targetPath).catch(() => undefined)
-        throw new Error(
-          'Cursor MCP catalog changed during cleanup; Codebook retained the actual file and recovery record.',
-        )
+        // The config changed between the check and the move: it goes back to its place and stays the learner's.
+        await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath)
+        await unlink(pendingPath)
+        return 'preserved'
       }
       await atomicPrivateWrite(
         receiptPath,
