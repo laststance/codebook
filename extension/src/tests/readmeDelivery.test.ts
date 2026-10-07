@@ -995,15 +995,15 @@ test('the packaged README has the section a refusal for a damaged installation n
   )
 })
 
-// Value: protects=a learner or an agent who reads in the README why a start was refused with SOURCE_CHANGED and that Codebook does not save a document when it starts a debugger; fails_when=the recovery table loses the sentence, or says again only that the editor file differs; why_new=Cycle 0046 row 314: a chat request saved the learner's unsaved documents and failed its own run, and the README named neither the cause nor the way on; seam=none
-test('the packaged README says for SOURCE_CHANGED that a start saves no document and is refused while a cited source is open in the editor with other text, and what the learner and the agent do then', async () => {
+// Value: protects=a learner or an agent recovering from SOURCE_CHANGED at a start or during a run; fails_when=the README describes only a refused start and hides earlier execution, retained observations or a continuation that sent no resume; why_new=Cycle 0046 rows 314 and 349: the source comparison also ends a running repository-browser or node-test run; seam=none
+test('the packaged README distinguishes a source-changed start that ran nothing from a running browser or Node test that ended, preserves earlier observations and says how to start deliberately again', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
     '| `SOURCE_CHANGED` ',
-    '| Read the captured source resource; the current editor file differs from it. A start is refused with it, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with other text than the article cites: Codebook starts its debuggers without saving a document, so the learner saves the file (the agent then reads the source and publishes the article again) or reverts it before a new run. ',
+    '| At a start, a cited source open in the editor with text that differs from the article refuses the run before the application, test, browser or debugger starts; Codebook saves no document. During a repository-browser or node-test run, the same change ends the run at its next stop or before a continuation; that continuation sends no resume. Earlier committed observations and their captured source remain readable. Read the existing run and its captured source resources; ask the learner to save or revert the named file: after a save, read the source again and publish the article again; after a revert, change nothing. Then start a new deliberate run. Never retry application input automatically. ',
   ])
 
   // Assert
