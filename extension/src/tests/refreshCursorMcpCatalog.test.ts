@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { constants as fileSystemConstants } from 'node:fs'
 import * as fileSystem from 'node:fs/promises'
 import {
   chmod,
@@ -964,14 +965,14 @@ test('a ~/.cursor/mcp.json this user may not read is refused by the refresh with
   assert.deepEqual(
     { refusal, config: await readFile(configPath, 'utf8') },
     {
-      refusal: `Cursor MCP config cannot be refreshed because this user may not read it: ${configPath} (EACCES). Codebook left it unchanged. Allow this user to read that file, then run Codebook: Set Up AI Chat again.`,
+      refusal: `The Cursor MCP config could not be opened: ${configPath} (EACCES). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
       config: '{"mcpServers":{"existing":{}}}\n',
     },
   )
 })
 
-// Value: protects=the sentence a learner reads when the system does not open ~/.cursor/mcp.json for a reason Codebook has no step for (too many open files, a failing disk); fails_when=the refusal speaks of "a redirected or inaccessible file", which names a link that is not there, or names neither the file, the system's code nor the command to run again; why_new=Cycle 0046 row 286 (every open the system refuses for another reason than a link or a missing right); seam=node:fs/promises open of the opener the loaded catalog opens through, which refuses the config once
-test('a ~/.cursor/mcp.json that the system does not open for a reason Codebook has no step for is answered with the config’s path, the system’s code and the setup as the command to run again, and the refresh run again, once the file opens, keeps its bytes', async (context) => {
+// Value: protects=the boundary of the sentences for a file that could not be opened: only a missing right and a program that holds the file have one; fails_when=another failure of the config's open (too many open files, a failing disk) is worded by Codebook, with a step it cannot know ("a redirected or inaccessible file", or "run the setup again once that file can be opened"), instead of reaching the learner as the system's own text; why_new=Cycle 0046 rows 286 and 310: every other failure of an open is the system's own text; seam=node:fs/promises open of the opener the loaded catalog opens through, which refuses the config once
+test('a ~/.cursor/mcp.json that the system does not open for another reason than a missing right or a program that holds it ends the refresh with the system’s own text, as it is, and the refresh run again, once the file opens, keeps its bytes', async (context) => {
   // Arrange: a learner's config, and a catalog whose first open of it the system refuses with EMFILE.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -991,9 +992,10 @@ test('a ~/.cursor/mcp.json that the system does not open for a reason Codebook h
           ) => {
             if (path === configPath && !isOpenRefused) {
               isOpenRefused = true
-              throw Object.assign(new Error('EMFILE: too many open files'), {
-                code: 'EMFILE',
-              })
+              throw Object.assign(
+                new Error(`EMFILE: too many open files, open '${path}'`),
+                { code: 'EMFILE' },
+              )
             }
             return fileSystem.open(path, ...flagsAndMode)
           },
@@ -1008,15 +1010,208 @@ test('a ~/.cursor/mcp.json that the system does not open for a reason Codebook h
   const refusal = await answerOrRefusalOf(
     catalog.refreshCursorMcpCatalog(storageRoot, directory),
   )
-  // The sentence is followed to the letter: the command is run again, and the file opens now.
+  // The file opens at the next run.
   await catalog.refreshCursorMcpCatalog(storageRoot, directory)
 
   // Assert
   assert.deepEqual(
     { refusal, config: await readFile(configPath, 'utf8') },
     {
-      refusal: `Cursor MCP config could not be opened: ${configPath} (EMFILE). Codebook left it unchanged. Run Codebook: Set Up AI Chat again once that file can be opened.`,
+      refusal: `EMFILE: too many open files, open '${configPath}'`,
       config: '{"mcpServers":{"existing":{}}}\n',
+    },
+  )
+})
+
+/**
+ * Loads the Cursor MCP catalog over a file system that refuses to open the files a test calls held, as a system does for a file another program holds for itself or this user may not read; every open of the catalog and of its opener goes through it.
+ * @param refusalCodeOf - Asked at every open with the path and whether the file is opened to be written too: the code to refuse it with, or undefined to open it.
+ * @param timesNeedWriteAccess - A file that was not opened with write access refuses to set its times, as on Windows, so the refresh opens the config a second time to write.
+ * @returns The loaded catalog.
+ */
+async function loadCatalogOverHeldFiles(
+  refusalCodeOf: (path: string, isOpenedToWrite: boolean) => string | undefined,
+  timesNeedWriteAccess = false,
+): Promise<typeof CatalogModule> {
+  const fileSystemOfTheCatalog = {
+    ...fileSystem,
+    open: async (
+      path: string,
+      ...flagsAndMode: [flags?: string | number, mode?: number]
+    ) => {
+      const [flags] = flagsAndMode
+      const code = refusalCodeOf(
+        path,
+        typeof flags === 'number' &&
+          (flags & fileSystemConstants.O_RDWR) === fileSystemConstants.O_RDWR,
+      )
+      if (code !== undefined)
+        throw Object.assign(
+          new Error(`${code}: the system refused, open '${path}'`),
+          { code },
+        )
+      return fileSystem.open(path, ...flagsAndMode)
+    },
+  }
+  return loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      'node:fs/promises': fileSystemOfTheCatalog,
+      './openWithoutFollowing': await loadOpenWithoutFollowing({
+        fileSystem: fileSystemOfTheCatalog,
+        timesNeedWriteAccess,
+      }),
+    },
+    // The catalog tells a refusal by `instanceof Error` and its code; these errors belong to this realm.
+    { Error },
+  )
+}
+
+// Value: protects=a learner whose editor, or Cursor itself, holds a file of the Cursor MCP catalog for itself, or who may not read it, while a setup or a removal runs; fails_when=the command ends with the file system's own text ("EBUSY: resource busy or locked, open …"), which names no step and no command; or a config that could not be opened is answered as a config that is not Codebook's and "preserved", or a record as invalid; why_new=Cycle 0046 row 310: the three codes of a file that cannot be opened have a sentence at every open of the catalog; seam=node:fs/promises open of the loaded catalog and of its opener, which refuses the held file
+test('a record or the config of the Cursor MCP catalog that this user cannot open at that moment is answered by the refresh and by the removal with the file’s path, the system’s code, the step and the command that was run, at a record, at the ownership check, at the config’s open and at its open for writing: the config is never answered as not Codebook’s, nothing is changed, and the run after the program let go finishes', async (context) => {
+  // Arrange: four catalogs. The first three hold Codebook's own config and receipt; the fourth a config of the learner.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const catalogOf = async (
+    name: string,
+    isOwned: boolean,
+  ): Promise<{
+    cursorDirectory: string
+    configPath: string
+    storageRoot: string
+    receiptPath: string
+  }> => {
+    const cursorDirectory = join(directory, name, '.cursor'),
+      storageRoot = join(directory, name, 'storage')
+    await mkdir(cursorDirectory, { recursive: true })
+    if (isOwned) await refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+    else
+      await writeFile(
+        join(cursorDirectory, 'mcp.json'),
+        '{"mcpServers":{"existing":{}}}\n',
+      )
+    return {
+      cursorDirectory,
+      configPath: join(cursorDirectory, 'mcp.json'),
+      storageRoot,
+      receiptPath: join(storageRoot, 'cursor-mcp-catalog', 'receipt.json'),
+    }
+  }
+  const withHeldRecord = await catalogOf('record', true),
+    withHeldOwnedConfig = await catalogOf('owned-config', true),
+    withHeldConfig = await catalogOf('config', false),
+    withConfigHeldForWriting = await catalogOf('config-for-writing', false)
+  let isProgramHoldingTheFiles = true
+  const catalog = await loadCatalogOverHeldFiles((path) =>
+    isProgramHoldingTheFiles
+      ? {
+          [withHeldRecord.receiptPath]: 'EACCES',
+          [withHeldOwnedConfig.configPath]: 'EBUSY',
+          [withHeldConfig.configPath]: 'EPERM',
+        }[path]
+      : undefined,
+  )
+  const catalogWhoseTimesNeedWriteAccess = await loadCatalogOverHeldFiles(
+    (path, isOpenedToWrite) =>
+      isProgramHoldingTheFiles &&
+      isOpenedToWrite &&
+      path === withConfigHeldForWriting.configPath
+        ? 'EBUSY'
+        : undefined,
+    true,
+  )
+  const run = {
+    refreshOverTheRecord: (): Promise<string> =>
+      answerOrRefusalOf(
+        catalog.refreshCursorMcpCatalog(
+          withHeldRecord.storageRoot,
+          withHeldRecord.cursorDirectory,
+        ),
+      ),
+    removalOverTheRecord: (): Promise<string> =>
+      answerOrRefusalOf(
+        catalog.captureOwnedCursorMcpCatalogGeneration(
+          withHeldRecord.storageRoot,
+          withHeldRecord.cursorDirectory,
+          'Codebook: Remove Managed Cursor Skill',
+        ),
+      ),
+    removalOverTheOwnedConfig: (): Promise<string> =>
+      answerOrRefusalOf(
+        catalog.removeOwnedCursorMcpCatalog(
+          withHeldOwnedConfig.storageRoot,
+          withHeldOwnedConfig.cursorDirectory,
+          undefined,
+          'Codebook: Remove Managed Cursor Skill',
+        ),
+      ),
+    refreshOverTheConfig: (): Promise<string> =>
+      answerOrRefusalOf(
+        catalog.refreshCursorMcpCatalog(
+          withHeldConfig.storageRoot,
+          withHeldConfig.cursorDirectory,
+        ),
+      ),
+    refreshThatOpensToWrite: (): Promise<string> =>
+      answerOrRefusalOf(
+        catalogWhoseTimesNeedWriteAccess.refreshCursorMcpCatalog(
+          withConfigHeldForWriting.storageRoot,
+          withConfigHeldForWriting.cursorDirectory,
+        ),
+      ),
+  }
+  const receiptBefore = await readFile(withHeldRecord.receiptPath, 'utf8')
+
+  // Act: each command while the file is held, and then its sentence to the letter: the program lets go, and the command is run again.
+  const whileHeld = {
+    refreshOverTheRecord: await run.refreshOverTheRecord(),
+    removalOverTheRecord: await run.removalOverTheRecord(),
+    removalOverTheOwnedConfig: await run.removalOverTheOwnedConfig(),
+    refreshOverTheConfig: await run.refreshOverTheConfig(),
+    refreshThatOpensToWrite: await run.refreshThatOpensToWrite(),
+  }
+  const filesWhileHeld = {
+    receiptIsUnchanged:
+      (await readFile(withHeldRecord.receiptPath, 'utf8')) === receiptBefore,
+    ownedConfig: await readFile(withHeldOwnedConfig.configPath, 'utf8'),
+    recordsOfTheOwnedConfig: (
+      await readdir(join(withHeldOwnedConfig.storageRoot, 'cursor-mcp-catalog'))
+    ).filter(
+      (name) => name.startsWith('pending-') || name.startsWith('retired-'),
+    ),
+    config: await readFile(withHeldConfig.configPath, 'utf8'),
+  }
+  isProgramHoldingTheFiles = false
+  const afterwards = {
+    refreshOverTheRecord: typeof JSON.parse(await run.refreshOverTheRecord()),
+    removalOverTheOwnedConfig: await run.removalOverTheOwnedConfig(),
+    refreshOverTheConfig: await run.refreshOverTheConfig(),
+    refreshThatOpensToWrite: await run.refreshThatOpensToWrite(),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { whileHeld, filesWhileHeld, afterwards },
+    {
+      whileHeld: {
+        refreshOverTheRecord: `A record of the Cursor MCP catalog could not be opened: ${withHeldRecord.receiptPath} (EACCES). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+        removalOverTheRecord: `A record of the Cursor MCP catalog could not be opened: ${withHeldRecord.receiptPath} (EACCES). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Remove Managed Cursor Skill again.`,
+        removalOverTheOwnedConfig: `The Cursor MCP config could not be opened: ${withHeldOwnedConfig.configPath} (EBUSY). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Remove Managed Cursor Skill again.`,
+        refreshOverTheConfig: `The Cursor MCP config could not be opened: ${withHeldConfig.configPath} (EPERM). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+        refreshThatOpensToWrite: `The Cursor MCP config could not be opened: ${withConfigHeldForWriting.configPath} (EBUSY). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+      },
+      filesWhileHeld: {
+        receiptIsUnchanged: true,
+        ownedConfig: '{"mcpServers":{}}\n',
+        recordsOfTheOwnedConfig: [],
+        config: '{"mcpServers":{"existing":{}}}\n',
+      },
+      afterwards: {
+        refreshOverTheRecord: 'string',
+        removalOverTheOwnedConfig: '"removed"',
+        refreshOverTheConfig: undefined,
+        refreshThatOpensToWrite: undefined,
+      },
     },
   )
 })

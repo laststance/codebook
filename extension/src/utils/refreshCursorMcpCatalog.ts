@@ -22,6 +22,7 @@ import {
 
 import { atomicPrivateWrite } from './atomicPrivateWrite'
 import { describeRefusedLinkBack } from './describeRefusedLinkBack'
+import { describeUnopenedFile } from './describeUnopenedFile'
 import { describeUnopenedMovedFile } from './describeUnopenedMovedFile'
 import {
   dropSecondNameOfMovedFile,
@@ -41,6 +42,7 @@ import {
   stepPastNoRealFolder,
 } from './stepPastNoRealFolder'
 import { systemErrorCode } from './systemErrorCode'
+import { unopenedFileCode } from './unopenedFileCode'
 import { withStorageLock } from './withStorageLock'
 
 const EMPTY_MCP_CONFIG = '{"mcpServers":{}}\n'
@@ -178,11 +180,34 @@ const RECORD_REFUSAL_SENTENCES: ReadonlyMap<
 ])
 
 /**
+ * Turns a failed open of a file of the catalog (a record, the config, or the config under a staged or retired name) into the refusal of a file this user could not open at that moment, for every place of the catalog that opens such a file: {@link refusalOfRecordOpen}, {@link ownedFile}, {@link refusalOfConfigOpen} and {@link openConfigForItsTimes}. Nothing is known of such a file: it is neither an invalid record nor a config that is not Codebook's.
+ * @param error - What the open threw.
+ * @param subject - What the file is, as the sentence begins.
+ * @param path - The file's path.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
+ * @returns An error with the sentence ({@link describeUnopenedFile}) and the failure as its cause, for the three codes of {@link unopenedFileCode}; every other failure itself, which is the system's own text.
+ * @example throw refusalOfUnopenedFile(error, 'The Cursor MCP config', '/home/user/.cursor/mcp.json', 'Codebook: Set Up AI Chat')
+ */
+function refusalOfUnopenedFile(
+  error: unknown,
+  subject: string,
+  path: string,
+  commandToRunAgain: string,
+): unknown {
+  const code = unopenedFileCode(error)
+  return code
+    ? new Error(describeUnopenedFile(subject, path, code, commandToRunAgain), {
+        cause: error,
+      })
+    : error
+}
+
+/**
  * Turns a refusal to open an ownership record into the sentence that fits it, for {@link privateJson}.
  * @param error - What {@link openWithoutFollowing} threw.
  * @param path - The record's path.
  * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
- * @returns An error with the sentence of a link, of what is no regular file or of a replaced file ({@link RECORD_REFUSAL_SENTENCES}), with the refusal as its cause; every other failure itself.
+ * @returns An error with the sentence of a link, of what is no regular file or of a replaced file ({@link RECORD_REFUSAL_SENTENCES}), or of a record this user could not open at that moment ({@link refusalOfUnopenedFile}), with the refusal as its cause; every other failure itself.
  * @example throw refusalOfRecordOpen(error, '/private/cursor-mcp-catalog/receipt.json', 'Codebook: Set Up AI Chat')
  */
 function refusalOfRecordOpen(
@@ -193,7 +218,12 @@ function refusalOfRecordOpen(
   const sentence = RECORD_REFUSAL_SENTENCES.get(systemErrorCode(error))
   return sentence
     ? new Error(sentence(path, commandToRunAgain), { cause: error })
-    : error
+    : refusalOfUnopenedFile(
+        error,
+        'A record of the Cursor MCP catalog',
+        path,
+        commandToRunAgain,
+      )
 }
 
 /**
@@ -352,17 +382,24 @@ async function isOwnedOpenFile(
   return holdsOwnedBytes(handle, before, owner)
 }
 
-/** Matches the inode number and the bytes through one no-follow handle ({@link openWithoutFollowing}, {@link isOwnedOpenFile}) before recovery or removal, tolerating volume device renumbering. @returns `true` for the file the receipt names; `false` for a path that holds nothing, a link or no regular file, and for another or a changed file, also one that took the path while it was opened. @example await ownedFile('/home/user/.cursor/mcp.json', receipt) */
+/** Matches the inode number and the bytes through one no-follow handle ({@link openWithoutFollowing}, {@link isOwnedOpenFile}) before recovery or removal, tolerating volume device renumbering. @param commandToRunAgain - The command the learner ran, which the refusal of a file that could not be opened names as the one to run again. @returns `true` for the file the receipt names; `false` for a path that holds nothing, a link or no regular file, and for another or a changed file, also one that took the path while it was opened. @throws With the sentence of a file this user could not open at that moment ({@link refusalOfUnopenedFile}): such a file is never answered as not the owned one; every other failure of the open itself. @example await ownedFile('/home/user/.cursor/mcp.json', receipt, 'Codebook: Set Up AI Chat') */
 async function ownedFile(
   path: string,
   owner: CatalogReceipt,
+  commandToRunAgain: string,
 ): Promise<boolean> {
   let handle
   try {
     handle = await openWithoutFollowing(path)
   } catch (error) {
     if (NOT_AN_OWNED_FILE_CODES.has(systemErrorCode(error))) return false
-    throw error
+    // A file that could not be opened is not "another file": nothing is known of it, and the command stops with the step that opens it.
+    throw refusalOfUnopenedFile(
+      error,
+      'The Cursor MCP config',
+      path,
+      commandToRunAgain,
+    )
   }
   try {
     return await isOwnedOpenFile(handle, owner)
@@ -434,25 +471,7 @@ function configEmptySentence(targetPath: string): string {
   return `Cursor MCP config is empty: ${targetPath}. Codebook preserved it; the file is yours. Write your MCP servers into it (a config without servers is {"mcpServers":{}}), or delete it so that Codebook creates the config, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 }
 
-/** The error codes with which a system refuses to open a file this user may not read. */
-const READ_REFUSED_CODES: ReadonlySet<string> = new Set(['EPERM', 'EACCES'])
-
-/**
- * Words what the learner reads for a config the system did not open for another reason than a link, a path that is no regular file or a replaced file; for {@link refusalOfConfigOpen}.
- * @param targetPath - The config's path.
- * @param code - The file system's code for the refused open.
- * @returns
- * - A file this user may not read ({@link READ_REFUSED_CODES}): the sentence that says to allow reading
- * - Every other code: the sentence that names the path and the code, and the setup as the command to run again once the file can be opened (no step is known for a code Codebook does not know)
- * @example configUnopenedSentence('/home/user/.cursor/mcp.json', 'EACCES')
- */
-function configUnopenedSentence(targetPath: string, code: string): string {
-  return READ_REFUSED_CODES.has(code)
-    ? `Cursor MCP config cannot be refreshed because this user may not read it: ${targetPath} (${code}). Codebook left it unchanged. Allow this user to read that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
-    : `Cursor MCP config could not be opened: ${targetPath} (${code}). Codebook left it unchanged. Run ${SET_UP_AI_CHAT_COMMAND} again once that file can be opened.`
-}
-
-/** The sentence for a config that {@link openWithoutFollowing} refused, by the code of its refusal: a link (`ELOOP`, from the open's own flag or from the look that comes first where the system has none), and, from that look alone, a path that is no regular file and a file that was replaced; every other code reads {@link configUnopenedSentence}. */
+/** The sentence for a config that {@link openWithoutFollowing} refused, by the code of its refusal: a link (`ELOOP`, from the open's own flag or from the look that comes first where the system has none), and, from that look alone, a path that is no regular file and a file that was replaced; a file that could not be opened at that moment reads {@link refusalOfUnopenedFile}, and every other code is the system's own text. */
 const CONFIG_OPEN_SENTENCES: ReadonlyMap<
   string,
   (targetPath: string) => string
@@ -465,24 +484,27 @@ const CONFIG_OPEN_SENTENCES: ReadonlyMap<
 /**
  * Turns a refused open of the Cursor MCP config into the sentence that fits it, for {@link openConfigForRefresh}.
  * @param error - What {@link openWithoutFollowing} threw; never a missing file.
- * @param targetPath - The config's path, which every sentence but the one of a replaced config names.
- * @returns An error with the sentence ({@link CONFIG_OPEN_SENTENCES}, {@link configUnopenedSentence}) and the failure as its cause; a failure without a code itself.
+ * @param targetPath - The config's path, which every sentence names.
+ * @returns An error with the sentence of a link, of a path that is no regular file or of a replaced config ({@link CONFIG_OPEN_SENTENCES}), or of a config this user could not open at that moment ({@link refusalOfUnopenedFile}), with the failure as its cause; every other failure itself, which is the system's own text.
  * @example throw refusalOfConfigOpen(Object.assign(new Error('ELOOP'), { code: 'ELOOP' }), '/home/user/.cursor/mcp.json')
  */
 function refusalOfConfigOpen(error: unknown, targetPath: string): unknown {
-  const code = systemErrorCode(error)
-  if (!code) return error
-  const sentence =
-    CONFIG_OPEN_SENTENCES.get(code)?.(targetPath) ??
-    configUnopenedSentence(targetPath, code)
-  return new Error(sentence, { cause: error })
+  const sentence = CONFIG_OPEN_SENTENCES.get(systemErrorCode(error))
+  return sentence
+    ? new Error(sentence(targetPath), { cause: error })
+    : refusalOfUnopenedFile(
+        error,
+        'The Cursor MCP config',
+        targetPath,
+        SET_UP_AI_CHAT_COMMAND,
+      )
 }
 
 /**
  * Opens the Cursor MCP config for a refresh without following a link, and turns a refusal into the sentence that fits it; called by {@link refreshCursorMcpCatalog} for each of its three opens of the config.
  * @param targetPath - The config's path.
  * @returns The open file; with `O_NOFOLLOW` it can still be a pipe, a device or a folder, which the refresh refuses by its status with {@link configNotRegularSentence}.
- * @throws The file system's error for a path that holds nothing (`ENOENT`: the refresh creates the config then); otherwise an error with the sentence of a link, of a pipe, a device or a folder, of a config another file replaced while it was opened, or of a file the system did not open ({@link refusalOfConfigOpen}), with the failure as its cause.
+ * @throws The file system's error for a path that holds nothing (`ENOENT`: the refresh creates the config then); an error with the sentence of a link, of a pipe, a device or a folder, of a config another file replaced while it was opened, or of a config this user could not open at that moment ({@link refusalOfConfigOpen}), with the failure as its cause; every other failure of the open as it is.
  * @example const handle = await openConfigForRefresh('/home/user/.cursor/mcp.json')
  */
 async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
@@ -546,14 +568,23 @@ function refusalOfConfigTimes(error: unknown, targetPath: string): unknown {
  * Opens the config a second time, with write access and without following a link, for {@link setTimesThroughWritableFile}. The open neither creates nor truncates a file.
  * @param targetPath - The config's path.
  * @returns The open file.
- * @throws With the sentence that fits ({@link refusalOfConfigTimes}) when this user may not write the file or the path no longer holds it.
+ * @throws With the sentence that fits when this user may not write the file or the path no longer holds it ({@link refusalOfConfigTimes}), or when a program holds the file for itself ({@link refusalOfUnopenedFile}).
  * @example const writable = await openConfigForItsTimes('/home/user/.cursor/mcp.json')
  */
 async function openConfigForItsTimes(targetPath: string): Promise<FileHandle> {
   try {
     return await openWithoutFollowing(targetPath, undefined, 'read-write')
   } catch (error) {
-    throw refusalOfConfigTimes(error, targetPath)
+    const refusal = refusalOfConfigTimes(error, targetPath)
+    // A config this user may not write has its own sentence; one a program holds for itself is a file that could not be opened.
+    throw refusal === error
+      ? refusalOfUnopenedFile(
+          error,
+          'The Cursor MCP config',
+          targetPath,
+          SET_UP_AI_CHAT_COMMAND,
+        )
+      : refusal
   }
 }
 
@@ -685,7 +716,10 @@ async function advanceOwnedRefreshId(
     receiptPath,
     commandToRunAgain,
   )
-  if (!owner.installed || !(await ownedFile(targetPath, owner)))
+  if (
+    !owner.installed ||
+    !(await ownedFile(targetPath, owner, commandToRunAgain))
+  )
     return undefined
   const refreshId = randomUUID()
   await atomicPrivateWrite(
@@ -734,8 +768,8 @@ async function recoverCreation(
       pendingPath,
       commandToRunAgain,
     )
-  const published = await ownedFile(targetPath, owner),
-    staged = await ownedFile(record.stagedPath, owner)
+  const published = await ownedFile(targetPath, owner, commandToRunAgain),
+    staged = await ownedFile(record.stagedPath, owner, commandToRunAgain)
   if (published)
     await atomicPrivateWrite(
       receiptPath,
@@ -856,7 +890,7 @@ async function recoverRemoval(
     pendingPath,
     commandToRunAgain,
   )
-  if (await ownedFile(record.retiredPath, owner)) {
+  if (await ownedFile(record.retiredPath, owner, commandToRunAgain)) {
     await atomicPrivateWrite(
       receiptPath,
       { ...owner, installed: false, retiredPath: record.retiredPath },
@@ -866,7 +900,7 @@ async function recoverRemoval(
     return 'removed'
   }
   // Neither name holds the config Codebook created: it changed under the removal and stays the learner's.
-  if (!(await ownedFile(targetPath, owner)))
+  if (!(await ownedFile(targetPath, owner, commandToRunAgain)))
     await leaveChangedConfigInPlace(
       targetPath,
       record.retiredPath,
@@ -988,7 +1022,7 @@ export async function refreshCursorMcpCatalog(
           handle = await openPublishedConfig(targetPath)
         }
         if (!handle) {
-          if (!(await ownedFile(targetPath, owner)))
+          if (!(await ownedFile(targetPath, owner, SET_UP_AI_CHAT_COMMAND)))
             throw new Error(
               `Cursor MCP config changed during publication: ${targetPath}. Codebook preserved it and its recovery record. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
             )
@@ -1127,7 +1161,10 @@ export async function removeOwnedCursorMcpCatalog(
         owner.refreshId !== expectedRefreshId
       )
         return 'preserved'
-      if (!owner.installed || !(await ownedFile(targetPath, owner)))
+      if (
+        !owner.installed ||
+        !(await ownedFile(targetPath, owner, commandToRunAgain))
+      )
         return whyNothingIsRetired(owner, targetPath)
       // Retain the actual file privately; a concurrent edit or replacement must never be unlinked after a stale check.
       if (
@@ -1146,7 +1183,7 @@ export async function removeOwnedCursorMcpCatalog(
         CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
       )
       await rename(targetPath, retiredPath)
-      if (!(await ownedFile(retiredPath, owner))) {
+      if (!(await ownedFile(retiredPath, owner, commandToRunAgain))) {
         // The config changed between the check and the move: it goes back to its place and stays the learner's.
         await leaveChangedConfigInPlace(
           targetPath,

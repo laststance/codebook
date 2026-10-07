@@ -5780,3 +5780,230 @@ test('an installation whose bundled skill or Wiki publisher is missing, or whose
     },
   )
 })
+
+/**
+ * Loads the skill deployment as a window whose reader the system refuses to open the files a test calls held, as it does for a file another program holds for itself or this user may not read. Only the reader's opens are refused; the rules that compare a file's two names open the file as it is.
+ * @param refusalOf - Asked at every open of the reader: the code and the system's words to refuse the path with, or undefined to open it.
+ * @returns The window.
+ */
+async function skillWindowWhoseReaderIsRefused(
+  refusalOf: (path: string) => { code: string; words: string } | undefined,
+): Promise<typeof CursorSkillModule> {
+  return skillWindow(constants.EXTENSION_VERSION, {
+    './utils/openWithoutFollowing': {
+      openWithoutFollowing: async (
+        path: string,
+      ): Promise<fileSystem.FileHandle> => {
+        const refusal = refusalOf(path)
+        if (refusal)
+          throw Object.assign(
+            new Error(`${refusal.code}: ${refusal.words}, open '${path}'`),
+            { code: refusal.code },
+          )
+        return openWithoutFollowing(path)
+      },
+    },
+  })
+}
+
+// Value: protects=a learner whose editor holds a file of the Cursor skill setup for itself (Windows), or who may not read it, while a setup, a reconnect or a removal runs; fails_when=the command ends with the file system's own text ("EBUSY: resource busy or locked, open '…SKILL.md'"), which names no step and no command; or a file nobody could look at is taken for one that is not Codebook's (a staged file is left and its record dropped) or a record for an invalid one ("delete it"); why_new=Cycle 0046 row 310: the three codes of a file that cannot be opened have a sentence at every read of the skill setup; seam=the opener of the loaded deployment's reader, which refuses the held file
+test('a file of the Cursor skill setup that this user cannot open at that moment is answered by setup, reconnect and removal with the file’s path, the system’s code, the step and the command that was run, at the skill file, at the receipt and at the staged file of an interrupted setup: nothing is changed, no file is taken for one that is not Codebook’s, and the run after the program let go finishes', async (context) => {
+  // Arrange: three homes with an installed skill. In the first the extension brings a new skill and a program holds the skill file; in the second this user may not read the receipt; in the third an update stopped after it staged the new skill, and the staged file cannot be opened.
+  const withHeldSkill = await fixture(context),
+    withHeldReceipt = await fixture(context),
+    withHeldStage = await fixture(context)
+  for (const paths of [withHeldSkill, withHeldReceipt, withHeldStage])
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+  await writeFile(withHeldSkill.sourcePath, NEXT_SKILL)
+  const receiptPath = join(
+    withHeldReceipt.storageRoot,
+    'cursor-skill',
+    'receipt.json',
+  )
+  const receiptBefore = await readFile(receiptPath, 'utf8')
+  const { stagedPath } = await writeUpdateRecord(withHeldStage)
+  let isProgramHoldingTheFiles = true
+  const window = await skillWindowWhoseReaderIsRefused((path) =>
+    isProgramHoldingTheFiles
+      ? {
+          [withHeldSkill.targetPath]: {
+            code: 'EBUSY',
+            words: 'resource busy or locked',
+          },
+          [receiptPath]: { code: 'EACCES', words: 'permission denied' },
+          [stagedPath]: { code: 'EPERM', words: 'operation not permitted' },
+        }[path]
+      : undefined,
+  )
+  const setUp = (paths: typeof withHeldSkill): Promise<string> =>
+    statusOrRefusalOf(
+      window.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    )
+  const reconnect = (paths: typeof withHeldSkill): Promise<string> =>
+    statusOrRefusalOf(
+      window.verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    )
+  const remove = (paths: typeof withHeldSkill): Promise<string> =>
+    statusOrRefusalOf(
+      window.removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    )
+
+  // Act: every command while the files are held, and then each sentence to the letter: the program lets go, and the command is run again.
+  const whileHeld = {
+    skill: {
+      setup: await setUp(withHeldSkill),
+      reconnect: await reconnect(withHeldSkill),
+      removal: await remove(withHeldSkill),
+    },
+    receipt: {
+      setup: await setUp(withHeldReceipt),
+      reconnect: await reconnect(withHeldReceipt),
+      removal: await remove(withHeldReceipt),
+    },
+    stagedFile: { setup: await setUp(withHeldStage) },
+  }
+  const filesWhileHeld = {
+    skill: await readFile(withHeldSkill.targetPath, 'utf8'),
+    filesOfTheHeldSkill: await filesOfTheSetup(withHeldSkill),
+    receiptIsUnchanged: (await readFile(receiptPath, 'utf8')) === receiptBefore,
+    skillOfTheHeldReceipt: await readFile(withHeldReceipt.targetPath, 'utf8'),
+    filesOfTheHeldStage: await filesOfTheSetup(withHeldStage),
+    stagedFile: await readFile(stagedPath, 'utf8'),
+  }
+  isProgramHoldingTheFiles = false
+  const afterwards = {
+    skill: {
+      setup: await setUp(withHeldSkill),
+      reconnect: await reconnect(withHeldSkill),
+      removal: await remove(withHeldSkill),
+    },
+    receipt: {
+      setup: await setUp(withHeldReceipt),
+      removal: await remove(withHeldReceipt),
+    },
+    stagedFile: { setup: await setUp(withHeldStage) },
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      whileHeld,
+      filesWhileHeld,
+      afterwards,
+      filesOfTheStageAfterwards: await filesOfTheSetup(withHeldStage),
+    },
+    {
+      whileHeld: {
+        skill: {
+          setup: `A file of the Cursor skill setup could not be opened: ${withHeldSkill.targetPath} (EBUSY). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+          reconnect: `A file of the Cursor skill setup could not be opened: ${withHeldSkill.targetPath} (EBUSY). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+          removal: `A file of the Cursor skill setup could not be opened: ${withHeldSkill.targetPath} (EBUSY). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Remove Managed Cursor Skill again.`,
+        },
+        receipt: {
+          setup: `A file of the Cursor skill setup could not be opened: ${receiptPath} (EACCES). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+          reconnect: `A file of the Cursor skill setup could not be opened: ${receiptPath} (EACCES). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+          removal: `A file of the Cursor skill setup could not be opened: ${receiptPath} (EACCES). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Remove Managed Cursor Skill again.`,
+        },
+        stagedFile: {
+          setup: `A file of the Cursor skill setup could not be opened: ${stagedPath} (EPERM). A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+        },
+      },
+      filesWhileHeld: {
+        skill: INITIAL_SKILL,
+        filesOfTheHeldSkill: {
+          skillFolder: ['SKILL.md'],
+          temporaryNames: [],
+          records: [],
+        },
+        receiptIsUnchanged: true,
+        skillOfTheHeldReceipt: INITIAL_SKILL,
+        filesOfTheHeldStage: {
+          skillFolder: ['SKILL.md'],
+          temporaryNames: [
+            '.codebook-stage-00000000-0000-0000-0000-000000000188.tmp',
+          ],
+          records: ['pending.json'],
+        },
+        stagedFile: NEXT_SKILL,
+      },
+      afterwards: {
+        skill: { setup: 'updated', reconnect: 'current', removal: 'removed' },
+        receipt: { setup: 'current', removal: 'removed' },
+        stagedFile: { setup: 'current' },
+      },
+      filesOfTheStageAfterwards: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [],
+        records: [],
+      },
+    },
+  )
+})
+
+// Value: protects=the boundary of the sentences for a file that could not be opened: only a missing right and a program that holds the file have one; fails_when=another failure of an open of the skill setup (too many open files, a failing disk) is worded by Codebook with a step it cannot know, or is taken for a file that is missing or not Codebook's, instead of reaching the learner as the system's own text; why_new=Cycle 0046 row 310: every other failure of an open is the system's own text; seam=the opener of the loaded deployment's reader, which refuses the skill file with EMFILE
+test('a failure of an open of the Cursor skill setup that is neither a missing right nor a program that holds the file ends setup, reconnect and removal with the system’s own text, as it is, and changes nothing', async (context) => {
+  // Arrange: the installed skill, an extension that brings a new one, and a reader whose open of the skill file the system refuses with "too many open files".
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const window = await skillWindowWhoseReaderIsRefused((path) =>
+    path === paths.targetPath
+      ? { code: 'EMFILE', words: 'too many open files' }
+      : undefined,
+  )
+
+  // Act
+  const outcomes = {
+    setup: await statusOrRefusalOf(
+      window.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    reconnect: await statusOrRefusalOf(
+      window.verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      window.removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcomes,
+      skill: await readFile(paths.targetPath, 'utf8'),
+      files: await filesOfTheSetup(paths),
+    },
+    {
+      outcomes: {
+        setup: `EMFILE: too many open files, open '${paths.targetPath}'`,
+        reconnect: `EMFILE: too many open files, open '${paths.targetPath}'`,
+        removal: `EMFILE: too many open files, open '${paths.targetPath}'`,
+      },
+      skill: INITIAL_SKILL,
+      files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+    },
+  )
+})

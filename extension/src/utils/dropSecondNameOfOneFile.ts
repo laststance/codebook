@@ -2,6 +2,7 @@ import { unlink, type FileHandle } from 'node:fs/promises'
 
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { systemErrorCode } from './systemErrorCode'
+import { unopenedFileCode } from './unopenedFileCode'
 
 /** The codes of a name that holds no file to open: nothing (`ENOENT`), a link (`ELOOP`), and, where the opener looks at the path first, a pipe, a device or a folder (`ENOTREG`) or another file that took the name between the look and the open (`EREPLACED`). */
 const NO_FILE_TO_OPEN_CODES: ReadonlySet<string> = new Set([
@@ -9,13 +10,6 @@ const NO_FILE_TO_OPEN_CODES: ReadonlySet<string> = new Set([
   'ELOOP',
   'ENOTREG',
   'EREPLACED',
-])
-
-/** The codes of a name that holds a file this user cannot open at this moment: no right to read it (`EACCES`, `EPERM`), or another program holds it for itself (`EBUSY`, on Windows). Once the file opens, the same call answers for it. */
-const FILE_NOT_OPENED_CODES: ReadonlySet<string> = new Set([
-  'EACCES',
-  'EPERM',
-  'EBUSY',
 ])
 
 /** The codes with which a system refuses to remove a name of a file that is open: Windows answers a name it cannot let go with `EPERM`, `EBUSY` or `EACCES`. Elsewhere the same codes mean that the folder allows no removal at all, and the second try after the closes ends with them again. */
@@ -39,15 +33,14 @@ type OpenedName = FileHandle | Exclude<SecondNameDrop, 'dropped'>
 /**
  * Opens one of the two names for {@link dropSecondNameOfOneFile}, without following a link ({@link openWithoutFollowing}); a name that cannot be opened is an answer there, not an error.
  * @param path - The name.
- * @returns The open file, which the caller closes; `not-one-file` for a name that holds no file to open ({@link NO_FILE_TO_OPEN_CODES}); `unopened` for a file this user cannot open at this moment ({@link FILE_NOT_OPENED_CODES}).
+ * @returns The open file, which the caller closes; `not-one-file` for a name that holds no file to open ({@link NO_FILE_TO_OPEN_CODES}); `unopened` for a file this user cannot open at this moment ({@link unopenedFileCode}).
  * @throws Every other failure of the open (too many open files, a failing disk): nothing is known of the name then.
  * @example const file = await openName('/home/user/.cursor/mcp.json') // => 'not-one-file' for a missing file
  */
 async function openName(path: string): Promise<OpenedName> {
   return openWithoutFollowing(path).catch((error: unknown) => {
-    const code = systemErrorCode(error)
-    if (NO_FILE_TO_OPEN_CODES.has(code)) return 'not-one-file'
-    if (FILE_NOT_OPENED_CODES.has(code)) return 'unopened'
+    if (NO_FILE_TO_OPEN_CODES.has(systemErrorCode(error))) return 'not-one-file'
+    if (unopenedFileCode(error)) return 'unopened'
     throw error
   })
 }
