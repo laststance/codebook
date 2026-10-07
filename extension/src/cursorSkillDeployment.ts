@@ -23,7 +23,9 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
+import { areNamesOfOneFile } from './utils/areNamesOfOneFile'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { dropSecondNameOfMovedFile } from './utils/dropSecondNameOfMovedFile'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
 import { isRecordedFileId } from './utils/isRecordedFileId'
 import { isSameFileId } from './utils/isSameFileId'
@@ -42,6 +44,28 @@ const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
 /** What a reconnect answers for a skill it will not touch; {@link verifyManagedCursorSkill} decides it under the storage lock. */
 const CHANGED_SKILL_REFUSAL =
   'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
+
+/** What setup answers when the skill file changed while setup ran (before or at its move away): the file is the learner's now and stays in place. */
+const SKILL_CHANGED_DURING_SETUP =
+  'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.'
+
+/** What setup answers when the skill it had just published changed before setup compared it. */
+const PUBLISHED_SKILL_CHANGED_DURING_SETUP =
+  'The published Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.'
+
+/** What removal answers when the skill file changed between its check and its move away: the file is back in place and is the learner's now. */
+const SKILL_CHANGED_DURING_REMOVAL =
+  'The Cursor skill changed during removal; Codebook did not remove it and left it in place. If you no longer want that file, delete it yourself.'
+
+/**
+ * Says what the learner does about a recovery record that Codebook keeps because it cannot finish or undo the step itself; the end of every refusal that leaves such a record.
+ * @param recordPath - The record in Codebook's storage (`pending.json` of a setup, `removal.json` of a removal).
+ * @returns The sentence, with a space before it.
+ * @example startOverBy('/private/cursor-skill/pending.json') // => ' To start over, delete /private/cursor-skill/pending.json, then run Codebook: Set Up AI Chat again.'
+ */
+function startOverBy(recordPath: string): string {
+  return ` To start over, delete ${recordPath}, then run Codebook: Set Up AI Chat again.`
+}
 
 /** The publisher a deployed skill names, as its receipt records it: the deploying installation's `publish-wiki.mjs`. Absent for a skill that names no publisher and in a record written before the path was recorded. */
 type RecordedPublisher = { publisherPath?: string }
@@ -442,17 +466,18 @@ async function removeOwnedStage(pending: PendingSkill): Promise<void> {
     await unlink(pending.stagedPath)
 }
 
-/** Retains the actual displaced skill during {@link deployCursorSkill} recovery, then checks its bytes. @param path - Displaced live path. @param retiredPath - Private retention path. @param owner - Prior owner receipt. @returns After the displacement is safely retained. @example await retireDisplaced('/home/user/.cursor/skills/codebook/.codebook-displaced-id.tmp', '/private/retired-id.SKILL.md', receipt) // => resolves */
+/** Retains the actual displaced skill during {@link deployCursorSkill} recovery, then checks its bytes. @param path - Displaced live path. @param retiredPath - Private retention path. @param owner - Prior owner receipt. @param recordPath - The recovery record this step belongs to; a refusal names it and says how to start over ({@link startOverBy}). @returns After the displacement is safely retained. @throws When both names hold a file, or the retained file is not the owner's: both stay, with the record. @example await retireDisplaced('/home/user/.cursor/skills/codebook/.codebook-displaced-id.tmp', '/private/retired-id.SKILL.md', receipt, '/private/cursor-skill/pending.json') // => resolves */
 async function retireDisplaced(
   path: string,
   retiredPath: string,
   owner: SkillReceipt,
+  recordPath: string,
 ): Promise<void> {
   const displaced = await inspectedPath(path),
     retired = await inspectedPath(retiredPath)
   if (displaced && retired)
     throw new Error(
-      'Cursor skill displacement and private retention both exist; Codebook preserved both for inspection.',
+      `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection.${startOverBy(recordPath)}`,
     )
   // Moving the actual file preserves a concurrent edit or replacement instead of unlinking it after an earlier check.
   if (displaced) await rename(path, retiredPath)
@@ -461,25 +486,149 @@ async function retireDisplaced(
     !(await matchesOwnedFile(retiredPath, owner))
   )
     throw new Error(
-      'The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery.',
+      `The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery.${startOverBy(recordPath)}`,
     )
 }
 
-/** Completes a pending displacement before {@link deployCursorSkill} publishes another body. @param pending - Validated setup journal. @returns After prior bytes are retained. @example await removeOwnedDisplacement(pending) // => resolves */
-async function removeOwnedDisplacement(pending: PendingSkill): Promise<void> {
+/** Completes a pending displacement before {@link deployCursorSkill} publishes another body. @param pending - Validated setup journal. @param pendingPath - That journal's path, which a refusal names ({@link startOverBy}). @returns After prior bytes are retained. @example await removeOwnedDisplacement(pending, '/private/cursor-skill/pending.json') // => resolves */
+async function removeOwnedDisplacement(
+  pending: PendingSkill,
+  pendingPath: string,
+): Promise<void> {
   if (!pending.displacedPath) return
   if (!pending.previous || !pending.retiredPath)
     throw new Error(
-      'Cursor skill displacement has no complete recovery record.',
+      `Cursor skill displacement has no complete recovery record.${startOverBy(pendingPath)}`,
     )
   await retireDisplaced(
     pending.displacedPath,
     pending.retiredPath,
     pending.previous,
+    pendingPath,
   )
 }
 
-/** Finishes or rejects an interrupted skill removal before {@link deployCursorSkill} reuses its receipt. @param path - Removal journal. @param receiptPath - Owner receipt path. @param targetPath - Managed skill path. @returns The recovered owner and completion flag, or undefined. @example await recoverRemoval('/private/removal.json', '/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
+/**
+ * Takes away what a setup's move left of a skill file that is not Codebook's any more, for {@link deploySkill}: at once when the file changed while setup ran, and at the next setup after a refusal or a crash left the setup's record.
+ * Codebook's own previous skill, which the setup had moved away, is retained privately as after a finished update. A file that is not that skill is the learner's: it is linked back where the skill's path holds nothing, and its second name is removed once it stands at the skill's path ({@link dropSecondNameOfMovedFile}). A skill that was edited in place right after its publication still has the staged name as a second name, which is removed too.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path, which a refusal names.
+ * @throws When the displaced name holds a file that is neither Codebook's previous skill nor the file at the skill's path: both files and the record stay, and the sentence names the kept file and how to start over.
+ * @example await settleChangedSkill(pending, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/pending.json')
+ */
+async function settleChangedSkill(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  await settleDisplacedName(pending, targetPath, pendingPath)
+  // A skill edited in place after its publication is one file with the stage; a stage with the recorded bytes is removed by the caller.
+  if (await areNamesOfOneFile(targetPath, pending.stagedPath))
+    await unlink(pending.stagedPath)
+}
+
+/**
+ * Says whether the displaced name of a setup holds Codebook's own previous skill, for {@link settleDisplacedName}.
+ * @param pending - The setup's record; one of a first install has no previous owner.
+ * @param displacedPath - The displaced name the record holds.
+ * @returns `true` for the previous skill with its recorded inode number and bytes; `false` for another file, for nothing, and without a previous owner.
+ * @example await holdsPreviousSkill(pending, displacedPath) // => false for a file the learner edited
+ */
+async function holdsPreviousSkill(
+  pending: PendingSkill,
+  displacedPath: string,
+): Promise<boolean> {
+  return (
+    pending.previous !== undefined &&
+    (await matchesOwnedFile(displacedPath, pending.previous))
+  )
+}
+
+/**
+ * Settles the displaced name of a setup whose skill file is not Codebook's any more, for {@link settleChangedSkill}.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path, which a refusal names.
+ * @throws When the displaced name holds a file that is neither Codebook's previous skill nor the file at the skill's path.
+ * @example await settleDisplacedName(pending, targetPath, pendingPath)
+ */
+async function settleDisplacedName(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  const displacedPath = pending.displacedPath
+  if (!displacedPath) return
+  // Codebook's own previous skill is retained privately, as after a finished update.
+  if (await holdsPreviousSkill(pending, displacedPath))
+    return removeOwnedDisplacement(pending, pendingPath)
+  // Any other file there is the learner's: it goes back to the skill's path, or stays where another file took that path.
+  if ((await dropSecondNameOfMovedFile(targetPath, displacedPath)) === 'kept')
+    throw new Error(
+      `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedPath}.${startOverBy(pendingPath)}`,
+    )
+}
+
+/**
+ * Ends a setup whose skill file changed while the setup ran, for {@link deploySkill} right before it refuses: what the move left is settled ({@link settleChangedSkill}), the staged file is removed and the record with it, so the next setup starts clean and answers for the file as it stands.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @throws What {@link settleChangedSkill} throws; the record then stays.
+ * @example await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
+ */
+async function abandonSetupOfChangedSkill(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  await settleChangedSkill(pending, targetPath, pendingPath)
+  await removeOwnedStage(pending)
+  await unlink(pendingPath)
+}
+
+/**
+ * Says whether a removal's move was of a skill file that is not Codebook's, and undoes what is left of it, for {@link recoverRemoval} and for {@link removeManagedCursorSkill} when the file changed between its check and its move.
+ * @param pending - The removal's record.
+ * @param targetPath - The managed skill path.
+ * @returns
+ * - `true`: neither the skill's path nor the displaced name holds Codebook's skill, and no second name is left (the file was linked back where the path held nothing, and its displaced name is removed; or nothing had been moved): the caller drops the record and goes on as for a file that was edited or replaced
+ * - `false`: one of the two names holds Codebook's skill, both hold nothing, or they hold two different files: the removal's own recovery decides
+ * @example await isRemovalOfChangedSkillUndone(pending, '/home/user/.cursor/skills/codebook/SKILL.md') // => true after an edit during the removal
+ */
+async function isRemovalOfChangedSkillUndone(
+  pending: PendingRemoval,
+  targetPath: string,
+): Promise<boolean> {
+  if (await holdsSkillOfRemoval(pending, targetPath)) return false
+  return (
+    (await dropSecondNameOfMovedFile(targetPath, pending.displacedPath)) ===
+    'dropped'
+  )
+}
+
+/**
+ * Says whether a removal's own recovery must decide, for {@link isRemovalOfChangedSkillUndone}: Codebook's skill stands at one of the two names, or neither name holds anything.
+ * @param pending - The removal's record.
+ * @param targetPath - The managed skill path.
+ * @returns `true` then; `false` when a file that is not Codebook's skill stands at the skill's path or at the displaced name, and Codebook's skill at neither.
+ * @example await holdsSkillOfRemoval(pending, targetPath) // => true right after a crash that moved Codebook's own skill
+ */
+async function holdsSkillOfRemoval(
+  pending: PendingRemoval,
+  targetPath: string,
+): Promise<boolean> {
+  const target = await inspectedPath(targetPath),
+    displaced = await inspectedPath(pending.displacedPath)
+  if (!target && !displaced) return true
+  return (
+    (await matchesOwnedFile(targetPath, pending.owner)) ||
+    (await matchesOwnedFile(pending.displacedPath, pending.owner))
+  )
+}
+
+/** Finishes or rejects an interrupted skill removal before {@link deployCursorSkill} reuses its receipt, and drops the record of a removal whose skill file changed under it ({@link isRemovalOfChangedSkillUndone}). @param path - Removal journal. @param receiptPath - Owner receipt path. @param targetPath - Managed skill path. @returns The recovered owner and completion flag; undefined without a record, and after the record of a changed file was dropped (the caller goes on as for an edited or replaced skill). @throws When the record must stay; each sentence says how to start over ({@link startOverBy}). @example await recoverRemoval('/private/removal.json', '/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
 async function recoverRemoval(
   path: string,
   receiptPath: string,
@@ -487,18 +636,23 @@ async function recoverRemoval(
 ): Promise<{ owner: SkillReceipt; completed: boolean } | undefined> {
   const pending = await readPendingRemoval(path, targetPath)
   if (!pending) return undefined
+  // A skill file that changed under the removal is the learner's: it stays in place, and the record is dropped.
+  if (await isRemovalOfChangedSkillUndone(pending, targetPath)) {
+    await unlink(path)
+    return undefined
+  }
   const target = await inspectedPath(targetPath),
     displaced = await inspectedPath(pending.displacedPath)
   if (target && !(await matchesOwnedFile(targetPath, pending.owner)))
     throw new Error(
-      'Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file.',
+      `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${pending.displacedPath}).${startOverBy(path)}`,
     )
   if (
     displaced &&
     !(await matchesOwnedFile(pending.displacedPath, pending.owner))
   )
     throw new Error(
-      'The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record.',
+      `The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record.${startOverBy(path)}`,
     )
   if (!target && displaced) {
     // Removal moved the exact owned body; finish its receipt before deleting that body.
@@ -511,23 +665,26 @@ async function recoverRemoval(
       pending.displacedPath,
       pending.retiredPath,
       pending.owner,
+      path,
     )
   } else if (!target && !displaced) {
     const receipt = await readReceipt(receiptPath, targetPath)
     if (receipt?.installed)
       throw new Error(
-        'Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record.',
+        `Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record.${startOverBy(path)}`,
       )
     await retireDisplaced(
       pending.displacedPath,
       pending.retiredPath,
       pending.owner,
+      path,
     )
   } else if (displaced)
     await retireDisplaced(
       pending.displacedPath,
       pending.retiredPath,
       pending.owner,
+      path,
     )
   await unlink(path)
   return { owner: pending.owner, completed: !target }
@@ -793,14 +950,14 @@ async function deploySkill(
           receipt,
           CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
         )
-        await removeOwnedDisplacement(pending)
+        await removeOwnedDisplacement(pending, pendingPath)
       } else if (
         (pending.previous &&
           (await matchesOwnedFile(targetPath, pending.previous))) ||
         (receipt?.installed && (await matchesOwnedFile(targetPath, receipt)))
       ) {
         // Publication never happened; retain the previous exact owner or the absent first-install target.
-        await removeOwnedDisplacement(pending)
+        await removeOwnedDisplacement(pending, pendingPath)
       } else if (
         !(await inspectedPath(targetPath)) &&
         pending.previous &&
@@ -809,17 +966,11 @@ async function deploySkill(
       ) {
         // A crash after displacement left the owned prior body intact; restore it without overwriting new content.
         await link(pending.displacedPath, targetPath)
-        await removeOwnedDisplacement(pending)
-      } else if (
-        !receipt?.installed &&
-        !(await inspectedPath(targetPath)) &&
-        !pending.displacedPath
-      ) {
-        // The first-install target was never published.
-      } else
-        throw new Error(
-          'Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record.',
-        )
+        await removeOwnedDisplacement(pending, pendingPath)
+      } else {
+        // The skill file is not Codebook's (it changed while a setup ran) or is gone: what the setup's move left is settled, and this setup answers for the file as it stands.
+        await settleChangedSkill(pending, targetPath, pendingPath)
+      }
       await removeOwnedStage(pending)
       await unlink(pendingPath)
     }
@@ -934,24 +1085,23 @@ async function deploySkill(
       await unlink(stagedPath)
       throw error
     }
-    if (current && receipt && !(await matchesOwnedFile(targetPath, receipt)))
-      throw new Error(
-        'The Cursor skill changed during setup; Codebook preserved it.',
-      )
+    if (current && receipt && !(await matchesOwnedFile(targetPath, receipt))) {
+      await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
+      throw new Error(SKILL_CHANGED_DURING_SETUP)
+    }
     if (current && receipt && next.displacedPath) {
       await rename(targetPath, next.displacedPath)
       if (!(await matchesOwnedFile(next.displacedPath, receipt))) {
-        await link(next.displacedPath, targetPath).catch(() => undefined)
-        throw new Error(
-          'The Cursor skill changed during setup; Codebook preserved the displaced file and recovery record.',
-        )
+        // The file changed between the check and the move: it goes back to its place and stays the learner's.
+        await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
+        throw new Error(SKILL_CHANGED_DURING_SETUP)
       }
     }
     await link(stagedPath, targetPath)
-    if (!(await matchesOwnedFile(targetPath, next)))
-      throw new Error(
-        'The published Cursor skill changed during setup; Codebook preserved its recovery record.',
-      )
+    if (!(await matchesOwnedFile(targetPath, next))) {
+      await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
+      throw new Error(PUBLISHED_SKILL_CHANGED_DURING_SETUP)
+    }
     await atomicPrivateWrite(
       receiptPath,
       {
@@ -968,7 +1118,7 @@ async function deploySkill(
       CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
     )
     await removeOwnedStage(next)
-    await removeOwnedDisplacement(next)
+    await removeOwnedDisplacement(next, pendingPath)
     await unlink(pendingPath)
     return {
       status: current ? 'updated' : receipt ? 'restored' : 'installed',
@@ -1166,17 +1316,22 @@ export async function removeManagedCursorSkill(
     )
     await rename(targetPath, displacedPath)
     if (!(await matchesOwnedFile(displacedPath, receipt))) {
-      await link(displacedPath, targetPath).catch(() => undefined)
-      throw new Error(
-        'The Cursor skill changed during removal; Codebook preserved the displaced file and recovery record.',
+      // The file changed between the check and the move: it goes back to its place and stays the learner's.
+      if (
+        (await dropSecondNameOfMovedFile(targetPath, displacedPath)) === 'kept'
       )
+        throw new Error(
+          `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${displacedPath}).${startOverBy(removalPath)}`,
+        )
+      await unlink(removalPath)
+      throw new Error(SKILL_CHANGED_DURING_REMOVAL)
     }
     await atomicPrivateWrite(
       receiptPath,
       { ...receipt, installed: false },
       CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
     )
-    await retireDisplaced(displacedPath, retiredPath, receipt)
+    await retireDisplaced(displacedPath, retiredPath, receipt, removalPath)
     // Remove only an empty Codebook directory; leave any user-added files in place.
     await rmdir(directory).catch((error) => {
       if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error

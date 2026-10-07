@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import * as fileSystem from 'node:fs/promises'
 import {
+  link,
   lstat,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -212,6 +214,256 @@ test('a new Cursor MCP config that the file system refuses to link into place en
       laterRefreshGaveAGeneration: true,
       entriesOfTheCursorFolder: ['mcp.json', 'storage'],
       removal: 'answered removed',
+    },
+  )
+})
+
+/** What a learner, or Cursor itself, writes into the config Codebook created. */
+const EDITED_CONFIG = '{"mcpServers":{"mine":{"command":"tool"}}}\n'
+
+/**
+ * Leaves the state an interrupted removal leaves in Codebook's storage: the removal's record, which names the receipt as the owner and a retired name.
+ * @returns The record's path and the retired name it holds.
+ */
+async function writeRemovalRecord(folders: {
+  recordDirectory: string
+}): Promise<{ pendingPath: string; retiredPath: string }> {
+  const pendingPath = join(folders.recordDirectory, 'pending-removal.json')
+  const retiredPath = join(
+    folders.recordDirectory,
+    'retired-123e4567-e89b-12d3-a456-426614174000.mcp.json',
+  )
+  const owner: unknown = JSON.parse(
+    await readFile(join(folders.recordDirectory, 'receipt.json'), 'utf8'),
+  )
+  await writeFile(
+    pendingPath,
+    JSON.stringify({ schemaVersion: 1, owner, retiredPath }),
+  )
+  return { pendingPath, retiredPath }
+}
+
+// Value: protects=the answer of "Remove Managed Cursor Skill" when Cursor (which writes this file) or the learner rewrites ~/.cursor/mcp.json in the instant between Codebook's ownership check and its move, and every later Cursor setup; fails_when=the removal ends with a refusal and keeps its recovery record, after which every Cursor registration of every window is refused until the learner deletes the record by hand; why_new=Cycle 0046 row 188 (the catalog's removal); seam=node:fs/promises rename of the loaded catalog, before whose move the config is rewritten
+test('a Cursor MCP config that is rewritten between the removal’s ownership check and its move is put back and preserved: the removal leaves no record, and the next refresh and removal answer for the learner’s config', async (context) => {
+  // Arrange: Codebook's own config; another writer rewrites it right before the removal moves it.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    rename: async (from: string, to: string) => {
+      if (from === folders.configPath) await writeFile(from, EDITED_CONFIG)
+      return fileSystem.rename(from, to)
+    },
+  })
+
+  // Act
+  const removal = await outcomeOf(
+    catalog.removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+  const recordsAfterTheRemoval = (await readdir(folders.recordDirectory)).sort()
+  const nextRefresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+  const nextRemoval = await outcomeOf(
+    removeOwnedCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert: only the receipt is left in Codebook's storage; the config is the learner's and stays.
+  assert.deepEqual(
+    {
+      removal,
+      recordsAfterTheRemoval,
+      nextRefresh,
+      nextRemoval,
+      config: await readFile(folders.configPath, 'utf8'),
+    },
+    {
+      removal: 'answered preserved',
+      recordsAfterTheRemoval: ['receipt.json'],
+      nextRefresh: 'answered undefined',
+      nextRemoval: 'answered preserved',
+      config: EDITED_CONFIG,
+    },
+  )
+})
+
+// Value: protects=a learner whose removal 0.2.29.0 (or an earlier build of this cycle) refused with "Cursor MCP catalog changed during cleanup; …" and who updates the extension; fails_when=the record and the second name that refusal left make every Cursor registration end with "Cursor MCP catalog changed during interrupted cleanup; …" for good; why_new=Cycle 0046 row 188 (the catalog's recovery); seam=none, the files as that refusal leaves them
+test('the record and the second name that a refused removal of a changed Cursor MCP config left are cleared by the next refresh, and the config stays as the learner’s', async (context) => {
+  // Arrange: Codebook's own config was rewritten, moved to its retired name, found changed and linked back; the record stayed.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const { retiredPath } = await writeRemovalRecord(folders)
+  await writeFile(folders.configPath, EDITED_CONFIG)
+  await link(folders.configPath, retiredPath)
+
+  // Act
+  const refresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+  const removal = await outcomeOf(
+    removeOwnedCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      removal,
+      records: (await readdir(folders.recordDirectory)).sort(),
+      config: await readFile(folders.configPath, 'utf8'),
+    },
+    {
+      refresh: 'answered undefined',
+      removal: 'answered preserved',
+      records: ['receipt.json'],
+      config: EDITED_CONFIG,
+    },
+  )
+})
+
+// Value: protects=a config the learner rewrote that a removal moved away and could not put back (the editor was closed in that instant); fails_when=the next call refuses for good, or the changed config stays hidden in Codebook's storage while its path is empty and the next setup creates an empty config in its place; why_new=Cycle 0046 row 188: the same state without the link back; seam=none, the files as a removal leaves them when it ends between its move and its link back
+test('a changed Cursor MCP config that a removal moved away and never put back is put back at its path by the next refresh, with its bytes', async (context) => {
+  // Arrange: the rewritten config stands under its retired name alone; the record stayed.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const { retiredPath } = await writeRemovalRecord(folders)
+  await writeFile(folders.configPath, EDITED_CONFIG)
+  await rename(folders.configPath, retiredPath)
+
+  // Act
+  const refresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      records: (await readdir(folders.recordDirectory)).sort(),
+      config: await readFile(folders.configPath, 'utf8'),
+    },
+    {
+      refresh: 'answered undefined',
+      records: ['receipt.json'],
+      config: EDITED_CONFIG,
+    },
+  )
+})
+
+// Value: protects=a learner whose removal was interrupted before it moved anything and who edited the config afterwards; fails_when=a record with nothing to recover refuses every Cursor registration for good; why_new=Cycle 0046 row 188: the recovery drops a record when no second name exists; seam=none, the files as a removal leaves them when it ends right after it wrote its record
+test('the record of a removal that moved nothing is dropped by the next refresh when the config was edited meanwhile, and the config stays', async (context) => {
+  // Arrange
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  await writeRemovalRecord(folders)
+  await writeFile(folders.configPath, EDITED_CONFIG)
+
+  // Act
+  const refresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      records: (await readdir(folders.recordDirectory)).sort(),
+      config: await readFile(folders.configPath, 'utf8'),
+    },
+    {
+      refresh: 'answered undefined',
+      records: ['receipt.json'],
+      config: EDITED_CONFIG,
+    },
+  )
+})
+
+// Value: protects=two files of the learner when a removal moved a changed config away and another config took its path before it could be put back; fails_when=Codebook drops its record and forgets the moved file, or removes one of the two, or refuses without saying where the moved file is and what to do; why_new=Cycle 0046 row 188: a record that is kept says what the learner does next; seam=none, the files as that state leaves them
+test('a changed Cursor MCP config that a removal moved away, with another config at its path now, is kept with its record: the refusal names the kept file and how to start over, and after the record is deleted the refresh answers', async (context) => {
+  // Arrange: the rewritten config stands under its retired name; a newer config stands at the path.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const { pendingPath, retiredPath } = await writeRemovalRecord(folders)
+  await writeFile(folders.configPath, EDITED_CONFIG)
+  await rename(folders.configPath, retiredPath)
+  const newerConfig = '{"mcpServers":{"newer":{}}}\n'
+  await writeFile(folders.configPath, newerConfig)
+
+  // Act
+  const refresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+  const filesWhileTheRecordIsKept = {
+    config: await readFile(folders.configPath, 'utf8'),
+    movedAway: await readFile(retiredPath, 'utf8'),
+    records: (await readdir(folders.recordDirectory)).sort(),
+  }
+  await rm(pendingPath)
+  const refreshAfterTheRecordWasDeleted = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { refresh, filesWhileTheRecordIsKept, refreshAfterTheRecordWasDeleted },
+    {
+      refresh: `refused: Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+      filesWhileTheRecordIsKept: {
+        config: newerConfig,
+        movedAway: EDITED_CONFIG,
+        records: [
+          'pending-removal.json',
+          'receipt.json',
+          'retired-123e4567-e89b-12d3-a456-426614174000.mcp.json',
+        ],
+      },
+      refreshAfterTheRecordWasDeleted: 'answered undefined',
+    },
+  )
+})
+
+// Value: protects=a config that Cursor or the learner rewrites in the instant after Codebook published it; fails_when=the refusal does not say what to do, or the next refresh leaves Codebook's staged name in ~/.cursor as a second name of the learner's config for good; why_new=Cycle 0046 row 188: the sentence of a kept record says what the learner does next, and a second name of a file that is not Codebook's is dropped; seam=node:fs/promises link of the loaded catalog, after which the published config is rewritten
+test('a Cursor MCP config that is rewritten right after Codebook published it is refused once with what to do, and the next refresh leaves the rewritten config in place under its one name', async (context) => {
+  // Arrange: no config yet; the published config is rewritten right after it was linked into place.
+  const folders = await catalogFolders(context)
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    link: async (existingPath: string, newPath: string) => {
+      await fileSystem.link(existingPath, newPath)
+      await writeFile(newPath, EDITED_CONFIG)
+    },
+  })
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+  const nextRefresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      nextRefresh,
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+      records: await readdir(folders.recordDirectory),
+      config: await readFile(folders.configPath, 'utf8'),
+    },
+    {
+      refresh:
+        'refused: Cursor MCP config changed during publication; Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.',
+      nextRefresh: 'answered undefined',
+      entriesOfTheCursorFolder: ['mcp.json', 'storage'],
+      records: [],
+      config: EDITED_CONFIG,
     },
   )
 })
