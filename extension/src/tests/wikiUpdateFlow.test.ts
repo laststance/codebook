@@ -1396,10 +1396,23 @@ function manualAnswerClock(): {
   }
 }
 
-/** Waits until the window handed its request to the chat, so the answer's bound runs from then on. */
-async function waitForChatRequest(chatRequests: unknown[]): Promise<void> {
+/** Waits until the window handed its request to the chat, so the answer's bound runs from then on; `count` is the number of requests waited for (the second press's request is the second). It gives up after six seconds, and the test's assertion then fails. */
+async function waitForChatRequest(
+  chatRequests: unknown[],
+  count = 1,
+): Promise<void> {
   const deadline = Date.now() + 6_000
-  while (chatRequests.length === 0 && Date.now() < deadline)
+  while (chatRequests.length < count && Date.now() < deadline)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+}
+
+/** Waits until the window has read the watch stamp to the end `total` times in all. Three reads more than the count at some moment mean that a look which began after that moment has been taken whole: the first read may have begun before, the second sees what was written since, and the third begins only when the second's look is done. It gives up after six seconds, and the test's assertion then fails. */
+async function waitForStampReads(
+  looks: { stampReadsDone: number },
+  total: number,
+): Promise<void> {
+  const deadline = Date.now() + 6_000
+  while (looks.stampReadsDone < total && Date.now() < deadline)
     await new Promise((resolveWait) => setTimeout(resolveWait, 10))
 }
 
@@ -2112,9 +2125,9 @@ test('a chat that shows a first sign after 5 seconds and completes its reply aft
       () => 'on disk',
       () => 'gone',
     )
-    // The next press is given half a second to send its request; its chat then opens the manifest too, so the press ends.
+    // The next press is waited for until it has sent its request; its chat then opens the manifest too, so the press ends.
     const nextPress = wiki.clickUpdate()
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500))
+    await waitForChatRequest(wiki.chatRequests, 2)
     const requestsAfterTheNextPress = wiki.chatRequests.length
     wiki.openDocument(wiki.manifestPath)
     await nextPress
@@ -2185,9 +2198,9 @@ test('a chat whose reply waits for a confirmation after its first sign stays wat
     wiki.openDocument(wiki.manifestPath)
     await press
 
-    // Act: the chat asks to approve a command; ten looks of the watch pass.
+    // Act: the chat asks to approve a command; a look of the watch that began after that is taken whole.
     request.end({ type: 'confirmation', kind: 'toolInvocation' })
-    await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+    await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
 
     // Assert
     assert.equal(wiki.status().state, 'running')
@@ -2263,17 +2276,18 @@ test('a folder the publisher prepares beside the Wiki counts as the chat’s wor
   try {
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
-    // The first look at the output has been taken by now.
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    // The first read of the output's stamp, the one every later look is compared with, has returned.
+    await waitForStampReads(wiki.looks, 1)
 
-    // Act: the publisher prepares a folder with its receipt; two seconds later Codebook looks again; then the bound passes.
+    // Act: the publisher prepares a folder with its receipt; two seconds later Codebook reads the stamp again; then the bound passes.
     await mkdir(preparedFolder)
     await writeFile(
       join(preparedFolder, 'codebook-publication.json'),
       JSON.stringify({ schemaVersion: 1, kind: 'candidate' }),
     )
     clock.advance(2_000)
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    await waitForStampReads(wiki.looks, 2)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
     clock.advance(28_000)
     // The settle time of a withdrawal passes as well.
     await new Promise((resolveWait) => setImmediate(resolveWait))
@@ -2886,14 +2900,14 @@ test('rewriting the manifest file without a publish is not recorded as Updated',
       await readFile(wiki.manifestPath),
     )
     await rename(`${wiki.manifestPath}.copy`, wiki.manifestPath)
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
     const afterSameBytes = wiki.status().state
     // Then other bytes are written, again without the publisher: no receipt names them.
     await writeFile(
       wiki.manifestPath,
       `${await readFile(wiki.manifestPath, 'utf8')}\n`,
     )
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
     const afterOtherBytes = wiki.status().state
 
     // Assert
@@ -3171,8 +3185,8 @@ test(
       await wiki.publish('c'.repeat(64))
       await rm(journalPath)
       await press
-      // The watch makes several looks at the folder.
-      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      // The watch takes a whole look at the folder.
+      await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
 
       // Assert
       assert.equal(wiki.status().state, 'running')
