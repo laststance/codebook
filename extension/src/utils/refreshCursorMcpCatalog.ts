@@ -288,6 +288,38 @@ async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
 }
 
 /**
+ * Opens the config right after Codebook published it, or after another writer's file took its path, for {@link refreshCursorMcpCatalog}; a config that is gone by then changed while it was refreshed.
+ * @param targetPath - The config's path.
+ * @returns The open file ({@link openConfigForRefresh}).
+ * @throws With {@link CONFIG_CHANGED_SENTENCE} when the path holds nothing any more, and with the sentence {@link openConfigForRefresh} gives for a link, a path that is no regular file or a replaced file.
+ * @example const handle = await openPublishedConfig('/home/user/.cursor/mcp.json')
+ */
+async function openPublishedConfig(targetPath: string): Promise<FileHandle> {
+  return openConfigForRefresh(targetPath).catch((error: unknown) => {
+    throw isMissing(error)
+      ? new Error(CONFIG_CHANGED_SENTENCE, { cause: error })
+      : error
+  })
+}
+
+/**
+ * Turns a failure to link Codebook's new config into place into a sentence, for {@link refreshCursorMcpCatalog} when the link fails for another reason than a file that is already there: no config changed then, the file system refused the new name (a folder that allows no new files, a file system without hard links, a staged file that is gone).
+ * @param error - What `link` threw.
+ * @param targetPath - The config's path.
+ * @returns An error that names the path and the file system's code, with the failure as its cause; a failure without a code itself.
+ * @example throw refusalOfConfigLink(Object.assign(new Error('EPERM'), { code: 'EPERM' }), '/home/user/.cursor/mcp.json')
+ */
+function refusalOfConfigLink(error: unknown, targetPath: string): unknown {
+  const code = systemErrorCode(error)
+  return code
+    ? new Error(
+        `Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${targetPath} (${code}). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+        { cause: error },
+      )
+    : error
+}
+
+/**
  * Turns a failure to open or change the config for its times into the sentence that fits it, for {@link openConfigForItsTimes} and {@link setTimesThroughWritableFile}.
  * @param error - What the open or the change threw.
  * @returns An error with {@link CONFIG_NOT_WRITABLE_SENTENCE} for a file this user may not write, one with {@link CONFIG_CHANGED_SENTENCE} for a path that no longer holds the file, each with the failure as its cause; every other failure itself.
@@ -571,19 +603,16 @@ export async function refreshCursorMcpCatalog(
         try {
           await link(stagedPath, targetPath)
         } catch (createError) {
-          if (!(
-            createError instanceof Error &&
-            'code' in createError &&
-            createError.code === 'EEXIST'
-          ))
-            throw createError
+          // Only a file that is already there is another writer's publication; every other refusal gets its sentence.
+          if (systemErrorCode(createError) !== 'EEXIST')
+            throw refusalOfConfigLink(createError, targetPath)
           await recoverCreation(
             pendingCreationPath,
             receiptPath,
             targetPath,
             cursorDirectory,
           )
-          handle = await openConfigForRefresh(targetPath)
+          handle = await openPublishedConfig(targetPath)
         }
         if (!handle) {
           if (!(await ownedFile(targetPath, owner)))
@@ -597,7 +626,7 @@ export async function refreshCursorMcpCatalog(
           )
           await unlink(stagedPath)
           await unlink(pendingCreationPath)
-          handle = await openConfigForRefresh(targetPath)
+          handle = await openPublishedConfig(targetPath)
         }
       }
       try {
