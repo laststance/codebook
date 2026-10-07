@@ -583,8 +583,8 @@ function studyClient(
     if (!element('study-files').hasAttribute('open')) {
       showCopyOutcome('', false)
       emptyStudyFiles()
-      // Opening the disclosure again asks the host again: an earlier refusal does not stand in for the answer.
-      forgetFilesRefusal()
+      // Closing ends the request, answered or not: a closed disclosure takes no answer in, so a request kept open across the close would still count as owed when the learner opens it again, and nothing would be asked. Opening asks the host again; an earlier refusal does not stand in for the answer.
+      filesRequest = undefined
       return
     }
     const studyId = filesDisclosureStudyId
@@ -1368,8 +1368,8 @@ function studyClient(
     })
   }
   /**
-   * Forgets a refusal the host answered this pane's files request with, so the next look at the entry's files asks the host again; called when the disclosure closes and at a press on Retry storage / refresh inside it.
-   * A request that is still open is kept: its answer is owed, and nothing is asked twice for it.
+   * Forgets a refusal the host answered this pane's files request with, so the next look at the entry's files asks the host again; called at a press on Retry storage / refresh inside the disclosure.
+   * A request that is still open is kept: its answer is owed, and nothing is asked twice for it while the disclosure stays open.
    * @example forgetFilesRefusal()
    */
   const forgetFilesRefusal = (): void => {

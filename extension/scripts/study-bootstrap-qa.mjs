@@ -5765,6 +5765,70 @@ async function check(page, options, collected) {
         JSON.stringify([otherStudyFile]),
   })
 
+  // Arrange: Remove by hand opened for the third study and closed again before the host has answered (row 252).
+  await library(studiesWithOther, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const askedThenClosed = await removalControl()
+  await toggleByKeyboard('study-files')
+  // Act: the host's refusal arrives while the disclosure is closed, and another pane's answer then takes its place in the message; the learner opens the disclosure again, and the host lists the file.
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listingFailed,
+    }),
+  })
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(3),
+    studyFiles: othersFiles,
+  })
+  const closedWithAnswer = await removalControl()
+  await toggleByKeyboard('study-files')
+  await page
+    .waitForFunction(
+      (requestsBefore) =>
+        window.sent.filter((message) => message.type === 'delete-study')
+          .length > requestsBefore,
+      closedWithAnswer.deletes.length,
+      { timeout: 2_000 },
+    )
+    .catch(() => undefined)
+  const reopened = await removalControl()
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { ...othersFiles, [thirdStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterReopening = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a refusal that arrives while Remove by hand is closed does not leave the disclosure waiting: opened again, it asks the host again and shows the files, not Listing this study’s files… with no button',
+    actual: {
+      askedThenClosed,
+      closedWithAnswer,
+      reopened,
+      listedAfterReopening,
+    },
+    passed:
+      closedWithAnswer.removeByHand.open === false &&
+      closedWithAnswer.deletes.length === askedThenClosed.deletes.length &&
+      // Opening again sends one new request, marked as the learner's own.
+      reopened.deletes.length === askedThenClosed.deletes.length + 1 &&
+      reopened.deletes.at(-1)[0] === thirdStudy.id &&
+      reopened.removeByHand.note === "Listing this study's files…" &&
+      listedAfterReopening.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterReopening.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      listedAfterReopening.removeByHand.retryVisible,
+  })
+
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).
   const deletesBeforeReasons = (await removalControl()).deletes.length
   /** Reads the reason shown under the list and whether Remove by hand is offered beside it. */
