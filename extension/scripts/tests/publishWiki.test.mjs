@@ -2734,20 +2734,107 @@ test('a page that shows a form, a script and authored SVG as escaped text is pub
   }
 })
 
-// Value: protects=the ids of a page after an attribute whose bare value holds "<!--", which a browser reads as a character of the tag; fails_when=the publisher takes that place for the start of a comment again, so every id after it is unseen: an outline anchor there is refused although the heading is in the page, and an id of the reader there is published a second time; why_new=Cycle 0046 row 193 (a start tag was read up to the next "<"); seam=none
-test('after a bare attribute value that holds <!-- the ids of the page are read as a browser reads them: an outline anchor is accepted and an id of the reader is renamed', async () => {
-  // Arrange: a paragraph whose title is the bare value <!--, then a heading that carries qa-form and one that carries flow; the outline names both.
+// Value: protects=a published page, on whose tags and ids the publisher and a browser must agree: the publisher follows a browser's reading of markup by a pattern, which holds only for markup written plainly; fails_when=a page is published although a `<` of its content begins something a browser reads by other rules (a `<?` or `<!` that is no comment, a CDATA section, a quotation mark that is no attribute's value, a tag or a quoted value that never ends, a bare value with a character a browser takes for an error, an end tag with an attribute, an attribute named twice, an id written with a character reference the publisher does not read), so an id of the reader could stand twice unseen, an outline entry could lead nowhere, or the rest of the page could be taken into an attribute; why_new=Cycle 0046 row 206 (the class of rows 134, 184, 193 and 194, closed by refusing what is not read exactly; it replaces row 193's allowance of a `<` in a bare attribute value); seam=none
+for (const [what, markup, place] of [
+  [
+    'a `<?` that a browser reads as a comment up to the next `>`',
+    '<? <b <h3 id="after">After</h3>',
+    '<? <b <h3 id="after">After</h3>',
+  ],
+  ['a `<!` that is no comment', '<!x <b>', '<!x <b>'],
+  [
+    'a CDATA section',
+    '<math><![CDATA[<h3 id="inside">Inside</h3>]]></math>',
+    '<![CDATA[<h3 id="inside">Inside</h3>]]><',
+  ],
+  [
+    'a quotation mark that is no attribute’s value',
+    '<p a"b>The text says id=fake here" </p>',
+    '<p a"b>The text says id=fake here" </p>',
+  ],
+  [
+    'a quoted attribute value that never ends',
+    '<a href="pages/details.html>More</a>',
+    '<a href="pages/details.html>More</a>',
+  ],
+  [
+    'a bare attribute value that holds a `<`',
+    '<p title=<!-- >A note</p><h3 id="qa-form">The form</h3>',
+    '<p title=<!-- >A note</p><h3 id="qa-form',
+  ],
+  [
+    'a bare attribute value that holds an `=`',
+    '<p title=a=b>A note</p>',
+    '<p title=a=b>A note</p>',
+  ],
+  ['an end tag with an attribute', '<p>A note</p id="note">', '</p id="note">'],
+  [
+    'a tag that never ends',
+    '<p>A note</p><div class="more"',
+    '<div class="more"',
+  ],
+  [
+    'an attribute named twice',
+    '<h3 id="note" id="qa-form">A note</h3>',
+    '<h3 id="note" id="qa-form">A note</h3>',
+  ],
+  [
+    'an id written with a character reference without its semicolon',
+    '<h3 id="qa&#45form">The form</h3>',
+    '<h3 id="qa&#45form">The form</h3>',
+  ],
+  [
+    'an id written with a named character reference the publisher does not read',
+    '<p id="a&lowbar;b">A note</p>',
+    '<p id="a&lowbar;b">A note</p>',
+  ],
+])
+  test(`a page with ${what} is refused with the sentence that names the place and says what to write`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-read-exactly-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${markup}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: ${place}`,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the markup an article is written in, which the rule above must not refuse; fails_when=the publisher refuses a `<` that is text for a browser (before a space, a digit or the page's end), a tag with a slash before its end, a bare attribute value, an attribute directly after a closing quote, an ampersand in an address, an id written with `&amp;` or a numeric reference, a custom element, or mathematics with an id inside, whose id it must read and rename like any other; why_new=Cycle 0046 row 206 (the rule was run over the 104 pages of the real Wikis on this machine first and refused none); seam=none
+test('a page whose every < is text, a comment that ends, an end tag or a plainly written start tag is published as authored, and an id inside mathematics is read like any other', async () => {
+  // Arrange: the forms an article uses, and a mathematics element one of whose parts carries an id of the reader.
   const root = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-reader-bare-value-')),
+    await mkdtemp(join(tmpdir(), 'codebook-reader-read-exactly-ok-')),
   )
   try {
     const manifest = await readerInput(root)
-    manifest.pages[0].contentHtml =
-      '<p title=<!-- >A note</p><h2 id="qa-form">The form</h2><h3 id="flow">Flow</h3>'
-    manifest.pages[0].outline = [
-      { id: 'qa-form', label: 'The form' },
-      { id: 'flow', label: 'Flow' },
-    ]
+    const authored =
+      '<h2 class="title"id="flow">Source flow</h2><p>When a < b and 1 <2, see <!-- a note --> the list.</p>' +
+      '<p data-level=2 title=\'it says "a > b"\'>A line<br/>and <img src=pages/a.png alt="A figure" /> a figure.</p>' +
+      '<p id="read&amp;write"><a href="pages/details.html?from=overview&part=2#more">More</a> <code-sample language=ts>let a</code-sample></p>' +
+      '<math><mi id="qa-form">x</mi></math><p>The end <'
+    manifest.pages[0].contentHtml = authored
+    manifest.pages.push({
+      path: 'pages/details.html',
+      title: 'Details',
+      section: 'Guide & concepts',
+      contentHtml: '<h2 id="more">More</h2><p>Explained from source.</p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [{ id: 'more', label: 'More' }],
+    })
 
     // Act
     const html = (
@@ -2757,15 +2844,13 @@ test('after a bare attribute value that holds <!-- the ids of the page are read 
       })
     ).get('index.html')
 
-    // Assert
+    // Assert: everything as authored, but for the id of the reader inside the mathematics, which is renamed.
     assert.ok(
       html.includes(
-        '<p title=<!-- >A note</p><h2 id="page-qa-form">The form</h2><h3 id="flow">Flow</h3>',
-      ),
-    )
-    assert.ok(
-      html.includes(
-        '<ul class="outline"><li><a href="#page-qa-form">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
+        authored.replace(
+          '<mi id="qa-form">x</mi>',
+          '<mi id="page-qa-form">x</mi>',
+        ),
       ),
     )
   } finally {
@@ -2773,16 +2858,16 @@ test('after a bare attribute value that holds <!-- the ids of the page are read 
   }
 })
 
-// Value: protects=the ids a diagram generates on a page with such an attribute; fails_when=an element after a bare attribute value "<!--" that carries a generated diagram id is unseen and the page is published with the id twice; why_new=Cycle 0046 row 193; seam=none
-test('after a bare attribute value that holds <!-- an element that carries a generated diagram id is seen and the page is refused', async () => {
+// Value: protects=the reader's own controls and the publisher's reading of a page that holds a select element; fails_when=a select is published: a browser drops or rearranges tags inside it by rules of its own, so an id the publisher reads there may be no element; why_new=Cycle 0046 row 206; seam=none
+test('a page that holds <select> is refused like a page that holds a form or a script', async () => {
   // Arrange
   const root = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-diagram-bare-value-')),
+    await mkdtemp(join(tmpdir(), 'codebook-reader-select-')),
   )
   try {
-    const manifest = await diagramInput(root)
-    manifest.pages[0].contentHtml +=
-      '<p title=<!-- >A note</p><p id="codebook-diagram-4-flow">Another note</p>'
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><select><option>One</option></select>'
 
     // Act / Assert
     await assert.rejects(
@@ -2790,7 +2875,10 @@ test('after a bare attribute value that holds <!-- an element that carries a gen
         projectRoot: root,
         outputDirectory: join(root, '.codebook/wiki'),
       }),
-      { message: 'Article IDs must not collide with generated diagram IDs.' },
+      {
+        message:
+          'Wiki page index.html must contain article sections, not a document, form or script: it holds <select>.',
+      },
     )
   } finally {
     await rm(root, { recursive: true, force: true })
