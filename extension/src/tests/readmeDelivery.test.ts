@@ -179,14 +179,15 @@ test('the packaged README says in both lock passages what a storage lock records
 })
 
 // Value: protects=a learner who finds the file of a running Wiki update in the project folder, or whose update is refused because of another window, reading what the file holds, that it names no computer, host or user in clear, and how long a marker counts that no window here can judge; fails_when=the README loses the marker's paragraphs, leaves out one of the three refusals or one of the cases in which a marker is not judged by its process (a window that could not read its own process start, a Linux window that could not read its pid namespace), or names another longest time than the product computes for Cursor and VS Code; why_new=Cycle 0046 row 119 (amendment ER-14): no document described the marker; rows 103, 115 and 145 added the two cases and the third refusal after the paragraphs were written; seam=none
-test('the packaged README says what the marker of a running Wiki update holds, that it names no computer, host or user in clear, the three refusals of a start beside another window, that a killed window’s marker does not refuse a start, and that a marker nobody here can judge counts for at most 21 minutes in Cursor and 21 minutes 30 seconds in VS Code', async () => {
+test('the packaged README says what a running Wiki update’s marker holds, preserves marker privacy, distinguishes a killed running owner from a stopped watch whose record could not be stored and states their time bounds', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
-  // Act: the two paragraphs under "LLM Wiki: open and update", whole.
+  // Act: the three paragraphs under "LLM Wiki: open and update", whole.
   const delivered = heldSentences(readme, [
     "While an update runs, its window keeps a marker file beside the output folder, `<folder>.update-run.json` (`.codebook/wiki.update-run.json` unless the setting names another folder), so that a second editor window on the same project does not start a second update. That window's start is refused with `Another editor window is updating this Wiki (<editor>, started <time>). Wait for it to finish, then press Update LLM Wiki again.` Two shorter refusals name no run. `Another editor window is starting an update of this Wiki. Wait a moment and try again.` is shown while another window is writing its marker (a marker file without content that is younger than 2 seconds). `Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.` is shown while another window holds the claim under which a marker is removed or replaced, and a leftover marker is in the way. The marker usually lies in your project folder, so it holds nothing that names the computer, its host or its user in clear: it records the process id of the window's extension host and when that process began, a random id of the window, the editor, the time the run started, the kernel's boot id on Linux, and two digests that stand for the machine. A digest is a pseudonym and no secret: a commit of the file publishes it, and the digest of a common host name can be found by trying names. When the run ends, its window removes the marker; after a stopped VS Code watch the file stays as that window's note that the chat may still publish, and the window removes it later or the next update does.",
-    "A marker that a killed editor left on this machine does not refuse a start: a window of this build judges a marker by the start of its owner's process, so the marker counts as nobody's when that process is gone and also when another process has its process id since, and the next start removes it. A marker whose owner cannot be judged here counts until its run's longest time has passed at the latest: 21 minutes after the run began for Cursor and 21 minutes 30 seconds for VS Code (the 15 minutes of a run, in VS Code after the 30 seconds for the chat's first answer, then 1 minute, then the 5 minutes by which two clocks may differ). That is a marker written on another computer (a project folder shared between machines), in another system or another pid namespace of this computer (a Windows window beside a WSL window, another WSL distribution, a container), where its process id means another process, by a window that could not read its own process start, or by a Linux window that could not read its own pid namespace (such a window also judges no other window's marker by its process). A marker of this computer that names another boot of the Linux kernel than the running one is nobody's all the same. A marker of 0.2.29.0 counts that long when a process still has its process id. [What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits.",
+    "A marker of a running update that a killed editor left on this machine does not refuse a start: a window of this build judges a marker by the start of its owner's process, so the marker counts as nobody's when that process is gone and also when another process has its process id since, and the next start removes it. A marker whose owner cannot be judged here counts until its run's longest time has passed at the latest: 21 minutes after the run began for Cursor and 21 minutes 30 seconds for VS Code (the 15 minutes of a run, in VS Code after the 30 seconds for the chat's first answer, then 1 minute, then the 5 minutes by which two clocks may differ). That is a marker written on another computer (a project folder shared between machines), in another system or another pid namespace of this computer (a Windows window beside a WSL window, another WSL distribution, a container), where its process id means another process, by a window that could not read its own process start, or by a Linux window that could not read its own pid namespace (such a window also judges no other window's marker by its process). A running update's marker of this computer that names another boot of the Linux kernel than the running one is nobody's all the same. A marker of 0.2.29.0 counts that long when a process still has its process id. [What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits.",
+    "A stopped VS Code watch's reservation describes a chat that can still publish. If the editor could not store that watch's record, Codebook keeps the reservation when the window closes or reloads. Another window, including the reloaded one, still waits until 15 minutes after the watch ended, also when the former extension host's process is gone. Stop that chat, then choose Update anyway if Codebook still waits for it; a publish the reader recognizes ends the wait sooner.",
   ])
   const longestCursorMarkerMs =
     WIKI_CURSOR_UPDATE_TIMEOUT_MS +
@@ -198,8 +199,8 @@ test('the packaged README says what the marker of a running Wiki update holds, t
     WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
     WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
 
-  // Assert: both paragraphs, and the file name and the times the product keeps: 21 minutes, 21 minutes 30 seconds and their parts, and the 2 seconds of a marker that is being written.
-  assert.deepEqual(delivered, [true, true])
+  // Assert: all paragraphs, and the file name and the times the product keeps: 21 minutes, 21 minutes 30 seconds and their parts, and the 2 seconds of a marker that is being written.
+  assert.deepEqual(delivered, [true, true, true])
   assert.equal(WIKI_UPDATE_RUN_MARKER_SUFFIX, '.update-run.json')
   assert.equal(longestCursorMarkerMs, 1_260_000)
   assert.equal(longestVsCodeMarkerMs, 1_290_000)
@@ -364,7 +365,7 @@ test('the packaged README says that a VS Code update sends its request into a ne
     "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). The update asks nothing about edits of that chat you have not decided on yet: they stay pending in their chat, with Keep and Undo, and the **Suggested Edits** editor that shows them stays open.",
     "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work elsewhere in the window (a file you open, a command you run) is not taken for a sign. What the update's own steps touch counts whoever does it, because Codebook cannot tell you from the chat there: a file opened in the Wiki's folder, in a folder prepared beside it or in the Codebook skill's folder, a terminal command that names `publish-wiki.mjs` or the Wiki's folder, and a change in the Wiki's folder or in a folder prepared beside it.",
     'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
-    'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
+    'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` instead.',
     "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command; where the reveal or New Chat failed, nothing says so before, and the Chat view shows the request in the chat that was open. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
   ])
   const retired = [
@@ -386,7 +387,7 @@ test('the packaged README says that a VS Code update sends its request into a ne
   )
   assert.equal(
     describeUnansweredWikiChat('left', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   )
   assert.equal(
     describeUnansweredWikiChat(
@@ -418,6 +419,25 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
     'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
   )
   assert.deepEqual(delivered, [true])
+})
+
+// Value: protects=a learner reading in the README what follows the 30 seconds with a request Codebook could not take back; fails_when=the README no longer says that Codebook then waits for that chat and answers a retry with Update anyway, so the refusal of the retry comes unannounced, or quotes another sentence than the product prints; why_new=Cycle 0046 row 358; seam=none
+test('the packaged README says that after a request Codebook could not take back a retry is answered with the wait for that chat and Update anyway, and quotes the sentence that names the step', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` instead. Codebook then waits for that chat as it does after a stopped watch, for 15 minutes: a retry in that time is answered with the wait and **Update anyway**, not with a second request beside the first.',
+  ])
+
+  // Assert: the README holds the sentences, the sentence it quotes is the product's, and the wait is the watch's bound.
+  assert.deepEqual(delivered, [true])
+  assert.equal(
+    describeUnansweredWikiChat('left', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+  )
+  assert.equal(WIKI_UPDATE_WATCH_TIMEOUT_MS / MS_PER_MINUTE, 15)
 })
 
 // Value: protects=a learner reading in the README what to do when an update stopped on a file of their own; fails_when=the row tells a VS Code learner only to move the file and update again, although the chat was not stopped and that press is answered with the wait for it, or no longer says that the chat can still publish; why_new=Cycle 0046 row 343; seam=none
@@ -461,7 +481,7 @@ test('the packaged README says that the wait for a chat whose watch stopped ends
 
   // Act
   const delivered = heldSentences(readme, [
-    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until. The wait for a chat whose watch stopped ends earlier when that chat publishes: once a site was published after the watch stopped, the next update starts without this sentence (in the window that watched only when the candidate folder its watch saw is gone too).',
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped or after a request Codebook could not take back, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until. The wait for a chat whose watch stopped ends earlier when that chat publishes: once a site was published after the watch stopped, the next update starts without this sentence (in the window that watched only when the candidate folder its watch saw is gone too).',
   ])
 
   // Assert
@@ -582,7 +602,7 @@ test('the packaged README names the rail entry Open in VS Code or Open in Cursor
     "Under the outline in the right rail every page has the entry **Open in VS Code**, or **Open in Cursor** when Cursor serves the page. It opens the page's first cited source at its cited line in that editor and names that file and line under its label.",
     'A page opened from disk keeps the entry as it was published: **Open in VS Code**, which opens VS Code, and for a site published by 0.2.29.0 without the file and line.',
     '| Update failed, and the sentence names **Update anyway**',
-    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until.',
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped or after a request Codebook could not take back, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until.',
     "Wait until that time, or, if that chat was stopped, press **Update anyway** in the editor's notification. It starts the update past what that notification named; anything that appeared since is named in a new notification. Another window's running update offers no **Update anyway**: wait for it to finish.",
     "While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists `save-learning-summary` in `nextActions` and gives the step as `saveLearningSummary`: call `codebook_explain` on a committed snapshot of the run with a new key and a complete `learningSummary` whose final step is observed and cites the run resource's `terminalReference`. Once the run's 32 explanation keys are spent the action is no longer listed, and `saveLearningSummary` says that the saved study will have no learning summary.",
   ])

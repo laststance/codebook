@@ -939,6 +939,187 @@ test('a window that was reloaded while it watched a VS Code update starts the ne
   }
 })
 
+// Value: protects=the extension host's log and both the current and reloaded window's next Update press after storage rejected a stopped watch's record; fails_when=the rejection is unhandled or closing the window removes the only remaining reservation, allowing a second chat while the first may still publish; why_new=Cycle 0046 row 359; seam=workspace storage rejects every write, and the retained marker names a process that has ended before the reload
+test('a stopped VS Code watch whose record cannot be stored leaves no unhandled rejection and keeps its reservation across reload and process exit, so neither window starts a second chat without Update anyway', async () => {
+  // Arrange
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  const workspaceState = new Map<string, unknown>()
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    workspaceState,
+    workspaceStateWrite: async () => {
+      throw new Error('The storage is not available.')
+    },
+  })
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  let reloaded: Awaited<ReturnType<typeof openWikiUpdateWindow>> | undefined
+  try {
+    await wiki.clickUpdate()
+
+    // Act: the watch is cancelled, the learner presses again in this window, and then the window is reloaded and the learner presses there.
+    progress[0]!.cancel()
+    const ended = await waitForEnd(wiki.status)
+    await wiki.clickUpdate()
+    const offeredInThisWindow = wiki.offeredActions.at(-1)?.actions
+    await wiki.closeWindow()
+    const markerAfterTheClose = await access(markerPath).then(
+      () => 'still there',
+      () => 'gone',
+    )
+    assert.equal(markerAfterTheClose, 'still there')
+    // A real reload replaces the extension host: the reservation still stands for a chat that may publish, even when its former process is gone.
+    const marker: unknown = JSON.parse(await readFile(markerPath, 'utf8'))
+    assert.ok(typeof marker === 'object' && marker !== null)
+    await writeFile(
+      markerPath,
+      JSON.stringify({ ...marker, pid: ID_OF_NO_PROCESS }),
+    )
+    reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      workspaceState,
+    })
+    await reloaded.clickUpdate()
+    // An unhandled rejection is reported after the promise jobs of this turn.
+    await new Promise<void>((resolveWait) => setImmediate(resolveWait))
+
+    // Assert: the end and this window's next press.
+    assert.equal(ended.state, 'cancelled')
+    assert.match(
+      wiki.notices[0] ?? '',
+      new RegExp(
+        `^Stopped watching at ${CLOCK_TIME}\\. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself\\. Nothing has been replaced so far\\.$`,
+      ),
+    )
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.deepEqual(offeredInThisWindow, ['Update anyway', 'Open LLM Wiki'])
+    assert.equal(wiki.chatRequests.length, 1)
+    // The missing workspace record does not remove the reservation's protection after a reload.
+    assert.equal(workspaceState.has('codebook.wikiUpdateLastRun'), false)
+    assert.equal(markerAfterTheClose, 'still there')
+    assert.equal(reloaded.status().state, 'failed')
+    assert.match(
+      reloaded.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat another editor window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; that window stopped watching it at ${CLOCK_TIME}[^.]* and Codebook waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.equal(reloaded.chatRequests.length, 0)
+    assert.deepEqual(reloaded.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.deepEqual(unhandledRejections, [])
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await reloaded?.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=what a window knows after a reload of the watch it had stopped before: the record of that run in its workspace state; fails_when=the record is no longer written or no longer read at activation, so the reloaded window sends a second request although Codebook still waits for the first chat (seen natively: a press after a reload was answered with the wait); why_new=Cycle 0046 row 359 (the counterpart of the test above: the write succeeded); seam=none
+test('a window that is reloaded after its VS Code watch was stopped still answers the next press with the wait for that chat and Update anyway, from the record of the run in its workspace state', async () => {
+  // Arrange: one window before and after its reload shares the workspace state.
+  const workspaceState = new Map<string, unknown>()
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress, workspaceState })
+  let reloaded: Awaited<ReturnType<typeof openWikiUpdateWindow>> | undefined
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    await wiki.closeWindow()
+
+    // Act
+    reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      workspaceState,
+    })
+    await reloaded.clickUpdate()
+
+    // Assert
+    assert.match(
+      reloaded.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.deepEqual(reloaded.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.deepEqual(reloaded.chatRequests, [])
+  } finally {
+    await reloaded?.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the first press after a window was reloaded during a watch it had started over an earlier stopped watch; fails_when=the closing window does not wait until the editor's storage took the record of the run it stops, so the reloaded window reads the older record, which says that a chat may still be updating, and refuses the press; why_new=Cycle 0046 row 359 (the write was started and never waited for); seam=the editor's storage, which takes a tenth of a second for a write once the window closes
+test('a window that closes while it watches a VS Code update waits until the record of the run it stops is written, so the reloaded window starts the next update and does not read the record of the stopped watch before it', async () => {
+  // Arrange: a first watch is stopped (its record says the chat may still work), then Update anyway starts a second watch.
+  const workspaceState = new Map<string, unknown>()
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  let isStorageSlow = false
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    workspaceState,
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+    workspaceStateWrite: async (write) => {
+      if (isStorageSlow)
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+      write()
+    },
+  })
+  let reloaded: Awaited<ReturnType<typeof openWikiUpdateWindow>> | undefined
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests, 2)
+
+    // Act: the window is reloaded while the second update is watched; its storage is slow now.
+    isStorageSlow = true
+    await wiki.closeWindow()
+    const recordAtTheReload = workspaceState.get('codebook.wikiUpdateLastRun')
+    reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      workspaceState,
+    })
+    await reloaded.clickUpdate()
+
+    // Assert
+    assert.equal(
+      typeof recordAtTheReload === 'object' &&
+        recordAtTheReload !== null &&
+        'mayAgentStillWork' in recordAtTheReload
+        ? recordAtTheReload.mayAgentStillWork
+        : 'no record',
+      false,
+    )
+    assert.equal(reloaded.status().state, 'running')
+    assert.deepEqual(reloaded.errors, [])
+  } finally {
+    await reloaded?.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
 // The bound is twice the default termination grace: an agent that is never started fails this test instead of hanging its file.
 test(
   'closing the window stops the Cursor agent and waits until its process has closed',
@@ -1363,6 +1544,69 @@ test('a VS Code watch that itself breaks off ends the update with the sentence t
   }
 })
 
+// Value: protects=the learner's next press, and every other window, after a watched VS Code update ended while a step of recording that end threw; fails_when=the end is recorded inside the watch's own guard, so a throw of the end is taken for a watch that broke off: the run is recorded again as one whose chat still works, the next press is refused with "may still be updating this Wiki" although the chat's reply had ended, the run's marker stays beside the Wiki and a rejection is left unhandled; why_new=Cycle 0046 row 353 (review finding on the watch's try/catch); seam=the editor's notification, whose call throws for the notice of the end
+test('a watched VS Code update whose chat finishes its reply without publishing, at a moment the editor cannot show the notice of that end, is not recorded as a watch that broke off: the page has the sentence of the finished reply, the marker is gone, nothing is left unhandled, and the next press sends a request', async () => {
+  // Arrange: the first chat shows a sign and later completes its reply; a later chat works. The editor's call for a notice with a button throws once, at the notice of the first end.
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  let completeTheReply = (): void => {}
+  let replyCount = 0
+  let noticeThrowsLeft = 1
+  const wiki = await openWikiWindow({
+    chatReply: () => {
+      replyCount += 1
+      return replyCount === 1
+        ? new Promise((resolveReply) => {
+            completeTheReply = (): void => resolveReply({})
+          })
+        : Promise.resolve({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+    chooseAction: () => {
+      noticeThrowsLeft -= 1
+      if (noticeThrowsLeft === 0)
+        throw new Error('The notification could not be shown.')
+      return undefined
+    },
+  })
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+    wiki.openDocument(wiki.manifestPath)
+    await press
+
+    // Act: the reply ends without a publish; then the learner presses again.
+    completeTheReply()
+    const ended = await waitForEnd(wiki.status)
+    const markerDeadline = Date.now() + 2_000
+    let markerAfterTheEnd = 'still there'
+    while (markerAfterTheEnd === 'still there' && Date.now() < markerDeadline) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+      markerAfterTheEnd = await access(markerPath).then(
+        () => 'still there',
+        () => 'gone',
+      )
+    }
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : ended.state,
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.equal(markerAfterTheEnd, 'gone')
+    assert.deepEqual(unhandledRejections, [])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await wiki.close()
+  }
+})
+
 // Value: protects=the Update button of a window whose watched run ends at a moment the Wiki folder cannot be read, and the chat of that run, which was not stopped; fails_when=the end rejects where it reads the disk, the watch's own catch runs into the same read, and the run stays "running", so every later press is answered with "already updating" until the window is reloaded; or the run ends without the reservation of a cancelled watch and the next press sends a second request; why_new=Cycle 0046 row 344; seam=the read of the publish token, which rejects while the run ends
 test('a VS Code watch the learner cancels at a moment the Wiki folder cannot be read does not stay running: the update ends with the sentence that Codebook could not read how it ended, claims nothing about the site, and the next press is answered with the wait for the chat and Update anyway', async () => {
   // Arrange
@@ -1479,17 +1723,23 @@ test('a Cursor update during which another repository was opened ends as failed 
   }
 })
 
-test('a chat command that never returns, also after the chat’s Cancel, ends the update as failed at its bound with the sentence that the request may still be in the chat, and the next press can start', async () => {
+// Value: protects=the learner and the Wiki after the 30 seconds passed with a request Codebook could not take back, which may still be in the chat; fails_when=a start that waits for the chat forever hangs the press, or that end leaves no reservation, so the retry the sentence names sends a second request into a new chat beside the first, or the refused retry offers no Update anyway; why_new=Cycle 0045 (the press that must not hang), Cycle 0046 row 358 (the retry: it used to start at once, which row 147 had recorded as decided); seam=the chat's command, which is held so that it never returns
+test('a chat command that never returns, also after the chat’s Cancel, ends the update as failed at its bound with the sentence that the request may still be in the chat; the retry sends no second request and is answered with the wait for that chat and Update anyway, which then starts the update', async () => {
   // Arrange: the bound is 0.1 seconds and each step of the withdrawal gets 0.05 seconds.
+  let isOverrideChosen = false
   const wiki = await openWikiWindow({
     constants: {
       WIKI_CHAT_OPEN_TIMEOUT_MS: 100,
       WIKI_CHAT_WITHDRAW_SETTLE_MS: 50,
     },
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
   })
   const chatThatNeverOpens = wiki.hold('chat-open')
   try {
-    // Act: the press is raced against two seconds, so a start that waits for the chat forever fails here instead of hanging.
+    // Act: the press is raced against two seconds, so a start that waits for the chat forever fails here instead of hanging. Then the learner retries without stopping the request, and after that chooses Update anyway.
     const firstPress = await Promise.race([
       wiki.clickUpdate().then(() => 'ended'),
       new Promise((resolveWait) =>
@@ -1497,16 +1747,42 @@ test('a chat command that never returns, also after the chat’s Cancel, ends th
       ),
     ])
     const afterFirstPress = wiki.status()
+    const requestsAfterFirstPress = wiki.executedCommands.filter(
+      (command) =>
+        command === 'workbench.action.chat.open with the update request',
+    ).length
     chatThatNeverOpens.release()
     await wiki.clickUpdate()
+    const afterTheRetry = wiki.status()
+    const requestsAfterTheRetry = wiki.executedCommands.filter(
+      (command) =>
+        command === 'workbench.action.chat.open with the update request',
+    ).length
+    const offeredAtTheRetry = wiki.offeredActions.at(-1)?.actions
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    const overrideDeadline = Date.now() + 2_000
+    while (wiki.status().state !== 'running' && Date.now() < overrideDeadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
 
     // Assert
     assert.equal(firstPress, 'ended')
     assert.equal(afterFirstPress.state, 'failed')
     assert.equal(
       afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 0.1 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 0.1 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
+    // The retry: no second request beside the one that may still be in the chat, and the override is offered.
+    assert.deepEqual([requestsAfterFirstPress, requestsAfterTheRetry], [1, 1])
+    assert.match(
+      wiki.errors[1] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.equal(afterTheRetry.state, 'failed')
+    assert.deepEqual(offeredAtTheRetry, ['Update anyway', 'Open LLM Wiki'])
+    // Update anyway starts the update.
     assert.equal(wiki.status().state, 'running')
   } finally {
     chatThatNeverOpens.release()
@@ -1734,13 +2010,13 @@ test('a chat whose Cancel fails ends the update with the sentence that the reque
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry\\. Nothing had been replaced by then\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
       ),
     )
   } finally {
@@ -1772,7 +2048,7 @@ test('a request that is still pending after the chat’s Cancel returned is repo
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
   } finally {
     await wiki.close()
@@ -1805,7 +2081,7 @@ test('a chat that asks for its first approval while Codebook takes the request b
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.deepEqual(wiki.progressTitles, [])
   } finally {
@@ -1949,7 +2225,7 @@ test('in an editor without the New Chat command a failing queue command is follo
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
   } finally {
     await wiki.close()

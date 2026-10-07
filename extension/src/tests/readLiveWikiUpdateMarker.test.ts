@@ -109,6 +109,30 @@ test('a run marker whose process id still answers stops counting as a running up
   }
 })
 
+// Cycle 0046 (row 359): the marker is the reload's only protection when workspace storage refused the stopped watch's record; it describes a chat, so the former extension host's exit must not clear it before its bound.
+test('a stopped watch’s reservation still protects a reloaded window after its former process ended, and expires at the watch bound', async (context) => {
+  // Arrange
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      windowId: 'stopped-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS - 60_000,
+      watchEndedAtMs: NOW_MS,
+      ...THIS_WINDOW,
+    }),
+  )
+
+  // Act
+  const beforeTheBound = await lookAt(outputDirectory, NOW_MS + 899_999)
+  const atTheBound = await lookAt(outputDirectory, NOW_MS + 900_000)
+
+  // Assert
+  assert.equal(beforeTheBound.kind, 'live')
+  assert.deepEqual(atTheBound, { kind: 'unowned' })
+})
+
 test('a run marker of another window still counts inside its host’s longest run, and a stopped watch’s reservation is handed on for the caller to weigh', async () => {
   // Arrange
   const nowMs = Date.now()

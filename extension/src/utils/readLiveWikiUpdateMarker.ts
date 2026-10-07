@@ -205,11 +205,29 @@ function isFromTooFarAhead(marker: WikiUpdateMarker, nowMs: number): boolean {
 }
 
 /**
+ * Keeps a stopped VS Code watch's reservation inside its existing time bound; called by {@link mayMarkerOwnerRun} after the future-clock check, including when its process ended and a reload lost the workspace record.
+ * @param marker - The host and stopped-watch time the marker records.
+ * @param nowMs - The asking window's current epoch milliseconds.
+ * @returns `true` for a stopped VS Code watch before its bound; `false` for a running marker, another host or an expired reservation.
+ * @example isStoppedWatchInsideBound({ host: 'vscode', watchEndedAtMs: 1_000 }, 1_001) // => true
+ */
+function isStoppedWatchInsideBound(
+  marker: Pick<WikiUpdateMarker, 'host' | 'watchEndedAtMs'>,
+  nowMs: number,
+): boolean {
+  return (
+    marker.host === 'vscode' &&
+    marker.watchEndedAtMs !== undefined &&
+    nowMs < marker.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+  )
+}
+
+/**
  * Says whether the owner of another window's marker may still run, by the rules that look at the owner; called by {@link isLiveMarkerOfAnotherWindow} for a marker that is not expired.
- * The rules, in this order: a marker whose owner is proven to run here counts, whatever its times say ({@link isVerifiedLiveOwner}); a marker whose run starts, or whose stopped watch ended, more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now is nobody's ({@link isFromTooFarAhead}: a file a repository supplies cannot refuse every start); every other marker counts until its owner is gone ({@link isMarkerOwnerGone}).
+ * The rules, in this order: a marker whose owner is proven to run here counts, whatever its times say ({@link isVerifiedLiveOwner}); a marker whose run starts, or whose stopped watch ended, more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now is nobody's ({@link isFromTooFarAhead}: a file a repository supplies cannot refuse every start); a stopped VS Code watch's reservation still inside its bound counts even after the extension host ended, because the reload may have no stored record of that chat; every other marker counts until its owner is gone ({@link isMarkerOwnerGone}).
  * @param marker - The marker beside the Wiki.
  * @param judgement - The identity of this process, the reader of process starts and the present.
- * @returns `true` while the owner may run; `false` for a marker from too far ahead without a proven owner and for one whose owner is gone.
+ * @returns `true` while the owner may run or a stopped VS Code watch's reservation remains inside its bound; `false` for a marker from too far ahead without a proven owner and for an ended owner without such a reservation.
  * @example
  * await mayMarkerOwnerRun({ pid: 2 ** 22 + 1, windowId: 'other', host: 'vscode', startedAtMs: Date.now() }, judgement) // => false where no such process exists
  */
@@ -220,12 +238,14 @@ async function mayMarkerOwnerRun(
   // A running window of this machine is looked at before its times: a clock set back during its update makes them lie ahead.
   if (await isVerifiedLiveOwner(marker, judgement)) return true
   if (isFromTooFarAhead(marker, judgement.nowMs)) return false
+  // A stopped watch's reservation stands for its chat, including after a reload lost the workspace record and replaced the extension host.
+  if (isStoppedWatchInsideBound(marker, judgement.nowMs)) return true
   return !(await isMarkerOwnerGone(marker, judgement))
 }
 
 /**
  * Says whether a marker stands for an update that still counts against the asking window; called by {@link lookAtReadableMarker}.
- * This window's own marker is a leftover, and a run's marker older than any run is nobody's ({@link isRunMarkerExpired}); neither asks for the owner's process. Every other marker counts while its owner may run ({@link mayMarkerOwnerRun}).
+ * This window's own marker is a leftover, and a run's marker older than any run is nobody's ({@link isRunMarkerExpired}); neither asks for the owner's process. Every other marker follows {@link mayMarkerOwnerRun}, including a stopped VS Code watch's bounded reservation after its process ended.
  * @param marker - The marker beside the Wiki.
  * @param ownWindowId - The asking window's own id.
  * @param judgement - The identity of this process, the reader of process starts and the present.
@@ -322,9 +342,9 @@ async function lookAtUnreadableEntry(
  * @param ownWindowId - The asking window's own id; its own marker is a leftover of a run that already ended and is nobody's.
  * @param judgement - What the owner is judged by; this process's identity ({@link currentStorageOwner}), {@link readProcessStart} and the clock unless a caller or a test names its own.
  * @returns
- * - `live`: a marker of another window that still counts ({@link isLiveMarkerOfAnotherWindow}: not older than any run, and its owner proven to run, or neither ahead of the clock nor gone), in `heldBy` (with `watchEndedAtMs` when it is the reservation of a stopped watch, which the caller weighs against the watch bound)
+ * - `live`: another window's marker that still counts ({@link isLiveMarkerOfAnotherWindow}), including a stopped VS Code watch's reservation inside its bound after its process ended; in `heldBy`, with `watchEndedAtMs` for the caller's reservation check
  * - `being-written`: a file without readable content that was written a moment ago, with that time in `heldBy`
- * - `unowned`: this window's own marker, one whose owner is gone, a run's marker older than any run can be, one whose run starts or whose stopped watch ended too far ahead, and an entry without a readable marker that is older than a write takes
+ * - `unowned`: this window's own marker, an ended owner's marker without a valid bounded reservation, a run's marker older than any run can be, one whose run starts or whose stopped watch ended too far ahead, and an entry without a readable marker that is older than a write takes
  * - `none`: no entry at the marker's path
  *
  * @example

@@ -560,7 +560,7 @@ test('a failure after which the chat can still publish ends the run as failed an
   const mayStillBeInTheChat: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
     failure:
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     isFailureCodebookSentence: true,
     mayBeReplacedLater: true,
   }
@@ -584,7 +584,7 @@ test('a failure after which the chat can still publish ends the run as failed an
   assert.deepEqual(failed, {
     state: 'failed',
     reason:
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     isCodebookSentence: true,
     mayBeReplacedLater: true,
     site: 'kept',

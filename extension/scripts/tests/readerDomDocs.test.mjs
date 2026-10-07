@@ -160,15 +160,21 @@ test('the test execution guide says that the Wiki reader DOM check takes its upd
     .map((step) => step.trim())
     .filter(Boolean)
   const said = [
-    'the height of the rail with a refused update and with a conflict, the focus rings in the chapter list, the rail, the article and the composer, among them the ring of an answer, and the line of a missing page.',
-    "The update states come from the reader itself: the check hands the reader the state it answers at `api/update-status` (idle, a refused start, a conflict of twelve files), so the rail is measured with the panel the reader's own script draws, its output line included.",
+    'the height of the rail with a refused update, with a conflict and with the watch-bound and learner-file end sentences, the focus rings in the chapter list, the rail, the article and the composer, among them the ring of an answer, and the line of a missing page.',
+    "The update states come from the reader itself: the check hands the reader the state it answers at `api/update-status` (idle, a refused start, a conflict of twelve files, a VS Code watch that passed its 15 minutes, a VS Code update that stopped on twelve files of the learner's), so the rail is measured with the panel the reader's own script draws, its output line included. The watch-bound and learner-file end sentences must each be whole in a rail of at most 45vh at 960 x 600, so a sentence of an update's end that grows past that fails the check.",
     "The steps of a page run twice: on the overview as this publisher prints it, and on the same content in the shell of 0.2.29.0 (`extension/scripts/fixtures/reader-shell-0.2.29.0.txt`: the stylesheet a site of that build carries, with the rail's entry as that build printed it). The cases of the second pass end with `(on a page in the shell of 0.2.29.0)`, and their stills go to the subfolder `shell-of-0.2.29.0/`.",
     "Three kinds of case run once, on pages of their own: the rail's entry of a source whose path is about 200 characters long (eight lines of the path at rest where the rail is a row), a page whose headings were authored with the ids the reader uses itself, as this publisher prints it and in the shape of a page published before it, and the missing page.",
   ].map((sentence) => paragraph.includes(sentence))
 
   // Assert: the guide's four statements, and the script's states, its second pass and its last steps as the guide names them.
   assert.deepEqual(said, [true, true, true, true])
-  assert.deepEqual(answeredStates, ['idle', 'refused', 'conflict'])
+  assert.deepEqual(answeredStates, [
+    'idle',
+    'refused',
+    'conflict',
+    'watchPastItsBound',
+    'learnerFiles',
+  ])
   assert.equal(check.includes('{ length: 12 },'), true)
   assert.equal(
     check.includes('() => answeredUpdateStatus,'),

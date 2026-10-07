@@ -6,8 +6,8 @@ import { test } from 'node:test'
 // Read as text and never imported: loading the script publishes a Wiki, starts its reader and opens a browser.
 const scriptUrl = new URL('../wiki-reader-dom-qa.mjs', import.meta.url)
 
-// Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout); fails_when=a case is removed or renamed without notice, so a size or a focus ring the cycle's rows name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83, 84, 132 and 137 (design review DR-8 to DR-11, ND-3); seam=none
-test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600 with a refused start and a conflict, a long source path, the single column, the missing-page line and two pages whose headings carry the reader’s ids', async () => {
+// Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout); fails_when=a case is removed or renamed without notice, so a size or a focus ring the cycle's rows name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83, 84, 132 and 137 (design review DR-8 to DR-11, ND-3), and rows 330 and 343 (the sentences of a watch past its bound and of a learner's file in the way grew; their case holds the rail's bound); seam=none
+test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600 with a refused start, the watch-bound and learner-file end sentences and a conflict, a long source path, the single column, the missing-page line and two pages whose headings carry the reader’s ids', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
 
@@ -30,6 +30,8 @@ test('the Wiki reader DOM check measures the open control and its states, the ro
     'in the Wiki reader at 1200 px the keyboard focus ring of every control of the article and the composer is whole, also of one the keyboard scrolled back from the edge: Relevant source files, a link of the article, the question field, Ask Codebook, the answer with its summary and its citation, and the connection line',
     'in the Wiki reader at 1200 px the answer of a question has the reader’s own keyboard focus ring, 2 px in the link colour and 3 px outside it, whole inside the composer that scrolls',
     'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a refused update and its output line without a scrollbar, while a long outline scrolls inside 160 px',
+    'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a VS Code watch that passed its 15 minutes, with the steps for a chat that waits, still works or stopped, and its output line without a scrollbar',
+    'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a VS Code update that stopped on twelve files of the learner’s, with the chat that was not stopped, and its output line without a scrollbar',
     'in the Wiki reader at 960 x 600 the page of a conflict of twelve files shows its whole sentence and its output line in a rail of at most 45vh, and the list of the files, opened by a press, scrolls inside 84 px (14vh) and adds no more than that to the rail',
     'in the Wiki reader at 960 px the keyboard focus ring of the summary of an open update detail lies inside the detail that scrolls',
     'in the Wiki reader at 960 px the keyboard focus ring of an outline link lies inside the outline that scrolls',
@@ -101,6 +103,7 @@ test('the Wiki reader DOM check runs the steps of a page a second time on the sa
     'measureReadingColumnInColumns',
     'measureAnswerRing',
     'measureRailWithRefusal',
+    'measureRailWithStoppedWatchEnds',
     'measureRailWithOpenDetail',
     'measureDetailSummaryRingInRow',
     'measureOutlineRingInRow',
