@@ -436,7 +436,9 @@ That tree is verified at `c721b28` and pushed: the build passes, the full suite 
 
 **Decided as a stated limit, row 292.** Three gestures give a frame's file the keyboard and report nothing an extension can read: the editor's call stack navigation commands by themselves, a double click or Enter on a frame whose file is already a kept tab, and Enter on a row that is not the selected frame yet. After one of them the next pane that covers that file leaves the keyboard on no element until the learner presses a key in the file or clicks. Taking the keyboard at every frame without a stop would bring back row 225's defect, which is worse and far more frequent; so the limit stays, the README names it, and the native round records each gesture. Found by the package and now rows 293 (the same signs are not yet counted when the editor's setting that focuses a paused file is off, or while a session runs) and 294 (a duplicated check).
 
-244 of 294 rows are closed. Open: 33 rows that owe a native check, 5 whose fix is on a branch that is not merged, and 12 that their packages work on or that were just added.
+**Rows 288 to 290 merged (`9c1eba4`).** The run knows the debugger's own pause at a module's first position by four things that the two native journals and the bundled debugger's source agree on (the first position of its script, exactly one hit breakpoint, an id of the observed form with the base name of a declared stop's file, and a script address that contains that name) and gives it the debugger's 3 s; an id of another form keeps 250 ms (row 288). A pause in a stop's stub that is read within 3 s after the debugger answered the run's resume is taken as the answered one (289). Found by it and now row 295: in a run with a browser stop too, such a pause of the debugger still counts as a competing resume after one second in one phase.
+
+247 of 295 rows are closed. Open: 33 rows that owe a native check, 7 whose fix is on a branch that is not merged, and 8 that their packages work on or that were just added.
 
 ## Result and decision
 
