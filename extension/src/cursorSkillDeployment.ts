@@ -327,6 +327,29 @@ function invalidSkillRecord(
 }
 
 /**
+ * Reads the bytes of a record of the skill setup (`receipt.json`, `pending.json`, `removal.json`), for {@link readReceipt}, {@link readPending} and {@link readPendingRemoval}.
+ * A record path that holds a link, a folder or another non-file, or a file that was replaced while it was opened, is an invalid record like one with a wrong field: the sentences of the skill file ("Codebook will not change a non-regular skill file: …") named the wrong thing there and gave no way out that ends in a finished setup.
+ * @param path - The record file.
+ * @param subject - What the record is, for the refusal ({@link invalidSkillRecord}).
+ * @param targetPath - The managed skill path.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
+ * @returns The bytes of the regular file at the path, or undefined when the path holds nothing.
+ * @throws With the sentence of an invalid record for everything else ({@link lookAtSkillFile} read nothing).
+ * @example await readRecordBytes('/private/cursor-skill/receipt.json', 'Cursor skill ownership receipt', targetPath, 'Codebook: Set Up AI Chat') // => undefined when absent
+ */
+async function readRecordBytes(
+  path: string,
+  subject: string,
+  targetPath: string,
+  commandToRunAgain: string,
+): Promise<Buffer | undefined> {
+  const look = await lookAtSkillFile(path)
+  if (look.kind === 'read') return look.bytes
+  if (look.kind === 'missing') return undefined
+  throw invalidSkillRecord(subject, path, targetPath, commandToRunAgain)
+}
+
+/**
  * Parses the text of a record of the skill setup, for {@link readReceipt}, {@link readPending} and {@link readPendingRemoval}; text that is no JSON is an invalid record like one with a wrong field.
  * @param bytes - The record file's bytes.
  * @param subject - What the record is, for the refusal ({@link invalidSkillRecord}).
@@ -419,7 +442,12 @@ async function readReceipt(
   targetPath: string,
   commandToRunAgain: string,
 ): Promise<SkillReceipt | undefined> {
-  const bytes = await regularFile(path)
+  const bytes = await readRecordBytes(
+    path,
+    'Cursor skill ownership receipt',
+    targetPath,
+    commandToRunAgain,
+  )
   return bytes
     ? parseReceipt(
         parseRecordText(
@@ -456,7 +484,12 @@ async function readPending(
   path: string,
   targetPath: string,
 ): Promise<PendingSkill | undefined> {
-  const bytes = await regularFile(path)
+  const bytes = await readRecordBytes(
+    path,
+    'Cursor skill pending ownership record',
+    targetPath,
+    SET_UP_AI_CHAT_COMMAND,
+  )
   if (!bytes) return undefined
   const value: unknown = parseRecordText(
     bytes,
@@ -533,7 +566,12 @@ async function readPendingRemoval(
   targetPath: string,
   commandToRunAgain: string,
 ): Promise<PendingRemoval | undefined> {
-  const bytes = await regularFile(path)
+  const bytes = await readRecordBytes(
+    path,
+    'Cursor skill pending removal record',
+    targetPath,
+    commandToRunAgain,
+  )
   if (!bytes) return undefined
   const value: unknown = parseRecordText(
     bytes,
