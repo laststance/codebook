@@ -1214,7 +1214,7 @@ test('a start refused for an unfinished publish names the recovery request on th
   )
 })
 
-// Value: protects=the page's running line of a VS Code update whose output lies outside the project; fails_when=the page writes its own copy of the note the editor shows in its confirmation and progress title, so a change of that note leaves the page saying something else; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=the constants of the loaded reader, whose note is reworded
+// Value: protects=the page's running line of a VS Code update whose output lies outside the project; fails_when=the page writes its own copy of the note the editor shows in its confirmation, so a change of that note leaves the page saying something else; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=the constants of the loaded reader, whose note is reworded
 test('the running line of a VS Code update whose output lies outside the project ends with the note the editor shows, also after the note is reworded', async () => {
   // Arrange: a reader whose editor note on approvals outside the project reads differently from today's.
   const editorNote =
@@ -1255,8 +1255,8 @@ test('the running line of a VS Code update whose output lies outside the project
   }
 })
 
-// Value: protects=the advice after a refused step, which the editor's notification and the page's running line both give; fails_when=the page writes its own copy of the advice, so a change of the notification's words leaves the page with the old ones, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223; seam=the reader's constants, of which the advice is reworded
-test('the running line of a VS Code update gives the advice after a refused step in the words of the editor’s notification, also after the advice is reworded', async () => {
+// Value: protects=the advice after a refused step, which only the page's running line gives since the notification of the watch has two lines; fails_when=the page writes its own copy of the advice, so a change of the extension's wording leaves the page with the old one, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223, renamed with row 336; seam=the reader's constants, of which the advice is reworded
+test('the running line of a VS Code update gives the advice after a refused step in the words the extension hands the page, also after the advice is reworded', async () => {
   // Arrange: a reader whose advice after a refused step reads differently from today's.
   const editorAdvice = 'After you refused a step of the chat, choose Cancel'
   const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(

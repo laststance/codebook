@@ -20,6 +20,7 @@ import {
   PRIVATE_FILE_MODE,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
+  WIKI_CHAT_WATCH_TITLE,
   WIKI_CHAT_WITHDRAW_SETTLE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
@@ -78,7 +79,6 @@ import {
   type WikiUpdateProgressPlace,
 } from './utils/describeSecondWikiUpdateStart'
 import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
-import { describeWikiChatWatch } from './utils/describeWikiChatWatch'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
@@ -231,8 +231,8 @@ export function activate(
   const UPDATE_ANYWAY_ACTION = 'Update anyway'
   // A window that is closing has nobody to notify of the run its shutdown stops, and starts no run.
   let isExtensionStopping = false
-  /** What the watch of a VS Code update takes from the start in the chat: the session the request went to and the watch of the chat's reply. */
-  type WatchedWikiChat = Pick<WikiChatStart, 'session' | 'reply'>
+  /** What the watch of a VS Code update takes from the start in the chat: the watch of the chat's reply. */
+  type WatchedWikiChat = Pick<WikiChatStart, 'reply'>
   /** What one Wiki update run carries from its start to its end. */
   type WikiRun = {
     projectRoot: string
@@ -996,43 +996,39 @@ export function activate(
       },
     )
   }
-  /** Watches for the editor agent's publish after VS Code's chat took up the request, then records the run's result for the reader; settles when the watch has stopped. @param chat - Of the start in the chat: the session the request went to, which the notification names, and the watch of the chat's reply (when the reply ends, one more look decides and the run ends at once). @example await watchVsCodeWikiUpdate(run, chatStart) */
+  /** Watches for the editor agent's publish after VS Code's chat took up the request, then records the run's result for the reader; settles when the watch has stopped. The notification it shows for that time has a title of two lines, whatever the run ({@link WIKI_CHAT_WATCH_TITLE}): a taller one covers the chat's approval buttons. @param chat - Of the start in the chat: the watch of the chat's reply (when the reply ends, one more look decides and the run ends at once). @example await watchVsCodeWikiUpdate(run, chatStart) */
   const watchVsCodeWikiUpdate = (
     run: WikiRun,
-    { session, reply }: WatchedWikiChat,
+    { reply }: WatchedWikiChat,
   ): Promise<void> =>
-    withCancellableProgress(
-      `${describeWikiChatWatch(session, run.timeoutMs)}${run.isOutputOutsideProject ? ` ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`,
-      run,
-      async () => {
-        try {
-          const result = await waitForWikiPublish({
-            // Only a new publication counts as the publish; a manifest rewritten by anything else does not.
-            startToken: run.publicationAtStart,
-            readStamp: () => readWikiWatchStamp(run.outputDirectory),
-            readToken: () => readWikiPublicationIdentity(run.outputDirectory),
-            readPublished: () =>
-              inspectPublishedWiki(run.projectRoot, run.outputDirectory),
-            unreadableGraceMs: WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
-            findBlockingFiles: () => probeWikiCandidates(run),
-            // A chat whose reply ended has said its last word: the look after it decides, and the bound is not waited out.
-            replyEnded: reply.ended,
-            signal: run.controller.signal,
-            timeoutMs: run.timeoutMs,
-            pollMs: WIKI_UPDATE_WATCH_POLL_MS,
-          })
-          await finishWikiUpdate(run, {
-            cancelled: result.outcome === 'cancelled',
-            timedOut: result.outcome === 'timed-out',
-            blockingPaths: result.outcome === 'blocked' ? result.paths : [],
-            publish: result.outcome === 'published' ? result : undefined,
-            ...failureOfWikiChatReplyEnd(result.outcome, reply.end()),
-          })
-        } catch (error) {
-          await finishWikiUpdate(run, { failure: thrownMessage(error) })
-        }
-      },
-    )
+    withCancellableProgress(WIKI_CHAT_WATCH_TITLE, run, async () => {
+      try {
+        const result = await waitForWikiPublish({
+          // Only a new publication counts as the publish; a manifest rewritten by anything else does not.
+          startToken: run.publicationAtStart,
+          readStamp: () => readWikiWatchStamp(run.outputDirectory),
+          readToken: () => readWikiPublicationIdentity(run.outputDirectory),
+          readPublished: () =>
+            inspectPublishedWiki(run.projectRoot, run.outputDirectory),
+          unreadableGraceMs: WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
+          findBlockingFiles: () => probeWikiCandidates(run),
+          // A chat whose reply ended has said its last word: the look after it decides, and the bound is not waited out.
+          replyEnded: reply.ended,
+          signal: run.controller.signal,
+          timeoutMs: run.timeoutMs,
+          pollMs: WIKI_UPDATE_WATCH_POLL_MS,
+        })
+        await finishWikiUpdate(run, {
+          cancelled: result.outcome === 'cancelled',
+          timedOut: result.outcome === 'timed-out',
+          blockingPaths: result.outcome === 'blocked' ? result.paths : [],
+          publish: result.outcome === 'published' ? result : undefined,
+          ...failureOfWikiChatReplyEnd(result.outcome, reply.end()),
+        })
+      } catch (error) {
+        await finishWikiUpdate(run, { failure: thrownMessage(error) })
+      }
+    })
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
   const runCursorWikiAgent = async (
     run: WikiRun,

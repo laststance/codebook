@@ -26,9 +26,9 @@ export type WikiUpdateWording = {
   msPerMinute: number
   /** The chat request that makes the editor agent run the publisher's recovery, as the learner pastes it ({@link WIKI_UPDATE_RECOVERY_REQUEST}); the function is embedded into the page and cannot import the constant. */
   recoveryRequest: string
-  /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, as the editor's confirmation and progress title say it ({@link WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}); the function is embedded into the page and cannot import the constant. */
+  /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, as the editor's confirmation says it ({@link WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}); the function is embedded into the page and cannot import the constant. */
   outsideOutputApprovalsNote: string
-  /** What a learner does after they refused a step of VS Code's chat, as the watch's notification says it ({@link WIKI_REFUSED_STEP_ADVICE}), without its full stop; the running line of a VS Code update goes on from it with where Cancel is and what happens otherwise. The function is embedded into the page and cannot import the constant. */
+  /** What a learner does after they refused a step of VS Code's chat ({@link WIKI_REFUSED_STEP_ADVICE}), without its full stop; the running line of a VS Code update goes on from it with where Cancel is and what happens otherwise. The function is embedded into the page and cannot import the constant. */
   refusedStepAdvice: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
@@ -133,7 +133,7 @@ export function describeWikiUpdate(
    * @param running - The running state.
    * @param since - When the request was sent, as the learner's local time.
    * @param bound - The watch's bound in whole minutes, for example "15 minutes".
-   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step; the line ends with what to do after a refused step, in the words of the editor's notification.
+   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step; the line ends with what to do after a refused step, which the editor's short notification does not say.
    * @example describeRunningInVsCode(running, '21:00', '15 minutes').lead // => 'Updating LLM Wiki…'
    */
   const describeRunningInVsCode = (

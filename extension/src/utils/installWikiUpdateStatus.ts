@@ -44,7 +44,7 @@ export type WikiUpdatePageSettings = {
   recoveryRequest: string
   /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, handed to the embedded sentence writer like the recovery request, so the running line says what the editor says. */
   outsideOutputApprovalsNote: string
-  /** What a learner does after they refused a step of VS Code's chat, handed to the embedded sentence writer like the note above, so the running line gives the advice of the editor's notification. */
+  /** What a learner does after they refused a step of VS Code's chat, handed to the embedded sentence writer like the note above, so the running line gives the advice in the extension's one wording. */
   refusedStepAdvice: string
   /** How long after the window's `load` event the line that says the overview stands in for a missing page gets its sentence (ms); the line is in the page, empty, before that. */
   missingPageTextDelayMs: number

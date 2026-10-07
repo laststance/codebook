@@ -26,7 +26,7 @@ export type WikiChatStartOutcome =
       withdrawal: WikiChatWithdrawal
     }
 
-/** The start of a VS Code Wiki update in the editor chat: how it ended, the session the request went to, which the watch's notification names, and the watch of the reply's end, which the watch for the publish follows when the chat works on the request. */
+/** The start of a VS Code Wiki update in the editor chat: how it ended, the session the request went to, which the sentence of a start without a sign words its next step by, and the watch of the reply's end, which the watch for the publish follows when the chat works on the request. */
 export type WikiChatStart = WikiChatStartOutcome & {
   session: WikiChatSession
   reply: WikiChatReplyWatch
