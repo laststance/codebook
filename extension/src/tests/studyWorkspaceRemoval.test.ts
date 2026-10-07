@@ -6364,7 +6364,9 @@ test('after a removal that moved nothing and could not write the ledger back, th
       structuredClone(
         view.errors.filter((line) => line.includes('Progress is not')),
       ),
-      ['Error: Progress is not a regular file.'],
+      [
+        `Error: Progress is not a regular file: ${ledgerPath}. Put the file itself at that path, or move what stands there away, then try again.`,
+      ],
     )
   } finally {
     await harness.close()

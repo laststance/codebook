@@ -2407,6 +2407,164 @@ test('a Set Up AI Chat in Cursor whose server is stopped while it connects says 
   }
 })
 
+// Value: protects=a learner whose agent server is stopped by another command of the window while it starts, before it is running and while it restores a saved Cursor connection; fails_when=the start ends with "Codebook server stopped while starting its chat connection." and names no step, where the start's other refusal of a stop names "Run Codebook: Start Agent Server to start it."; or that command does not start the server afterwards; why_new=Cycle 0046 row 311; seam=the server start and the skill check of the loaded extension, during which the stop command is run
+test('a start of the agent server that a stop overtakes, while the server is prepared and while a saved Cursor connection is restored, says that the server stopped and names Codebook: Start Agent Server as the command that starts it, and that command starts it', async () => {
+  // Arrange: a Cursor window with a saved setup for this workspace; a test decides at which step of a start the stop command runs.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-start-stopped-')),
+  )
+  const commands = new Map<string, () => Promise<unknown>>()
+  let stopAt: 'the preparation' | 'the restored connection' | undefined
+  let stopped: Promise<unknown> = Promise.resolve()
+  let reportReconnected!: () => void
+  const reconnected = new Promise<void>((resolveReconnected) => {
+    reportReconnected = resolveReconnected
+  })
+  const stopHereIfAskedAt = (step: NonNullable<typeof stopAt>): void => {
+    if (stopAt !== step) return
+    stopAt = undefined
+    stopped = commands.get('codebook.stopAgentServer')!()
+  }
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<unknown>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          getConfiguration: () => ({
+            get: (_setting: string, fallback: string) => fallback,
+          }),
+        },
+        window: {
+          showWarningMessage: () => Promise.resolve(undefined),
+          showInformationMessage: () => Promise.resolve(undefined),
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => {
+          // The stop is asked for while the server is prepared: it waits for this start, which then finds it.
+          stopHereIfAskedAt('the preparation')
+          return {
+            listening: true,
+            resourcesReleased: true,
+            descriptor: {
+              url: 'http://127.0.0.1/instance-1/mcp',
+              token: 'token-instance-1',
+              instanceId: 'instance-1',
+              workspace: directory,
+              apiVersion: '1.5',
+            },
+            close: async (): Promise<void> => {},
+          }
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => {
+          // The stop runs to its end while the start restores the saved Cursor connection.
+          stopHereIfAskedAt('the restored connection')
+          await stopped
+          return { status: 'current' }
+        },
+      },
+      './utils/refreshCursorMcpCatalog': {
+        refreshCursorMcpCatalog: async () => {
+          reportReconnected()
+          return 'generation-1'
+        },
+      },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/usr/local/bin/node',
+      },
+    },
+  )
+  const startOrRefusal = (): Promise<string> =>
+    commands.get('codebook.startAgentServer')!().then(
+      () => 'started',
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    )
+  try {
+    // Act: the saved setup reconnects at activation; then the server is stopped, and each start is overtaken by a stop at one of the two steps and followed by its sentence to the letter.
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await reconnected
+    await commands.get('codebook.stopAgentServer')!()
+    stopAt = 'the preparation'
+    const startStoppedWhileItWasPrepared = await startOrRefusal()
+    await stopped
+    const startAfterIt = await startOrRefusal()
+    await commands.get('codebook.stopAgentServer')!()
+    stopAt = 'the restored connection'
+    const startStoppedWhileItRestoredTheConnection = await startOrRefusal()
+    await stopped
+    const startAfterThat = await startOrRefusal()
+
+    // Assert
+    assert.deepEqual(
+      {
+        startStoppedWhileItWasPrepared,
+        startAfterIt,
+        startStoppedWhileItRestoredTheConnection,
+        startAfterThat,
+      },
+      {
+        startStoppedWhileItWasPrepared:
+          'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
+        startAfterIt: 'started',
+        startStoppedWhileItRestoredTheConnection:
+          'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
+        startAfterThat: 'started',
+      },
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('Update LLM Wiki without a Wiki, in an output folder named like a command link, shows no clickable link', async () => {
   // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax and the folder holds no manifest.
   const projectRoot = await realpath(

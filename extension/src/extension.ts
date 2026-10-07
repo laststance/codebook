@@ -363,7 +363,7 @@ export function activate(
       // A concurrent Stop can retire the shared preparation before another Start caller resumes.
       if (stopping || !server.endpoint.listening)
         throw new Error(
-          'Codebook server stopped while starting its chat connection.',
+          'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
         )
       running = server
       // A normal Stop then Start must restore an already configured Cursor chat connection.
@@ -384,7 +384,7 @@ export function activate(
       }
       if (running !== server || stopping || !server.endpoint.listening)
         throw new Error(
-          'Codebook server stopped while starting its chat connection.',
+          'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
         )
       notifyMcpDefinitions()
       return server.descriptorPath

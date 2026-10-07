@@ -884,6 +884,41 @@ async function removeUnrecordedStages(
   }
 }
 
+/** What setup answers when the record of an update would be larger than Codebook writes: it names the installed skill as the previous owner and four more paths, and reaches {@link CURSOR_SKILL_RECEIPT_LIMIT_BYTES} only where the path of the home folder is close to what a system allows at all (about 3,850 of Linux's 4,096 bytes; no path of macOS, and none of Windows without long paths, is that long). A first installation writes a record without a previous owner, which is far smaller, and a removal's is smaller too: so the way on is to remove the skill and to set it up anew. */
+const UPDATE_RECORD_TOO_LARGE = `Cursor skill could not be updated: the record Codebook keeps of an update would be larger than it writes (${CURSOR_SKILL_RECEIPT_LIMIT_BYTES} bytes), because the paths of this home folder, of the editor's storage and of the installed extension are very long. No skill file was changed. Run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND}, then ${SET_UP_AI_CHAT_COMMAND}: the skill is installed anew then, which needs no such record.`
+
+/**
+ * Writes the record of a setup before anything of the skill is moved, for {@link deploySkill} right after it staged the new skill; a setup that cannot write its record leaves no staged file behind.
+ * @param pendingPath - The record's path.
+ * @param pending - The setup's record, which names its staged file.
+ * @throws
+ * - {@link UPDATE_RECORD_TOO_LARGE} for the record of an update that would be larger than Codebook writes: the limit's own sentence ("Storage limit exceeded …") names neither the record nor a way on, and here one exists
+ * - Every failure of the write as it is
+ * @example await recordSetup('/private/cursor-skill/pending.json', next)
+ */
+async function recordSetup(
+  pendingPath: string,
+  pending: PendingSkill,
+): Promise<void> {
+  try {
+    // Only an update's record, which holds the previous owner, can be this large in a path a system allows.
+    if (
+      pending.previous &&
+      Buffer.byteLength(JSON.stringify(pending)) >
+        CURSOR_SKILL_RECEIPT_LIMIT_BYTES
+    )
+      throw new Error(UPDATE_RECORD_TOO_LARGE)
+    await atomicPrivateWrite(
+      pendingPath,
+      pending,
+      CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
+    )
+  } catch (error) {
+    await unlink(pending.stagedPath)
+    throw error
+  }
+}
+
 /** Removes only a matching abandoned stage while {@link deployCursorSkill} recovers setup. @param pending - Validated stage receipt. @returns After any owned stage is removed. @example await removeOwnedStage(pending) // => resolves */
 async function removeOwnedStage(pending: PendingSkill): Promise<void> {
   if (await matchesOwnedFile(pending.stagedPath, pending))
@@ -1737,16 +1772,7 @@ async function deploySkill(
           }
         : {}),
     }
-    try {
-      await atomicPrivateWrite(
-        pendingPath,
-        next,
-        CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
-      )
-    } catch (error) {
-      await unlink(stagedPath)
-      throw error
-    }
+    await recordSetup(pendingPath, next)
     // Also a change made while the copy above was kept is met here, before anything is moved.
     if (current && receipt && !(await matchesOwnedFile(targetPath, receipt))) {
       await abandonSetupOfChangedSkill(next, targetPath, pendingPath)

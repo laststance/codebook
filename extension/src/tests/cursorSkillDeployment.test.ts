@@ -6007,3 +6007,72 @@ test('a failure of an open of the Cursor skill setup that is neither a missing r
     },
   )
 })
+
+// Value: protects=a learner whose home folder has a path close to the longest a system allows (about 3,900 of Linux's 4,096 bytes); fails_when=every update of the Cursor skill ends with "Storage limit exceeded (16384 bytes); existing data was retained.", which names neither what is too large nor a way on, although one exists: a removal and a new setup need no record of that size; why_new=Cycle 0046 row 311: the one record of the Cursor setup that can reach its limit, and where; seam=none, a real home folder with a path of 3,900 bytes (the test skips where the system allows no such path)
+test('an update of the Cursor skill in a home folder whose path is so long that the update’s record would be larger than Codebook writes is refused with what is too large and the way on, and changes no skill file: after the learner runs the removal and then the setup, the new skill is installed', async (context) => {
+  // Arrange: an installed skill in a home folder whose path is 3,900 bytes long, and an extension that brings a new skill.
+  const paths = await fixture(context)
+  let homeRoot = join(paths.homeRoot, 'long')
+  while (Buffer.byteLength(homeRoot) + 256 <= 3_900)
+    homeRoot = join(homeRoot, 'd'.repeat(255))
+  homeRoot = join(homeRoot, 'e'.repeat(3_900 - Buffer.byteLength(homeRoot) - 1))
+  const isHomeMade = await mkdir(homeRoot, { recursive: true }).then(
+    () => true,
+    () => false,
+  )
+  if (!isHomeMade)
+    return context.skip(
+      'this system allows no folder with a path of 3,900 bytes, so no record of the Cursor setup reaches its limit here',
+    )
+  const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
+  const setUp = (): Promise<string> =>
+    statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, homeRoot),
+    )
+
+  // Act
+  const firstSetup = await setUp()
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const update = await setUp()
+  const afterTheRefusal = {
+    skill: await readFile(targetPath, 'utf8'),
+    temporaryNames: (await readdir(join(homeRoot, '.cursor', 'skills'))).filter(
+      (name) => name.startsWith('.codebook-'),
+    ),
+    records: (await readdir(join(paths.storageRoot, 'cursor-skill'))).filter(
+      (name) => name === 'pending.json',
+    ),
+  }
+  // The sentence is followed to the letter.
+  const removal = await statusOrRefusalOf(
+    removeManagedCursorSkill(paths.storageRoot, homeRoot),
+  )
+  const setupAfterTheRemoval = await setUp()
+
+  // Assert
+  assert.deepEqual(
+    {
+      homePathBytes: Buffer.byteLength(homeRoot),
+      firstSetup,
+      update,
+      afterTheRefusal,
+      removal,
+      setupAfterTheRemoval,
+      skill: await readFile(targetPath, 'utf8'),
+    },
+    {
+      homePathBytes: 3_900,
+      firstSetup: 'installed',
+      update:
+        "Cursor skill could not be updated: the record Codebook keeps of an update would be larger than it writes (16384 bytes), because the paths of this home folder, of the editor's storage and of the installed extension are very long. No skill file was changed. Run Codebook: Remove Managed Cursor Skill, then Codebook: Set Up AI Chat: the skill is installed anew then, which needs no such record.",
+      afterTheRefusal: {
+        skill: INITIAL_SKILL,
+        temporaryNames: [],
+        records: [],
+      },
+      removal: 'removed',
+      setupAfterTheRemoval: 'restored',
+      skill: NEXT_SKILL,
+    },
+  )
+})

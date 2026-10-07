@@ -165,3 +165,41 @@ test('a reconnect or registration refusal that names the setup command after "th
       "Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/user/.cursor/skills. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
   })
 })
+
+// Value: protects=the notice a learner reads when the saved chat does not reconnect because the server was stopped while it started; fails_when=the notice adds "Run Codebook: Set Up AI Chat." after a reason that already says which command to run ("Run Codebook: Start Agent Server to start it."), so the learner reads two commands for one step; why_new=Cycle 0046 row 311: the sentences of a stopped start name their step, and the helper sends nobody to the setup after a sentence that says to run something else; seam=none
+test('a reconnect or registration failure whose reason says which command to run is shown without the setup step, and a reason that names a command without telling to run it still gets the setup step', () => {
+  // Act
+  const notices = {
+    stoppedWhileStarting: noticeWithSetupStep(
+      'Codebook AI chat did not reconnect',
+      new Error(
+        'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
+      ),
+      'Run Codebook: Set Up AI Chat.',
+    ),
+    stopAskedForWhileWaiting: noticeWithSetupStep(
+      'Codebook AI chat did not reconnect',
+      new Error(
+        "Codebook server was not started: a stop was asked for while the start waited for the workspace's folders to change. Run Codebook: Start Agent Server to start it.",
+      ),
+      'Run Codebook: Set Up AI Chat.',
+    ),
+    shutdownIncomplete: noticeWithSetupStep(
+      'Codebook AI chat did not reconnect',
+      new Error(
+        'Previous server shutdown is incomplete. Retry Codebook: Stop Agent Server before starting a new instance.',
+      ),
+      'Run Codebook: Set Up AI Chat.',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(notices, {
+    stoppedWhileStarting:
+      'Codebook AI chat did not reconnect: Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
+    stopAskedForWhileWaiting:
+      "Codebook AI chat did not reconnect: Codebook server was not started: a stop was asked for while the start waited for the workspace's folders to change. Run Codebook: Start Agent Server to start it.",
+    shutdownIncomplete:
+      'Codebook AI chat did not reconnect: Previous server shutdown is incomplete. Retry Codebook: Stop Agent Server before starting a new instance. Run Codebook: Set Up AI Chat.',
+  })
+})

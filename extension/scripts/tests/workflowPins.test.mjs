@@ -629,6 +629,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/claimWikiUpdateMarker.ts',
     'extension/src/utils/currentStorageOwner.ts',
     'extension/src/utils/deriveMachineKeys.ts',
+    'extension/src/utils/describeNoStorageFolder.ts',
     'extension/src/utils/describeRefusedLinkBack.ts',
     'extension/src/utils/describeUnopenedFile.ts',
     'extension/src/utils/describeUnopenedMovedFile.ts',
