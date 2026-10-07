@@ -2042,15 +2042,6 @@ test('the Application pane takes the keyboard and tells its owner two seconds af
 })
 
 for (const [situation, pausedFile] of [
-  ['no debug session has stopped yet', undefined],
-  [
-    'the session runs again after a pause and the editor reports its thread',
-    { focusEditorOnBreak: true, sessionRunsAgain: true },
-  ],
-  [
-    'the learner turned off debug.focusEditorOnBreak',
-    { focusEditorOnBreak: false },
-  ],
   // Cycle 0045 X7-A.4: the debugger opened the paused file in the Application's group, and the learner went back to Cursor's chat before a delayed reveal.
   [
     "the learner went back to Cursor's chat after a pause and the editor names the chat's group",
@@ -2061,7 +2052,7 @@ for (const [situation, pausedFile] of [
     { focusEditorOnBreak: true, learnerInChat: 'keyboard only' },
   ],
 ] as const)
-  // Value: protects=the keyboard focus of a learner who types in the chat or another pane while the Application pane is brought back; fails_when=the Application pane takes the focus although the editor it covers was not focused by a pause; why_new=control for the 0037-F6 fix; seam=fake editor
+  // Value: protects=the keyboard focus of a learner who types in Cursor's chat tab while the Application pane is brought back; fails_when=the Application pane takes the focus, or asks its owner about a keyboard, although it covers no active text editor; why_new=control for the 0037-F6 fix; seam=fake editor
   test(`the Application pane leaves the keyboard focus where it is when it is revealed while ${situation}`, async () => {
     // Arrange: the lease has an owner that could give the keyboard back.
     const harness = await viewportHarness(
@@ -2088,3 +2079,54 @@ for (const [situation, pausedFile] of [
     assert.deepEqual(harness.revealsWhenOwnerAsked(), [])
     harness.viewport.close()
   })
+
+for (const [situation, pausedFile] of [
+  ['no debug session has stopped yet', undefined],
+  [
+    'the session runs again after a pause and the editor reports its thread',
+    { focusEditorOnBreak: true, sessionRunsAgain: true },
+  ],
+  [
+    'a session is paused and the learner turned off debug.focusEditorOnBreak',
+    { focusEditorOnBreak: false },
+  ],
+] as const)
+  for (const [ownerAnswer, owner, revealPreservesFocus, takesTold, asked] of [
+    ['says that the keyboard is not in that editor', true, true, 0, [0]],
+    ['says that the learner works in that editor', false, false, 1, [0]],
+    ['could not answer', 'fails', true, 0, [0]],
+    ['does not exist', undefined, true, 0, []],
+  ] as const)
+    // Value: protects=the keyboard of a learner around an Application pane that comes to the front over the active text editor of its group while the debugger gave that editor no keyboard (no stop yet, a session that runs, a stop with debug.focusEditorOnBreak off): the pane's owner, who knows whether the learner works in that editor, is asked, and the pane takes the keyboard only when the owner says so; fails_when=the owner is asked only at a pause that focused the file, so a learner who clicked into the covered file loses the keyboard to no element; or a pane without an owner, or with one that fails, takes the keyboard from a learner who types in a side-view chat; why_new=Cycle 0046 row 293 (the viewport judged these three situations alone, as "the keyboard cannot be told"); seam=fake editor with a text editor in front of the pane's group in the three states of the debugger, and a lease whose owner answers, fails or is missing
+    test(`the Application pane that comes to the front over the active text editor while ${situation} ${revealPreservesFocus ? 'leaves the keyboard where it is' : 'takes the keyboard and tells its owner'} when the owner ${ownerAnswer}`, async () => {
+      // Arrange: a text editor is in front of the Application pane's group and is the active text editor.
+      const harness = await viewportHarness(
+        'normal',
+        true,
+        undefined,
+        'live',
+        viewportPanel(),
+        pausedFile,
+        owner,
+      )
+      harness.hide()
+      const signal = new AbortController().signal
+
+      // Act: the reveal waits for an owner that is asked, and the renderer answers once the pane is in front.
+      const revealed = harness.viewport.reveal(signal)
+      await waitUntil(
+        () => harness.reveals.length > 0,
+        "the pane's reveal",
+        2_000,
+      )
+      harness.ready('11111111-1111-1111-1111-111111111111')
+      await revealed
+
+      // Assert
+      assert.deepEqual(harness.revealsWhenOwnerAsked(), asked)
+      assert.deepEqual(harness.reveals, [
+        { preserveFocus: revealPreservesFocus },
+      ])
+      assert.equal(harness.keyboardTakesAtPause(), takesTold)
+      harness.viewport.close()
+    })
