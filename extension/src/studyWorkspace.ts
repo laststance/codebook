@@ -12932,8 +12932,8 @@ export class StudyWorkspace {
   /**
    * Makes the step that applies the Study layout a second time in pixels, at most once for one arrangement; called by {@link rememberLayout}, which asks it for every read that has the Study's groups without its proportions.
    * {@link arrange} sends pixels when the grid it measured has a nested split, whose two axes give the editor area ({@link toPixelEditorLayout}). A flat grid gives one axis only: the learner's two groups side by side with the Study pane's new group beside them are three columns, and the layout goes out in proportions. Both editors then left the Application group at one pixel and the split was never confirmed, so the Open went on to a Read of the explanation (measured natively on 2026-10-07 in VS Code 1.140.0 for Linux, three takes: a first column of 1 px with rows of 1 and 687 px beside 1269 px; Cursor 3.23.12: 1 px with rows of 1 and 657 px beside 659 px). The grid that answer made is nested, so its read gives both axes.
-   * A grid the editor really cannot give the proportions (a window too narrow for three groups) gets the same one step, to no effect, and is then taken as it is.
-   * @returns A function that takes a layout read and answers `true` when it applied the Study layout in that read's pixels; `false` on every later call, and when the read measures no pixels.
+   * A grid the editor really cannot give the proportions (a window too narrow for three groups) gets the same one step, to no effect, and is then taken as it is. The current main-editor proof ({@link isMainEditorLayout}) is required immediately before that extra command: a focus change during the read must not apply these pixels to Cursor's separate chat part.
+   * @returns A function that takes a layout read and answers `true` when it applied the Study layout in that read's pixels; `false` on every later call, when the read measures no pixels, or when the main editor is no longer known to own the command.
    * @example
    * ```ts
    * const appliesPixelsOnce = this.studyLayoutPixelPass()
@@ -12946,7 +12946,8 @@ export class StudyWorkspace {
       if (!isStillOwed) return false
       isStillOwed = false
       const pixels = toPixelEditorLayout(this.studyLayout(), actual)
-      if (!pixels) return false
+      // A reply captured in the main editor does not authorize a mutation in a chat part that gained focus while it waited.
+      if (!pixels || !this.isMainEditorLayout(actual)) return false
       await vscode.commands.executeCommand('vscode.setEditorLayout', pixels)
       return true
     }
