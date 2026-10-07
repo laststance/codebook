@@ -195,6 +195,17 @@ async function lookOrEnd<Published>(
 }
 
 /**
+ * Says whether the chat's reply has ended; called by {@link waitForWikiPublish} before every look.
+ * @param options - The watch's options.
+ * @returns `true` once the signal of the reply's end aborted; `false` before, and for a watch that follows no reply.
+ * @example
+ * hasReplyEnded({ replyEnded: undefined }) // => false
+ */
+function hasReplyEnded(options: { replyEnded?: AbortSignal }): boolean {
+  return Boolean(options.replyEnded?.aborted)
+}
+
+/**
  * Picks the signal that ends the sleep between two looks; called by {@link waitForWikiPublish}.
  * @param options - The watch's options.
  * @param isLastLook - Whether the chat's reply has ended.
@@ -270,7 +281,7 @@ export async function waitForWikiPublish<Published>(
   const watch = startWatch(options)
   for (;;) {
     // The reply's end is read before the look, so a publish that landed with it is found by this look.
-    const isLastLook = Boolean(options.replyEnded?.aborted)
+    const isLastLook = hasReplyEnded(options)
     const step = await lookOrEnd(watch, isLastLook)
     if (typeof step === 'object') return step
     if (step === 'wait')
