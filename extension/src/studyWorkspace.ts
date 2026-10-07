@@ -7625,20 +7625,31 @@ export class StudyWorkspace {
     this.layoutBeforeOpen = undefined
     if (!before || this.disposed) return
     await this.closedPanesGone()
+    const now = await this.readEditorLayoutWithUnchangedGroups()
+    if (!this.owesLayoutOfBeforeOpen(before, now)) return
+    await vscode.commands
+      .executeCommand('vscode.setEditorLayout', before.layout)
+      .then(undefined, () => undefined)
+  }
+
+  /**
+   * Reads a layout only while the complete editor group model stays unchanged; called by {@link giveLayoutOfBeforeOpenBack} after its panes close.
+   * A stale reply's count must not hide a group the learner opened during the native read.
+   * @returns The completed layout reply when group identities and columns stayed unchanged; `undefined` otherwise.
+   * @example const layout = await this.readEditorLayoutWithUnchangedGroups()
+   */
+  private async readEditorLayoutWithUnchangedGroups(): ReturnType<
+    StudyWorkspace['readEditorLayout']
+  > {
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
       column: group.viewColumn,
     }))
-    const now = await this.readEditorLayout()
-    // Compare the complete native group model before trusting the reply's main-group count.
-    if (
-      !this.sameEditorGroups(groups, vscode.window.tabGroups.all) ||
-      !this.owesLayoutOfBeforeOpen(before, now)
-    )
-      return
-    await vscode.commands
-      .executeCommand('vscode.setEditorLayout', before.layout)
-      .then(undefined, () => undefined)
+    const layout = await this.readEditorLayout()
+    // Compare every group before allowing a layout reply to authorize restoration.
+    return this.sameEditorGroups(groups, vscode.window.tabGroups.all)
+      ? layout
+      : undefined
   }
 
   /**
