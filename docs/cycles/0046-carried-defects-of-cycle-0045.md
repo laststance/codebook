@@ -662,6 +662,12 @@ Tasks 369/370/371 are fixed in `ec7c8ae2`. The current state distinguishes local
 
 Final-3 OCR found task 372 after the health extraction: its complete-group comparison runs before the async helper returns, and the caller's additional await puts a continuation boundary before the effect. The original predicate was adjacent to the layout command. Freeze the correction before editing: capture/await remain in the caller; a small synchronous predicate combines the unchanged group and original-layout checks immediately before restoration. Reproduce by an answer-preserving comparison observer that queues a third learner group, require all three groups and the third file to survive, and prove the old async extraction fails the named regression. The current 09de62d7 gates are otherwise green (4,072/4,073 with one existing skip; 338 scripts/package; all static/browser gates), CodeRabbit has zero findings and the native adversarial pass no supported finding; this additional source finding remains required. Candidate 5 is built privately from that source and not installed or credited. All review readers have returned before this repair.
 
+### Ordering regression closed (2026-10-08)
+
+Task 372 is fixed in `3c74871f`. Its answer-preserving group comparison queues a third group: the old async extraction then restores two groups and loses the third file. The new synchronous predicate stays beside the restoration command and preserves all three. The named regression passes; restoring the old production extraction parses and fails that same assertion, then restores SHA-256 `fd1e0050da0fefa300e70470d089b734ed47365da205910d89baa71799e2c76a`. All workspace/viewport/playback tests pass 1,220/1,220, and compiler/lint/format/health/dupes/dead-code pass with baseline unchanged. Evidence: `integrated-codex-final-3/row372-*`. Candidate 5 is superseded and remains uninstalled; no native claim is made for it.
+
+The gstack review invocation ended explicitly incomplete/nonconverged after its three fix cycles, with all 49 native plan checks still pending; receipts and the limit are in `review-codex-final-3/invocation-end.json`. This ends that invocation, not the authorized bug-fix cycle. Continue ordinary cycle verification and a fresh final-source review; no defect is skipped or carried. Table: 372 tasks, 323 closed, 49 native-pending. Next: refresh timings, commit, run the complete unchanged-root verification, then build/install a fresh identified candidate and execute the mapped native round.
+
 ## Result and decision
 
 - Result: pending
