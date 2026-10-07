@@ -366,7 +366,7 @@ test('the packaged README says that a VS Code update sends its request into a ne
     "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work elsewhere in the window (a file you open, a command you run) is not taken for a sign. What the update's own steps touch counts whoever does it, because Codebook cannot tell you from the chat there: a file opened in the Wiki's folder, in a folder prepared beside it or in the Codebook skill's folder, a terminal command that names `publish-wiki.mjs` or the Wiki's folder, and a change in the Wiki's folder or in a folder prepared beside it.",
     'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
     'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` instead.',
-    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command; where the reveal or New Chat failed, nothing says so before, and the Chat view shows the request in the chat that was open. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
+    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command; where the reveal or New Chat failed, nothing says so before, and the Chat view shows the request in the chat that was open. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel.",
   ])
   const retired = [
     // Row 337: read in the editor's source, and not what the editor does (seen in VS Code 1.140.0).
@@ -397,6 +397,40 @@ test('the packaged README says that a VS Code update sends its request into a ne
     ),
     'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
   )
+})
+
+// Value: protects=a learner whose Wiki request went into a shared chat and showed no sign: the next step differs when no request was held, when it was taken back and when it remains; fails_when=the README quotes one universal shared-chat ending or omits Update anyway for the request not taken back; why_new=Cycle 0046 row 367; seam=none
+test('the packaged README distinguishes all three shared-chat withdrawal outcomes and quotes the whole Update anyway sentence for a request that could not be taken back', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'When the shared chat holds no request of the update, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
+    'When Codebook took the request back, it reads `Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
+    'When Codebook could not take the request back, it reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.`',
+  ])
+  const sharedSentences = [
+    describeUnansweredWikiChat('not-sent', 'shared', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    describeUnansweredWikiChat(
+      'withdrawn',
+      'shared',
+      WIKI_CHAT_OPEN_TIMEOUT_MS,
+    ),
+    describeUnansweredWikiChat('left', 'shared', WIKI_CHAT_OPEN_TIMEOUT_MS),
+  ]
+  const hasTheOldUniversalEnding = readme.includes(
+    'before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
+  )
+
+  // Assert: the document distinguishes each outcome and the full product sentences are independent hard-coded expectations.
+  assert.deepEqual(delivered, [true, true, true])
+  assert.equal(hasTheOldUniversalEnding, false)
+  assert.deepEqual(sharedSentences, [
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+  ])
 })
 
 // Value: protects=a learner reading, before they press Update LLM Wiki, what the editor's confirmation will tell them: a new chat starts, the open chat keeps its place, a draft in an empty chat is replaced; fails_when=the README quotes another confirmation than the product shows, or says nothing about the command, which starts without one; why_new=Cycle 0046 rows 197 and 198; seam=none
