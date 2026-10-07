@@ -408,10 +408,12 @@ interface LeftoverTabClose {
  * A pause of the editor's debugger as the chat's record of {@link StudyWorkspace} notes it, from the stack frame that reported it until the next frame or the pause's end.
  * `openedByDebugger`: the document the debugger had opened with the keyboard when the frame was reported, `undefined` when no text editor was active then.
  * `state`: `'unsettled'` until the reader's first reveal at that pause, `'settling'` while its one return of the keyboard to the chat runs, `'settled'` after it: from then an editor that becomes active is the learner's choice or the next stop's paused file.
+ * `returned`: that one return, from the moment it began: it resolves to whether the chat got the keyboard. Kept with the pause, because a second reveal of the same stop (the Application pane's, while the captured source's return runs) asks the same question and must get the same answer.
  */
 interface KeyboardPauseOfRecord {
   openedByDebugger: string | undefined
   state: 'unsettled' | 'settling' | 'settled'
+  returned?: Promise<boolean>
 }
 
 /**
@@ -2908,7 +2910,7 @@ export class StudyWorkspace {
    * Gives the keyboard back to the chat that had it just before a pause, once for each pause; the first step of {@link settleKeyboardAtPause}, and the second half of {@link keepsKeyboardFromPaneAtPause}, which answers the Application pane's viewport before it reveals the pane over the paused file.
    * A pause is settled at the reader's first reveal after its frame was reported ({@link owedPauseOf}): a later render of the same pause runs nothing, so a file, the captured source or a pane the learner chose meanwhile keeps the keyboard, and such a choice ends the record when the pause ends ({@link endsPauseOfRecord}) or, for a stop that follows without an end, by the time it was made ({@link judgeKeyboardAtPauseBegin}). The keyboard is taken from a text editor only: the paused file the editor's debugger opened, or the captured source shown in its place. While no text editor is active it is not known to have left the chat, and nothing is run.
    * @returns
-   * - `true` when the function {@link retainForeignTabFocus} answered ran the chat's focus command now.
+   * - `true` when the function {@link retainForeignTabFocus} answered ran the chat's focus command, now or for an earlier asker of the same pause ({@link returnMadeAtPause}).
    * - `false` without a record that notes an unsettled pause beside a live run, while no text editor is active, and when that function gave nothing back (the remembered tab is one of the main editor's or not known to be the chat's, its group is gone or a Study pane's, the window lost the focus, or the host has no command for its chat).
    * @throws What the editor's layout read, its command list or the chat's focus command rejected with.
    * @example const gaveBack = await this.returnsKeyboardToChatAtPause()
@@ -2917,8 +2919,24 @@ export class StudyWorkspace {
     const remembered = this.keyboardOutsideEditors
     if (!remembered) return false
     const pause = this.owedPauseOf(remembered)
-    if (!pause) return false
+    if (!pause) return this.returnMadeAtPause(remembered)
     pause.state = 'settling'
+    pause.returned = this.returnKeyboardOfPause(remembered, pause)
+    return pause.returned
+  }
+
+  /**
+   * Runs the one return of a pause and marks the pause as settled when it is over; the step of {@link returnsKeyboardToChatAtPause} for a pause whose return was still owed.
+   * @param remembered - The chat's record.
+   * @param pause - Its pause, already marked as settling.
+   * @returns `true` when the chat's focus command ran; `false` while no text editor is active and when nothing could be given back.
+   * @throws What the editor's layout read, its command list or the chat's focus command rejected with.
+   * @example pause.returned = this.returnKeyboardOfPause(remembered, pause)
+   */
+  private async returnKeyboardOfPause(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+    pause: KeyboardPauseOfRecord,
+  ): Promise<boolean> {
     try {
       return (
         vscode.window.activeTextEditor !== undefined &&
@@ -2929,6 +2947,23 @@ export class StudyWorkspace {
       pause.state = 'settled'
       remembered.leftAtMs = undefined
     }
+  }
+
+  /**
+   * Answers a second asker of a pause with the return the first one began; the step of {@link returnsKeyboardToChatAtPause} for a pause that is not owed a return any more.
+   * While that return runs, and after it for as long as no editor became active (the editor may not have reported the chat's focus yet), the answer is the return's own: a pane that comes to the front for the same stop must not take the keyboard the chat is getting or has got. Once an editor became active after the return, the learner chose it, and the old answer no longer holds.
+   * @param remembered - The chat's record.
+   * @returns The return of the record's pause, or `false` without a pause, for a pause that never began a return (the learner selected a frame first), and after the learner chose an editor.
+   * @example if (!pause) return this.returnMadeAtPause(remembered)
+   */
+  private returnMadeAtPause(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+  ): Promise<boolean> | false {
+    const pause = remembered.pause
+    if (!pause?.returned) return false
+    return pause.state === 'settling' || remembered.leftAtMs === undefined
+      ? pause.returned
+      : false
   }
 
   /**

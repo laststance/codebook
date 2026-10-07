@@ -5339,6 +5339,148 @@ test("a pause of a live run is shown and committed when the editor refuses to gi
   }
 })
 
+for (const moment of [
+  "while the reader's return of the keyboard to the chat is still running",
+  'right after that return, before the editor reports the chat',
+] as const)
+  // Value: protects=the keyboard of a learner who was typing in Cursor's Agent chat when a live run paused, when the Application pane comes to the front for the same stop at which the reader gives the keyboard back: the pane comes without the keyboard and no notice is told; fails_when=a return that runs, or one that is done, is answered like "the keyboard was given to nobody", so the pane is revealed with the keyboard while the chat's focus command is on its way, and the notice says that a Codebook pane has the keyboard now, which is untrue once the chat has it; why_new=Cycle 0046 row 249 (delegated review, finding 2: the answer of the pause's one return belongs to the pause and to every asker of that pause); seam=workspace harness with the controlled runtime, a live run's viewport that asks during the reader's own settle, addSeparateEditorPart, focusMutableDraft, pauseDebugger, holdNextCommand on Cursor's Focus Agent command, revealApplicationPaneOverPausedFile
+  test(`the Application pane comes to the front without the keyboard and tells nothing when its viewport asks ${moment}`, async () => {
+    // Arrange: Cursor with the Agent chat as a tab of another editor part; the learner typed in the chat when the run paused, and the debugger opened the paused file in the Application pane's group with the keyboard; the editor holds Cursor's command that focuses the chat.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    let live: { close(): void } | undefined
+    let release = (): void => {}
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      chat.focusTab()
+      harness.focusMutableDraft('actions.ts', 1)
+      harness.pauseDebugger()
+      const held = harness.holdNextCommand('composer.focusComposer')
+      release = held.release
+
+      // Act: the reader shows the stop's captured source and begins its return; the pane's viewport reveals the pane over the paused file for the same stop, during that return or right after it.
+      harness.service.action({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        key: randomUUID(),
+        action: 'repository-click',
+      })
+      const shown = readerSeams(harness).refresh()
+      await held.started
+      if (moment.startsWith('right after')) {
+        held.release()
+        await shown
+      }
+      const revealed = harness.revealApplicationPaneOverPausedFile()
+      held.release()
+      await Promise.all([shown, revealed])
+
+      // Assert: one return, the pane without the keyboard, the chat with it, and no notice.
+      assert.deepEqual(
+        harness
+          .panelReveals()
+          .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser'),
+        {
+          kind: 'codebook.scopedBrowser',
+          column: undefined,
+          preserveFocus: true,
+        },
+      )
+      assert.equal(chat.focused(), true)
+      assert.deepEqual(
+        harness.commands.filter(
+          (command) => command === 'composer.focusComposer',
+        ),
+        ['composer.focusComposer'],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      release()
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner in Cursor who, after the chat got the keyboard back at a pause, clicks into a file in the Application pane's group: when the pane comes to the front over that file it takes the keyboard, so the keyboard is on an element; fails_when=the answer of the pause's return ("the chat has the keyboard") is still given after the learner chose an editor, so the pane covers the file the learner types in without taking the keyboard, which is then on no element; why_new=Cycle 0046 row 249 (the bound of the kept answer: it holds until an editor becomes active); seam=workspace harness with the controlled runtime, a live run's viewport, addSeparateEditorPart, focusMutableDraft, pauseDebugger, revealApplicationPaneOverPausedFile
+test('the Application pane takes the keyboard when it comes to the front over a file the learner clicked into after the chat got the keyboard back at that pause', async () => {
+  // Arrange: Cursor with the Agent chat as a tab of another editor part; the run paused, the reader showed the captured source and gave the keyboard back to the chat; then the learner clicked into a file in the Application pane's group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    const chatFocusedAfterReturn = chat.focused()
+    harness.focusMutableDraft('learner-notes.ts', 1)
+
+    // Act
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: no second return; the pane has the keyboard.
+    assert.equal(chatFocusedAfterReturn, true)
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser'),
+      {
+        kind: 'codebook.scopedBrowser',
+        column: undefined,
+        preserveFocus: false,
+      },
+    )
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer'],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner who works in a file in Cursor beside the Agent chat's tab when a live run pauses: it stays in the editor, and the chat does not take it; fails_when=the return to the chat runs at a pause without a record that the chat had the keyboard, so that every pause throws a learner who edits a file into the chat input; why_new=Cycle 0046 row 5, Cursor half (the other side of the return); seam=workspace harness with the controlled runtime, addSeparateEditorPart, focusMutableDraft, pauseDebugger, the clock of performance.now held for the editor events
 test("a learner in Cursor who worked in a file for a minute before a pause of a live run keeps the keyboard in the editor at that pause, and the chat's tab does not take it", async (t) => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part, which never had the keyboard; the reader follows a live run and the learner works in a file.
