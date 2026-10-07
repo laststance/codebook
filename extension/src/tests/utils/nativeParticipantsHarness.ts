@@ -223,8 +223,8 @@ export async function nativeParticipantsHarness(
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
-  // The page is paused at a server stop's breakpoint in its stub of the server module; the next browser continue resumes only that pause.
-  let browserAtServerBreakpoint = false
+  // How many pauses of the page at a server stop's breakpoint, in its stub of the server module, the adapter has reported and nobody resumed yet; each of the next browser continues resumes only one of them.
+  let stubPausesAwaitingResume = 0
   // How the browser's adapter answers the run's resume of that pause: at once, only once the test releases it, or with a refusal.
   let stubResume: 'answered' | 'refused' | Promise<void> = 'answered'
   // The editor breakpoints, by participant session, that the adapter sent `changed` news about: the editor keeps no column of such news for a breakpoint that has none of its own.
@@ -336,8 +336,8 @@ export async function nativeParticipantsHarness(
           ],
         }
       // The run resumes the page's pause at a server stop's breakpoint: the adapter resumes it and no declared stop follows.
-      if (command === 'continue' && browserAtServerBreakpoint) {
-        browserAtServerBreakpoint = false
+      if (command === 'continue' && stubPausesAwaitingResume > 0) {
+        stubPausesAwaitingResume--
         run.onRequest(sessions[name], {
           type: 'request',
           seq: ++sequence,
@@ -1099,7 +1099,7 @@ export async function nativeParticipantsHarness(
      * @example harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
      */
     pauseBrowserAtServerBreakpoint(serverBreakpoint: { id: string }): void {
-      browserAtServerBreakpoint = true
+      stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
         url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
@@ -1132,7 +1132,7 @@ export async function nativeParticipantsHarness(
     pauseBrowserInServerStub(serverBreakpoint: { id: string }): {
       stopped(): void
     } {
-      browserAtServerBreakpoint = true
+      stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
         url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
@@ -1169,7 +1169,7 @@ export async function nativeParticipantsHarness(
     announceBrowserStopAtServerBreakpoint(serverBreakpoint: { id: string }): {
       paused(): void
     } {
-      browserAtServerBreakpoint = true
+      stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
         url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,

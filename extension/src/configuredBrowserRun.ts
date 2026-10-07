@@ -323,8 +323,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent
     journaled: boolean
   }
-  /** Set from the moment the run sends its own resume of a page pause at a server stop's breakpoint until the page's runtime reports a resume: a page pause read meanwhile is that pause, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}). */
-  private isPageResumeUnderWay = false
+  /** How many resumes of a page pause at a server stop's breakpoint the run itself has under way: one more for each `continue` it sends ({@link resumeServerBreakpointInBrowser}), one fewer for each resume the page's runtime reports and for a request that failed ({@link pageResumeEnded}). While it is above zero a page pause read meanwhile is such a pause, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}); one flag could not say that, because the resume of an earlier pause cleared it while a later pause's resume was still under way. */
+  private pageResumesUnderWay = 0
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
   /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
@@ -2763,7 +2763,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private ownPagePauseUnderResume(): void {
-    if (!this.isPageResumeUnderWay) return
+    if (this.pageResumesUnderWay === 0) return
     const transient = this.transientBrowserPause,
       held = this.participants.browser.unannouncedPause
     if (transient) clearTimeout(transient.timer)
@@ -3824,7 +3824,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     this.participants.browser.expectedResumeRequests++
     // From here on the page's pause is the run's own to resume, also when its runtime event is read only later.
-    this.isPageResumeUnderWay = true
+    this.pageResumesUnderWay++
     this.ownPagePauseUnderResume()
     const detail = {
       participant: 'browser',
@@ -3838,12 +3838,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'dap.server-breakpoint-browser-resume-requested',
       detail,
     )
-    await awaitResponse(
-      session.customRequest('continue', { threadId: body.threadId }),
-      'browser resume of a server stop breakpoint',
-      this.abort.signal,
-    )
+    try {
+      await awaitResponse(
+        session.customRequest('continue', { threadId: body.threadId }),
+        'browser resume of a server stop breakpoint',
+        this.abort.signal,
+      )
+    } catch (error) {
+      // A request the adapter refused or never answered resumes nothing, so it is no longer under way.
+      this.pageResumeEnded()
+      throw error
+    }
     this.evidence.record('dap.server-breakpoint-browser-stop-resumed', detail)
+  }
+
+  /**
+   * Takes one resume of the run's own off the count of those under way ({@link pageResumesUnderWay}); called by {@link onCdpResumed} for every resume the page's runtime reports and by {@link resumeServerBreakpointInBrowser} when its request failed.
+   * The count never falls below zero: the page also resumes pauses the run did not ask to resume, and a request can fail after the page already reported its resume.
+   * @example
+   * ```ts
+   * this.pageResumeEnded() // 2 resumes under way become 1; none stays none
+   * ```
+   */
+  private pageResumeEnded(): void {
+    if (this.pageResumesUnderWay > 0) this.pageResumesUnderWay--
   }
 
   /** Tells {@link onEvent} and {@link adapterPauseLimitMs} whether this participant's accepted stop has no pause of its own yet: {@link inspect} is still waiting for it, or took a pause held elsewhere in the stop's module and is about to judge its binding. @example this.awaitsOwnPause('server') // true during the wait of pauseOfAcceptedStop */
@@ -3952,8 +3970,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
-    // The page runs again: a resume of the run's own is no longer under way.
-    if (name === 'browser') this.isPageResumeUnderWay = false
+    // The page runs again: one resume of the run's own is no longer under way.
+    if (name === 'browser') this.pageResumeEnded()
     const participant = this.participants[name],
       pausedForMs = elapsedMsSince(
         participant.pauseObservedAtMs,

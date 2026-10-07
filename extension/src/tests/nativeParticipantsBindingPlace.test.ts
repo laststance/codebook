@@ -840,6 +840,112 @@ test('a page pause at a server stop’s breakpoint that is read only after the r
   assert.deepEqual([server.source.line, server.source.column], [1, 1])
 })
 
+// Cycle 0046 (row 269): red while one flag stood for every resume of the run's own and any resume of the page cleared it: with two pauses in the stub whose `stopped` events were read before the page's events, the first pause's resume cleared the flag, the second pause got the timer of a pause nobody owns, and an adapter that answered its resume late ended the run with "Unowned browser stop remained paused".
+test('a second page pause at a server stop’s breakpoint, whose stopped event was read before the first pause’s own events, is not ended by the bound of an unowned page pause while its resume is under way, and the run goes on to its server stop', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet. The adapter reports two pauses of the page at the server breakpoint, one after the other, before the run has read any event of the page; it answers each of the run's two resumes only when the test lets it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const firstResume = harness.holdStubResume()
+  const firstPause = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  const secondResume = harness.holdStubResume()
+  const secondPause = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length === 2,
+    'the run sent both resumes of the page',
+  )
+  // Act: the first pause is read and the adapter resumes it; then the second pause is read, and 3,001 ms pass before the adapter answers its resume.
+  firstPause.paused()
+  firstResume.release()
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length ||
+      harness.run.view().failures.length,
+    'the adapter answered the first resume',
+  )
+  secondPause.paused()
+  harness.advance(3_001)
+  const failuresWhilePaused = harness.run.view().failures.join('; ')
+  secondResume.release()
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresWhilePaused, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.equal(
+    journaled(harness, 'cdp.browser-adapter-pause-retired').length,
+    2,
+  )
+})
+
+// Cycle 0046 (row 269, the same two pauses in a run that declares a browser stop too): red while the second held pause was not marked as resumed by the run, because the first pause's resume had cleared the one flag: its late resume ended the run with "Manual or competing resume invalidated live pause: ...".
+test('a second page pause at a server stop’s breakpoint, whose stopped event was read before the first pause’s own events, is not taken for a competing resume when the adapter answers late, in a run that declares a browser stop too', async (context) => {
+  // Arrange: as above, with a browser stop declared after the server stop, so each page pause is held instead of timed.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const firstResume = harness.holdStubResume()
+  const firstPause = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  const secondResume = harness.holdStubResume()
+  const secondPause = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length === 2,
+    'the run sent both resumes of the page',
+  )
+  // Act: the first pause is read and the adapter resumes it; then the second pause is read, and 4 s pass before the adapter answers its resume.
+  firstPause.paused()
+  firstResume.release()
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length ||
+      harness.run.view().failures.length,
+    'the adapter answered the first resume',
+  )
+  secondPause.paused()
+  harness.advance(4_000)
+  secondResume.release()
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+        .length === 2 || harness.run.view().failures.length,
+    'the adapter answered the second resume',
+  )
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.deepEqual(journaled(harness, 'cdp.unannounced-pause-resumed-late'), [])
+  assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 2)
+})
+
 // Cycle 0046 (row 158): red while a pause that arrived during the judgement by break locations stayed held after that judgement accepted its place: the stop was adopted only when the 3 s wait for its own pause ended, as the native journals of row 77 show.
 test('a server stop that pauses while the debugger still has to answer the break-location request is taken as soon as that judgement accepts its place, without the wait and without an adoption', async (context) => {
   // Arrange: the module is announced and the adapter's news names 7:3; the debugger's answer to the judgement that news starts is kept back. The wait for the stop's own pause never ends by itself.
