@@ -556,7 +556,7 @@ test('the Reader DOM job keeps the video encoder between runs under a key that n
   )
 })
 
-test('the Windows storage lock job runs the lock test files on windows-latest and starts for every lock source those tests load', async () => {
+test('the Windows job runs its test files on windows-latest, one at a time, and starts for every source those tests load', async () => {
   // Arrange
   const workflow = await repositoryText(
     '.github/workflows/storage-locks-windows.yml',
@@ -689,7 +689,6 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     pushFilter,
   )
   assert.equal(settings.includes('runs-on: windows-latest'), true)
-  assert.equal(settings.includes('name: Storage lock tests on Windows'), true)
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
@@ -702,6 +701,55 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
 })
 
 // Review of Cycle 0045 (tests-1 #11): the pin knew npm, npx and pnpm only, so a job that added a tool with yarn, pip, corepack or a piped download stayed green.
+// Value: protects=a reader of a pull request's checks, who must see from a failed check's name what failed on Windows; fails_when=the workflow, its job or its test step is named after the storage lock again, the first of the ten kinds of test the job runs, or the guide gives another name for the check than the workflow has; why_new=Cycle 0046 row 264: a failed test of the Cursor MCP catalog or of the process listing showed as "Storage lock tests on Windows"; seam=none
+test('the Windows workflow, its job and its test step are named after the file system and process tests they run, none after the storage lock alone, and the guide gives the check under the name a pull request shows', async () => {
+  // Arrange
+  const guide = await repositoryText('docs/qa/test-execution.md')
+  const workflow = await repositoryText(
+    '.github/workflows/storage-locks-windows.yml',
+  )
+
+  // Act: every name the workflow gives (itself, its job, its steps) in file order, the step that starts the tests, and the guide's section.
+  const names = workflow
+    .split('\n')
+    .map((line) => line.trim().replace(/^- /, ''))
+    .filter((line) => line.startsWith('name: '))
+    .map((line) => line.slice('name: '.length))
+  const testStep = stepLines(workflow, 'Run the file system and process tests')
+  const section =
+    guide.split(/^## /m).find((part) => part.startsWith('The Windows job\n')) ??
+    ''
+
+  // Assert
+  assert.deepEqual(names, [
+    'Windows file system and process tests',
+    'File system and process tests on Windows',
+    'Keep line endings as committed',
+    'Prepare environment',
+    'Emit the compiled tests without type checking',
+    'Run the file system and process tests',
+  ])
+  assert.deepEqual(
+    names.filter((name) => /storage lock/i.test(name)),
+    [],
+    'a name of the Windows workflow speaks of the storage lock alone, one of the ten kinds of test the job runs',
+  )
+  // The step of that name is the one that starts the tests.
+  assert.equal(
+    testStep.some((line) =>
+      line.startsWith('run: node --test --test-concurrency=1 dist/tests/'),
+    ),
+    true,
+  )
+  assert.equal(
+    section.includes(
+      "Among a pull request's checks the job shows as `Windows file system and process tests / File system and process tests on Windows`; the workflow's file keeps the name it got in Cycle 0045, when the job ran the storage lock's tests alone.",
+    ),
+    true,
+    'the guide does not give the check under the name the workflow and its job have',
+  )
+})
+
 test('the install pin knows a package or a download named on a command line for npm, pnpm, yarn, pip and corepack, and passes an install from a lockfile', () => {
   // Arrange
   const commands = [
@@ -1161,7 +1209,7 @@ test('the test execution guide and the header of the Windows workflow name every
 })
 
 // Value: protects=the Windows run of the storage lock tests after a change the path filter leaves out (extension/src/constants.ts holds the lock's grace time, its boot time tolerance, its path and its file modes; most pull requests change that file); fails_when=the job starts for the filtered paths only, so a pull request that changes when a lock is taken over never runs on Windows; why_new=Cycle 0045 local review other-1 #1; seam=none
-test('the Windows storage lock job also runs once a week and for a new Node release, so a change the path filter leaves out is seen on Windows', async () => {
+test('the Windows job also runs once a week and for a new Node release, so a change the path filter leaves out is seen on Windows', async () => {
   // Arrange
   const workflow = await repositoryText(
     '.github/workflows/storage-locks-windows.yml',

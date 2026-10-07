@@ -1,4 +1,4 @@
-name: Storage locks (Windows)
+name: Windows file system and process tests
 
 # The storage lock is taken over with a hard link, a directory rename onto an existing directory, a process probe and a
 # query for the start of a process (PowerShell on Windows), which Windows answers differently from Linux; the Test
@@ -128,7 +128,7 @@ concurrency:
 
 jobs:
   storage-locks-windows:
-    name: Storage lock tests on Windows
+    name: File system and process tests on Windows
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -155,6 +155,6 @@ jobs:
       # One test file at a time: these tests start PowerShell and read real process starts, which the product bounds at
       # 3 s, and on a runner that runs several files side by side such a read went past that bound (run 37321685601). The
       # files' times then add up instead of running beside each other, which is seconds for this job.
-      - name: Run the storage lock tests
+      - name: Run the file system and process tests
         working-directory: extension
         run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js

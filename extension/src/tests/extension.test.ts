@@ -992,8 +992,9 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     // A second start from the command while the first run is still watched is refused, not sent as a second chat request.
     await commands.get('codebook.updateDeepWiki')!()
     assert.equal(submissions.length, 1)
+    // This editor has no progress API, so no notification watches the update and the sentence names none.
     assert.deepEqual(notices, [
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader.',
     ])
   } finally {
     await boundary.deactivate()
