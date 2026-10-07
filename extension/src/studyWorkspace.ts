@@ -186,6 +186,7 @@ import {
   editorLayoutSchema,
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
+import { isSameEditorLayoutShape } from './utils/isSameEditorLayoutShape'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
@@ -632,6 +633,8 @@ export class StudyWorkspace {
   private arranging?: Promise<void>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
+  /** The main editor's layout as {@link rememberSideBarsBeforeRead} read it when a reading began, kept from the moment a Read of that reading ran the editor's Expand ({@link maximizeActiveGroupForRead}), which leaves every other group at its minimum size: {@link giveGroupSizesBackAfterRead} applies it when a Close or a Restore ends the reading, and when the Read is refused after its Expand; where the learner's change of focus stopped that, it stays for the next Restore or the Close. `undefined` for a reading that maximized with the command that hides the side bars and resizes no group, when that layout could not be read or was not known to be the main editor's, once the sizes were given back, and from the begin of the next reading. */
+  private groupSizesBeforeRead?: unknown
   /** What {@link rememberSideBarsBeforeRead} and {@link rememberAuxiliaryBarAtRead} measured when a Read began, for {@link showSideBarsHiddenByRead}. `undefined` while no reading is pending, and during a reading whose editor area gave no width at all: {@link maximizeForRead} then hides no side bar. */
   private sideBarsBeforeRead?: {
     /** Whether the primary side bar is shown again when the reading ends: it was open before the Read, or the measurement hid it and the read after that gave no width. */
@@ -1437,6 +1440,10 @@ export class StudyWorkspace {
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
+          // A Read that began with Expand resized the groups; they get their sizes back before the arrangement, which arranges nothing beside a group of the learner's.
+          await this.giveGroupSizesBackAfterRead(() =>
+            focusedPane.assertCurrent(),
+          )
           await this.arrange(
             transition.cancellation.signal,
             'study',
@@ -1885,6 +1892,10 @@ export class StudyWorkspace {
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
+        // A Read that began with Expand resized the groups; they get their sizes back before the arrangement.
+        await this.giveGroupSizesBackAfterRead(() =>
+          focusedPane.assertCurrent(),
+        )
         await this.arrange(
           transition.cancellation.signal,
           'study',
@@ -3483,17 +3494,22 @@ export class StudyWorkspace {
   /**
    * Measures which side bars are open before {@link maximizeForRead} maximizes a pane, and hides the primary one for that measurement.
    * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link rememberAuxiliaryBarAtRead} reads it once more when the maximization has hidden the secondary bar too.
-   * @returns Once {@link sideBarsBeforeRead} holds the measurement; or `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement), and no bar is hidden for a measurement that cannot be made; or, when the read after hiding the primary side bar gave no width, a record without that width that shows the primary side bar again when the reading ends, because the measurement hid it and cannot tell whether it was open.
+   * @returns The main editor's layout as it was read before anything was hidden, for {@link maximizeActiveGroupForRead} ({@link isMainEditorLayout}; `undefined` when the read failed or another editor part may have answered). By then {@link sideBarsBeforeRead} holds the measurement; or it is `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement), and no bar is hidden for a measurement that cannot be made; or, when the read after hiding the primary side bar gave no width, a record without that width that shows the primary side bar again when the reading ends, because the measurement hid it and cannot tell whether it was open.
    * @example
    * ```ts
    * await this.rememberSideBarsBeforeRead() // sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874 } for columns of 363 + 297 beside a side bar of 214
    * ```
    */
-  private async rememberSideBarsBeforeRead(): Promise<void> {
+  private async rememberSideBarsBeforeRead(): Promise<unknown> {
     this.sideBarsBeforeRead = undefined
-    const widthPx = await this.readEditorAreaWidthPx()
+    const layout = await this.readEditorLayout()
+    const widthPx = editorAreaWidthPx(layout)
+    // The same read tells the sizes of the groups before the reading, for a Read that has to begin with the editor's Expand.
+    const layoutBeforeRead = this.isMainEditorLayout(layout)
+      ? layout
+      : undefined
     // Without a width nothing can be compared: the primary side bar stays as the learner has it.
-    if (widthPx === undefined) return
+    if (widthPx === undefined) return layoutBeforeRead
     await vscode.commands
       .executeCommand('workbench.action.closeSidebar')
       .then(undefined, () => undefined)
@@ -3501,12 +3517,69 @@ export class StudyWorkspace {
     // The measurement hid the primary side bar and cannot tell whether it was open: the end of the reading shows it again rather than leave the learner's bar away.
     if (widthWithoutPrimaryPx === undefined) {
       this.sideBarsBeforeRead = { primaryVisible: true }
-      return
+      return layoutBeforeRead
     }
     this.sideBarsBeforeRead = {
       primaryVisible: this.hasSideBarGain(widthWithoutPrimaryPx, widthPx),
       widthWithoutPrimaryPx,
     }
+    return layoutBeforeRead
+  }
+
+  /**
+   * Says whether an answer of the editor's layout read is the main editor's and not another editor part's; asked by {@link rememberSideBarsBeforeRead} before a layout is kept for the end of a reading and by {@link giveGroupSizesBackAfterRead} before one is applied.
+   * The editor answers a layout read, and applies a layout, for the editor part that has the focus (Cursor's Agent chat as a tab has a part of its own): a layout noted or applied there would give that part the main editor's groups.
+   * @param layout - What `vscode.getEditorLayout` answered.
+   * @returns `true` when the layout counts exactly the groups the editor's tab model names (one editor part), and when the main editor is known to have the focus ({@link hasMainEditorFocus}); `false` otherwise, and for an answer that is no layout.
+   * @example this.isMainEditorLayout({ orientation: 1, groups: [{ size: 344 }, { size: 343 }] }) // => true in VS Code with two editor groups
+   */
+  private isMainEditorLayout(layout: unknown): boolean {
+    const count = editorLayoutGroupCount(layout)
+    return (
+      count !== undefined &&
+      (count === vscode.window.tabGroups.all.length ||
+        this.hasMainEditorFocus(count))
+    )
+  }
+
+  /**
+   * Gives the editor groups the sizes they had before a reading whose Read ran the editor's Expand, and forgets them; called once the maximization is ended, by {@link endReadAtClose}, by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement} before they arrange, and by {@link beginReadingMaximized} for a Read that was refused after its Expand.
+   * Expand leaves every group but the active one at its minimum size, and no command of the editor undoes that: after a Read in an arrangement whose top level is rows (the live and the replay arrangement, where the panes share the learner's own groups) the learner's groups stayed that way when the workspace was closed, and after a Restore that arranges nothing because it preserves a group of the learner's. The layout the editor answered before the reading is applied again, which is what a Restore does with its arrangement.
+   * Nothing is applied, and the sizes stay as the Read left them, when the editor's groups are no longer those of before (the learner opened, closed or moved a group during the reading), and when the main editor is not known to answer (the keyboard is in Cursor's chat tab, whose editor part would be given the layout). A layout that was read while the learner had maximized a group by hand gives that group the larger share.
+   * @param assertUnchanged - Throws when the learner changed the focus since the caller began; asked once the editor answered the layout read and before anything is applied. Left out by a Close, which nobody's focus stops.
+   * @returns Once the editor answered the layout command, or at once when no sizes are kept or they may not be applied.
+   * @throws What `assertUnchanged` throws; the sizes then stay kept, for the next Restore or the Close.
+   * @example
+   * ```ts
+   * await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+   * await this.giveGroupSizesBackAfterRead() // two rows of 617 and 70 px are 344 and 343 px again
+   * ```
+   */
+  private async giveGroupSizesBackAfterRead(
+    assertUnchanged?: () => void,
+  ): Promise<void> {
+    const before = this.groupSizesBeforeRead
+    if (before === undefined) return
+    const now = await this.readEditorLayout()
+    // A learner who changed the focus while the editor answered keeps the groups as they are.
+    assertUnchanged?.()
+    this.groupSizesBeforeRead = undefined
+    // Only the main editor's groups of before get their sizes back.
+    if (!this.hasMainEditorGroupsOf(before, now)) return
+    await vscode.commands
+      .executeCommand('vscode.setEditorLayout', before)
+      .then(undefined, () => undefined)
+  }
+
+  /**
+   * Says whether the editor's groups are still those a layout was noted for, in the main editor; asked by {@link giveGroupSizesBackAfterRead} before it applies that layout.
+   * @param before - The main editor's layout as it was noted before a reading.
+   * @param now - What the editor's layout read answers now.
+   * @returns `true` when the answer of now is the main editor's ({@link isMainEditorLayout}) and names the same groups in the same splits ({@link isSameEditorLayoutShape}); `false` when another editor part may have answered and when a group was opened, closed or moved since.
+   * @example this.hasMainEditorGroupsOf({ orientation: 1, groups: [{ size: 344 }, { size: 343 }] }, { orientation: 1, groups: [{ size: 617 }, { size: 70 }] }) // => true
+   */
+  private hasMainEditorGroupsOf(before: unknown, now: unknown): boolean {
+    return this.isMainEditorLayout(now) && isSameEditorLayoutShape(before, now)
   }
 
   /**
@@ -3570,7 +3643,7 @@ export class StudyWorkspace {
    * Begins a reading: measures the side bars, maximizes the active group and measures the secondary bar; called by {@link maximizeForRead} for a Read made while no reading is pending.
    * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read; asked after each step that can let it happen.
    * @returns Once the editor answered the maximize command and the secondary bar was measured.
-   * @throws What `assertReadFocus` throws, and a rejection of the editor's maximize command; the reading is then not begun, and the side bar its measurement hid is shown again first.
+   * @throws What `assertReadFocus` throws, and a rejection of the editor's maximize command; the reading is then not begun, and first the groups get back the sizes the Read's Expand took from them ({@link giveGroupSizesBackAfterRead}) and the side bar its measurement hid is shown again.
    * @example
    * ```ts
    * await this.beginReadingMaximized(assertReadFocus) // maximizedByRead => true, sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874, auxiliaryVisible: false }
@@ -3581,14 +3654,19 @@ export class StudyWorkspace {
   ): Promise<void> {
     try {
       this.maximizedByRead = true
-      await this.rememberSideBarsBeforeRead()
+      this.groupSizesBeforeRead = undefined
+      const layoutBeforeRead = await this.rememberSideBarsBeforeRead()
       assertReadFocus()
-      await this.maximizeActiveGroupForRead(assertReadFocus)
+      await this.maximizeActiveGroupForRead(assertReadFocus, layoutBeforeRead)
       // The secondary bar is measured at the Read itself, before the learner can resize the window.
       await this.rememberAuxiliaryBarAtRead()
     } catch (error) {
-      // A Read refused before its maximization begins no reading: the side bar hidden for the measurement is shown again, and the next Read measures anew.
+      // A Read refused before its maximization begins no reading: the groups its Expand resized get their sizes back, the side bar hidden for the measurement is shown again, and the next Read measures anew.
       this.maximizedByRead = false
+      // A learner who took the focus keeps the groups as they are; the sizes then stay kept for the Close.
+      await this.giveGroupSizesBackAfterRead(assertReadFocus).catch(
+        () => undefined,
+      )
       await this.showSideBarsHiddenByRead()
       throw error
     }
@@ -3597,6 +3675,7 @@ export class StudyWorkspace {
   /**
    * Runs the editor commands that maximize the active group for a Read; called by {@link beginReadingMaximized} once the side bars were measured or found unmeasurable, and by {@link maximizeForRead} for a Read during a reading.
    * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read.
+   * @param layoutBeforeRead - The main editor's layout as it was read when this reading began ({@link rememberSideBarsBeforeRead}); left out by a Read during a reading, which keeps what the reading's first Read noted.
    * @returns Once the editor answered: both side bars hidden for a reading whose primary side bar was measured ({@link sideBarsBeforeRead} with its width), or the side bars left as they are after Expand and the maximize toggle.
    * @throws What `assertReadFocus` throws, and a rejection of an editor command.
    * @example
@@ -3606,6 +3685,7 @@ export class StudyWorkspace {
    */
   private async maximizeActiveGroupForRead(
     assertReadFocus: () => void,
+    layoutBeforeRead?: unknown,
   ): Promise<void> {
     // A measured reading hides both side bars with the group's maximization; one whose measurement failed after hiding the primary bar leaves the secondary bar alone.
     if (this.sideBarsBeforeRead?.widthWithoutPrimaryPx !== undefined) {
@@ -3614,6 +3694,8 @@ export class StudyWorkspace {
       )
       return
     }
+    // Expand ends an earlier maximization, which the editor does not report, and leaves every other group at its minimum size: the sizes of before the reading are kept from here on, to be given back when the reading ends.
+    this.groupSizesBeforeRead ??= layoutBeforeRead
     await vscode.commands.executeCommand(
       'workbench.action.minimizeOtherEditors',
     )
@@ -3758,11 +3840,18 @@ export class StudyWorkspace {
    * ```
    */
   private async readEditorAreaWidthPx(): Promise<number | undefined> {
-    return editorAreaWidthPx(
-      await vscode.commands
-        .executeCommand<unknown>('vscode.getEditorLayout')
-        .then(undefined, () => undefined),
-    )
+    return editorAreaWidthPx(await this.readEditorLayout())
+  }
+
+  /**
+   * Reads the editor's layout, for {@link readEditorAreaWidthPx}, {@link rememberSideBarsBeforeRead} and {@link giveGroupSizesBackAfterRead}.
+   * @returns What `vscode.getEditorLayout` answered (for the editor part that has the focus), or `undefined` when the editor refused the read.
+   * @example const layout = await this.readEditorLayout() // => { orientation: 1, groups: [{ size: 344 }, { size: 343 }] }
+   */
+  private async readEditorLayout(): Promise<unknown> {
+    return vscode.commands
+      .executeCommand<unknown>('vscode.getEditorLayout')
+      .then(undefined, () => undefined)
   }
 
   /**
@@ -7056,22 +7145,28 @@ export class StudyWorkspace {
 
   /**
    * Ends the Read {@link close} finds on, so that a closed workspace leaves no maximized group and no hidden side bar behind; called by {@link close} once its writes are drained, before it closes the captured source and the panes.
-   * The maximization is left to the editor where it ends it by itself as the panes' groups go, because that keeps every group at the size it had before the Read ({@link editorEndsReadMaximizationAtClose}); elsewhere the editor's Expand ends it.
+   * The maximization is left to the editor where it ends it by itself as the panes' groups go, because that keeps every group at the size it had before the Read ({@link editorEndsReadMaximizationAtClose}); elsewhere the editor's Expand ends it. A reading whose Read itself began with Expand (an arrangement whose top level is rows) then gets the sizes of before the Read back ({@link giveGroupSizesBackAfterRead}).
    * The bars the Read hid are shown again while the panes still give the editor area its columns. The editor shows a bar only with a command that gives that bar the keyboard ({@link showSideBarsHiddenByRead}), in a window without the focus too, so this step moves the keyboard: the chat that had it gets it back ({@link returnsKeyboardToChatAfterSideBars}), and otherwise {@link movesKeyboardAfterClose} lets the active editor group take it at the end of the close, and the learner is told.
    * @param giveKeyboardBackToChat - What {@link retainForeignTabFocus} answered when the close began: the return to the tab outside the text editors and the Study panes that the editor named as active then, `undefined` when a text editor or a Study pane was active.
-   * @returns `true` when a side bar was shown again and the keyboard was not given back to the chat; `false` when no Read was on, when the Read hid no bar that is to be shown, and when the chat has the keyboard again.
+   * @returns `true` when a side bar was shown again and the keyboard was not given back to the chat; `false` when no Read was on (sizes a refused Restore or Read left kept are still given back), when the Read hid no bar that is to be shown, and when the chat has the keyboard again.
    * @example const movedKeyboardToSideBar = await this.endReadAtClose(giveKeyboardBackToChat)
    */
   private async endReadAtClose(
     giveKeyboardBackToChat: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
   ): Promise<boolean> {
-    if (!this.maximizedByRead) return false
+    // No reading is on, yet a refused Restore or a refused Read may have left sizes to give back.
+    if (!this.maximizedByRead) {
+      await this.giveGroupSizesBackAfterRead()
+      return false
+    }
     this.maximizedByRead = false
     // The editor's Expand ends a maximization whatever its state, and leaves every other group at its minimum size: it is run only where the editor will not end the maximization by itself.
     if (!this.editorEndsReadMaximizationAtClose())
       await vscode.commands
         .executeCommand('workbench.action.minimizeOtherEditors')
         .then(undefined, () => undefined)
+    // A Read that began with Expand resized the groups at the Read itself: they get their sizes back before the panes are closed.
+    await this.giveGroupSizesBackAfterRead()
     // The Read also hid the side bars; the bars it hid are shown again while the panes still give the editor area its columns.
     if (!(await this.showSideBarsHiddenByRead())) return false
     // A bar that was shown took the keyboard: the chat that had it gets it back, and then nothing more is moved or told.
@@ -7083,16 +7178,28 @@ export class StudyWorkspace {
   /**
    * Says whether the editor ends a Read's maximization by itself while {@link close} closes the panes, so that no command has to end it; asked by {@link endReadAtClose}.
    * Both editors leave a maximization when a group is removed from their grid and show the hidden groups again at the sizes they had before it (VS Code 1.140 and Cursor 3.23, the grid's `removeView`: `this.hasMaximizedView()&&this.exitMaximizedView()`), without moving the keyboard. The one command that ends a maximization whatever its state is the editor's Expand, which then gives the active group all the room and leaves every other group at its minimum size: after it the learner's own groups stay that way when the panes are gone (344 and 343 px before the Study workspace, 617 and 70 px after a Read and Close; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). A Restore runs Expand too, and gets its sizes from the arrangement it applies afterwards, which a Close has not. The editor's toggle would leave the sizes alone, but it maximizes a group when the learner or the editor has ended the Read's maximization already, which the editor does not report.
-   * @returns `true` when this close empties an editor group that the editor then removes ({@link emptiesEditorGroupAtClose}) and the side bars are not measured at the end of the Read; `false` when no group will go, so that the maximization would stay, and when {@link sideBarShowCommands} has to read the editor area, which it reads from a grid that is not maximized.
+   * @returns `true` when this close empties an editor group that the editor then removes ({@link emptiesEditorGroupAtClose}) and the side bars are not measured at the end of the Read; `false` when no group will go, so that the maximization would stay, when {@link sideBarShowCommands} has to read the editor area, which it reads from a grid that is not maximized, and for a reading whose Read began with Expand and resized the groups ({@link giveGroupSizesBackAfterRead}): what the editor would bring back there are the sizes the Expand left.
    * @example if (!this.editorEndsReadMaximizationAtClose()) await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
    */
   private editorEndsReadMaximizationAtClose(): boolean {
+    // A reading whose Read began with Expand has sizes to give back, which are applied to a grid that is not maximized.
+    if (this.groupSizesBeforeRead !== undefined) return false
+    return (
+      !this.measuresSideBarsAtEndOfRead() && this.emptiesEditorGroupAtClose()
+    )
+  }
+
+  /**
+   * Says whether the end of the reading has to measure the secondary side bar; asked by {@link editorEndsReadMaximizationAtClose}.
+   * @returns `true` for a reading whose maximization hid both bars and whose secondary bar could not be measured at the Read: {@link sideBarShowCommands} then reads the editor area, from the columns of a grid that is not maximized; `false` otherwise.
+   * @example this.measuresSideBarsAtEndOfRead() // => false after a Read that measured both bars
+   */
+  private measuresSideBarsAtEndOfRead(): boolean {
     const before = this.sideBarsBeforeRead
-    // A reading whose secondary bar could not be measured at the Read measures it now, from the columns of a grid that is not maximized.
-    const measuresSideBars =
+    return (
       before?.widthWithoutPrimaryPx !== undefined &&
       before.auxiliaryVisible === undefined
-    return !measuresSideBars && this.emptiesEditorGroupAtClose()
+    )
   }
 
   /**
