@@ -3045,7 +3045,13 @@ export async function workspaceHarness(
       presentationPreferences.set(key, structuredClone(value))
     },
   }
-  const createReader = (extensionPath = join(harness.directory, 'extension')) =>
+  /** Makes one more reader over the same fake editor and storage, as the extension does after a change of the workspace's folders; `handedOverArchives` are the study archives the reader before it could not save and released. @example const replacement = harness.createReader(undefined, harness.reader.releaseUnsavedStudies()) */
+  const createReader = (
+    extensionPath = join(harness.directory, 'extension'),
+    handedOverArchives: ReturnType<
+      WorkspaceReader['releaseUnsavedStudies']
+    > = [],
+  ) =>
     new boundary.StudyWorkspace(
       {
         extensionPath,
@@ -3054,6 +3060,7 @@ export async function workspaceHarness(
         workspaceState,
       },
       controls,
+      handedOverArchives,
     )
   const reader = createReader()
   if (attach) {

@@ -5052,6 +5052,162 @@ test('after the archive of a stopped run could not be saved, a reader made again
   }
 })
 
+// Value: protects=the study of a stopped run whose archive could not be saved before its server ended, when the workspace's folders then change: the reader made in place of the disposed one shows "History not saved: …" again, and one press on Retry storage / refresh saves the study, which opens; fails_when=the archive that waits is disposed with its reader, or the new reader does not take what was handed over, so the press writes nothing, the study stays without its archive for good and no line says so; why_new=Cycle 0046 row 278 (probe P2 of row 267, turned into this test); seam=the hand-over as the extension's handling of a changed workspace folder makes it (releaseUnsavedStudies, dispose, a new reader from the workspace harness's createReader with what was released) and the library's study save, which fails until the disk is writable again
+for (const [situation, isWriteStillRunning, lineOfNewReader] of [
+  [
+    'whose save had failed',
+    false,
+    'Error: History not saved: Error: disk is read-only',
+  ],
+  [
+    'whose write was still running',
+    true,
+    "Error: History not saved: a study of an earlier run was still being written when the workspace's folders changed. Press Retry storage / refresh to write it.",
+  ],
+] as const)
+  test(`after the server of a stopped run ${situation} has ended and the workspace’s folders changed, the reader made again shows “History not saved: …” for it, writes its archive at Retry storage / refresh, and the study opens`, async (context) => {
+    // Arrange: a stopped run whose archive could not be saved; its server stops while the disk still refuses, so the reader holds the archive of a run that no service holds any more.
+    const harness = await workspaceHarness(true, true)
+    let replacement: ReturnType<typeof harness.createReader> | undefined
+    try {
+      const unsaved = await stopRunOnRefusingDisk(context, harness)
+      const retirement = await harness.reader.retire(harness.service).then(
+        () => 'retired',
+        (error: unknown) => String(error),
+      )
+      // A write that had not ended when the readers were replaced left no reason on the run.
+      if (isWriteStillRunning)
+        unsaved.record.historyReceipt = {
+          revision: unsaved.record.historyReceipt!.revision,
+          signature: unsaved.record.historyReceipt!.signature,
+          status: 'pending',
+        }
+      // Act: the workspace's folders change: the extension takes what the reader could not save, disposes it and makes a new reader with it. The disk is writable again, and the learner presses Retry storage / refresh and chooses the study.
+      const handedOver = harness.reader.releaseUnsavedStudies()
+      await harness.reader.dispose()
+      replacement = harness.createReader(undefined, handedOver)
+      const successor = { reader: replacement },
+        library = await successor.reader.learningStorage()
+      const beforeRetry = structuredClone({
+        queued: readerSeams(successor).queuedStudyWrites(),
+        listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+        errors: successor.reader.inspect().view!.errors,
+        unretryableErrorCount:
+          successor.reader.inspect().view!.unretryableErrorCount,
+      })
+      unsaved.makeDiskWritable()
+      await successor.reader.action('retry')
+      const afterRetry = structuredClone({
+        queued: readerSeams(successor).queuedStudyWrites(),
+        listed: (await library.list()).map((entry) => [
+          entry.id,
+          entry.format,
+          entry.metadata,
+        ]),
+        errors: successor.reader.inspect().view!.errors,
+      })
+      await successor.reader.open()
+      await readerSeams(successor).receive(
+        {
+          type: 'history',
+          revision: successor.reader.inspect().view!.revision,
+          studyId: unsaved.studyId,
+        },
+        'context',
+      )
+      await waitUntil(
+        () =>
+          successor.reader.inspect().view!.model.selection.studyId ===
+            unsaved.studyId && !successor.reader.inspect().view!.loading,
+        'the chosen saved study',
+        1_000,
+        // A study that was not saved is never shown: the assertions below then say what the new reader held.
+      ).catch(() => undefined)
+      // Assert
+      assert.equal(
+        retirement,
+        'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+      )
+      assert.deepEqual(
+        structuredClone(handedOver.map((entry) => entry.archive.id)),
+        [unsaved.studyId],
+      )
+      assert.deepEqual(beforeRetry, {
+        queued: 1,
+        listed: [[unsaved.studyId, 'archive-missing']],
+        errors: [lineOfNewReader],
+        // Retry storage / refresh is offered beside the line.
+        unretryableErrorCount: 0,
+      })
+      assert.deepEqual(afterRetry, {
+        queued: 0,
+        listed: [[unsaved.studyId, 'v3', 'validated']],
+        errors: [],
+      })
+      // The chosen study is shown: the captured source of the run's stop is rendered, without a line.
+      assert.deepEqual(
+        structuredClone(successor.reader.inspect().view!.errors),
+        [],
+      )
+      assert.equal(
+        successor.reader.inspect().rendered?.snapshotUri,
+        `codebook://${harness.service.instanceId}/runs/${unsaved.record.id}/snapshots/browser-session%3A1`,
+      )
+    } finally {
+      context.mock.restoreAll()
+      await replacement?.dispose()
+      await harness.close()
+    }
+  })
+
+// Value: protects=a study archive of another workspace's library that reaches a reader in a hand-over: it is never written into this library, where it would be a study without its recording and take a place, it shows no line that Retry could not answer here, and it is not dropped: the next hand-over carries it on; fails_when=the new reader queues everything it is handed, so Retry tries to write a study of another workspace into this library, or the reader forgets what is not its own; why_new=Cycle 0046 row 278 (the reader takes those whose workspace key is its library's); seam=the hand-over (releaseUnsavedStudies and the workspace harness's createReader) with the archive's workspace key changed to another project's
+test('a study archive of another workspace’s library that a disposed reader hands over is not written into this library and shows no line, and the reader hands it on again when it is replaced', async (context) => {
+  // Arrange: a stopped run whose archive could not be saved and whose server ended; the archive that waits names another workspace's library.
+  const harness = await workspaceHarness(true, true)
+  let replacement: ReturnType<typeof harness.createReader> | undefined
+  try {
+    const unsaved = await stopRunOnRefusingDisk(context, harness)
+    await harness.reader.retire(harness.service).catch(() => undefined)
+    const otherWorkspaceKey = sha256('another project')
+    const ofAnotherLibrary = harness.reader
+      .releaseUnsavedStudies()
+      .map((entry) => ({
+        ...entry,
+        archive: { ...entry.archive, workspaceKey: otherWorkspaceKey },
+      }))
+    await harness.reader.dispose()
+    // Act: a new reader is made with it, the disk is writable, and the learner presses Retry storage / refresh; then that reader is replaced in turn.
+    replacement = harness.createReader(undefined, ofAnotherLibrary)
+    const successor = { reader: replacement },
+      library = await successor.reader.learningStorage()
+    unsaved.makeDiskWritable()
+    await successor.reader.action('retry')
+    const afterRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      errors: successor.reader.inspect().view!.errors,
+    })
+    const handedOn = successor.reader.releaseUnsavedStudies()
+    // Assert
+    assert.deepEqual(afterRetry, {
+      queued: 0,
+      // Only the run's recording, which was made in this library, is listed: no archive was written.
+      listed: [[unsaved.studyId, 'archive-missing']],
+      errors: [],
+    })
+    assert.deepEqual(
+      structuredClone(
+        handedOn.map((entry) => [entry.archive.id, entry.archive.workspaceKey]),
+      ),
+      [[unsaved.studyId, otherWorkspaceKey]],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await replacement?.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=a removal by hand that took the archive of a study of this window's own stopped run: Retry storage / refresh does not write the archive again, so the learner can remove what is left; fails_when=the reader still takes the run's study for listed, and the forced checkpoint of Retry captures the run again and writes a new archive beside the rest; why_new=Cycle 0046 row 181 (read from the code by the library's fixer, not measured there); seam=the file system, on which the test removes the archive
 test('after the archive of the study of this window’s own stopped run was removed by hand, Retry storage / refresh does not write that archive again and lists what is left', async () => {
   // Arrange: a recorded run of this window that was stopped and saved.

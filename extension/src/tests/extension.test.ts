@@ -2570,6 +2570,9 @@ test('a workspace folder change whose cleanup error quotes a command link shows 
       },
       './studyWorkspace': {
         StudyWorkspace: class {
+          releaseUnsavedStudies(): never[] {
+            return []
+          }
           async dispose(): Promise<void> {}
         },
       },
@@ -2605,13 +2608,17 @@ interface RecordedStudyReader {
   attachedServices: StudyService[]
   /** The services the extension retired on this reader. */
   retiredServices: StudyService[]
+  /** The study archives the extension gave this reader when it made it. */
+  handedOver: unknown[]
+  /** The study archives this reader could not save: a test puts them here, and the reader hands them on when the extension asks. */
+  unsaved: unknown[]
   isDisposed: boolean
 }
 
 /**
  * Activates the extension over fake readers that record what the extension does with them, with the listener of changed workspace folders and the commands reachable, and with the real agent server over a temporary project.
  * No other test of this file reaches the extension's handling of a changed workspace folder with a server: the fakes here are what that needs.
- * @param behavior - `disposeStudyReader` runs inside every dispose of a Study reader, before the reader counts as disposed: a test holds it open, as while the reader's panes close, or throws from it.
+ * @param behavior - `disposeStudyReader` runs inside every dispose of a Study reader, before the reader counts as disposed: a test holds it open, as while the reader's panes close, or throws from it. `beforeStudyReaderIsMade` runs first in every construction of a Study reader, with the number that reader would get: a test throws from it.
  * @returns The commands by name, `changeWorkspaceFolders` (the editor's event), every Study reader the extension made, what happened in order (`events`), how many environments a server start has built, the error notices, and `close`, which deactivates the extension and removes the temporary project.
  * @example
  * const editor = await activateOverRecordedReaders()
@@ -2621,6 +2628,7 @@ interface RecordedStudyReader {
 async function activateOverRecordedReaders(
   behavior: {
     disposeStudyReader?: (reader: RecordedStudyReader) => Promise<void>
+    beforeStudyReaderIsMade?: (number: number) => void
   } = {},
 ) {
   const harness = await createHarness(),
@@ -2673,11 +2681,26 @@ async function activateOverRecordedReaders(
           readonly number = readers.length + 1
           readonly attachedServices: StudyService[] = []
           readonly retiredServices: StudyService[] = []
+          readonly handedOver: unknown[]
+          unsaved: unknown[] = []
           isDisposed = false
           presentation = undefined
-          constructor() {
+          constructor(
+            _context: unknown,
+            _controls: unknown,
+            handedOver: unknown[] = [],
+          ) {
+            behavior.beforeStudyReaderIsMade?.(this.number)
+            this.handedOver = handedOver
             readers.push(this)
             events.push(`Study reader ${this.number} made`)
+          }
+          async action(): Promise<void> {}
+          releaseUnsavedStudies(): unknown[] {
+            events.push(
+              `Study reader ${this.number} handed its unsaved studies on`,
+            )
+            return this.unsaved.splice(0)
           }
           async attach(service: StudyService): Promise<void> {
             this.attachedServices.push(service)
@@ -2818,15 +2841,138 @@ test('a second change of the workspace’s folders that arrives while the first 
       'Study reader 1 made',
       'Repository reader 1 made',
       'Repository reader 1 disposed',
+      'Study reader 1 handed its unsaved studies on',
       'Study reader 1: dispose started',
       'Study reader 1 disposed',
+      'Study reader 2 made',
       'Repository reader 2 made',
       'Repository reader 2 disposed',
+      'Study reader 2 handed its unsaved studies on',
+      'Study reader 2: dispose started',
+      'Study reader 2 disposed',
+      'Study reader 3 made',
       'Repository reader 3 made',
     ])
     assert.deepEqual(editor.errors, [])
   } finally {
     finishDispose()
+    await editor.close()
+  }
+})
+
+// Value: protects=the study archives a Study reader could not save when the workspace's folders change: the extension takes them from the reader before it disposes it and makes the next Study reader with them at once, so the learner reads "History not saved: …" again without running a command, and the Study views have their provider again; fails_when=the handling disposes the reader with its archives, or makes no Study reader until a later command; why_new=Cycle 0046 row 278 (the reader that is disposed hands its pending archives on); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), with a marker in place of an archive
+test('after a change of the workspace’s folders the Study reader is made again at once and is given the study archives the disposed reader could not save', async () => {
+  // Arrange: the Study reader holds one archive it could not save.
+  const editor = await activateOverRecordedReaders()
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change; no command is run.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Repository reader 2 made'),
+      'the readers made again',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.deepEqual(editor.events, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1 handed its unsaved studies on',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+      'Study reader 2 made',
+      'Repository reader 2 made',
+    ])
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(editor.readers.map((reader) => reader.handedOver)),
+      [[], [unsavedStudy]],
+    )
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the study archives a Study reader could not save on the way through a change of the workspace's folders on which the reader's dispose fails: they are not lost with the reader, the Study reader made after the next change has them; fails_when=the archives are dropped when the handling fails, or stay with a reader that is never asked for them again; why_new=Cycle 0046 row 278 (no way through the handling may lose an archive); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), whose first dispose of the first Study reader throws
+test('when the dispose of the Study reader fails during a change of the workspace’s folders, the archives it could not save are not lost: the Study reader made after the next change is given them', async () => {
+  // Arrange: the Study reader holds one archive it could not save, and its panes cannot be closed once.
+  let disposals = 0
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: async (): Promise<void> => {
+      disposals += 1
+      if (disposals === 1) throw new Error('The panes could not be closed.')
+    },
+  })
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change, the dispose fails and the learner is told; the folders change again.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the failed dispose',
+      1_000,
+    )
+    const readersAfterFailedDispose = editor.readers.length
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Repository reader 2 made'),
+      'the readers made again',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.deepEqual(editor.errors, [
+      'Codebook cleanup incomplete: Error: The panes could not be closed.',
+    ])
+    assert.equal(readersAfterFailedDispose, 1)
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(editor.readers.map((reader) => reader.handedOver)),
+      [[], [unsavedStudy]],
+    )
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the study archives a disposed Study reader could not save when the reader after it cannot be made at once: they stay with the extension, and the Study reader that the learner's next command makes is given them; fails_when=the archives are taken out of the extension's keeping before the new reader exists, so a constructor that throws loses them; why_new=Cycle 0046 row 278 (no way through the handling may lose an archive); seam=the listener of changed workspace folders and a Study command over fake readers (activateOverRecordedReaders), whose second Study reader cannot be made once
+test('when the Study reader cannot be made after a change of the workspace’s folders, the archives the disposed reader could not save are kept and given to the Study reader the next command makes', async () => {
+  // Arrange: the Study reader holds one archive it could not save, and the reader after it cannot be made at the first attempt.
+  let attempts = 0
+  const editor = await activateOverRecordedReaders({
+    beforeStudyReaderIsMade: (number): void => {
+      if (number !== 2) return
+      attempts += 1
+      if (attempts === 1)
+        throw new Error('The Learning summary could not be registered.')
+    },
+  })
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change and the learner is told that the cleanup is incomplete; then the learner presses Retry storage / refresh.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the reader that could not be made',
+      1_000,
+    )
+    const readersAfterFailedChange = editor.readers.length
+    await editor.commands.get('codebook.study.retry')!()
+    // Assert
+    assert.deepEqual(editor.errors, [
+      'Codebook cleanup incomplete: Error: The Learning summary could not be registered.',
+    ])
+    assert.equal(readersAfterFailedChange, 1)
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(editor.readers.map((reader) => reader.handedOver)),
+      [[], [unsavedStudy]],
+    )
+  } finally {
     await editor.close()
   }
 })

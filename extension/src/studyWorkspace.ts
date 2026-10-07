@@ -62,6 +62,7 @@ import {
   SUMMARY_PLACEMENT_OFFER,
   UNMAXIMIZE_FOCUS_SETTLE_MS,
   UNRETRYABLE_READER_ERROR_KINDS,
+  UNSAVED_STUDY_HANDED_OVER_REASON,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
 import { StudyError } from './errors'
@@ -424,6 +425,18 @@ interface KeyboardPauseOfRecord {
  */
 const keyboardNoticesTold = new Set<'close' | 'pause'>()
 
+/**
+ * A study archive a Study reader captured and could not save, with the run it was captured from and the checkpoint it answers.
+ * A reader keeps these until Retry storage / refresh writes them; a reader that is disposed hands them on ({@link StudyWorkspace.releaseUnsavedStudies}) to the reader made after it, which takes them at its construction.
+ */
+export interface UnsavedStudyArchive {
+  archive: RetainedStudy
+  service: StudyService
+  record: StudyRecord
+  signature: string
+  checkpointRevision: number
+}
+
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
@@ -500,16 +513,9 @@ export class StudyWorkspace {
     { signature: string; status: 'saved' | 'failed' }
   >()
   private readonly historyReads = new Map<string, number>()
-  private readonly pendingArchives = new Map<
-    string,
-    {
-      archive: RetainedStudy
-      service: StudyService
-      record: StudyRecord
-      signature: string
-      checkpointRevision: number
-    }
-  >()
+  private readonly pendingArchives = new Map<string, UnsavedStudyArchive>()
+  /** The archives a disposed reader of this window could not save, as the constructor took them, until {@link initialize} knows this reader's library ({@link queueHandedOverArchives}). What is left afterwards belongs to another workspace's library: it is never written here and is handed on again by {@link releaseUnsavedStudies}. */
+  private handedOverArchives: UnsavedStudyArchive[]
   private readonly archiveWrites = new Map<string, Promise<void>>()
   /** The learner's last removal of a saved study, from its confirmation dialog to its outcome; while it is `moving`, its study is neither written nor opened. */
   private studyRemoval?: StudyRemovalView
@@ -749,7 +755,10 @@ export class StudyWorkspace {
       /** Tells whether the Wiki reader of this host owns its Repository Wiki panel; a Wiki tab seen while it does not is an earlier host's. */
       repositoryWikiOpen?(): boolean
     },
+    /** The archives the reader this one replaces could not save ({@link releaseUnsavedStudies}); this reader shows "History not saved: …" for those of its library and writes them at Retry storage / refresh. */
+    handedOverArchives: readonly UnsavedStudyArchive[] = [],
   ) {
+    this.handedOverArchives = [...handedOverArchives]
     this.readPresentationPreference()
     this.installReaders()
     // Activation constructs the reader before this host creates any pane, so every Codebook pane in the window now is an earlier host's.
@@ -6680,6 +6689,50 @@ export class StudyWorkspace {
     return Boolean(this.app?.active || this.contextPanel?.active)
   }
 
+  /**
+   * Takes out every study archive this reader could not save, for the reader that replaces it; called by the extension's handling of a changed workspace folder right before it disposes this reader, so that a dispose that fails loses none.
+   * Without it the archive of a run whose service has ended is lost with the reader: no later reader can capture that run again.
+   * @returns The archives that wait for Retry storage / refresh here and those handed over to this reader that are not of its library; this reader holds none afterwards.
+   * @example
+   * const unsaved = reader.releaseUnsavedStudies()
+   * await reader.dispose()
+   * const next = new StudyWorkspace(context, controls, unsaved) // shows "History not saved: …" and writes them at Retry
+   */
+  releaseUnsavedStudies(): UnsavedStudyArchive[] {
+    const unsaved = [
+      ...this.pendingArchives.values(),
+      ...this.handedOverArchives,
+    ]
+    this.pendingArchives.clear()
+    this.handedOverArchives = []
+    return unsaved
+  }
+
+  /**
+   * Queues the archives a disposed reader handed over that belong to this reader's library and says so in the archive line, which offers Retry storage / refresh; called by {@link initialize} once the library is known.
+   * An archive of another workspace's library stays in {@link handedOverArchives}: written here it would be a study without its recording, which lies in that other library, and would take a place of this one. It is handed on with the next {@link releaseUnsavedStudies}.
+   * @example this.queueHandedOverArchives() // => the line "History not saved: Error: disk is read-only" for a handed-over archive
+   */
+  private queueHandedOverArchives(): void {
+    const workspaceKey = this.library!.workspaceKey
+    const ofThisLibrary = this.handedOverArchives.filter(
+      (unsaved) => unsaved.archive.workspaceKey === workspaceKey,
+    )
+    this.handedOverArchives = this.handedOverArchives.filter(
+      (unsaved) => unsaved.archive.workspaceKey !== workspaceKey,
+    )
+    for (const unsaved of ofThisLibrary) {
+      this.pendingArchives.set(unsaved.archive.id, unsaved)
+      // The run's own receipt keeps why the save failed; an archive released while its write was still running has none.
+      this.report(
+        'archive',
+        new Error(
+          `History not saved: ${unsaved.record.historyReceipt?.reason ?? UNSAVED_STUDY_HANDED_OVER_REASON}`,
+        ),
+      )
+    }
+  }
+
   /** Releases observers after extension shutdown has retired its service; read-only harnesses inspect state via {@link inspect}. @example await workspace.dispose() */
   async dispose(): Promise<void> {
     this.disposed = true
@@ -6757,6 +6810,8 @@ export class StudyWorkspace {
         // The saved studies as the library's own admission counts them: what is left of a study without its archive is listed and takes no place.
         () => this.library!.savedStudyCount(),
       )
+      // What the reader before this one could not save waits for Retry storage / refresh here.
+      this.queueHandedOverArchives()
       // An unreadable Node history store stays visible without blocking browser studies, progress or playback.
       this.nodeHistoryCatalog = await this.nodeHistoryStore
         .list()
