@@ -1347,8 +1347,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param session - The stop's selected session.
    * @param moved - The failure of the read, which carries the refused place.
    * @param pausedAt - The generated place of the paused top frame, when the receipt is read at the stop's pause.
-   * @returns The receipt read again ({@link registeredStop}), once the debugger's own break locations accepted the place and the owned breakpoint took it again ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}).
-   * @throws The registration failure ({@link registrationFailure}) when the break locations refuse the place too, or the module is not announced within the bound ({@link moduleAnnouncedForJudgement}) and the map's rule stands.
+   * @returns The receipt read again ({@link registeredStop}), once the debugger's own break locations accepted the place and the owned breakpoint took it again ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), or once later news moved the breakpoint away from that place while this judgement waited ({@link isStillRefusedAt}).
+   * @throws The registration failure ({@link registrationFailure}) when the breakpoint still stands at the refused place and the break locations refuse it too, or the module is not announced within the bound ({@link moduleAnnouncedForJudgement}) and the map's rule stands.
    * @example
    * ```ts
    * return this.registeredAfterRefusedNews(stop, session, error) // { status: 'bound', movedTo: { line: 32, column: 11 }, ... }
@@ -1362,12 +1362,38 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): ReturnType<ConfiguredBrowserRun['registeredStop']> {
     // The adapter can report the breakpoint verified before the run's own channel announced the module, and the break locations cannot be asked without it.
     await this.moduleAnnouncedForJudgement(stop, moved.place.line)
+    // The wait lasts up to the capture bound, and later news may have moved the breakpoint meanwhile: the receipt is read for the place it has now, and nothing is judged or refused for a place it left.
+    if (!this.isStillRefusedAt(stop, session, moved.place))
+      return this.registeredStop(stop, pausedAt)
     // The news named a place the map alone refused; the debugger's break locations may accept it, and then the breakpoint stands there (it may already, when {@link retakeNewsByBreakLocations} judged that news first), so the receipt is read once more.
     if (await this.acceptsByBreakLocations(stop, moved.place, pausedAt)) {
       stop.breakpoint!.retakeRefusedPlace(session)
       return this.registeredStop(stop, pausedAt)
     }
+    // The debugger's answer took time too: the refusal stands only for the place the breakpoint still has.
+    if (!this.isStillRefusedAt(stop, session, moved.place))
+      return this.registeredStop(stop, pausedAt)
     throw this.registrationFailure(stop, moved)
+  }
+
+  /**
+   * Tells {@link registeredAfterRefusedNews} after each of its waits whether a stop's owned breakpoint still stands at the refused place that judgement began with; the adapter's later news can put the breakpoint at an accepted place, or at another refused one, while the run waits for the module or for the debugger's break locations.
+   * @param stop - The declared server stop whose receipt is being read.
+   * @param session - The stop's selected session.
+   * @param place - The refused place the read of the receipt failed for.
+   * @returns `true` while the breakpoint's refused place is that line and column; `false` once it stands at an accepted place (no refused place is left) or was refused at another place.
+   * @example
+   * ```ts
+   * this.isStillRefusedAt(stop, session, { line: 4, column: 3 }) // false after news verified the breakpoint at 1:1, which the stop's rule accepts
+   * ```
+   */
+  private isStillRefusedAt(
+    stop: PreparedStop,
+    session: vscode.DebugSession,
+    place: { line: number; column: number },
+  ): boolean {
+    const refusedNow = stop.breakpoint!.refusedPlace(session)
+    return refusedNow?.line === place.line && refusedNow.column === place.column
   }
 
   /**

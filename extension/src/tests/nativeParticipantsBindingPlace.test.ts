@@ -953,6 +953,34 @@ test('a server stop whose reported place the map refuses and whose module is not
   )
 })
 
+// Cycle 0046 (row 270): red while the place judged after the wait for the module was the one read before it: news that put the breakpoint back at an accepted place during that wait was ignored, and the run ended before the input with "Declared stop src/mode.ts:1 bound at 4:3, refused: line 2 between the declared line 1 and line 4 has a mapped position", a place the breakpoint no longer had.
+test('a server stop whose breakpoint the adapter first reports at a place the map refuses and then, while the run waits for the module, at an accepted place is taken as registered there, and the run goes on to its stop', async (context) => {
+  // Arrange: the function head over lines 1 to 3 is mapped. The adapter's news names 4:3, which the map refuses, before the module is announced; the module is never announced, and the bound of the wait for it is 200 ms.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+    runtimeConstants: { CAPTURE_TIMEOUT_MS: 200 },
+  })
+  await harness.run.prepare()
+  harness.announceBreakpointVerified('server', 4, 3)
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return harness.waitInProgress(
+      'the announcement of the module of declared stop src/mode.ts:1',
+    )
+  }, 'the run waits for the module before the input')
+  // Act: during that wait the adapter reports the breakpoint verified on its declared line, 1:1; the wait then ends without the module.
+  harness.announceBreakpointVerified('server', 1, 1)
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.equal(harness.run.view().failures.join('; '), '')
+})
+
 // Cycle 0046 (row 209): red while every page pause of a run without browser stops had 250 ms until someone resumed it: the pause in the stub of a declared server stop's module, whose `stopped` the adapter sent later than that, ended the run with "Unowned browser stop remained paused" before the run could know whose pause it was.
 test('a page pause in the stub of a declared server stop’s module whose stopped event is read 300 ms later is resumed by the run, and the server stop is captured', async (context) => {
   // Arrange: the action is accepted and the server stop has not paused yet. The run's clock moves only when the test advances it.
