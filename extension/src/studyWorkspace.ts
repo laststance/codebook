@@ -135,6 +135,7 @@ import { isDebugStopsInvalidation } from './runtimeSupport/utils/isDebugStopsInv
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
 import type {
@@ -192,6 +193,7 @@ import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
+import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
@@ -579,6 +581,8 @@ export class StudyWorkspace {
   private summaryDocumentActive = false
   // What the Learning summary's document last reported about the keyboard focus; the editor gives a webview view no focus state to read.
   private summaryHeldFocus = false
+  /** Whether the Study pane's own document last reported that it has the keyboard (`pane-focus`, sent at its window's focus and blur events and once at load); `false` until a report, after a blur, and for a newly bound pane. {@link focusPaneForGridCommand} reads it to leave a pane alone that has the keyboard already. */
+  private studyPaneReportsKeyboard = false
   // The wait for a hidden summary's report that it lost the focus; see {@link releaseHiddenSummaryFocus}.
   private summaryFocusRelease?: ReturnType<typeof setTimeout>
   // Set while Show Variables runs its commands: Run and Debug takes the focus on purpose then, also where its view hides the summary.
@@ -4468,7 +4472,14 @@ export class StudyWorkspace {
     )
   }
 
-  /** Requires both document and native owned-tab focus for the final reading restoration. @example await this.focusPresentationPanel(panel, signal) */
+  /**
+   * Gives one of the reader's panes the keyboard and waits until both the editor and the pane's own document confirm it; called for the final reading restoration of a presentation change ({@link capturePresentationFocus}), for the presentation action `focus` ({@link focusCurrentPresentation}), and by {@link focusPaneForGridCommand} for a pane that is not the editor's active one.
+   * @param panel - The Application pane or the Study pane.
+   * @param signal - Ends the handshake with its reason.
+   * @returns Once the pane's document reported the focus and the editor names the pane's tab as the active one.
+   * @throws When the learner chose another pane or tab meanwhile, the window lost the focus, the pane was closed or replaced, and, with the sentence of {@link paneFocusFailure}, when the pane did not confirm the keyboard within {@link PRESENTATION_READY_TIMEOUT_MS}.
+   * @example await this.focusPresentationPanel(panel, signal)
+   */
   private async focusPresentationPanel(
     panel: vscode.WebviewPanel,
     signal?: AbortSignal,
@@ -4545,10 +4556,94 @@ export class StudyWorkspace {
           // Original focus is admissible only before acquisition; later departure permanently ends this handoff.
           assertOwnedFocus()
         },
+      }).catch((error: unknown) => {
+        throw this.paneFocusFailure(error, panel)
       })
     } finally {
       for (const subscription of focusChanges) subscription.dispose()
     }
+  }
+
+  /**
+   * Words the end of a pane's focus handshake for the learner or agent who reads it; called by {@link focusPresentationPanel} with whatever {@link focusWebview} rejected with.
+   * A wait of the handshake that ran out names an internal step ("owned presentation inner focus", "current presentation focus document"), and the caller's line or reason would show that text. It is replaced by {@link paneKeyboardTimeoutMessage}, which says which pane did not confirm the keyboard, for how long Codebook waited and what to do. Every other failure of the handshake is a sentence already (the window lost the focus, the learner chose another pane, the pane was closed) and is passed on as it is.
+   * @param error - What the handshake rejected with.
+   * @param panel - The pane that was asked.
+   * @returns An error with the sentence for a {@link WaitTimeoutError}; the given error otherwise.
+   * @example throw this.paneFocusFailure(error, panel) // => Error: Codebook asked the Explanation pane to take the keyboard, and the pane did not confirm it within 5 seconds. …
+   */
+  private paneFocusFailure(
+    error: unknown,
+    panel: vscode.WebviewPanel,
+  ): unknown {
+    if (!(error instanceof WaitTimeoutError)) return error
+    return new Error(
+      paneKeyboardTimeoutMessage(
+        panel === this.app ? 'Application' : 'Explanation',
+        PRESENTATION_READY_TIMEOUT_MS,
+      ),
+    )
+  }
+
+  /**
+   * Gives one of the reader's panes the editor's focus before a command that acts on the active editor group; called by the action Arrange Study Workspace and by {@link enlargePresentationPanel}.
+   * Those commands need the pane to be the editor's active one, not a report of the pane's own document, so for a pane the editor already names as active no report is waited for. Revealing such a pane once more makes the editor focus the frame around the pane's document, which can take the keyboard from that document without any focus event: {@link focusPresentationPanel} then waited its whole bound for a report that could not come, and the command did not run (2 of 8 Arranges after a Read of the explanation ended that way after five seconds; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). A pane whose document says that it has the keyboard is therefore left as it is; an active pane that does not say so (the keyboard is in a view, the terminal or a side bar, or the pane's page reports nothing) is revealed with the focus, and the command goes on at once. Any other pane gets the full handshake, whose reveal brings the focus event the report answers.
+   * @param panel - The pane the command acts on, one of the reader's two.
+   * @returns At once for the editor's active pane; otherwise once {@link focusPresentationPanel} confirmed the focus.
+   * @throws What {@link focusPresentationPanel} throws for a pane that is not the active one.
+   * @example await this.focusPaneForGridCommand(this.contextPanel)
+   */
+  private async focusPaneForGridCommand(
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
+    if (!this.isEditorsActivePane(panel)) {
+      await this.focusPresentationPanel(panel)
+      return
+    }
+    // The keyboard may be outside the editor area while the pane is the active editor: the pane takes it, and nothing waits for its document.
+    if (!this.reportsKeyboard(panel)) panel.reveal(undefined, false)
+  }
+
+  /**
+   * Says whether a pane's own document last reported that it has the keyboard; asked by {@link focusPaneForGridCommand} for the editor's active pane.
+   * @param panel - The Application pane or the Study pane.
+   * @returns What the Study pane last reported ({@link studyPaneReportsKeyboard}); `false` for the Application pane, whose page sends no such report.
+   * @example this.reportsKeyboard(this.contextPanel) // => true after the learner clicked into the Study pane
+   */
+  private reportsKeyboard(panel: vscode.WebviewPanel): boolean {
+    return panel === this.contextPanel && this.studyPaneReportsKeyboard
+  }
+
+  /**
+   * Says whether the editor names one of the reader's panes as its active editor; asked by {@link focusPaneForGridCommand}.
+   * @param panel - The Application pane or the Study pane.
+   * @returns `true` when the pane reports itself active and its tab is the one the active tab group shows in the pane's column; `false` otherwise, also while another editor part or a text editor is the active one.
+   * @example this.isEditorsActivePane(this.contextPanel) // => true during a Read of the explanation
+   */
+  private isEditorsActivePane(panel: vscode.WebviewPanel): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup
+    return (
+      panel.active &&
+      group.viewColumn === panel.viewColumn &&
+      this.isCodebookPaneInput(
+        group.activeTab?.input,
+        this.paneViewTypeOf(panel),
+      )
+    )
+  }
+
+  /**
+   * Names the view type of one of the reader's two panes; asked by {@link isEditorsActivePane} to find the pane's tab.
+   * @param panel - The Application pane or the Study pane.
+   * @returns `'codebook.scopedBrowser'` for the Application pane, `'codebook.studyContext'` for the Study pane.
+   * @example this.paneViewTypeOf(this.app) // => 'codebook.scopedBrowser'
+   */
+  private paneViewTypeOf(
+    panel: vscode.WebviewPanel,
+  ): 'codebook.scopedBrowser' | 'codebook.studyContext' {
+    return panel === this.app
+      ? 'codebook.scopedBrowser'
+      : 'codebook.studyContext'
   }
 
   /** Opens a closed reader for a focused Read command, then makes its owned pane readable without changing the selected item or run. @example await this.readStudyPane('source') */
@@ -4858,7 +4953,7 @@ export class StudyWorkspace {
       ? receipt?.signature
       : previous?.expandedSignature
     // Native focus must belong to the requested pane before Expand or Maximize changes the editor grid.
-    await this.focusPresentationPanel(panel)
+    await this.focusPaneForGridCommand(panel)
     const before = receipt
       ? await this.readPassivePresentationLayout()
       : undefined
@@ -6774,7 +6869,7 @@ export class StudyWorkspace {
       try {
         // A Study click can precede Cursor's native focus notification after unmaximizing Application.
         if (this.contextPanel)
-          await this.focusPresentationPanel(this.contextPanel)
+          await this.focusPaneForGridCommand(this.contextPanel)
         const state = this.presentationState()
         await this.changePresentation({
           presentationId: state.presentationId,
@@ -6784,10 +6879,13 @@ export class StudyWorkspace {
         })
       } catch (error) {
         if (this.closing || this.disposed) throw error
+        // The line begins with one error name, which the report adds: the cause's own is taken off.
         this.report(
           'layout',
           new Error(
-            error instanceof StudyError ? error.causeDetail : String(error),
+            withoutErrorName(
+              error instanceof StudyError ? error.causeDetail : String(error),
+            ),
           ),
         )
       }
@@ -10392,6 +10490,7 @@ export class StudyWorkspace {
   /** Binds a fresh explanation document for cold entry or handoff without accepting retired controls or receipts. @example this.bindContextPanel(replacement) */
   private bindContextPanel(panel: vscode.WebviewPanel): void {
     this.contextPanel = panel
+    this.studyPaneReportsKeyboard = false
     this.lastPublished = undefined
     this.lastRendered = undefined
     panel.onDidDispose(() => {
@@ -13081,6 +13180,9 @@ export class StudyWorkspace {
     if (message.type === 'pane-focus') {
       if (owner !== undefined && owner === this.summaryView)
         this.summaryHeldFocus = message.focused
+      // The Study pane's report is kept for an Arrange or an Enlarge, which leave a pane alone that has the keyboard.
+      if (owner !== undefined && owner === this.contextPanel)
+        this.studyPaneReportsKeyboard = message.focused
       return
     }
     await this.initialize()

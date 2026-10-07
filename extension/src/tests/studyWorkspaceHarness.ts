@@ -699,6 +699,8 @@ export async function workspaceHarness(
   let nextPanelCreated:
     { kind: string; run(value: ReturnType<typeof panel>): void } | undefined
   let failedPanelKind: string | undefined
+  /** Whether a reveal with the focus takes the keyboard from the document of a pane that already has it; see `dropInnerFocusAtRevealOfFocusedPane`. */
+  let dropsInnerFocusAtRevealOfFocusedPane = false
   let suppressNativeInnerFocus = false,
     innerFocusedPanel: string | undefined
   let nextPanelActivity:
@@ -1597,7 +1599,13 @@ export async function workspaceHarness(
             keyboardOnBody = false
             keyboardInView = false
             retainDelayedTextFocus(kind)
-            if (!suppressNativeInnerFocus && !value.blockInnerFocus)
+            // A pane whose document has the focus already loses it to the frame around it, and nothing gives it back.
+            if (
+              dropsInnerFocusAtRevealOfFocusedPane &&
+              innerFocusedPanel === kind
+            )
+              innerFocusedPanel = undefined
+            else if (!suppressNativeInnerFocus && !value.blockInnerFocus)
               innerFocusedPanel = kind
             if (separateEditorPart) separateEditorPart.focused = false
             // Refocusing an already kept Application can echo after the following Context acknowledgement.
@@ -3382,6 +3390,15 @@ export async function workspaceHarness(
     suppressNativeInnerFocus(): void {
       suppressNativeInnerFocus = true
       innerFocusedPanel = undefined
+    },
+    /**
+     * Makes the fake editor take the keyboard from a pane's own document when that pane is revealed with the focus while its document already has it, and send no focus report afterwards; the editor goes on naming the pane as its active one. Both editors answer such a reveal by focusing the webview's outer frame (`this.element.contentWindow?.focus()` in the workbench), and that frame's page gives its inner document the focus back only when its own active element is not that document's frame (`if (document.activeElement === activeFrame) return` in the webview's `index.html`). Read in the bundles, not seen in a running editor: there 2 of 8 Arranges of a pane that had the keyboard got no focus report (Cycle 0046 row 338).
+     * @example
+     * await harness.reader.action('read-context')
+     * harness.dropInnerFocusAtRevealOfFocusedPane()
+     */
+    dropInnerFocusAtRevealOfFocusedPane(): void {
+      dropsInnerFocusAtRevealOfFocusedPane = true
     },
     /** Separates native tab focus from its panel notification for presentation ownership tests. @example const held = harness.holdPanelActivity('codebook.scopedBrowser'); await held.started; held.release(); */
     holdPanelActivity(kind: string) {

@@ -728,7 +728,7 @@ test('a missing explicit replay-focus receipt rejects once without retrying focu
       {
         code: 'PRESENTATION_UNAVAILABLE',
         causeDetail:
-          'Error: Timed out waiting for owned presentation inner focus',
+          'Error: Codebook asked the Application pane to take the keyboard, and the pane did not confirm it within 5 seconds. The action was stopped there and nothing else was changed. Click into the Application pane and repeat the action.',
       },
     )
     // Assert: failed focus cannot change layout, select another mode or rewrite learner evidence.
@@ -2405,7 +2405,7 @@ test('mode selection rejects missing inner focus instead of treating native tab 
       {
         code: 'PRESENTATION_UNAVAILABLE',
         causeDetail:
-          'Error: Timed out waiting for owned presentation inner focus',
+          'Error: Codebook asked the Explanation pane to take the keyboard, and the pane did not confirm it within 5 seconds. The action was stopped there and nothing else was changed. Click into the Explanation pane and repeat the action.',
       },
     )
     // Assert: native selection alone cannot certify document focus or commit a preference.
