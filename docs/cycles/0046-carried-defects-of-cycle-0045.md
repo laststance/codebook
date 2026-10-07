@@ -438,7 +438,9 @@ That tree is verified at `c721b28` and pushed: the build passes, the full suite 
 
 **Rows 288 to 290 merged (`9c1eba4`).** The run knows the debugger's own pause at a module's first position by four things that the two native journals and the bundled debugger's source agree on (the first position of its script, exactly one hit breakpoint, an id of the observed form with the base name of a declared stop's file, and a script address that contains that name) and gives it the debugger's 3 s; an id of another form keeps 250 ms (row 288). A pause in a stop's stub that is read within 3 s after the debugger answered the run's resume is taken as the answered one (289). Found by it and now row 295: in a run with a browser stop too, such a pause of the debugger still counts as a competing resume after one second in one phase.
 
-247 of 295 rows are closed. Open: 33 rows that owe a native check, 7 whose fix is on a branch that is not merged, and 8 that their packages work on or that were just added.
+**Row 295 merged (`706116a`), with a list of every time bound the configured run puts on a page pause or a resume**: fourteen bounds, from the 250 ms of a page pause nobody owns to the deadlines of the run, each with the kind of pause it is for and what ends the run. The list was asked for so that the set could be seen as a whole after rows 157, 209, 268, 282, 288, 289 and 295 had each moved one bound, and it showed two pairs that still disagree for one kind of pause: rows 296 (a pause in a server stop's stub has 3 s as a timed pause and 1 s as a held one) and 297 (the debugger's own pause in the browser stop's own module is taken for a stop that paused before its turn after 1 s).
+
+248 of 297 rows are closed. Open: 33 rows that owe a native check, 8 whose fix is on a branch that is not merged, and 8 that their packages work on or that were just added.
 
 ## Result and decision
 
