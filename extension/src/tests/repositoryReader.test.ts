@@ -22,6 +22,8 @@ async function readerHarness(context: TestContext) {
   await source.track('src/order.ts', 'export const total = 48;\n')
   const library = new LearningLibrary(join(root, '.learning'), sha256(root))
   const disposable = () => ({ dispose(): void {} })
+  /** How many Repository Wiki views are registered with the fake editor: one a reader, until that reader's dispose releases it. */
+  let wikiViewsRegistered = 0
   class EventEmitter {
     event = () => disposable()
     fire(): void {}
@@ -208,7 +210,14 @@ async function readerHarness(context: TestContext) {
           },
         },
         window: {
-          registerTreeDataProvider: disposable,
+          registerTreeDataProvider: () => {
+            wikiViewsRegistered += 1
+            return {
+              dispose(): void {
+                wikiViewsRegistered -= 1
+              },
+            }
+          },
           get activeTextEditor() {
             return activeEditor
           },
@@ -459,6 +468,7 @@ async function readerHarness(context: TestContext) {
     textDocuments,
     Uri,
     createReader,
+    wikiViewsRegistered: (): number => wikiViewsRegistered,
     panelColumns,
     reveals,
     receive: (message: unknown): void => receive(message),
@@ -1644,4 +1654,24 @@ test('evidence navigation persists exact return context and rejects changed chec
     /missing or changed/,
   )
   assert.equal(harness.linked.length, 1)
+})
+
+// Value: protects=the editor after a Repository Wiki reader's dispose failed: the reader's Repository Wiki view and listeners are released all the same, so the reader the extension makes in its place does not share them with a disposed one; fails_when=the dispose stops at the failure and leaves what the reader registered with the editor in place; why_new=Cycle 0046 row 312 (the Repository Wiki reader's dispose, read beside row 298's change of the Study reader's); seam=the reader harness's count of registered Repository Wiki views, and the reader's close replaced by one that fails
+test('a Repository Wiki reader whose dispose fails while it closes its pane releases what it registered with the editor all the same, and tells the failure', async (context) => {
+  // Arrange: a second reader beside the harness's own, whose pane cannot be closed.
+  const harness = await readerHarness(context),
+    replaced = harness.createReader()
+  const viewsBefore = harness.wikiViewsRegistered()
+  replaced.close = (): void => {
+    throw new Error('The Repository Wiki pane could not be closed.')
+  }
+  // Act: the workspace folders change, and the extension disposes the reader.
+  const disposal = await replaced.dispose().then(
+    () => 'disposed',
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.equal(viewsBefore, 2)
+  assert.equal(disposal, 'Error: The Repository Wiki pane could not be closed.')
+  assert.equal(harness.wikiViewsRegistered(), 1)
 })
