@@ -419,6 +419,20 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
   assert.deepEqual(delivered, [true])
 })
 
+// Value: protects=a learner reading when Codebook stops waiting for a chat whose watch it had stopped; fails_when=the README still says only that Codebook waits until the named time, although the chat's own publish ends that wait and the next update then starts without a refusal; why_new=Cycle 0046 row 335; seam=none
+test('the packaged README says that the wait for a chat whose watch stopped ends when that chat publishes, so the next update starts without the sentence that names Update anyway', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until. The wait for a chat whose watch stopped ends earlier when that chat publishes: once a site was published after the watch stopped, the next update starts without this sentence (in the window that watched only when the candidate folder its watch saw is gone too).',
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true])
+})
+
 // Value: protects=a learner whose chat's Stop or input lies under the notification of the watch, and the learner of the command, who reads no confirmation; fails_when=the README quotes another title than the editor shows, no longer says that the notification can be hidden while the watch goes on and where its Cancel then is, or no longer says for the command where the request goes and where the ends of the watch are named; why_new=Cycle 0046 row 336 (the title lost the sentences of rows 216, 217 and 261, which the README must now carry for the command); seam=none
 test('the packaged README quotes the two-line title of the notification that watches a VS Code update, says that the notification can be hidden while the watch goes on, and says for the command where the request goes and where the ends of the watch are named', async () => {
   // Arrange

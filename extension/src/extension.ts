@@ -89,6 +89,7 @@ import {
   type FolderChangeCleanupStep,
 } from './utils/folderChangeCleanupNotice'
 import { formatClockTime } from './utils/formatClockTime'
+import { hasWikiPublishEndedWait } from './utils/hasWikiPublishEndedWait'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import {
   isAcknowledgedWikiLeftover,
@@ -251,6 +252,8 @@ export function activate(
     /** Leaves the marker as the reservation of a watch that was stopped while its chat may still work, for other windows to read. */
     reserveMarker: (watchEndedAtMs: number) => Promise<void>
     startedAtMs: number
+    /** Folder names of the candidates the run's looks saw that were written since its start; a stopped VS Code watch keeps them for the next start, which tells the chat's own publish by them ({@link hasWikiPublishEndedWait}). */
+    seenCandidateNames: Set<string>
     /** The bound the run announces on the page and in its request, and the one it is stopped at. */
     timeoutMs: number
     /** Stops the run: the learner's Cancel and the closing window both abort it. */
@@ -943,6 +946,7 @@ export function activate(
       startedAtMs: run.startedAtMs,
       endedAtMs,
       mayAgentStillWork,
+      candidateNames: [...run.seenCandidateNames],
     }
     void context.workspaceState.update(
       WIKI_UPDATE_LAST_RUN_STATE_KEY,
@@ -964,10 +968,17 @@ export function activate(
   /** Looks at this run's candidates: notes on the run state that the agent staged one, and names the learner files it would overwrite. @example await probeWikiCandidates(run) // => ['pages/notes.html'] */
   const probeWikiCandidates = async (run: WikiRun): Promise<string[]> => {
     const candidates = await listWikiCandidates(run.outputDirectory)
+    const stagedSinceStart = candidates.filter(
+      (candidate) => candidate.writtenAtMs >= run.startedAtMs,
+    )
+    // The run remembers what it saw staged: a publish that leaves one of these beside the Wiki was not this run's chat's.
+    stagedSinceStart.forEach((candidate) =>
+      run.seenCandidateNames.add(candidate.name),
+    )
     // A look that returns after its run ended must not mark the next run.
     if (
       activeWikiRun?.controller === run.controller &&
-      candidates.some((candidate) => candidate.writtenAtMs >= run.startedAtMs)
+      stagedSinceStart.length > 0
     )
       wikiUpdateRun.markCandidateStaged()
     return detectWikiPublishConflicts(
@@ -1096,7 +1107,7 @@ export function activate(
   /**
    * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
    *
-   * The order: what makes the publisher refuse (a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusal named; and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
+   * The order: what makes the publisher refuse (a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusal named, and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
    *
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
@@ -1208,10 +1219,14 @@ export function activate(
       const nowMs = Date.now()
       // Every leftover in the way now, each with the sentence that names it; "Update anyway" is bound to all of them.
       const leftovers: Array<{ leftover: WikiLeftover; reason: string }> = []
-      // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on.
+      // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on. A site published since that watch's end ended the wait: the reservation names no candidate, so this window knows no more of that chat's publish than its time.
       if (
         otherWindow?.watchEndedAtMs !== undefined &&
-        nowMs < otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+        nowMs < otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS &&
+        !(await hasWikiPublishEndedWait(outputDirectory, {
+          watchEndedAtMs: otherWindow.watchEndedAtMs,
+          candidateNames: [],
+        }))
       )
         leftovers.push({
           leftover: {
@@ -1235,10 +1250,14 @@ export function activate(
           leftover: { kind: 'candidate', name: activeCandidate.name },
           reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
         })
-      // A watch that stopped before the chat staged anything left no candidate, yet the chat may still work.
+      // A watch that stopped before the chat staged anything left no candidate, yet the chat may still work. Its own publish since the watch's end ended the wait: the page has shown that publish, and nothing is left to wait for.
       if (
         lastRun?.mayAgentStillWork &&
-        nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+        nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS &&
+        !(await hasWikiPublishEndedWait(outputDirectory, {
+          watchEndedAtMs: lastRun.endedAtMs,
+          candidateNames: lastRun.candidateNames ?? [],
+        }))
       )
         leftovers.push({
           leftover: { kind: 'last-run', endedAtMs: lastRun.endedAtMs },
@@ -1338,6 +1357,7 @@ export function activate(
         releaseMarker: start.releaseMarker,
         reserveMarker: start.reserveMarker,
         startedAtMs: start.startedAtMs,
+        seenCandidateNames: new Set(),
         timeoutMs: isCursorHost
           ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
           : WIKI_UPDATE_WATCH_TIMEOUT_MS,

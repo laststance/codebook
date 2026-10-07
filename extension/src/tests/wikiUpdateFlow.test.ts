@@ -2800,6 +2800,195 @@ test('after a VS Code watch passed its 15 minutes, a press on Update LLM Wiki fo
   }
 })
 
+/** Makes the Wiki's manifest two minutes younger than now: a publish that came after a watch which ended a moment ago, as the chat's publish did natively two minutes after the bound. The reader takes the manifest's time for the time of the publish. */
+async function datePublishTwoMinutesLater(manifestPath: string): Promise<void> {
+  const twoMinutesLater = new Date(Date.now() + 120_000)
+  await utimes(manifestPath, twoMinutesLater, twoMinutesLater)
+}
+
+// Value: protects=a learner who updates again after the chat of a stopped watch has published (the page said "A new site was published after this run ended"): the press must start; fails_when=Codebook still counts that chat as possibly updating the Wiki until the watch bound, so the press is refused with "may still be updating this Wiki" and a step for a chat that was stopped, or a watch that was followed by no publish stops refusing, so a second agent starts beside a chat that still works; why_new=Cycle 0046 row 335 (native run in VS Code 1.140.0: watch ended 18:09, chat published 18:11:51, source changed 18:21, press at 18:23:58 refused until 18:24); seam=the watch's clock, and the manifest's time for the time of the chat's publish
+test('after a VS Code watch stopped at its 15 minutes, a press before the chat published is refused with the sentence that Codebook waits for that chat and with Update anyway; after the chat’s publish a press for a source that changed again starts the update with no refusal', async () => {
+  // Arrange: the first watch's fifteen minutes pass at once; the watch after it waits in real time, so the second run stays running.
+  let nowMs = 0
+  let hasBoundPassed = false
+  const wiki = await openWikiWindow({
+    watchClock: {
+      now: () => nowMs,
+      sleep: async (delayMs, signal) => {
+        if (hasBoundPassed) return sleepUntilAborted(delayMs, signal)
+        nowMs += delayMs
+      },
+    },
+  })
+  try {
+    await wiki.clickUpdate()
+    const atTheBound = await waitForEnd(wiki.status)
+    hasBoundPassed = true
+
+    // Act: a press while nothing was published; then the chat publishes, the source differs from the new site again (the window's freshness stays "changed"), and the learner presses once more.
+    await wiki.clickUpdate()
+    const noticesAfterTheFirstPress = [...wiki.errors]
+    const offeredAfterTheFirstPress = wiki.offeredActions.map(
+      (offered) => offered.actions,
+    )
+    const requestsAfterTheFirstPress = wiki.chatRequests.length
+    await wiki.publish('b'.repeat(64))
+    await datePublishTwoMinutesLater(wiki.manifestPath)
+    await wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests, 2)
+
+    // Assert: without a publish the refusal stays as it was, whole.
+    assert.equal(atTheBound.state, 'timed-out')
+    assert.equal(noticesAfterTheFirstPress.length, 2)
+    assert.match(
+      noticesAfterTheFirstPress[1] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. The last usable site is kept\\.$`,
+      ),
+    )
+    assert.deepEqual(offeredAfterTheFirstPress, [
+      ['Open LLM Wiki'],
+      ['Update anyway', 'Open LLM Wiki'],
+    ])
+    assert.equal(requestsAfterTheFirstPress, 1)
+    // After the chat's publish the press starts: a second request, a running update, and no further notice or offer.
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+    assert.equal(wiki.errors.length, 2)
+    assert.equal(wiki.offeredActions.length, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the chat of a stopped watch that has staged a candidate and not published it yet; fails_when=any publish after the watch's end ends the wait for that chat, also one that left the chat's candidate beside the Wiki (somebody else's publish), so a second agent starts beside it, or the window forgets which candidate its watch saw, or the chat's own publish, which moves that candidate into place, does not end the wait; why_new=Cycle 0046 row 335 (the rule the row decided for a watch that saw a candidate); seam=the watch's clock, the manifest's time, and a stage folder written by the test as the publisher's --prepare writes it
+test('a VS Code watch that saw the chat’s candidate goes on waiting for that chat after a publish that left the candidate beside the Wiki, and stops waiting once the candidate is gone and a site was published after the watch’s end', async () => {
+  // Arrange: the watch waits in real time until it has seen the candidate, then its fifteen minutes pass at once, then the next watch waits in real time again.
+  let nowMs = 0
+  let phase: 'watching' | 'passing the bound' | 'after the bound' = 'watching'
+  const wiki = await openWikiWindow({
+    watchClock: {
+      now: () => nowMs,
+      sleep: async (delayMs, signal) => {
+        if (phase === 'watching') return sleepUntilAborted(10, signal)
+        if (phase === 'after the bound')
+          return sleepUntilAborted(delayMs, signal)
+        nowMs += delayMs
+      },
+    },
+  })
+  const candidateFolder = `${wiki.outputDirectory}.stage-3f6c`
+  try {
+    await wiki.clickUpdate()
+    await mkdir(candidateFolder)
+    await writeFile(
+      join(candidateFolder, 'codebook-publication.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'candidate',
+        output: wiki.outputDirectory,
+        baseline: {
+          manifestSha256: createHash('sha256')
+            .update(await readFile(wiki.manifestPath))
+            .digest('hex'),
+        },
+      }),
+    )
+    // The file system's clock lags the process's by up to a tick, so a receipt written a few milliseconds after the run's start can be dated before it: it is dated a second later, as a chat's candidate is in fact.
+    const oneSecondLater = new Date(Date.now() + 1_000)
+    await utimes(
+      join(candidateFolder, 'codebook-publication.json'),
+      oneSecondLater,
+      oneSecondLater,
+    )
+    const seenDeadline = Date.now() + 6_000
+    let whileWatching = wiki.status()
+    while (
+      !(whileWatching.state === 'running' && whileWatching.candidateStaged) &&
+      Date.now() < seenDeadline
+    ) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+      whileWatching = wiki.status()
+    }
+    phase = 'passing the bound'
+    const atTheBound = await waitForEnd(wiki.status)
+    phase = 'after the bound'
+
+    // Act: a site is published while the chat's candidate is still beside the Wiki, and the learner presses; then the candidate is gone (the publisher moved it into place), a site was published, and the learner presses again.
+    await wiki.publish('b'.repeat(64))
+    await datePublishTwoMinutesLater(wiki.manifestPath)
+    await wiki.clickUpdate()
+    const pressedWhileCandidateIsThere = wiki.status()
+    const requestsWhileCandidateIsThere = wiki.chatRequests.length
+    await rm(candidateFolder, { recursive: true })
+    await wiki.publish('c'.repeat(64))
+    await datePublishTwoMinutesLater(wiki.manifestPath)
+    await wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests, 2)
+
+    // Assert
+    assert.equal(
+      whileWatching.state === 'running' && whileWatching.candidateStaged,
+      true,
+    )
+    assert.equal(atTheBound.state, 'timed-out')
+    assert.equal(pressedWhileCandidateIsThere.state, 'failed')
+    assert.match(
+      pressedWhileCandidateIsThere.state === 'failed'
+        ? pressedWhileCandidateIsThere.reason
+        : '',
+      /^The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at \d{1,2}:\d{2}[^.]* and waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
+    )
+    assert.equal(requestsWhileCandidateIsThere, 1)
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    await wiki.close()
+    await rm(candidateFolder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a learner who updates in a second window after the chat another window had stopped watching has published; fails_when=the second window still counts the first window's reservation as a chat that may be updating the Wiki, although a site was published after that watch's end, so the press is refused until the bound; or it stops counting a reservation that was followed by no publish; why_new=Cycle 0046 row 335 (the reservation leftover of the start check; another window knows the watch's end from the marker and the publish's time from the Wiki); seam=the manifest's time for the time of the chat's publish
+test('a second window’s Update is refused with the sentence of another window’s stopped watch while nothing was published since, and starts with no refusal once a site was published after that watch’s end', async () => {
+  // Arrange: the first window stops watching before its chat staged anything.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress })
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+  })
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+
+    // Act: the second window's press before the first window's chat published, and its press after that publish.
+    await secondWindow.clickUpdate()
+    const noticesAfterTheFirstPress = [...secondWindow.errors]
+    const requestsAfterTheFirstPress = secondWindow.chatRequests.length
+    await wiki.publish('b'.repeat(64))
+    await datePublishTwoMinutesLater(wiki.manifestPath)
+    await secondWindow.clickUpdate()
+    await waitForChatRequest(secondWindow.chatRequests, 1)
+
+    // Assert
+    assert.equal(noticesAfterTheFirstPress.length, 1)
+    assert.match(
+      noticesAfterTheFirstPress[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat another editor window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; that window stopped watching it at ${CLOCK_TIME}[^.]* and Codebook waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. The last usable site is kept\\.$`,
+      ),
+    )
+    assert.equal(requestsAfterTheFirstPress, 0)
+    assert.equal(secondWindow.status().state, 'running')
+    assert.equal(secondWindow.chatRequests.length, 1)
+    assert.equal(secondWindow.errors.length, 1)
+    assert.equal(secondWindow.offeredActions.length, 1)
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
 test('a second window’s Update is refused while the first window’s stopped watch is still inside its bound', async () => {
   // Arrange: the first window stops watching before its chat staged anything, so no run and no candidate show the chat's work.
   const progress: CancellableProgress[] = []
