@@ -999,6 +999,36 @@ test('a target buffer changed during the hold rejects Continue and preserves the
   assert.equal(documents[0]?.isDirty, true)
 })
 
+// Cycle 0046 (row 324): red while a continuation that the comparison of the editor's documents refused, before any resume, ended the run as "Continue uncertain: Error: The cited source ...".
+test('a continuation refused because the learner changed a cited source in the editor during the hold ends the run saying that no resume was sent, not as an uncertain continuation', async (context) => {
+  // Arrange
+  const { run, documents, commands } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured stop',
+  )
+  documents[0]!.text = 'const nextTheme = "light";\n'
+  documents[0]!.isDirty = true
+  // Act
+  const refusal: unknown = await run
+    .continue('browser', snapshot.pause)
+    .catch((error: unknown) => error)
+  await run.stop()
+  // Assert
+  assert.equal(
+    thrownMessage(refusal),
+    'The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+  )
+  assert.equal(
+    run.view().failures[0],
+    'Sources were not confirmed before the continuation and no resume was sent: The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+  )
+  assert.equal(commands.filter((command) => command === 'continue').length, 0)
+  assert.equal(run.view().snapshots.length, 1)
+})
+
 test('manual CDP resume revokes the exact pause and after completion even before a DAP continued event arrives', async (context) => {
   // Arrange
   const { run, manualResume } = await configuredRuntimeHarness(context)
