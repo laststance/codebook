@@ -1,3 +1,5 @@
+import { withFinalPeriod } from './withFinalPeriod'
+
 /** One participant that is paused with no announced debugger stop, and where. */
 export interface UnannouncedPausePlace {
   participant: string
@@ -27,9 +29,4 @@ export function withUnannouncedPauses(
       `${withFinalPeriod(text)} The ${pause.participant} is paused at ${pause.place} without a debugger stop.`,
     reason,
   )
-}
-
-/** Ends a text with exactly one period before a sentence follows it. @example withFinalPeriod('timed out') // 'timed out.' */
-function withFinalPeriod(text: string): string {
-  return text.endsWith('.') ? text : `${text}.`
 }

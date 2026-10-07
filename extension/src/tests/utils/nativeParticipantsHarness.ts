@@ -223,10 +223,11 @@ export async function nativeParticipantsHarness(
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
-  // The page is paused at a server stop's breakpoint in its stub of the server module; the next browser continue resumes only that pause.
-  let browserAtServerBreakpoint = false
-  // How the browser's adapter answers the run's resume of that pause: at once, only once the test releases it, or with a refusal.
-  let stubResume: 'answered' | 'refused' | Promise<void> = 'answered'
+  // How many pauses of the page at a server stop's breakpoint, in its stub of the server module, the adapter has reported and nobody resumed yet; each of the next browser continues resumes only one of them.
+  let stubPausesAwaitingResume = 0
+  // How the browser's adapter answers the run's resume of that pause: at once, at once while the page does not go on, only once the test releases it, or with a refusal.
+  let stubResume: 'answered' | 'unresumed' | 'refused' | Promise<void> =
+    'answered'
   // The editor breakpoints, by participant session, that the adapter sent `changed` news about: the editor keeps no column of such news for a breakpoint that has none of its own.
   const breakpointsWithNews: Record<Participant, Set<string>> = {
     browser: new Set(),
@@ -336,8 +337,8 @@ export async function nativeParticipantsHarness(
           ],
         }
       // The run resumes the page's pause at a server stop's breakpoint: the adapter resumes it and no declared stop follows.
-      if (command === 'continue' && browserAtServerBreakpoint) {
-        browserAtServerBreakpoint = false
+      if (command === 'continue' && stubPausesAwaitingResume > 0) {
+        stubPausesAwaitingResume--
         run.onRequest(sessions[name], {
           type: 'request',
           seq: ++sequence,
@@ -346,6 +347,8 @@ export async function nativeParticipantsHarness(
         })
         // The adapter refuses the resume, or answers it only after the test let it: the page stays paused meanwhile.
         if (stubResume === 'refused') throw new Error('Thread is not paused')
+        // The adapter answers and the page stays paused: no `continued` and no resume of the runtime follow.
+        if (stubResume === 'unresumed') return {}
         if (stubResume !== 'answered') await stubResume
         run.onEvent(sessions[name], {
           type: 'event',
@@ -1099,7 +1102,7 @@ export async function nativeParticipantsHarness(
      * @example harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
      */
     pauseBrowserAtServerBreakpoint(serverBreakpoint: { id: string }): void {
-      browserAtServerBreakpoint = true
+      stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
         url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
@@ -1132,7 +1135,7 @@ export async function nativeParticipantsHarness(
     pauseBrowserInServerStub(serverBreakpoint: { id: string }): {
       stopped(): void
     } {
-      browserAtServerBreakpoint = true
+      stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
         url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
@@ -1169,7 +1172,7 @@ export async function nativeParticipantsHarness(
     announceBrowserStopAtServerBreakpoint(serverBreakpoint: { id: string }): {
       paused(): void
     } {
-      browserAtServerBreakpoint = true
+      stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
         url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
@@ -1202,6 +1205,10 @@ export async function nativeParticipantsHarness(
     /** Makes the browser's adapter refuse the run's resume of the next page pause at a server stop's breakpoint, as an adapter whose thread is no longer paused does. @example harness.refuseStubResume() */
     refuseStubResume(): void {
       stubResume = 'refused'
+    },
+    /** Makes the browser's adapter answer the run's resume of the next page pause at a server stop's breakpoint while the page stays paused: the request succeeds and neither a `continued` nor a resume of the page's runtime follows. @example harness.answerStubResumeWithoutResuming() */
+    answerStubResumeWithoutResuming(): void {
+      stubResume = 'unresumed'
     },
     /** Keeps the browser adapter's answer to the run's resume of the next page pause at a server stop's breakpoint back until released, so a test can let time pass while the page is still paused. @example const resume = harness.holdStubResume(); harness.advance(300); resume.release() */
     holdStubResume(): { release(): void } {
