@@ -58,11 +58,10 @@ const WIKI_PUBLISHER_RELATIVE_PATH = join(
 const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
 /** What a reconnect answers for a skill it will not touch; {@link verifyManagedCursorSkill} decides it under the storage lock. */
 const CHANGED_SKILL_REFUSAL = (skillPath: string): string =>
-  `Cursor skill is missing or was changed: ${skillPath}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`
+  `Cursor skill is missing or was changed: ${skillPath}. Run ${SET_UP_AI_CHAT_COMMAND}; Codebook will not overwrite another edit.`
 
 /** The step that lets a setup finish while a file that is not Codebook's stands at the skill's path: setup dropped its record when it refused, so the file is not adopted again, whatever is done to it. On a first install the skill folder must be empty, which is why the sentence says "out of its folder" and not "rename". */
-const FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN =
-  "Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again."
+const FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN = `Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What setup answers when a file that is not the installed skill stands at the skill's path while setup runs: a file that took the path in the instant before a first setup's link, or one that replaced the installed skill during an update. The file is the learner's and stays in place. */
 const SKILL_CHANGED_DURING_SETUP = (skillPath: string): string =>
@@ -70,19 +69,18 @@ const SKILL_CHANGED_DURING_SETUP = (skillPath: string): string =>
 
 /** What setup answers when the installed skill was edited in place while an update ran: the receipt still names that file, so the next setup adopts it again once its content is back, and installs anew when the file is gone. */
 const SKILL_EDITED_DURING_SETUP = (skillPath: string): string =>
-  `The Cursor skill was edited during setup: ${skillPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`
+  `The Cursor skill was edited during setup: ${skillPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What setup answers when the installed skill was taken away while an update ran: nothing is left to preserve, and the next setup installs the skill again. */
 const SKILL_REMOVED_DURING_SETUP = (skillPath: string): string =>
-  `The Cursor skill was removed while setup ran: ${skillPath}. Codebook changed no file. Run Codebook: Set Up AI Chat again to install it.`
+  `The Cursor skill was removed while setup ran: ${skillPath}. Codebook changed no file. Run ${SET_UP_AI_CHAT_COMMAND} again to install it.`
 
 /** What setup answers when the skill it had just published changed before setup compared it: the receipt does not name that file (none on a first install, the previous skill on an update), so it is not adopted again. */
 const PUBLISHED_SKILL_CHANGED_DURING_SETUP = (skillPath: string): string =>
   `The published Cursor skill changed during setup: ${skillPath}. Codebook preserved it. ${FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN}`
 
 /** How a removal that found a file of the learner at the skill's path ends: Codebook removes no file that is not its own, and once the learner took the file away the removal has nothing left to remove and finishes. */
-const FINISH_REMOVAL_WITHOUT_THAT_FILE =
-  'To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.'
+const FINISH_REMOVAL_WITHOUT_THAT_FILE = `To finish the removal, delete or rename that file, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`
 
 /** What removal answers when the skill file changed between its check and its move away: the file is back in place and is the learner's now. */
 const SKILL_CHANGED_DURING_REMOVAL = (skillPath: string): string =>
@@ -90,15 +88,15 @@ const SKILL_CHANGED_DURING_REMOVAL = (skillPath: string): string =>
 
 /** What setup answers for the installed skill file with other bytes than Codebook wrote (the same file, edited in place): setup leaves it alone, adopts it again once its content is back, and installs its skill anew when the file is gone from its path. */
 const SKILL_EDITED_AFTER_SETUP = (skillPath: string): string =>
-  `The managed Cursor skill was edited after setup: ${skillPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`
+  `The managed Cursor skill was edited after setup: ${skillPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What setup answers for a file that took the place of the skill Codebook installed (another inode): setup leaves it alone, and installs its skill again once the path is free. */
 const SKILL_REPLACED_AFTER_SETUP = (skillPath: string): string =>
-  `The managed Cursor skill was replaced after setup: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`
+  `The managed Cursor skill was replaced after setup: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What setup answers for the skill file a removal had taken away when it stands at the skill's path again (moved back by hand): the receipt says removed, so setup does not adopt it, and installs its skill once the path is free. */
 const SKILL_BACK_AFTER_REMOVAL = (skillPath: string): string =>
-  `A codebook skill appeared after managed removal: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`
+  `A codebook skill appeared after managed removal: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What removal answers for a file that took the place of the skill Codebook installed. */
 const SKILL_REPLACED_BEFORE_REMOVAL = (skillPath: string): string =>
@@ -236,20 +234,19 @@ type UnreadSkillFileSentences = Record<
 
 /** What a setup or a reconnect answers for a path another file took while Codebook opened it (only where the system's open cannot refuse a link): nothing was read, and the same command reads the path as it stands then. */
 const ANOTHER_FILE_TOOK_THE_PLACE = (path: string): string =>
-  `Another file took the place of ${path} while Codebook opened it, so it was not read. Run Codebook: Set Up AI Chat again.`
+  `Another file took the place of ${path} while Codebook opened it, so it was not read. Run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What a setup or a reconnect answers for the managed skill path when it did not read it: each sentence names the step after which a setup installs the skill again (the receipt is there, so a path that holds nothing is restored). */
 const UNREAD_SKILL_SENTENCES_OF_SETUP: UnreadSkillFileSentences = {
   link: (path) =>
-    `Codebook will not read through a link: ${path}. Remove the link, then run Codebook: Set Up AI Chat again.`,
+    `Codebook will not read through a link: ${path}. Remove the link, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
   'not-regular': (path) =>
-    `Codebook will not change a non-regular skill file: ${path}. Delete or rename what stands at that path, then run Codebook: Set Up AI Chat again.`,
+    `Codebook will not change a non-regular skill file: ${path}. Delete or rename what stands at that path, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
   replaced: ANOTHER_FILE_TOOK_THE_PLACE,
 }
 
 /** How a refusal ends for a file of the installation itself (the bundled skill, the Wiki publisher), also one that is missing or invalid: the learner does not repair such a file, the extension is installed again, in the words of the README's section "Install the private VSIX" ("install the desired verified VSIX"), and the setup is run in the reopened window. */
-const INSTALL_AGAIN_THEN_SET_UP_AGAIN =
-  'That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.'
+const INSTALL_AGAIN_THEN_SET_UP_AGAIN = `That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** What the learner reads for a file of the installation itself (the bundled skill, the Wiki publisher) that Codebook did not read: each sentence names the path, and a link and what is no regular file end with installing the extension again ({@link INSTALL_AGAIN_THEN_SET_UP_AGAIN}). */
 const UNREAD_INSTALLED_FILE_SENTENCES: UnreadSkillFileSentences = {
@@ -263,7 +260,7 @@ const UNREAD_INSTALLED_FILE_SENTENCES: UnreadSkillFileSentences = {
 /** What the learner reads for the copy of the installed skill that Codebook keeps in its own storage when an update did not read it: each sentence names the path and the step after which a setup updates the skill (a path that holds nothing gets the copy anew). */
 const UNREAD_SKILL_COPY_SENTENCES: UnreadSkillFileSentences = {
   link: (path) =>
-    `Codebook will not read through a link: ${path}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+    `Codebook will not read through a link: ${path}. Put the file itself at that path or remove the link, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
   'not-regular': UNREAD_SKILL_SENTENCES_OF_SETUP['not-regular'],
   replaced: ANOTHER_FILE_TOOK_THE_PLACE,
 }
@@ -271,11 +268,11 @@ const UNREAD_SKILL_COPY_SENTENCES: UnreadSkillFileSentences = {
 /** What a removal answers for the managed skill path when it did not read it: each sentence names the step after which the removal finishes, and the removal as the command to run again. */
 const UNREAD_SKILL_SENTENCES_OF_REMOVAL: UnreadSkillFileSentences = {
   link: (path) =>
-    `Codebook will not read through a link: ${path}. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+    `Codebook will not read through a link: ${path}. To finish the removal, remove the link, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`,
   'not-regular': (path) =>
-    `Codebook will not change a non-regular skill file: ${path}. To finish the removal, delete or rename what stands at that path, then run Codebook: Remove Managed Cursor Skill again.`,
+    `Codebook will not change a non-regular skill file: ${path}. To finish the removal, delete or rename what stands at that path, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`,
   replaced: (path) =>
-    `Another file took the place of ${path} while Codebook opened it, so it was not read. Run Codebook: Remove Managed Cursor Skill again.`,
+    `Another file took the place of ${path} while Codebook opened it, so it was not read. Run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`,
 }
 
 /**
@@ -1721,7 +1718,7 @@ async function deploySkill(
       const backup = await regularFile(backupPath, UNREAD_SKILL_COPY_SENTENCES)
       if (backup && sha256(backup) !== receipt.skillSha256)
         throw new Error(
-          `The copy of the installed Cursor skill that Codebook keeps as ${backupPath} differs from its receipt; no skill file was changed. Delete that copy, then run Codebook: Set Up AI Chat again.`,
+          `The copy of the installed Cursor skill that Codebook keeps as ${backupPath} differs from its receipt; no skill file was changed. Delete that copy, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
         )
       if (!backup) {
         const stagedBackup = await writeStagedBytes(
