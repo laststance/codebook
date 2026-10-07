@@ -450,7 +450,9 @@ That tree, with row 302's renames (`010aa9c`, and three more names by the coordi
 
 **Rows 296 and 297 merged (`66ee6b9`).** A pause in a server stop's stub has 3 s as a held pause too, except in the module of the browser stop that is accepted at that moment, where a held pause may be that stop's own (row 296); the debugger's own pause at a module's first position is not taken for a stop that paused before its turn (297). With them no two lines of the list of bounds disagree for one kind of pause the run can tell apart; the fixer found no further defect. One limit stays, stated with row 288 and recorded by its native check: the run knows the debugger's own pause only by the form of its id that the journals show.
 
-262 of 305 rows are closed. Open: 34 rows that owe a native check, 1 whose fix is on a branch that is not merged, and 8 that their packages work on or that were just added.
+**CI on the pushed head `ab27231`: 24 checks pass and one fails.** The job that failed on `c721b28` passes (row 291). The job Test (8/14) failed in one test of the Study workspace's layout, a test of Cycle 0045 that this cycle did not change: "a saved study chosen with the bottom panel maximized is shown when the panel is restored ten minutes later", where the reader's tick one second after the choice sent no layout request (`0 !== 1`). It passed on the development host in every run of the suite. It is row 306; its cause is to be established by making it fail here before anything is changed. The Windows job passed (run 37580713208: 231 tests, 217 pass, 14 skipped with their reasons).
+
+262 of 306 rows are closed. Open: 34 rows that owe a native check, 2 whose fix is on a branch that is not merged, and 8 that their packages work on or that were just added.
 
 ## Result and decision
 
