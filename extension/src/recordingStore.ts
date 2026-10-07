@@ -59,6 +59,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { describeNoStorageFolder } from './utils/describeNoStorageFolder'
 import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
@@ -935,7 +936,9 @@ export class RecordingStore {
         })
       if (!rootStat) continue
       if (!rootStat.isDirectory())
-        throw new Error('Recording root is not a regular directory.')
+        throw new Error(
+          describeNoStorageFolder('Recording root', root, rootStat),
+        )
       const directory = this.path(studyId, storage.version),
         stat = await lstat(directory).catch((error) => {
           if (error.code === 'ENOENT') return undefined
@@ -964,7 +967,9 @@ export class RecordingStore {
         })
       if (!stat) continue
       if (!stat.isDirectory())
-        throw new Error('Recording root is not a regular directory.')
+        throw new Error(
+          describeNoStorageFolder('Recording root', directory, stat),
+        )
       // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
       for await (const entry of await opendir(directory))
         this.addIdentityOf(entry, identities)
@@ -997,8 +1002,11 @@ export class RecordingStore {
       )!,
       directory = join(this.learningDirectory, storage.directory)
     await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-    if (!(await lstat(directory)).isDirectory())
-      throw new Error('Recording root is not a regular directory.')
+    const standing = await lstat(directory)
+    if (!standing.isDirectory())
+      throw new Error(
+        describeNoStorageFolder('Recording root', directory, standing),
+      )
   }
 }
 

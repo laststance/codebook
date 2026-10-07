@@ -6,7 +6,10 @@ import fsPromises, {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
+  symlink,
+  unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -861,3 +864,71 @@ test(
     assert.deepEqual(await readdir(directory), [])
   },
 )
+
+// Value: protects=a learner at whose private storage folder a link or a file stands (a storage folder kept elsewhere behind a link; a file of that name), at every write of Codebook, also the Cursor setup's; fails_when=the refusal reads "Learning storage is not a regular directory." and names neither the folder nor what to do, or, for a file or a link that leads nowhere, is the system's text of the folder's creation ("EEXIST: file already exists, mkdir …"); or a step it names does not end in a write; why_new=Cycle 0046 row 311; seam=none, the real entries (the link is a junction on Windows, which every user may create)
+test('a link or a file where a private storage folder should be is refused with the folder’s path, what stands there and what to do, and nothing is written through the link: after the learner puts the folder in the link’s place, removes the link, or renames the file, the write runs', async (context) => {
+  // Arrange: three storage paths: two links to a folder kept elsewhere, and a file.
+  const root = await storageDirectory(context)
+  const linkToReplace = join(root, 'link-to-replace'),
+    linkToRemove = join(root, 'link-to-remove'),
+    file = join(root, 'a-file')
+  await mkdir(join(root, 'kept-for-the-first'))
+  await mkdir(join(root, 'kept-for-the-second'))
+  await symlink(join(root, 'kept-for-the-first'), linkToReplace, 'junction')
+  await symlink(join(root, 'kept-for-the-second'), linkToRemove, 'junction')
+  await writeFile(file, 'A file of that name.')
+  const write = (directory: string): Promise<string> =>
+    withStorageLock(directory, async () => {
+      await writeFile(join(directory, 'written'), 'x')
+      return 'written'
+    }).catch((error: Error) => error.message)
+
+  // Act
+  const refusals = {
+    linkToReplace: await write(linkToReplace),
+    linkToRemove: await write(linkToRemove),
+    file: await write(file),
+  }
+  const entriesBehindTheLinks = [
+    await readdir(join(root, 'kept-for-the-first')),
+    await readdir(join(root, 'kept-for-the-second')),
+  ]
+  // The sentences are followed to the letter, each way once.
+  await unlink(linkToReplace)
+  await rename(join(root, 'kept-for-the-first'), linkToReplace)
+  await unlink(linkToRemove)
+  await rename(file, join(root, 'a-file-renamed'))
+  const writesAfterwards = {
+    linkToReplace: await write(linkToReplace),
+    linkToRemove: await write(linkToRemove),
+    file: await write(file),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      entriesBehindTheLinks,
+      writesAfterwards,
+      folderTheRemovedLinkPointedTo: await readdir(
+        join(root, 'kept-for-the-second'),
+      ),
+      renamedFile: await readFile(join(root, 'a-file-renamed'), 'utf8'),
+    },
+    {
+      refusals: {
+        linkToReplace: `Learning storage is not a regular directory: ${linkToReplace}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+        linkToRemove: `Learning storage is not a regular directory: ${linkToRemove}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+        file: `Learning storage is not a regular directory: ${file}. What stands at that path is not a folder. Rename it or move it elsewhere, then try again.`,
+      },
+      entriesBehindTheLinks: [[], []],
+      writesAfterwards: {
+        linkToReplace: 'written',
+        linkToRemove: 'written',
+        file: 'written',
+      },
+      folderTheRemovedLinkPointedTo: [],
+      renamedFile: 'A file of that name.',
+    },
+  )
+})

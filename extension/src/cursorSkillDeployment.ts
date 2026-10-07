@@ -30,6 +30,7 @@ import {
   ALLOW_LINKS_THEN_SET_UP_AGAIN,
   describeRefusedSkillLink,
 } from './utils/describeRefusedSkillLink'
+import { describeUnopenedFile } from './utils/describeUnopenedFile'
 import { describeUnopenedMovedFile } from './utils/describeUnopenedMovedFile'
 import { dropSecondNameOfMovedFile } from './utils/dropSecondNameOfMovedFile'
 import { dropSecondNameOfOneFile } from './utils/dropSecondNameOfOneFile'
@@ -45,6 +46,7 @@ import {
   stepPastNoRealFolder,
 } from './utils/stepPastNoRealFolder'
 import { systemErrorCode } from './utils/systemErrorCode'
+import { unopenedFileCode } from './utils/unopenedFileCode'
 import { withStorageLock } from './utils/withStorageLock'
 
 const SKILL_RELATIVE_PATH = join('skills', 'codebook', 'SKILL.md')
@@ -277,6 +279,54 @@ const UNREAD_SKILL_SENTENCES_OF_REMOVAL: UnreadSkillFileSentences = {
 }
 
 /**
+ * A file of the skill setup that exists and that this user could not open at that moment; thrown by {@link lookAtSkillFile}, which every read of the setup goes through, and worded at the command's entry with the command that was run ({@link wordingUnopenedFiles}).
+ * It is an end of the command and no answer: a check that asks "is this the file Codebook wrote?" must not hear "no" for a file nobody could look at.
+ * @example throw new UnopenedSkillFile('/home/user/.cursor/skills/codebook/SKILL.md', 'EBUSY', error)
+ */
+class UnopenedSkillFile extends Error {
+  /**
+   * @param path - The file that could not be opened.
+   * @param code - The system's code for the refused open ({@link unopenedFileCode}).
+   * @param cause - What the open threw.
+   */
+  constructor(
+    readonly path: string,
+    readonly code: string,
+    cause: unknown,
+  ) {
+    super(`${code}: the file could not be opened: ${path}`, { cause })
+  }
+}
+
+/**
+ * Runs a command of the skill setup and words a file it could not open with the command that was run; the three entries go through it: {@link deployCursorSkill} and {@link verifyManagedCursorSkill} with the setup, {@link removeManagedCursorSkill} with the removal.
+ * @param commandToRunAgain - The command the learner ran (a reconnect names the setup).
+ * @param run - The command's work.
+ * @returns What `run` returned.
+ * @throws For an {@link UnopenedSkillFile}: the sentence that names the file, the step and the command ({@link describeUnopenedFile}), with the system's error as its cause; everything else `run` throws, as it is.
+ * @example await wordingUnopenedFiles('Codebook: Set Up AI Chat', () => deploySkill(extensionPath, storageRoot, homeRoot, 'setup'))
+ */
+async function wordingUnopenedFiles<Result>(
+  commandToRunAgain: string,
+  run: () => Promise<Result>,
+): Promise<Result> {
+  try {
+    return await run()
+  } catch (error) {
+    if (!(error instanceof UnopenedSkillFile)) throw error
+    throw new Error(
+      describeUnopenedFile(
+        'A file of the Cursor skill setup',
+        error.path,
+        error.code,
+        commandToRunAgain,
+      ),
+      { cause: error.cause },
+    )
+  }
+}
+
+/**
  * Takes the status and the bytes of an open file, for {@link lookAtSkillFile}: both come from the one file that was opened.
  * @param file - The file {@link openWithoutFollowing} opened.
  * @returns The bytes and the status of a regular file; `not-regular` for a pipe, a device or a folder, which the open lets through where the system has `O_NOFOLLOW`.
@@ -295,7 +345,9 @@ async function readOpenSkillFile(file: FileHandle): Promise<SkillFileLook> {
  * @returns
  * - `read` with the bytes and the status of the regular file at the path
  * - `missing`, `link`, `not-regular` or `replaced` when nothing was read ({@link UnreadSkillFileKind})
- * @throws Every other failure of the open or the read (no permission, for example).
+ * @throws
+ * - {@link UnopenedSkillFile} for a file that exists and that this user could not open at that moment ({@link unopenedFileCode}): no caller may take such a file for one that is missing, changed or not Codebook's, so it is no answer but an end of the command, which the command's entry words ({@link wordingUnopenedFiles})
+ * - Every other failure of the open or the read as it is: the system's own text
  * @example await lookAtSkillFile('/home/user/.cursor/skills/codebook/SKILL.md') // => { kind: 'read', bytes, status }
  */
 async function lookAtSkillFile(path: string): Promise<SkillFileLook> {
@@ -305,7 +357,8 @@ async function lookAtSkillFile(path: string): Promise<SkillFileLook> {
   } catch (error) {
     const kind = UNREAD_KIND_BY_OPEN_CODE.get(systemErrorCode(error))
     if (kind) return { kind }
-    throw error
+    const code = unopenedFileCode(error)
+    throw code ? new UnopenedSkillFile(path, code, error) : error
   }
   try {
     return await readOpenSkillFile(file)
@@ -828,6 +881,41 @@ async function removeUnrecordedStages(
       targetPath,
       packagedSha256,
     )
+  }
+}
+
+/** What setup answers when the record of an update would be larger than Codebook writes: it names the installed skill as the previous owner and four more paths, and reaches {@link CURSOR_SKILL_RECEIPT_LIMIT_BYTES} only where the path of the home folder is close to what a system allows at all (about 3,850 of Linux's 4,096 bytes; no path of macOS, and none of Windows without long paths, is that long). A first installation writes a record without a previous owner, which is far smaller, and a removal's is smaller too: so the way on is to remove the skill and to set it up anew. */
+const UPDATE_RECORD_TOO_LARGE = `Cursor skill could not be updated: the record Codebook keeps of an update would be larger than it writes (${CURSOR_SKILL_RECEIPT_LIMIT_BYTES} bytes), because the paths of this home folder, of the editor's storage and of the installed extension are very long. No skill file was changed. Run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND}, then ${SET_UP_AI_CHAT_COMMAND}: the skill is installed anew then, which needs no such record.`
+
+/**
+ * Writes the record of a setup before anything of the skill is moved, for {@link deploySkill} right after it staged the new skill; a setup that cannot write its record leaves no staged file behind.
+ * @param pendingPath - The record's path.
+ * @param pending - The setup's record, which names its staged file.
+ * @throws
+ * - {@link UPDATE_RECORD_TOO_LARGE} for the record of an update that would be larger than Codebook writes: the limit's own sentence ("Storage limit exceeded …") names neither the record nor a way on, and here one exists
+ * - Every failure of the write as it is
+ * @example await recordSetup('/private/cursor-skill/pending.json', next)
+ */
+async function recordSetup(
+  pendingPath: string,
+  pending: PendingSkill,
+): Promise<void> {
+  try {
+    // Only an update's record, which holds the previous owner, can be this large in a path a system allows.
+    if (
+      pending.previous &&
+      Buffer.byteLength(JSON.stringify(pending)) >
+        CURSOR_SKILL_RECEIPT_LIMIT_BYTES
+    )
+      throw new Error(UPDATE_RECORD_TOO_LARGE)
+    await atomicPrivateWrite(
+      pendingPath,
+      pending,
+      CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
+    )
+  } catch (error) {
+    await unlink(pending.stagedPath)
+    throw error
   }
 }
 
@@ -1469,7 +1557,7 @@ function receiptedSkillState(
  * - `updated`: the receipted, unedited skill held other bytes
  * - `restored`: the receipted skill was missing
  * - `current`: the receipted skill already holds this installation's bytes
- * @throws When a skill Codebook does not own, or a later edit or replacement, is in the way (nothing is changed), and when the storage lock is held by another writer.
+ * @throws When a skill Codebook does not own, or a later edit or replacement, is in the way (nothing is changed), when the storage lock is held by another writer, and when a file of the setup could not be opened at that moment ({@link wordingUnopenedFiles}).
  * @example await deployCursorSkill('/ext', '/private', '/home') // => { status: 'installed', path, sha256, version }
  */
 export async function deployCursorSkill(
@@ -1477,7 +1565,9 @@ export async function deployCursorSkill(
   storageRoot: string,
   homeRoot = homedir(),
 ): Promise<CursorSkillResult> {
-  return deploySkill(extensionPath, storageRoot, homeRoot, 'setup')
+  return wordingUnopenedFiles(SET_UP_AI_CHAT_COMMAND, () =>
+    deploySkill(extensionPath, storageRoot, homeRoot, 'setup'),
+  )
 }
 
 /**
@@ -1682,16 +1772,7 @@ async function deploySkill(
           }
         : {}),
     }
-    try {
-      await atomicPrivateWrite(
-        pendingPath,
-        next,
-        CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
-      )
-    } catch (error) {
-      await unlink(stagedPath)
-      throw error
-    }
+    await recordSetup(pendingPath, next)
     // Also a change made while the copy above was kept is met here, before anything is moved.
     if (current && receipt && !(await matchesOwnedFile(targetPath, receipt))) {
       await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
@@ -1747,13 +1828,29 @@ async function deploySkill(
  * Several windows reconnect at once after an extension update. The file that matches its receipt is accepted without the lock; everything else is decided under the storage lock, and a window that finds the lock held by another window's update waits and checks again, a bounded number of times.
  *
  * @returns `current` for this installation's or a newer window's skill, `updated` after the implicit update.
- * @throws When the skill is missing or was changed, and when the storage lock stays held through every attempt.
+ * @throws When the skill is missing or was changed, when the storage lock stays held through every attempt, and when a file of the setup could not be opened at that moment ({@link wordingUnopenedFiles}).
  * @example await verifyManagedCursorSkill('/ext', '/private', '/home')
  */
 export async function verifyManagedCursorSkill(
   extensionPath: string,
   storageRoot: string,
   homeRoot = homedir(),
+): Promise<CursorSkillResult> {
+  return wordingUnopenedFiles(SET_UP_AI_CHAT_COMMAND, () =>
+    reconnectManagedSkill(extensionPath, storageRoot, homeRoot),
+  )
+}
+
+/**
+ * Does the reconnect's work for {@link verifyManagedCursorSkill}, which words a file this work could not open.
+ * @returns `current` for this installation's or a newer window's skill, `updated` after the implicit update.
+ * @throws When the skill is missing or was changed, when the storage lock stays held through every attempt, and {@link UnopenedSkillFile} for a file that could not be opened.
+ * @example await reconnectManagedSkill('/ext', '/private', '/home')
+ */
+async function reconnectManagedSkill(
+  extensionPath: string,
+  storageRoot: string,
+  homeRoot: string,
 ): Promise<CursorSkillResult> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
   await assertSkillParents(homeRoot, SET_UP_AI_CHAT_COMMAND)
@@ -1915,12 +2012,27 @@ async function assertSkillParentsOfRemoval(homeRoot: string): Promise<void> {
  * - `removed`: Codebook's skill was moved away and retained privately, or its file or folder was already gone and the receipt now says so
  * - `already-removed`: the receipt says an earlier removal took the skill away; nothing was changed, and the command goes on to what that removal could not finish
  * - `not-installed`: no receipt exists (Cursor chat was never set up here, or the learner deleted the receipt as an invalid record's sentence says); no file was changed
- * @throws When the file at the skill's path is not the one Codebook installed (it stays, and the sentence says what to do), and when a record of an interrupted setup or removal is in the way.
+ * @throws When the file at the skill's path is not the one Codebook installed (it stays, and the sentence says what to do), when a record of an interrupted setup or removal is in the way, and when a file of the setup could not be opened at that moment ({@link wordingUnopenedFiles}).
  * @example await removeManagedCursorSkill('/private', '/home') // => { status: 'removed', path, sha256, version }
  */
 export async function removeManagedCursorSkill(
   storageRoot: string,
   homeRoot = homedir(),
+): Promise<CursorSkillRemoval> {
+  return wordingUnopenedFiles(REMOVE_MANAGED_CURSOR_SKILL_COMMAND, () =>
+    removeManagedSkillUnderLock(storageRoot, homeRoot),
+  )
+}
+
+/**
+ * Does the removal's work under the storage lock for {@link removeManagedCursorSkill}, which words a file this work could not open.
+ * @returns How the removal ended ({@link CursorSkillRemoval}).
+ * @throws What {@link removeManagedCursorSkill} names, and {@link UnopenedSkillFile} for a file that could not be opened.
+ * @example await removeManagedSkillUnderLock('/private', '/home')
+ */
+async function removeManagedSkillUnderLock(
+  storageRoot: string,
+  homeRoot: string,
 ): Promise<CursorSkillRemoval> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
   const receiptDirectory = join(storageRoot, 'cursor-skill'),

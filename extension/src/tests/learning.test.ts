@@ -566,3 +566,61 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
     [{ format: 'newer', outcome: 'Saved by a newer Codebook; kept as it is' }],
   )
 })
+
+// Value: protects=a learner at whose progress file a link or a folder stands (a file kept elsewhere behind a link; a folder a tool left); fails_when=the Study pane and the Wiki pane show "Progress is not a regular file." for good: it names no path, the file lies in the editor's storage where nobody finds it, and the panes' Retry storage reads the same entry again; or a step the sentence names does not end in a read; why_new=Cycle 0046 row 311; seam=none, the real entries
+test('a link or a folder where the progress file should be is refused with the file’s path and what to do: after the learner puts the file itself at that path, the saved choices are read again, and after the learner moves the folder away, progress starts empty', async (context) => {
+  // Arrange: one library whose saved progress is kept elsewhere behind a link, and one with a folder at the progress file's path.
+  const withLink = await mkdtemp(join(tmpdir(), 'codebook-learning-')),
+    withFolder = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(withLink, { recursive: true, force: true }))
+  context.after(() => rm(withFolder, { recursive: true, force: true }))
+  await new LearningLibrary(withLink, workspaceKey).decide(decision(true))
+  const linkedPath = join(withLink, 'progress.repository.v4.json'),
+    folderPath = join(withFolder, 'progress.repository.v4.json')
+  await fsPromises.rename(linkedPath, join(withLink, 'kept-progress.json'))
+  const isLinkMade = await fsPromises
+    .symlink(join(withLink, 'kept-progress.json'), linkedPath)
+    .then(
+      () => true,
+      () => false,
+    )
+  if (!isLinkMade)
+    return context.skip(
+      'creating a symbolic link to a file was refused: this user lacks the right (on Windows: no administrator and no developer mode)',
+    )
+  await fsPromises.mkdir(folderPath, { recursive: true })
+  const read = (directory: string): Promise<string> =>
+    new LearningLibrary(directory, workspaceKey).readProgress().then(
+      (progress) => `read, ${progress.decisions.length} saved choice(s)`,
+      (error: Error) => error.message,
+    )
+
+  // Act
+  const refusals = {
+    link: await read(withLink),
+    folder: await read(withFolder),
+  }
+  // The sentence is followed to the letter, each way once.
+  await fsPromises.rm(linkedPath)
+  await fsPromises.rename(join(withLink, 'kept-progress.json'), linkedPath)
+  await fsPromises.rename(folderPath, join(withFolder, 'moved-away'))
+  const afterwards = {
+    link: await read(withLink),
+    folder: await read(withFolder),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, afterwards },
+    {
+      refusals: {
+        link: `Progress is not a regular file: ${linkedPath}. Put the file itself at that path, or move what stands there away, then try again.`,
+        folder: `Progress is not a regular file: ${folderPath}. Put the file itself at that path, or move what stands there away, then try again.`,
+      },
+      afterwards: {
+        link: 'read, 1 saved choice(s)',
+        folder: 'read, 0 saved choice(s)',
+      },
+    },
+  )
+})

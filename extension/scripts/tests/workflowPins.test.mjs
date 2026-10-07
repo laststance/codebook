@@ -629,7 +629,9 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/claimWikiUpdateMarker.ts',
     'extension/src/utils/currentStorageOwner.ts',
     'extension/src/utils/deriveMachineKeys.ts',
+    'extension/src/utils/describeNoStorageFolder.ts',
     'extension/src/utils/describeRefusedLinkBack.ts',
+    'extension/src/utils/describeUnopenedFile.ts',
     'extension/src/utils/describeUnopenedMovedFile.ts',
     'extension/src/utils/dropSecondNameOfMovedFile.ts',
     'extension/src/utils/dropSecondNameOfOneFile.ts',
@@ -663,6 +665,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/startOverBy.ts',
     'extension/src/utils/stepPastNoRealFolder.ts',
     'extension/src/utils/systemErrorCode.ts',
+    'extension/src/utils/unopenedFileCode.ts',
     'extension/src/utils/withStorageLock.ts',
     'extension/src/utils/withoutBootTime.ts',
   ])
