@@ -156,8 +156,8 @@ async function viewportHarness(
     learnerInChat?: 'named group' | 'keyboard only'
     sessionRunsAgain?: boolean
   },
-  /** What the lease's owner answers when the viewport asks it to give the keyboard back before the pane covers the paused file: `true` (it gave the keyboard to the chat), `false` (to nobody), or `'fails'` (its answer rejects). Left out, the lease has no such owner. */
-  ownerReturnsKeyboard?: boolean | 'fails',
+  /** What the lease's owner answers when the viewport asks it, before the pane covers the paused file, whether the pane is to come without the keyboard: `true` (it gave the keyboard to the chat), `false` (to nobody), `'fails'` (its answer rejects) or `'held'` (it does not answer until the test calls `answerOwner`, and never if the test does not). Left out, the lease has no such owner. */
+  ownerReturnsKeyboard?: boolean | 'fails' | 'held',
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -167,6 +167,8 @@ async function viewportHarness(
     keyboardTakesAtPause = 0
   /** How many reveals the pane had seen each time the viewport asked the owner to give the keyboard back. */
   const revealsWhenOwnerAsked: number[] = []
+  /** Answers the owner's held answer; see `ownerReturnsKeyboard`. */
+  let answerHeldOwner = (_keeps: boolean): void => {}
   const failures: string[] = []
   runInNewContext(
     await readFile(filename, 'utf8'),
@@ -240,6 +242,10 @@ async function viewportHarness(
                     revealsWhenOwnerAsked.push(renderer.reveals.length)
                     if (ownerReturnsKeyboard === 'fails')
                       throw new Error('The chat could not be focused.')
+                    if (ownerReturnsKeyboard === 'held')
+                      return new Promise<boolean>((resolve) => {
+                        answerHeldOwner = resolve
+                      })
                     return ownerReturnsKeyboard
                   },
                 }),
@@ -257,6 +263,8 @@ async function viewportHarness(
     keyboardTakesAtPause: () => keyboardTakesAtPause,
     /** For each time the viewport asked its lease's owner to give the keyboard back at a pause: how many reveals the pane had seen by then. */
     revealsWhenOwnerAsked: () => [...revealsWhenOwnerAsked],
+    /** Lets an owner whose answer is held (`ownerReturnsKeyboard: 'held'`) answer now. @example harness.answerOwner(false) */
+    answerOwner: (keeps: boolean): void => answerHeldOwner(keeps),
     rebind(
       replacement: ReturnType<typeof viewportPanel>,
       signal = new AbortController().signal,
@@ -1958,6 +1966,80 @@ for (const [ownerAnswer, revealPreservesFocus, takesTold] of [
     assert.equal(harness.keyboardTakesAtPause(), takesTold)
     harness.viewport.close()
   })
+
+// Value: protects=a reveal of the Application pane that was called off while its owner was asked about the keyboard: the pane stays as it is, takes no keyboard and tells nothing; fails_when=after the owner's answer only the viewport's closure is read again, so an aborted reveal still brings the pane to the front and, when the owner gave the keyboard to nobody, takes the keyboard and tells the notice before its wait throws; why_new=Cycle 0046 row 253 (delegated review, finding 6); seam=fake editor with a paused debug session, a lease whose owner's answer is held, and the reveal's abort signal
+test('a reveal of the Application pane that is aborted while its owner is asked about the keyboard reveals nothing, takes no keyboard and tells nothing', async () => {
+  // Arrange: the debugger opened the paused file in the Application pane's group and focused it; the owner does not answer yet.
+  const harness = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    viewportPanel(),
+    { focusEditorOnBreak: true },
+    'held',
+  )
+  harness.hide()
+  const abort = new AbortController()
+
+  // Act: the reveal waits for the owner; it is called off; then the owner answers that it gave the keyboard to nobody.
+  const revealed = harness.viewport.reveal(abort.signal)
+  await waitUntil(
+    () => harness.revealsWhenOwnerAsked().length > 0,
+    "the viewport's question to its owner",
+    2_000,
+  )
+  abort.abort(new Error('The presentation was replaced.'))
+  harness.answerOwner(false)
+  const outcome = await revealed.then(
+    () => 'revealed',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(outcome, 'Error: The presentation was replaced.')
+  assert.deepEqual(harness.reveals, [])
+  assert.equal(harness.keyboardTakesAtPause(), 0)
+  harness.viewport.close()
+})
+
+// Value: protects=the Application pane and every placement behind its reveal when the owner's answer about the keyboard never comes (the editor does not answer the chat's focus command): after two seconds the reveal goes on as if the keyboard had been given to nobody, so the pane takes it and says so; fails_when=the wait for the owner has no bound, so one command the editor does not answer holds the reveal and everything queued behind it for good; why_new=Cycle 0046 row 253 (delegated review, finding 6); seam=fake editor with a paused debug session, a lease whose owner never answers, and the faked clock
+test('the Application pane takes the keyboard and tells its owner two seconds after it asked an owner that does not answer, and not before', async (context) => {
+  // Arrange: the debugger opened the paused file in the Application pane's group and focused it; the owner never answers.
+  const harness = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    viewportPanel(),
+    { focusEditorOnBreak: true },
+    'held',
+  )
+  harness.hide()
+  const signal = new AbortController().signal
+  enableFakeClock(context)
+
+  // Act: the reveal asks its owner and waits; 1.9 s pass, then 0.2 s more.
+  const revealed = harness.viewport.reveal(signal)
+  await advanceClock(context, 1_900)
+  const revealsBeforeTheBound = harness.reveals.length
+  await advanceClock(context, 200)
+  const revealsAfterTheBound = [...harness.reveals]
+  // A reveal that still waited would be let go here, so that a run without the bound ends too.
+  harness.answerOwner(false)
+  await advanceClock(context, 0)
+  harness.ready('11111111-1111-1111-1111-111111111111')
+  await advanceClock(context, 100)
+  resetFakeClock(context)
+  await revealed
+
+  // Assert
+  assert.deepEqual(harness.revealsWhenOwnerAsked(), [0])
+  assert.equal(revealsBeforeTheBound, 0)
+  assert.deepEqual(revealsAfterTheBound, [{ preserveFocus: false }])
+  assert.equal(harness.keyboardTakesAtPause(), 1)
+  harness.viewport.close()
+})
 
 for (const [situation, pausedFile] of [
   ['no debug session has stopped yet', undefined],

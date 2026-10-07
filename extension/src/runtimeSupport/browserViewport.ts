@@ -6,11 +6,13 @@ import { clearTimeout, setTimeout } from 'node:timers'
 import * as vscode from 'vscode'
 
 import { MILLISECONDS_PER_SECOND } from '../constants'
+import { settledWithin } from '../utils/settledWithin'
 
 import type { Cdp } from './cdp'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
+  KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
   STREAM_TELEMETRY_INTERVAL_MS,
   VIEWPORT_HEIGHT_PX,
   VIEWPORT_WIDTH_PX,
@@ -444,11 +446,8 @@ export class BrowserViewport {
     if (!this.panel.visible) {
       const takesKeyboard = this.takesKeyboardAtPause()
       // Only an owner that was asked is waited for: every other reveal stays in this turn.
-      this.revealPanel(
-        typeof takesKeyboard === 'boolean'
-          ? takesKeyboard
-          : await takesKeyboard,
-      )
+      if (typeof takesKeyboard === 'boolean') this.revealPanel(takesKeyboard)
+      else await this.revealPanelOnceOwnerAnswered(takesKeyboard, signal)
     }
     this.requestReadiness()
     await waitUntil(
@@ -474,17 +473,52 @@ export class BrowserViewport {
    * @returns
    * - `false` at once when the pane covers no editor the debugger focused.
    * - `true` at once when it does and the lease has no owner to ask.
-   * - Otherwise a promise of whether the owner said that the pane has to take the keyboard; an owner that fails counts as saying so.
+   * - Otherwise a promise of whether the pane has to take the keyboard by the owner's answer ({@link takesKeyboardByOwnersAnswer}); an owner that fails or does not answer in time counts as saying so.
    * @example const takesKeyboard = this.takesKeyboardAtPause()
    */
   private takesKeyboardAtPause(): boolean | Promise<boolean> {
     if (!this.coversEditorFocusedByPause()) return false
     const asked = this.lease?.keepsKeyboardAtPause?.()
     if (!asked) return true
-    return asked.then(
-      (keeps) => !keeps,
-      () => true,
+    return this.takesKeyboardByOwnersAnswer(asked)
+  }
+
+  /**
+   * Waits for the owner's answer about the keyboard, for at most {@link KEYBOARD_OWNER_ANSWER_TIMEOUT_MS}; the step of {@link takesKeyboardAtPause} for a lease whose owner was asked.
+   * @param asked - The owner's pending answer: `true` when the pane is to come without the keyboard.
+   * @returns `false` when the owner answered in time that the pane must not take the keyboard; `true` when it answered that the pane has to take it, when its answer failed, and when no answer came within the bound: the reveal then goes on as if the keyboard had been given to nobody, so that one command the editor does not answer cannot hold the reveal and every placement behind it.
+   * @example return this.takesKeyboardByOwnersAnswer(asked)
+   */
+  private async takesKeyboardByOwnersAnswer(
+    asked: Promise<boolean>,
+  ): Promise<boolean> {
+    let keepsKeyboard = false
+    await settledWithin(
+      asked.then(
+        (keeps) => {
+          keepsKeyboard = keeps
+        },
+        () => undefined,
+      ),
+      KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
     )
+    return !keepsKeyboard
+  }
+
+  /**
+   * Brings the pane to the front once its owner answered about the keyboard, unless the reveal was called off meanwhile; the step of {@link revealNow} for a reveal that had to ask.
+   * @param takesKeyboard - What {@link takesKeyboardAtPause} is waiting for.
+   * @param signal - The reveal's cancellation.
+   * @throws The signal's reason when the reveal was aborted while its owner was asked: the pane then stays as it is, takes no keyboard and tells nothing. "Owned viewport is closed" when the viewport was closed meanwhile.
+   * @example await this.revealPanelOnceOwnerAnswered(takesKeyboard, signal)
+   */
+  private async revealPanelOnceOwnerAnswered(
+    takesKeyboard: Promise<boolean>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const takes = await takesKeyboard
+    signal.throwIfAborted()
+    this.revealPanel(takes)
   }
 
   /**
