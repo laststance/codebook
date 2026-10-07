@@ -17,6 +17,8 @@ export const PRIVATE_FILE_MODE = 0o600
 export const KERNEL_BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
 /** How far the boot time a storage owner recorded may lie before this boot's and still be the same boot. Each is the wall clock minus the uptime, so a clock correction moves it by seconds, while a restart moves it by at least the earlier session's length. */
 export const STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS = 60_000
+/** The largest id a process can have on any system this extension runs on: a process id is a signed 32-bit integer on Linux and macOS (whose own limits are 4194304 and 99998), a Windows id stays far below it, and the system's probe takes no larger number. A recorded id above it names no process ({@link isProcessGone}). */
+export const LARGEST_PROCESS_ID = 2 ** 31 - 1
 /** How long the query for one process's start (`ps` on macOS, PowerShell on Windows) may run before it is ended and the start counts as unreadable. */
 export const PROCESS_START_QUERY_TIMEOUT_MS = 3_000
 /** The most bytes the query for one process's start may print; a longer answer is no start. */
@@ -27,7 +29,7 @@ export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
 export const PROCESS_START_PS_TEXT_MAX_LENGTH = 64
 /** Where the start time (field 22 of `/proc/<pid>/stat`) is among the values that follow the command name's closing parenthesis; the first of them is field 3. */
 export const LINUX_STAT_START_TIME_INDEX = 19
-/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. On Linux the form also names the pid namespace, as `linux@<number>` ({@link processStartFormHere}). Two starts of different forms were read in two spaces of process ids and are never compared ({@link canJudgeOwnerHere}). */
+/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. On Linux the form also names the pid namespace, as `linux@<number>` ({@link processStartFormHere}). Two starts of different forms were read in two spaces of process ids and are never compared, and for a record in a project folder neither are two Linux starts that name no pid namespace ({@link canJudgeOwnerHere}). */
 export const PROCESS_START_FORMS = {
   linux: 'linux',
   darwin: 'ps',
@@ -567,6 +569,8 @@ export const WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS = 300_000
 export const WIKI_UPDATE_MARKER_WRITE_GRACE_MS = 2_000
 /** The mode a Wiki update's marker file is created with: that of any file a project holds, which the process's file mode mask narrows, so a window of another user on a shared project folder can read whose update runs. */
 export const WIKI_UPDATE_MARKER_FILE_MODE = 0o666
+/** The mode the claim folder beside a Wiki update's marker is created with: that of any folder a project holds, which the process's file mode mask narrows. With {@link WIKI_UPDATE_MARKER_FILE_MODE} for the claim file inside it, a window of another user on a shared project folder can judge the claim a killed window left, and remove it where the folder's modes let it write. */
+export const WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE = 0o777
 /** How often the end of a Wiki update asks for the exclusive claim on its marker file before it leaves the marker as it is; another window holds that claim for the time of one read and one removal. */
 export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
 /** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */
@@ -575,8 +579,12 @@ export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
-/** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the chat's first answer (a reply, or a tool call it makes for the request) before the run ends as failed. */
+/** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the first sign that the chat works on it (its reply or its wait for a confirmation, a step of the update the editor reports, a folder the publisher prepares) before the request is taken back and the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
+/** How long a VS Code Wiki update gives each of the two editor commands that start a chat session of its own (the reveal of the chat and New Chat) to return before it sends the request into the session the learner has open. */
+export const WIKI_CHAT_SESSION_START_TIMEOUT_MS = 5_000
+/** How long the withdrawal of an unanswered Wiki update request gives each of the chat's commands to return, and then the hand-over command to return after it; a request the chat removed or stopped ends its hand-over command within milliseconds, so a command still pending after this time is taken as not ended by that step. */
+export const WIKI_CHAT_WITHDRAW_SETTLE_MS = 2_000
 /** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
 export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
 /** What a Wiki update says when it was blocked by a conflict that names no file, so that the learner cannot be told what to move: the reason of the `failed` state {@link WikiUpdateRun} records for a finished update and for a refused start alike. */
@@ -949,6 +957,10 @@ export const MANAGED_PROFILE_SWEEP_LIMIT = 64
 export const MANAGED_PROFILE_REMOVAL_RETRIES = 3
 /** The pause before the first retry of that removal; each further retry waits this much longer. */
 export const MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS = 100
+/** How long the one listing of this machine's processes ({@link listProcesses}: `ps`, PowerShell on Windows) may run before it is ended and counts as failed. It lies above a cold start of PowerShell and below the 20 s a managed run waits for its browser's processes, so a listing that hangs ends inside that wait and inside the run's close. */
+export const PROCESS_LISTING_TIMEOUT_MS = 10_000
+/** The most bytes that listing may print before it is ended and counts as failed. Node.js gives a child 1 MiB unless told otherwise, which some hundred long command lines pass; 64 MiB hold thirty thousand processes with command lines of two thousand bytes each. */
+export const PROCESS_LISTING_MAX_BYTES = 64 * 1024 * 1024
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */

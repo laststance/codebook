@@ -174,21 +174,78 @@ function sequenceSvg(diagram, prefix) {
   return { width, height: y + LAYOUT.margin, content: participants + messages };
 }
 
-/** Replaces exact article slots after verifying each graph's cited source through the page resolver. @example await renderWikiDiagrams(page, resolveReference) */
+/** A comment of authored HTML, also one that never ends: a browser reads everything after its start as comment then. */
+const COMMENT = /<!--[\s\S]*?(?:-->|$)/;
+/** A start tag of authored HTML; a quoted attribute value may hold a `>`. Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
+const START_TAG = /<[A-Za-z][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/;
+/** A comment or a start tag of authored HTML, the two things {@link withAttributeValues} tells apart from text. A comment is passed over whole, so an element inside it is no element of the page. */
+const COMMENT_OR_START_TAG = new RegExp(`${COMMENT.source}|${START_TAG.source}`, 'g');
+/** One attribute of a start tag, read in the order a browser reads them: what stands before its name (spaces, a slash, or nothing after a closing quote), its name, and, when it has a value, its equals sign and the value in double quotes, in single quotes or bare. */
+const ATTRIBUTE = /([\s/]*)([^\s"'<>/=]+)(?:(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+/** A character reference in an attribute value: decimal, hexadecimal, or one of the five named ones an author writes into an address or an id. */
+const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g;
+const NAMED_CHARACTERS = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+/** The character a numeric reference names; the replacement character for a number that names none. Called by {@link attributeText}. @example referencedCharacter('45', 10) // => '-' */
+const referencedCharacter = (digits, radix) => { const codePoint = Number.parseInt(digits, radix); return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '�'; };
+/** Reads an attribute value as a browser does: every character reference becomes its character, so an id or an address written with an entity compares as the text it means. Called by {@link withAttributeValues}. @example attributeText('a&amp;b.html#qa&#45;form') // => 'a&b.html#qa-form' */
+const attributeText = value => value.replace(CHARACTER_REFERENCE, (_reference, decimal, hexadecimal, name) => NAMED_CHARACTERS[name] ?? referencedCharacter(decimal ?? hexadecimal, decimal === undefined ? 16 : 10));
+/** An attribute's value as written, in whichever of the three forms {@link ATTRIBUTE} matched it. Called by {@link withAttributeValues}. @example writtenValue(undefined, 'a', undefined) // => 'a' */
+const writtenValue = (double, single, bare) => double ?? single ?? bare;
+/** The quote an attribute's value stands in, by which of the two quoted forms {@link ATTRIBUTE} matched; none for a bare value. Called by {@link withAttributeValues}. @example quoteOf(undefined, 'a') // => "'" */
+const quoteOf = (double, single) => double !== undefined ? '"' : single !== undefined ? "'" : '';
+/** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped, in the quotes the author used. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
+export const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_START_TAG, markup => {
+  if (markup.startsWith('<!--')) return markup;
+  // The tag's name ends at the first space, slash or closing bracket; what follows are its attributes.
+  const nameEnd = markup.search(/[\s/>]/);
+  return markup.slice(0, nameEnd) + markup.slice(nameEnd).replace(ATTRIBUTE, (attribute, lead, name, equals, double, single, bare) => {
+    // An attribute without a value refers to nothing.
+    if (equals === undefined) return attribute;
+    const text = attributeText(writtenValue(double, single, bare)), rewritten = rewrite(name.toLowerCase(), text);
+    // An unchanged attribute keeps its exact text.
+    return rewritten === text ? attribute : `${lead}${name}${equals}${quoteOf(double, single)}${escapeHtml(rewritten)}${quoteOf(double, single)}`;
+  });
+});
+/** Lists the ids the elements of authored HTML carry, as a browser reads them: from start tags alone, with character references read. Called by {@link renderWikiDiagrams} for the ids a diagram generates, and by the page renderer for a page's outline and for the ids the reader uses itself. @example contentIdsOf('<h2 id="flow">Flow</h2><p id=note>…</p><!-- <p id="old"> --><code>&lt;p id="shown"&gt;</code>') // => Set { 'flow', 'note' } */
+export const contentIdsOf = html => {
+  const ids = new Set();
+  withAttributeValues(html, (name, value) => { if (name === 'id') ids.add(value); return value; });
+  return ids;
+};
+/** An empty figure slot of a diagram as the agent writes it into a page's content; the second group is the diagram's id. */
+const SLOT = /<figure\s+data-codebook-diagram=(["'])([A-Za-z][\w-]{0,63})\1\s*>\s*<\/figure>/;
+/** A comment, a slot or any other start tag, tried in that order at each `<` of authored HTML: the text of a slot inside a comment or inside another tag's quoted attribute value belongs to that comment or tag and is no slot. */
+const COMMENT_SLOT_OR_START_TAG = new RegExp(`${COMMENT.source}|${SLOT.source}|${START_TAG.source}`, 'g');
+/** Whether a piece of markup is a comment that holds the start of a slot. Called by {@link diagramSlotsOf}. @example isCommentedSlot('<!-- <figure data-codebook-diagram="old"></figure> -->') // => true */
+const isCommentedSlot = markup => markup.startsWith('<!--') && /<figure\s+data-codebook-diagram\s*=/.test(markup);
+/** Reads the diagram slots of a page's content: the ids of the empty figure slots that are elements of the page, and whether a comment holds the start of one. Called by {@link renderWikiDiagrams}. @example diagramSlotsOf('<figure data-codebook-diagram="flow"></figure><!-- <figure data-codebook-diagram="old"></figure> -->') // => { slots: ['flow'], hasCommentedSlot: true } */
+const diagramSlotsOf = contentHtml => {
+  const markup = [...contentHtml.matchAll(COMMENT_SLOT_OR_START_TAG)];
+  // A match that is a slot carries the slot's id as its second group.
+  return { slots: markup.map(([, , id]) => id).filter(id => id !== undefined), hasCommentedSlot: markup.some(([text]) => isCommentedSlot(text)) };
+};
+/** Counts the elements of a page's content that carry the slot attribute with a value, whatever element and whatever value: more of them than slots means a slot that is not an empty figure. A comment that shows such an element and an attribute value that mentions it are not counted. Called by {@link renderWikiDiagrams}. @example slotAttributeCountOf('<figure data-codebook-diagram="flow">Old graph</figure>') // => 1 */
+const slotAttributeCountOf = contentHtml => {
+  let count = 0;
+  withAttributeValues(contentHtml, (name, value) => { if (name === 'data-codebook-diagram') count += 1; return value; });
+  return count;
+};
+/** Replaces exact article slots after verifying each graph's cited source through the page resolver. The slots, the elements that carry the slot attribute and the ids of the content are read from the content's start tags, never from its text or its comments. @example await renderWikiDiagrams(page, resolveReference) */
 export async function renderWikiDiagrams(page, resolveReference) {
   const diagrams = page.diagrams ?? [];
   if (!Array.isArray(diagrams) || diagrams.length > LIMITS.diagrams) throw new Error('A Wiki page supports at most 24 diagrams.');
-  // A commented slot would pass string matching but hide its generated figure from the learner.
-  if ([...page.contentHtml.matchAll(/<!--[\s\S]*?-->/g)].some(comment => /<figure\s+data-codebook-diagram\s*=/.test(comment[0]))) throw new Error('Diagram figure slots must not be inside HTML comments.');
-  const slots = [...page.contentHtml.matchAll(/<figure\s+data-codebook-diagram=(["'])([A-Za-z][\w-]{0,63})\1\s*>\s*<\/figure>/g)];
-  if ((page.contentHtml.match(/<[A-Za-z][^>]*\sdata-codebook-diagram\s*=/g) ?? []).length !== slots.length || slots.length !== diagrams.length) throw new Error('Every diagram needs exactly one empty figure slot.');
-  const ids = new Set(), rendered = new Map();
+  const { slots, hasCommentedSlot } = diagramSlotsOf(page.contentHtml);
+  // A commented slot would hide its generated figure from the learner, also in a comment that never ends.
+  if (hasCommentedSlot) throw new Error('Diagram figure slots must not be inside HTML comments.');
+  if (slotAttributeCountOf(page.contentHtml) !== slots.length || slots.length !== diagrams.length) throw new Error('Every diagram needs exactly one empty figure slot.');
+  // The ids the elements of the content really carry: an id a code example or a comment only shows collides with nothing.
+  const ids = new Set(), rendered = new Map(), contentIds = [...contentIdsOf(page.contentHtml)];
   for (const diagram of diagrams) {
     const nodes = validateDiagram(diagram);
-    if (ids.has(diagram.id) || slots.filter(slot => slot[2] === diagram.id).length !== 1) throw new Error('Diagram IDs and slots must match exactly once.');
+    if (ids.has(diagram.id) || slots.filter(slot => slot === diagram.id).length !== 1) throw new Error('Diagram IDs and slots must match exactly once.');
     ids.add(diagram.id);
     const prefix = `codebook-diagram-${diagram.id.length}-${diagram.id}`;
-    if (new RegExp(`\\sid\\s*=\\s*["']${prefix}(?:["'-])`).test(page.contentHtml)) throw new Error('Article IDs must not collide with generated diagram IDs.');
+    if (contentIds.some(id => id === prefix || id.startsWith(`${prefix}-`))) throw new Error('Article IDs must not collide with generated diagram IDs.');
     const evidence = [];
     for (const element of [...diagram.nodes, ...diagram.edges]) {
       const links = [];
@@ -200,5 +257,5 @@ export async function renderWikiDiagrams(page, resolveReference) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${graph.width}" height="${graph.height}" viewBox="0 0 ${graph.width} ${graph.height}" role="img" aria-labelledby="${prefix}-title"><title id="${prefix}-title">${escapeHtml(diagram.title)}</title><defs><marker id="${prefix}-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker></defs>${graph.content}</svg>`;
     rendered.set(diagram.id, `<figure class="codebook-diagram" id="${prefix}"><div class="diagram-canvas" tabindex="0" role="region" aria-label="${escapeHtml(diagram.title)}">${svg}</div><figcaption>${escapeHtml(diagram.caption)}</figcaption><details><summary>Diagram relationships and sources</summary><ul>${evidence.join('')}</ul></details></figure>`);
   }
-  return page.contentHtml.replace(/<figure\s+data-codebook-diagram=(["'])([A-Za-z][\w-]{0,63})\1\s*>\s*<\/figure>/g, (_slot, _quote, id) => rendered.get(id));
+  return page.contentHtml.replace(COMMENT_SLOT_OR_START_TAG, (markup, _quote, id) => id === undefined ? markup : rendered.get(id));
 }

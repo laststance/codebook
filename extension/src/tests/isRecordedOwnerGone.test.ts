@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -92,11 +91,10 @@ test('a real running process recorded with its start is not gone when the clock 
   assert.equal(isGone, false)
 })
 
-// Value: protects=a killed holder's reused pid is not taken for it; fails_when=the start is not compared, so a lock or claim stays for as long as any process has its owner's id (Cycle 0046 row 2, LK-F1); why_new=the judgement by the process start is new; seam=the injected start reader, then none (real child processes)
+// Value: protects=a killed holder's reused pid is not taken for it; fails_when=the start is not compared, so a lock or claim stays for as long as any process has its owner's id (Cycle 0046 row 2, LK-F1); why_new=the judgement by the process start is new; seam=the injected start reader, then none (a real child process, and an id no process has)
 test('an owner whose pid is used by another process is gone, and so is one whose process has ended', async (context) => {
-  // Arrange: a record of a killed window whose id a live process of this test has now, and a record of a process that has ended.
+  // Arrange: a record of a killed window whose id a live process of this test has now, and a record of a process that has ended: its id is one no process has. The id of a child that just exited would not do, because the system may give it to another process before the judgement asks.
   const processWithTheReusedId = await idleChild(context)
-  const ended = spawnSync(process.execPath, ['-e', ''])
   const identity = { hostname: 'workstation', boot: { id: 'boot-1' } }
   const startsAsked: number[] = []
   // Act
@@ -125,7 +123,7 @@ test('an owner whose pid is used by another process is gone, and so is one whose
   )
   const isEndedProcessGone = await isRecordedOwnerGone(
     {
-      pid: ended.pid,
+      pid: ID_OF_NO_PROCESS,
       hostname: 'workstation',
       boot: { id: 'boot-1' },
       processStart: startOfKilledWindow(),
@@ -266,21 +264,21 @@ test('an owner whose start has another system’s form is never gone here, altho
 
 // Value: protects=the takeover of what a killed window of this system left in a project folder: a record that names its machine by digests and its start in this system's form is still judged by its process id; fails_when=every record that matches by a digest counts as one that cannot be probed here, so a killed window's marker or claim is never called gone (Cycle 0046 row 58, the other side of the rule); why_new=the rule of the process space is new; seam=the injected identity of a Linux window
 test('an owner whose start has this system’s form and whose process id names no process is gone', async () => {
-  // Arrange: the same record as a Linux window of this computer wrote it; no process has its process id.
+  // Arrange: the same record as a Linux window of this computer and of this pid namespace wrote it, without a kernel boot id; no process has its process id.
   // Act
   const isGone = await isRecordedOwnerGone(
     {
       pid: ID_OF_NO_PROCESS,
       machineKey: '1fb1404a9738d5ed',
       hostKey: 'd195d36bd79da7df',
-      processStart: 'linux:100',
+      processStart: 'linux@4026531836:100',
     },
     {
       hostname: 'workstation',
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-of-the-linux-kernel' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     },
   )
   // Assert
@@ -560,6 +558,33 @@ test('the update marker of a window whose process start could not be read counts
   })
 })
 
+// Value: protects=the Update button on a Wiki whose repository carries an update marker with a process id no system can have ("pid": 4294967295, as a marker of 0.2.29.0 without digests), and a storage lock or claim that records such an id; fails_when=the id is answered as a process that may still run, because the system's probe refuses the number itself, so the marker refuses every start until the run's longest time has passed (about 21 minutes) and the lock is never taken over (Cycle 0046 row 180); why_new=no record test had an id above the largest a system has; seam=the clock handed to the look
+test('an update marker and an owner record that name the process id 4294967295, which no system can have, are nobody’s at once', async (context) => {
+  // Arrange: a marker as 0.2.29.0 writes it, without digests, whose run has just begun; and a lock's owner record of this machine as 0.2.29.0 writes it.
+  const wiki = await wikiFolder(context)
+  await writeFile(
+    wiki.markerPath,
+    '{"pid":4294967295,"windowId":"window-of-the-repository","host":"cursor","startedAtMs":1790000000000}',
+  )
+  // Act
+  const look = await readLiveWikiUpdateMarker(
+    wiki.outputDirectory,
+    'own-window',
+    {
+      identity: WINDOW_IN_NAMESPACE_4026531836,
+      readStart: async () => undefined,
+      nowMs: 1_790_000_001_000,
+    },
+  )
+  const isOwnerOfTheRecordGone = await isRecordedOwnerGone(
+    { pid: 4_294_967_295, hostname: 'workstation' },
+    WINDOW_IN_NAMESPACE_4026531836,
+  )
+  // Assert
+  assert.deepEqual(look, { kind: 'unowned' })
+  assert.equal(isOwnerOfTheRecordGone, true)
+})
+
 // Value: protects=the claim a live Windows window whose process start could not be read holds on the update marker while it removes or replaces it, beside a WSL window on the same project folder; fails_when=the claim, which names its machine by digests and no start, is judged by a probe of its process id in the WSL window's space and removed at once, so two windows change the marker at the same time (Cycle 0046 row 103); and it must still go after 60 s, or a killed window's claim would keep a stale marker for good; why_new=no claim test had digests without a start; seam=the claim file's modification time, the injected identity and the clock handed to the claim
 test('a claim on the update marker of a window whose process start could not be read keeps the marker in place for 60 s and is removed after that, although no process has its process id here', async (context) => {
   // Arrange: a killed editor's marker (a marker of 0.2.29.0, whose process no longer exists), and a claim on it that names its machine by digests and no process start, last written at the fixed time.
@@ -627,6 +652,51 @@ test('a claim on the update marker of a window whose process start could not be 
     claims: 'no claim folder',
     markerOfWindow: 'window-a',
   })
+})
+
+// Value: protects=the Wiki update marker of a live window in another pid namespace of one computer where neither window can read its own pid namespace (their Linux starts have one form, `linux`); fails_when=two Linux forms without a namespace count as one space of process ids, so the marker is probed here, no process has its id in this space, and its live owner is called gone (Cycle 0046 row 145); why_new=rows 65 and 103 left the case where neither side names a namespace; seam=the injected identity of a Linux window without its namespace and the start reader, which must not be asked for the record of a project folder
+test('an owner that names its machine by digests alone and a Linux start without a pid namespace is never gone for a window that names no namespace either, and the same record with its host name in clear is gone as before', async () => {
+  // Arrange: a Linux window that could not read its own pid namespace, and a record of this computer under the same kernel boot whose start names no namespace either; no process has its process id here.
+  const windowWithoutItsNamespace = {
+    hostname: 'workstation',
+    machineKey: 'f9c8c7ddcf3d5f56',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-shared-kernel' },
+    processStart: 'linux:16362446',
+  }
+  const recordWithoutANamespace = {
+    pid: ID_OF_NO_PROCESS,
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-shared-kernel' },
+    processStart: 'linux:100',
+  }
+  const startsAsked: number[] = []
+  const readStart = async (pid: number): Promise<string> => {
+    startsAsked.push(pid)
+    return 'linux:200'
+  }
+  // Act
+  const isGoneInAProjectFolder = await isRecordedOwnerGone(
+    recordWithoutANamespace,
+    windowWithoutItsNamespace,
+    readStart,
+  )
+  const isGoneWhileAnotherProcessHasItsId = await isRecordedOwnerGone(
+    { ...recordWithoutANamespace, pid: process.pid },
+    windowWithoutItsNamespace,
+    readStart,
+  )
+  const isGoneInPrivateStorage = await isRecordedOwnerGone(
+    { ...recordWithoutANamespace, hostname: 'workstation' },
+    windowWithoutItsNamespace,
+    readStart,
+  )
+  // Assert
+  assert.equal(isGoneInAProjectFolder, false)
+  assert.equal(isGoneWhileAnotherProcessHasItsId, false)
+  assert.equal(isGoneInPrivateStorage, true)
+  assert.deepEqual(startsAsked, [])
 })
 
 // Value: protects=a record names its owner's start to the reader, which lets a start kept by a sweep confirm it; fails_when=the judgement asks without the recorded start, so a sweep's kept start is never used or, worse, is trusted for a start it does not equal; why_new=the cache rule is new (ER-12); seam=the injected start reader

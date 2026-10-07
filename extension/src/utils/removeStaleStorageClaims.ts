@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path'
 
 import { isLeftEmpty } from './isLeftEmpty'
 import { isStaleStorageLock } from './isStaleStorageLock'
+import { listPlacedClaims } from './listPlacedClaims'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { StorageOwnerIdentity } from './readRecordedOwner'
 
@@ -12,7 +13,7 @@ type LeftoverJudgement = {
   readStart: ProcessStartReader
 }
 
-/** Removes one owner file, a placed claim or a prepared lock, when its owner is gone ({@link isStaleStorageLock}); a file that cannot be removed stays for the next writer. @example await removeStaleOwnerFile('/storage/learning/writer.lock.pending-4f2c', judgement) */
+/** Removes one owner file, a placed claim or a prepared lock, when its owner is gone ({@link isStaleStorageLock}); a file that cannot be removed stays for the next sweep. @example await removeStaleOwnerFile('/storage/learning/writer.lock.pending-4f2c', judgement) */
 async function removeStaleOwnerFile(
   path: string,
   { identity, readStart }: LeftoverJudgement,
@@ -34,12 +35,12 @@ async function removeStalePreparedClaim(
     await rm(path, { recursive: true, force: true }).catch(() => undefined)
 }
 
-/** Removes the stale claims inside the claim directory `<lock>.takeover`, one owner file each. @example await removeStalePlacedClaims('/storage/learning/writer.lock.takeover', judgement) */
+/** Removes the stale claims inside the claim directory `<lock>.takeover`, one owner file each; a link or a file at that path is no claim directory and is removed by its own name, never listed ({@link listPlacedClaims}). @example await removeStalePlacedClaims('/storage/learning/writer.lock.takeover', judgement) */
 async function removeStalePlacedClaims(
   claimDirectory: string,
   judgement: LeftoverJudgement,
 ): Promise<void> {
-  for (const claimName of await readdir(claimDirectory).catch(() => []))
+  for (const claimName of await listPlacedClaims(claimDirectory))
     await removeStaleOwnerFile(join(claimDirectory, claimName), judgement)
 }
 
@@ -65,13 +66,13 @@ async function removeStalePreparations(
 }
 
 /**
- * Removes what windows that were killed in the middle of taking a storage lock left beside it, so that such a leftover neither keeps a stale lock in place nor stays in the storage for good; called by {@link claimStorageLockTakeover} before it places its own claim, and by {@link withStorageLock} each time it holds the lock.
+ * Removes what windows that were killed in the middle of taking a storage lock left beside it, so that such a leftover neither keeps a stale lock in place nor stays in the storage for good; called by {@link claimStorageLockTakeover} before it places its own claim (for a storage lock and for a Wiki update's marker), and by {@link withStorageLock} while it holds the lock: at this process's first hold of a storage directory and after each acquisition that met a lock in the way, never at later uncontended holds.
  * Three kinds are removed, each by its own unique name, which can never remove what a running window made meanwhile:
  * a claim inside `<lock>.takeover` whose owner is gone, also one whose process id another process has now ({@link isRecordedOwnerGone}); a claim prepared as `<lock>.takeover-<name>` and never renamed into place, whose owner file is stale or which stayed empty; and a lock prepared as `<lock>.pending-<name>` and never linked, judged the same way ({@link placeStorageLock}).
  * @param lockPath - The `writer.lock` file the leftovers belong to.
  * @param identity - The machine and the boot of this process, by which each leftover's owner is judged ({@link isStaleStorageLock}).
  * @param readStart - Reads the start of the process that has a leftover's process id now; {@link readProcessStart} unless a test names its own. This call adds one cache of its own to it, so several leftovers of one running window cost one read; a kept start never calls an owner gone.
- * @returns After every stale leftover that could be removed is gone; one that cannot be removed stays and is tried again by the next writer.
+ * @returns After every stale leftover that could be removed is gone; one that cannot be removed stays and is tried again at the next sweep: the next takeover claim on this lock by any window, or the next hold of a process that sweeps (its first of the directory, or one that met a lock in the way).
  * @example
  * await removeStaleStorageClaims('/storage/learning/writer.lock', await currentStorageOwner())
  * // removes /storage/learning/writer.lock.takeover-4f2c… of a window that was killed before its rename

@@ -16,6 +16,7 @@ on:
     paths: &lock-test-paths
       - .github/workflows/storage-locks-windows.yml
       - .node-version
+      - extension/src/runtimeSupport/utils/listProcesses.ts
       - extension/src/runtimeSupport/utils/sha256.ts
       - extension/src/tests/canJudgeOwnerHere.test.ts
       - extension/src/tests/claimWikiUpdateMarker.test.ts
@@ -25,6 +26,7 @@ on:
       - extension/src/tests/isProcessGone.test.ts
       - extension/src/tests/isRecordedOwnerGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
+      - extension/src/tests/listProcesses.test.ts
       - extension/src/tests/namesMachineInClear.test.ts
       - extension/src/tests/openWithoutFollowing.test.ts
       - extension/src/tests/processStartFormHere.test.ts
@@ -41,9 +43,11 @@ on:
       - extension/src/tests/utils/fileSystemWithLargeFileIds.ts
       - extension/src/tests/utils/idOfNoProcess.ts
       - extension/src/tests/utils/idleChild.ts
+      - extension/src/tests/utils/isFileIdExactAsANumber.ts
       - extension/src/tests/utils/loadModule.ts
       - extension/src/tests/utils/loadOpenWithoutFollowing.ts
       - extension/src/tests/utils/realProcessStart.ts
+      - extension/src/tests/utils/standInForPs.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
       - extension/src/tests/withStorageLock.test.ts
       - extension/src/utils/atomicPrivateBytes.ts
@@ -62,6 +66,7 @@ on:
       - extension/src/utils/isSameFileId.ts
       - extension/src/utils/isSameStorageMachine.ts
       - extension/src/utils/isStaleStorageLock.ts
+      - extension/src/utils/listPlacedClaims.ts
       - extension/src/utils/modifiedAtMsOf.ts
       - extension/src/utils/namesMachineInClear.ts
       - extension/src/utils/openWithoutFollowing.ts
@@ -122,6 +127,9 @@ jobs:
         working-directory: extension
         run: node scripts/build-fast.mjs
 
+      # One test file at a time: these tests start PowerShell and read real process starts, which the product bounds at
+      # 3 s, and on a runner that runs several files side by side such a read went past that bound (run 37321685601). The
+      # files' times then add up instead of running beside each other, which is seconds for this job.
       - name: Run the storage lock tests
         working-directory: extension
-        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js
+        run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js

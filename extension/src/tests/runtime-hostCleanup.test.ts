@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import fsPromises, {
   readFile,
   mkdir,
@@ -13,11 +12,16 @@ import { createRequire } from 'node:module'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
+import {
+  setImmediate as nextEventLoopTurn,
+  setTimeout as delay,
+} from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 
 import type * as HostModule from '../runtimeSupport/hostBrowser'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 
 /** Loads the compiled adapter with controlled non-cancellable editor calls for cleanup regressions; the adapter's lazy import of its viewport module is answered by the same `require` as its other modules, so a managed launch can get a stand-in. @example await loadHostBrowser(editorStub) */
 async function loadHostBrowser(
@@ -69,6 +73,7 @@ async function loadHostBrowser(
  * @param options.onEvent - Called with the type of every journal entry as it is recorded, for a test that cancels at one.
  * @param options.removeFolder - Stands in for the adapter's folder removal; the real one by default.
  * @param options.removeAbandonedProfiles - Stands in for the sweep of the profile folders a killed editor left; the real one by default.
+ * @param options.currentStorageOwner - Stands in for the read of this process's machine, boot and start, for a test that holds it; the real one by default.
  * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and no process is found.
  * @example
  * const managed = await managedBrowser(context)
@@ -81,6 +86,7 @@ async function managedBrowser(
     onEvent?: (type: string) => void
     removeFolder?: typeof rm
     removeAbandonedProfiles?: (root: string) => Promise<string[]>
+    currentStorageOwner?: () => Promise<{ hostname: string }>
   } = {},
 ) {
   const root = await realpath(
@@ -115,6 +121,11 @@ async function managedBrowser(
       ...(options.removeAbandonedProfiles && {
         './utils/removeAbandonedProfiles': {
           removeAbandonedProfiles: options.removeAbandonedProfiles,
+        },
+      }),
+      ...(options.currentStorageOwner && {
+        '../utils/currentStorageOwner': {
+          currentStorageOwner: options.currentStorageOwner,
         },
       }),
     },
@@ -577,7 +588,7 @@ test('closing a managed browser again after its profile folder was removed succe
 
 // Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
-  // Arrange: three folders lie in the profile root when the next run starts.
+  // Arrange: three folders lie in the profile root when the next run starts. The killed editor's marker names an id no process can have: the id of a child that just exited could be given to another process before the sweep judges it.
   const cancellation = new AbortController()
   const managed = await managedBrowser(context, {
     onEvent: (type) => {
@@ -585,7 +596,6 @@ test('a marked profile folder whose editor was killed is removed by the next run
         cancellation.abort(new Error('run cancelled'))
     },
   })
-  const killedEditor = spawnSync(process.execPath, ['-e', ''])
   const ofKilledEditor = join(managed.root, 'codebook-browser-killed'),
     ofRunningEditor = join(managed.root, 'codebook-browser-running'),
     withoutMarker = join(managed.root, 'codebook-browser-unmarked')
@@ -595,7 +605,7 @@ test('a marked profile folder whose editor was killed is removed by the next run
   }
   await writeFile(
     join(ofKilledEditor, 'codebook-owner.json'),
-    JSON.stringify({ pid: killedEditor.pid, hostname: hostname() }),
+    JSON.stringify({ pid: ID_OF_NO_PROCESS, hostname: hostname() }),
   )
   await writeFile(
     join(ofRunningEditor, 'codebook-owner.json'),
@@ -640,37 +650,46 @@ test('a marked profile folder whose editor was killed is removed by the next run
   )
 })
 
-// Value: protects=the first run after crashes starts its browser without waiting for the removal of the profile folders killed editors left (Cycle 0045 review PL-6); fails_when=the launch awaits the sweep, or the run's close does not wait for it, so the sweep outlives the run; why_new=the sweep was awaited inside the launch until Cycle 0046; seam=the sweep, which the test holds until it releases it
+// Value: protects=the first run after crashes starts its browser without waiting for the removal of the profile folders killed editors left (Cycle 0045 review PL-6); fails_when=the launch awaits the sweep (the awaited launch then never ends and the test runs into its time limit), or the run's close does not wait for it, so the sweep outlives the run; why_new=the sweep was awaited inside the launch until Cycle 0046, and the first form of this test decided both claims by races against the wall clock (Cycle 0046 row 97); seam=the sweep, which the test holds until it releases it, the adapter's folder removal, which only notes the folder, and the journal, whose entry for the verified browser exit says that the close has reached its wait for the sweep
 test('a managed launch starts its debugger while the sweep of abandoned profile folders still runs, and the run’s close waits for that sweep', async (context) => {
-  // Arrange: a sweep that ends only when the test releases it.
+  // Arrange: a sweep that ends only when the test releases it. The removal of the run's own folder does no file work, so a close that did not wait for the sweep would end without leaving its turn of the event loop.
   let releaseSweep!: (removed: string[]) => void
   const sweep = new Promise<string[]>((resolve) => {
     releaseSweep = resolve
   })
+  let reportBrowserExitVerified!: () => void
+  const browserExitVerified = new Promise<void>((resolve) => {
+    reportBrowserExitVerified = resolve
+  })
   const managed = await managedBrowser(context, {
     removeAbandonedProfiles: () => sweep,
+    removeFolder: async () => undefined,
+    onEvent: (type) => {
+      if (type === 'browser.managed-exit-verified') reportBrowserExitVerified()
+    },
   })
-  // Act
-  const launch = await Promise.race([
-    managed.browser
-      .launch(
-        { type: 'editor-browser', name: 'owned', request: 'launch' },
-        new AbortController().signal,
-      )
-      .then(() => 'debugger started'),
-    delay(1_000).then(() => 'waiting for the sweep'),
-  ])
-  const closing = managed.browser.close().then(() => 'closed')
-  const closeBeforeSweepEnded = await Promise.race([
-    closing,
-    delay(100).then(() => 'waiting for the sweep'),
-  ])
+  // Act: the launch is awaited while the sweep is held. The close is started and followed up to the step before its wait for the sweep, and then for one more turn of the event loop.
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const journalAfterLaunch = managed.events.map((event) => event.type)
+  let hasCloseSettled = false
+  const closing = managed.browser.close().then(() => {
+    hasCloseSettled = true
+  })
+  await browserExitVerified
+  await nextEventLoopTurn()
+  const hadCloseSettledBeforeSweepEnded = hasCloseSettled
   releaseSweep(['/profile-root/codebook-browser-killed'])
-  const closeAfterSweepEnded = await closing
+  await closing
   // Assert
-  assert.equal(launch, 'debugger started')
-  assert.equal(closeBeforeSweepEnded, 'waiting for the sweep')
-  assert.equal(closeAfterSweepEnded, 'closed')
+  assert.deepEqual(journalAfterLaunch, [
+    'browser.managed-profile',
+    'host.debugger-started',
+  ])
+  assert.equal(hadCloseSettledBeforeSweepEnded, false)
+  assert.equal(hasCloseSettled, true)
   assert.deepEqual(
     managed.events.map((event) => event.type),
     [
@@ -678,6 +697,102 @@ test('a managed launch starts its debugger while the sweep of abandoned profile 
       'host.debugger-started',
       'browser.managed-exit-verified',
       'browser.abandoned-profiles-removed',
+      'browser.managed-profile-removed',
+      'browser.cleanup-verified',
+    ],
+  )
+})
+
+// Value: protects=a managed launch that was cancelled while it read its owner removes no folder of a killed editor; fails_when=the sweep is started before the launch looks at its signal again, so a cancelled launch still starts up to 64 folder removals (Cycle 0046 row 98); why_new=no test cancelled a launch before its sweep; seam=the read of the storage owner, which the test holds, and the sweep, which counts its starts
+test('a managed launch cancelled while it reads its owner starts no sweep of abandoned profile folders', async (context) => {
+  // Arrange: the read of the owner ends only when the test releases it.
+  let releaseOwner!: (owner: { hostname: string }) => void
+  const ownerRead = new Promise<{ hostname: string }>((resolve) => {
+    releaseOwner = resolve
+  })
+  let reportOwnerAsked!: () => void
+  const ownerAsked = new Promise<void>((resolve) => {
+    reportOwnerAsked = resolve
+  })
+  let sweepsStarted = 0
+  const managed = await managedBrowser(context, {
+    currentStorageOwner: () => {
+      reportOwnerAsked()
+      return ownerRead
+    },
+    removeAbandonedProfiles: async () => {
+      sweepsStarted += 1
+      return []
+    },
+  })
+  const cancellation = new AbortController()
+  // Act: the run is cancelled while the launch waits for its owner.
+  const launch = managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      cancellation.signal,
+    )
+    .then(
+      () => 'launched',
+      (error: unknown) => String(error),
+    )
+  await ownerAsked
+  cancellation.abort(new Error('run cancelled'))
+  releaseOwner({ hostname: hostname() })
+  const launchOutcome = await launch
+  await managed.browser.close()
+  // Assert
+  assert.equal(launchOutcome, 'Error: run cancelled')
+  assert.equal(sweepsStarted, 0)
+  assert.deepEqual(
+    managed.events.map((event) => event.type),
+    ['browser.cleanup-verified'],
+  )
+})
+
+// Value: protects=no sweep of abandoned profile folders outlives the close of its run; fails_when=a launch that reaches its sweep after the browser's close ran starts one, which no close waits for any more (Cycle 0046 row 98); why_new=no test closed a browser before its launch reached the sweep; seam=the read of the storage owner, which the test holds, and the sweep, which counts its starts
+test('a managed browser that was closed before its launch reached the sweep of abandoned profile folders starts none', async (context) => {
+  // Arrange: the read of the owner ends only when the test releases it.
+  let releaseOwner!: (owner: { hostname: string }) => void
+  const ownerRead = new Promise<{ hostname: string }>((resolve) => {
+    releaseOwner = resolve
+  })
+  let reportOwnerAsked!: () => void
+  const ownerAsked = new Promise<void>((resolve) => {
+    reportOwnerAsked = resolve
+  })
+  let sweepsStarted = 0
+  const managed = await managedBrowser(context, {
+    currentStorageOwner: () => {
+      reportOwnerAsked()
+      return ownerRead
+    },
+    removeAbandonedProfiles: async () => {
+      sweepsStarted += 1
+      return []
+    },
+  })
+  // Act: the browser is closed while its launch, which nothing cancelled, waits for its owner; the launch then goes on, and a second close removes what it created.
+  const launch = managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  await ownerAsked
+  await managed.browser.close()
+  releaseOwner({ hostname: hostname() })
+  await launch
+  const profile = profileOf(managed.events)
+  await managed.browser.close()
+  // Assert
+  assert.equal(sweepsStarted, 0)
+  assert.equal(await exists(profile), false)
+  assert.deepEqual(
+    managed.events.map((event) => event.type),
+    [
+      'browser.cleanup-verified',
+      'browser.managed-profile',
+      'host.debugger-started',
+      'browser.managed-exit-verified',
       'browser.managed-profile-removed',
       'browser.cleanup-verified',
     ],

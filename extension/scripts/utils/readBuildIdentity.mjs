@@ -1,27 +1,16 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { lstat, readFile, readdir } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
-import {
-  BUILD_PACKAGES,
-  PACKAGE_COMMAND_OUTPUT_BYTES,
-  PACKAGE_COMMAND_TIMEOUT_MS,
-} from './packageConstants.mjs'
+import { listCheckoutChanges } from './listCheckoutChanges.mjs'
+import { BUILD_PACKAGES } from './packageConstants.mjs'
+import { packageGitOptions } from './packageGitOptions.mjs'
 
 /** Captures source provenance for metadata and {@link buildPackage}; the final check excludes only its owned untracked scratch. @example await readBuildIdentity(repository) // { revision, dirty, sourceHash, sourceHashes } */
 export async function readBuildIdentity(repository, ownedScratchDirectory) {
   // Ignore ambient Git overrides and replacement objects: recorded revisions must name their stored source tree.
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
-  )
-  const gitOptions = {
-    cwd: repository,
-    env: environment,
-    encoding: 'utf8',
-    timeout: PACKAGE_COMMAND_TIMEOUT_MS,
-    maxBuffer: PACKAGE_COMMAND_OUTPUT_BYTES,
-  }
+  const gitOptions = packageGitOptions(repository)
   const revision = execFileSync(
     'git',
     ['--no-replace-objects', 'rev-parse', 'HEAD'],
@@ -112,36 +101,10 @@ export async function readBuildIdentity(repository, ownedScratchDirectory) {
     )
       selectedInputsDifferFromHead = true
   }
-  // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.
-  const scratchPrefix =
-    ownedScratchDirectory === undefined
-      ? undefined
-      : `?? ${relative(
-          await realpath(repository),
-          await realpath(ownedScratchDirectory),
-        )
-          .split('\\')
-          .join('/')}/`
-  // Reading provenance must not refresh the index or leave an optional write lock after interruption.
-  const status = execFileSync(
-    'git',
-    [
-      '--no-optional-locks',
-      '--no-replace-objects',
-      'status',
-      '--porcelain=v1',
-      '-z',
-      '--untracked-files=all',
-    ],
-    gitOptions,
-  )
+  // Tracked changes and untracked files anywhere in the repository count, except this publication's own scratch.
   const dirty =
     selectedInputsDifferFromHead ||
-    status
-      .split('\0')
-      .some(
-        (entry) => entry && !(scratchPrefix && entry.startsWith(scratchPrefix)),
-      )
+    (await listCheckoutChanges(repository, ownedScratchDirectory)).length > 0
   return {
     revision,
     dirty,

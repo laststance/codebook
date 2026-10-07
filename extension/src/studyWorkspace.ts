@@ -6586,7 +6586,8 @@ export class StudyWorkspace {
         this.library.directory,
         key,
         () => this.library!.storageLimit(),
-        async () => (await this.library!.list()).length,
+        // The saved studies as the library's own admission counts them: what is left of a study without its archive is listed and takes no place.
+        () => this.library!.savedStudyCount(),
       )
       // An unreadable Node history store stays visible without blocking browser studies, progress or playback.
       this.nodeHistoryCatalog = await this.nodeHistoryStore
