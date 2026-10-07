@@ -13,9 +13,9 @@ const OPEN_ENTRY_WITHOUT_TARGET =
 /** A comment or a start tag of a page: what {@link withEditorSchemeInLinks} tells apart from the page's text. A comment is passed over whole, up to what a browser takes for its end (`-->`, `--!>`, or at once for `<!-->` and `<!--->`); a start tag is where the address of a link stands, read up to the `>` that ends it as a browser reads it: a quoted attribute value in it may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). An escaped code example holds no `<` before a letter, so it is text. */
 const COMMENT_OR_START_TAG =
   /<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g
-/** The start of a Codebook address in the `href` of a start tag, with the scheme of either editor; the third group is the action the address names. */
+/** The start of a Codebook address in the `href` of a start tag, with the scheme of either editor; the third group is the action the address names. The attribute stands after one of the five characters a browser separates attributes at (tab, line feed, form feed, carriage return, space): another white space of JavaScript, a no-break space for example, is a letter of the tag for a browser. */
 const CODEBOOK_ADDRESS_START =
-  /(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g
+  /([\t\n\f\r ])href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g
 
 /**
  * Gives every Codebook address a link of the page opens the scheme of the editor that serves the page; called by {@link rebindDeepWikiEditorLinks} first.
@@ -54,7 +54,7 @@ function withEditorSchemeInLinks(
  */
 function publishedQueryOf(linkAttributes: string): URLSearchParams {
   const address = unescapeHtml(
-    /(?:^|\s)href=(["'])(.*?)\1/.exec(linkAttributes)?.[2] ?? '',
+    /(?:^|[\t\n\f\r ])href=(["'])(.*?)\1/.exec(linkAttributes)?.[2] ?? '',
   )
   const queryStart = address.indexOf('?')
   // What follows the first question mark is the query; an address without one names no parameter this entry reads.

@@ -474,6 +474,24 @@ test('a link after a bare attribute value that holds <!-- gets the scheme of the
   )
 })
 
+// Value: protects=the reader and a browser reading the same thing as a link's address; fails_when=the reader takes a character for a separator inside a tag that a browser does not (a no-break space is white space for JavaScript and a letter of the tag's name for a browser), and rewrites an address in what a browser reads as no link; why_new=Cycle 0046 row 276: the publisher separates at the five characters a browser separates at since row 234, and the reader's two patterns for an href still used JavaScript's white space; seam=none, the served page is compared as text
+test('an address after a no-break space inside a tag is not taken for a link’s: a browser reads no href there, and the page is served as published', () => {
+  // Arrange: "a" + U+00A0 + "href" is one tag name for a browser; the second link is an ordinary one.
+  const page =
+    '<a\u00a0href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a.ts:1</a>' +
+    '<a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=b.ts&amp;line=2">b.ts:2</a>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<a\u00a0href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a.ts:1</a>' +
+      '<a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=b.ts&amp;line=2">b.ts:2</a>',
+  )
+})
+
 // Value: protects=the links of a page that stand after a comment a browser ends in one of its less usual ways; fails_when=the reader knows "-->" alone as the end of a comment, so after a comment that ends with "--!>" or is "<!-->" or "<!--->" it passes over the links that follow and serves them with the scheme the page was published with; why_new=Cycle 0046 row 194 (the forms were run in a browser); seam=none
 test('a link after a comment that ends with --!>, and after the comments <!--> and <!--->, gets the scheme of the editor that serves the page', () => {
   // Arrange: three comments, each followed by a source link; no "-->" stands anywhere in the page.
