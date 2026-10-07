@@ -12,6 +12,7 @@ import {
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
+  LEARNER_STARTED_STOP_REASONS,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
   CONTROL_RETIRING_MESSAGE_TYPES,
@@ -121,7 +122,7 @@ import {
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
-import { isDebugStoppedEvent } from './runtimeSupport/utils/isDebugStoppedEvent'
+import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
@@ -568,7 +569,7 @@ export class StudyWorkspace {
     leftAtMs?: number
     pause?: KeyboardPauseOfRecord
   }
-  /** The debug sessions whose adapter reported a stop ({@link isDebugStoppedEvent}) that the editor has not reported as a stack frame yet; {@link followStopsOf} adds a session and {@link cameWithStop} takes it out again. */
+  /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet; {@link followStopsOf} adds a session and {@link cameWithStop} takes it out again. */
   private readonly announcedStops = new Set<string>()
   /** The debug sessions that started while this reader existed, whose adapter's messages it therefore sees ({@link followStopsOf}). A session that started before has none to tell a stop from a selected frame. */
   private readonly followedSessions = new Set<string>()
@@ -2640,7 +2641,7 @@ export class StudyWorkspace {
    * Follows the stops of one debug session for the reader; called by the editor through the tracker factory of {@link watchKeyboardOutsideEditors} when a session of any debug type starts.
    * The adapter's `stopped` event reaches this tracker in the extension host before the editor opens the paused file and reports the stack frame, so {@link cameWithStop} finds it when that frame arrives.
    * @param session - The session that starts.
-   * @returns The tracker, which notes each `stopped` event of that session.
+   * @returns The tracker, which notes each `stopped` event of that session ({@link noteStopOf}).
    * @example vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: (session) => this.followStopsOf(session) })
    */
   private followStopsOf(
@@ -2649,9 +2650,37 @@ export class StudyWorkspace {
     this.followedSessions.add(session.id)
     return {
       onDidSendMessage: (message: unknown): void => {
-        if (isDebugStoppedEvent(message)) this.announcedStops.add(session.id)
+        const stop = debugStopOf(message)
+        if (stop) this.noteStopOf(session.id, stop.reason)
       },
     }
+  }
+
+  /**
+   * Notes a stop a debug adapter reported, for the frame the editor reports next, and ends the chat's record when the learner started that stop from an editor; called by the tracker of {@link followStopsOf} for every `stopped` event.
+   * A stop after a step ({@link LEARNER_STARTED_STOP_REASONS}) that is reported while a text editor has the keyboard was made by a learner who works in that editor: the keyboard is not to go to the chat at this stop, at a later render of it or when the run goes on, however short a time ago the learner came from the chat. While no text editor is active (the chat has the keyboard, and the step came from the debug toolbar) the record stays.
+   * @param sessionId - The session that stopped.
+   * @param reason - The reason the adapter gave, if any.
+   * @example this.noteStopOf(session.id, 'step')
+   */
+  private noteStopOf(sessionId: string, reason: string | undefined): void {
+    this.announcedStops.add(sessionId)
+    if (this.isLearnersStopFromEditor(reason))
+      this.keyboardOutsideEditors = undefined
+  }
+
+  /**
+   * Says whether a stop was started by the learner with the keyboard in a text editor; asked by {@link noteStopOf} when the adapter reports the stop, before the editor's debugger opens the paused file.
+   * @param reason - The reason the adapter gave for the stop, if any.
+   * @returns `true` for one of {@link LEARNER_STARTED_STOP_REASONS} while a text editor is the active one; `false` for every other reason, for none, and while no text editor is active.
+   * @example this.isLearnersStopFromEditor('step') // => true while the learner steps in "actions.ts"
+   */
+  private isLearnersStopFromEditor(reason: string | undefined): boolean {
+    return (
+      reason !== undefined &&
+      LEARNER_STARTED_STOP_REASONS.has(reason) &&
+      vscode.window.activeTextEditor !== undefined
+    )
   }
 
   /**

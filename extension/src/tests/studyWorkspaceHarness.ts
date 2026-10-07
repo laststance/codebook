@@ -1110,6 +1110,19 @@ export async function workspaceHarness(
       },
     }
   }
+  /**
+   * Gives the text editor of a draft's tab the keyboard, whoever had it before: the tab is in front of its group, the group is the active one, and the editor is reported as the active text editor; called by `focusMutableDraft` for a learner's click and by `pauseDebugger` for the debugger's own opening of the paused file.
+   * @param opened - What `openDraftTab` returned for that draft.
+   * @example giveDraftKeyboard(openDraftTab('actions.ts', 1))
+   */
+  function giveDraftKeyboard(opened: ReturnType<typeof openDraftTab>): void {
+    opened.group.activeTab = opened.tab
+    activeTabGroup = opened.group
+    if (separateEditorPart) separateEditorPart.focused = false
+    keyboardOnBody = false
+    keyboardInView = false
+    activeTextEditorChanged(opened.editor)
+  }
   /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
   function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
     const main = groups
@@ -3658,7 +3671,7 @@ export async function workspaceHarness(
     },
     /**
      * Pauses the fake debugger: Run and Debug's active stack item is a stack frame, and the reader's listeners are told. Both editors report three states of that item, and this method with `resumeDebugger` is the only way to set them: none before a session's first stop (the state every harness starts in), a frame while the focused thread is stopped (this method), and that thread without a frame once the session runs again (`resumeDebugger`). Called again while a frame is active, it reports the next frame with no thread between the two, as an editor does for a thread that stops again within the 200 ms it waits before it reports a running session, and for a frame the learner selects in the Call Stack view. The editor has opened the paused file with the keyboard before it reports the frame (see `focusMutableDraft`; Cursor's and VS Code's debugger await that opening and select the frame after it), so a test focuses that file first.
-     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server.
+     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent).
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
      * harness.pauseDebugger()
@@ -3668,6 +3681,8 @@ export async function workspaceHarness(
         focusesEditorOnBreak?: boolean
         session?: string
         startedBeforeTheReader?: boolean
+        reason?: string
+        opensWithKeyboard?: { filename: string; column: number }
       } = {},
     ): void {
       const session = { id: options.session ?? 'live-next-server' }
@@ -3677,8 +3692,16 @@ export async function workspaceHarness(
           tracker?.onDidSendMessage?.({
             type: 'event',
             event: 'stopped',
-            body: { reason: 'breakpoint', threadId: 1 },
+            body: { reason: options.reason ?? 'breakpoint', threadId: 1 },
           })
+      // The debugger opens the paused file with the keyboard after the adapter reported the stop and before the editor reports the frame.
+      if (options.opensWithKeyboard)
+        giveDraftKeyboard(
+          openDraftTab(
+            options.opensWithKeyboard.filename,
+            options.opensWithKeyboard.column,
+          ),
+        )
       activeStackItem = {
         session,
         threadId: 1,
@@ -3912,16 +3935,9 @@ export async function workspaceHarness(
       filename = 'mutable-notes.txt',
       column = groups[0]!.viewColumn,
     ) {
-      const { document, tab, editor, group, replaceText } = openDraftTab(
-        filename,
-        column,
-      )
-      activeTabGroup = group
-      if (separateEditorPart) separateEditorPart.focused = false
-      // The learner's editor has the keyboard, whoever lost it before.
-      keyboardOnBody = false
-      keyboardInView = false
-      activeTextEditorChanged(editor)
+      const opened = openDraftTab(filename, column)
+      const { document, tab, editor, replaceText } = opened
+      giveDraftKeyboard(opened)
       return {
         document,
         tab,
@@ -3930,12 +3946,7 @@ export async function workspaceHarness(
           replaceText(value)
         },
         focus(): void {
-          group.activeTab = tab
-          activeTabGroup = group
-          if (separateEditorPart) separateEditorPart.focused = false
-          keyboardOnBody = false
-          keyboardInView = false
-          activeTextEditorChanged(editor)
+          giveDraftKeyboard(opened)
         },
       }
     },

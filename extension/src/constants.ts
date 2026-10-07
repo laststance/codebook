@@ -253,6 +253,15 @@ export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
  */
 export const PAUSE_FOCUS_LOOKBACK_MS = 1_000
 /**
+ * The reasons a debug adapter gives in its `stopped` event for a stop the learner started with one of the editor's own debugging commands, as against a stop that happens by itself (`breakpoint`, `exception`, `data breakpoint`, `function breakpoint`, `entry`) or one whose cause the reason does not tell (`pause`, which js-debug also gives for a `debugger` statement and a `debug()` call): `step` is the Debug Adapter Protocol's and js-debug's reason after Step Over, Step Into and Step Out; `goto` is the protocol's reason after a jump to a line; `frame_entry` is what js-debug 1.105 gives after Restart Frame. {@link StudyWorkspace} ends its record of the chat's keyboard at such a stop when a text editor has the keyboard: the learner works in that editor.
+ * @example LEARNER_STARTED_STOP_REASONS.has('step') // => true
+ */
+export const LEARNER_STARTED_STOP_REASONS: ReadonlySet<string> = new Set([
+  'step',
+  'goto',
+  'frame_entry',
+])
+/**
  * How long "Codebook: Close Study Workspace" waits, once its panes' tabs are gone, for the editor to remove the groups those tabs left empty before it gives the active editor group the keyboard: the removal rebuilds the editor grid and takes the keyboard from the editor that had it (Cursor removed the captured source's group 57 ms after its tab, and the Study pane's 12 ms after its tab).
  * @example await waitUntil(() => hasNoEmptiedGroup(), 'the emptied editor groups to close', CLOSE_GROUP_SETTLE_MS)
  */
