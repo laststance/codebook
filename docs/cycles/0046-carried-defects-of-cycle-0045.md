@@ -390,7 +390,9 @@ That tree is verified at `9d44be9`: the build passes, the full suite 3,713 of 3,
 
 **Package WUB's row 223 merged (`c206ae8`).** The page's line of a running VS Code update ends with "If you refuse a step of the chat, press Cancel in the editor's notification; otherwise Codebook keeps watching for the whole 15 minutes.", built from the constant the notification ends with; Cursor's line has no such sentence, because the Cursor Agent CLI is a process whose end Codebook sees. The review pass over what changed runs on the Study workspace (27 files, at `9d44be9`) and on the update flow (49 files, at `c206ae8`) too; the configured run follows when rows 209 and 210 are merged.
 
-193 of 226 rows are closed. Open: 28 rows that owe a native check, 1 whose fix is on a branch that is not merged, and 4 that their packages work on or that were just added.
+**The review pass, group of the lock, the marker and the removals** (53 files of 53 reviewed at `abfa846`): no critical, high or medium finding, six low ones, rows 227 to 232. The one that matters most is in the walk of row 187: it lists what `lstat` calls a directory before it tries to remove it, so an entry that is no plain directory of its parent would be emptied through (on Windows a junction whose target is a volume path, which the file system layer does not report as a link; a mount point elsewhere), where the removal it replaced asked `rmdir` first. Decided: the walk asks `rmdir` first, and the listings list only a path that is its parent's own entry (row 227). The others: a prepared claim path is read below before it is looked at (228), an entry that vanishes during the walk (229), the start check lists with a look of its own (230), the sentence of row 186 tells a learner without a Wiki to remove something (231), and a failed probe after the reply's end ends the watch against its docstring (232).
+
+193 of 232 rows are closed. Open: 28 rows that owe a native check, 1 whose fix is on a branch that is not merged, and 10 that their packages work on or that were just added.
 
 ## Result and decision
 
