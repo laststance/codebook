@@ -49,6 +49,15 @@ export const SCENARIOS = [
   'viewport-timeout',
 ] as const
 export type Scenario = (typeof SCENARIOS)[number]
+/**
+ * The areas of a debug adapter's `invalidated` event after which the editor handles the stops of that session again, opening the paused file with the keyboard: `all`, `threads` and `stacks` (VS Code 1.140 and Cursor 3.23); read by {@link isDebugStopsInvalidation}. An event for `variables` only refreshes the views.
+ * @example STOP_HANDLING_INVALIDATION_AREAS.has('variables') // => false
+ */
+export const STOP_HANDLING_INVALIDATION_AREAS: ReadonlySet<string> = new Set([
+  'all',
+  'threads',
+  'stacks',
+])
 export const RESUME_COMMANDS = new Set([
   'continue',
   'next',

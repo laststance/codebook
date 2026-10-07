@@ -293,3 +293,333 @@ test('the reader follows a debug session only while it lives: an ended session i
     await harness.close()
   }
 })
+
+for (const sign of [
+  'clicks into its file',
+  'presses a key in its file after the Navigate Call Stack command',
+  'opens it with a double click',
+  'goes to another file in that group',
+] as const)
+  // Value: protects=the keyboard of a learner who, at a frame that came without a stop, works in the text editor the Application pane then covers: the pane takes the keyboard, so it is on an element; fails_when=after a frame without a stop the reader holds for the rest of the pause that the covered editor has no keyboard, whatever the editor reports afterwards (a selection made with the mouse or the keyboard in it, a text editor that becomes active, the frame's preview tab kept open by the second click), so the pane comes without the keyboard over the editor the learner types in and the keyboard is on no element; why_new=Cycle 0046 rows 263 (second limit: a double click) and 273 (delegated review, finding 6: a click into the file, the navigation command); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame with its three gestures, workInActiveTextEditor, focusMutableDraft, revealApplicationPaneOverPausedFile
+  test(`a learner who selects a frame and then ${sign} has the keyboard in that editor: the Application pane that covers it takes the keyboard`, async () => {
+    // Arrange: a live run paused; the debugger opened the paused file in the Application pane's group, and the learner clicked into the Call Stack view.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      harness.pauseDebugger({
+        opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+      })
+      harness.focusView()
+      const revealsBefore = harness.panelReveals().length
+
+      // Act: the learner selects the caller's frame, whose file the editor opens in the same group, and gives the sign; then the Application pane comes to the front over that group.
+      if (sign === 'clicks into its file') {
+        harness.selectStackFrame('page.tsx', 1)
+        harness.workInActiveTextEditor('mouse')
+      }
+      if (
+        sign ===
+        'presses a key in its file after the Navigate Call Stack command'
+      ) {
+        harness.selectStackFrame('page.tsx', 1, 'navigation-command')
+        harness.workInActiveTextEditor('keyboard')
+      }
+      if (sign === 'opens it with a double click')
+        harness.selectStackFrame('page.tsx', 1, 'double-click')
+      if (sign === 'goes to another file in that group') {
+        harness.selectStackFrame('page.tsx', 1)
+        harness.focusMutableDraft('learner-notes.ts', 1)
+      }
+      await harness.revealApplicationPaneOverPausedFile()
+
+      // Assert: the pane took the keyboard.
+      assert.deepEqual(
+        harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .map((reveal) => reveal.preserveFocus),
+        [false],
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner who, at a frame selected in the Call Stack view, clicks into that frame's file in the captured source's group: the captured source the reader shows in its place takes the keyboard, so it is on an element; fails_when=only the Application pane heeds the learner's sign, and the captured source is shown preserving the focus over the editor the learner clicked into; why_new=Cycle 0046 row 273 (the source covers a frame's file as the pane does); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, the reader's refresh and Retry, focusView, selectStackFrame, workInActiveTextEditor, the text documents shown
+test('a learner who selects a frame and then clicks into its file has the keyboard in that editor: the captured source shown in its place takes the keyboard', async () => {
+  // Arrange: a live run paused; the reader showed the stop's captured source in the source group, and the learner clicked into the Call Stack view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the learner selects the caller's frame, whose file the editor opens over the captured source, clicks into that file, and the reader renders the pause once more.
+    harness.selectStackFrame('login-form.tsx', 2)
+    harness.workInActiveTextEditor('mouse')
+    await harness.reader.action('retry')
+
+    // Assert: the captured source was shown with the keyboard.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .map((shown) => shown.preserveFocus),
+      [false],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner in the Call Stack view at a selected frame while the reader renders the pause again: the reader's own showing of the captured source over the frame's file, and the selection it sets there, are no sign of the learner, and the Application pane that then comes to the front leaves the keyboard in the view; fails_when=every text editor that becomes active after a frame, or every change of a selection, counts as the learner's choice of that editor, so the reader's own render makes the pane take the keyboard from the Call Stack view at its next reveal; why_new=Cycle 0046 row 273 (the bound of its fix: only what the learner did is a sign); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, the reader's Retry, revealApplicationPaneOverPausedFile
+test("the reader's own showing of the captured source at a selected frame is no sign of the learner: the Application pane that comes to the front afterwards leaves the keyboard in the Call Stack view", async () => {
+  // Arrange: a live run paused, its captured source shown; the learner clicked into the Call Stack view and selected the caller's frame, whose file the editor opened over the captured source.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    harness.focusView()
+    harness.selectStackFrame('login-form.tsx', 2)
+    const before = {
+      shows: harness.textDocumentShows().length,
+      reveals: harness.panelReveals().length,
+    }
+
+    // Act: the reader renders the pause once more, which shows the captured source over the frame's file, and the Application pane comes to the front.
+    await harness.reader.action('retry')
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the source was shown and the pane revealed, both without the keyboard, which is still in the Call Stack view.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(before.shows)
+        .map((shown) => shown.preserveFocus),
+      [true],
+    )
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(before.reveals)
+        .filter((reveal) => !reveal.preserveFocus),
+      [],
+    )
+    assert.equal(harness.keyboardInView(), true)
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner in the Call Stack view at a selected frame when a command moves the selection in that frame's file (the editor's own jump to a line, another extension): that is no sign of the learner, and the Application pane that comes to the front leaves the keyboard in the view; fails_when=every change of a selection counts as the learner's work in that editor, whatever the editor says about how it changed, so the pane takes the keyboard from the Call Stack view; why_new=Cycle 0046 row 273 (the bound of its fix: a selection is a sign only when the editor names the mouse or the keyboard as its cause); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, jumpInActiveTextEditor, revealApplicationPaneOverPausedFile
+test("a selection that a command moves in a selected frame's file is no sign of the learner: the Application pane that comes to the front leaves the keyboard in the Call Stack view", async () => {
+  // Arrange: a live run paused; the learner clicked into the Call Stack view and selected the caller's frame.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
+    harness.focusView()
+    harness.selectStackFrame('page.tsx', 1)
+    const revealsBefore = harness.panelReveals().length
+
+    // Act: a command moves the selection in the frame's file, and the Application pane comes to the front.
+    harness.jumpInActiveTextEditor()
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the pane came without the keyboard, which is still in the Call Stack view.
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [true],
+    )
+    assert.equal(harness.keyboardInView(), true)
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner who clicked into a frame's file and then went back to the Call Stack view and selected another frame: the sign belonged to the frame before, and the Application pane that comes to the front leaves the keyboard in the view; fails_when=a sign of the learner outlives the frame it was given at, so every later frame of the pause counts as one whose file has the keyboard, and the pane takes the keyboard from the Call Stack view; why_new=Cycle 0046 row 273 (the bound of its fix: a sign holds until the next stack item); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, workInActiveTextEditor, revealApplicationPaneOverPausedFile
+test("a learner who clicked into a frame's file and then selects another frame in the Call Stack view has the keyboard in that view: the Application pane that comes to the front leaves it there", async () => {
+  // Arrange: a live run paused; the learner selected the caller's frame in the Call Stack view and clicked into its file.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
+    harness.focusView()
+    harness.selectStackFrame('page.tsx', 1)
+    harness.workInActiveTextEditor('mouse')
+    const revealsBefore = harness.panelReveals().length
+
+    // Act: the learner clicks into the Call Stack view again and selects a third frame; then the Application pane comes to the front.
+    harness.focusView()
+    harness.selectStackFrame('layout.tsx', 1)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the pane came without the keyboard, which is still in the Call Stack view.
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [true],
+    )
+    assert.equal(harness.keyboardInView(), true)
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner at a pause whose stacks the debug adapter declares invalid: the editor handles the stop again and opens the paused file with the keyboard, and the Application pane that covers the file takes it, so the keyboard is on an element; fails_when=only a stopped event counts as a stop, so the frame the editor reports after an invalidated event is taken for one the learner selected and the pane comes without the keyboard over the file that has it; why_new=Cycle 0046 row 273 (delegated review, finding 6, case c); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, invalidateStacks, revealApplicationPaneOverPausedFile
+test('a pause whose stacks the adapter declares invalid gives the paused file the keyboard again: the Application pane that covers it takes the keyboard', async () => {
+  // Arrange: a live run paused; the learner clicked into the Call Stack view and selected the caller's frame.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
+    harness.focusView()
+    harness.selectStackFrame('page.tsx', 1)
+    const revealsBefore = harness.panelReveals().length
+
+    // Act: the adapter declares the stacks invalid, the editor handles the stop again, and the Application pane comes to the front over the paused file.
+    harness.invalidateStacks({ filename: 'actions.ts', column: 1 })
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the pane took the keyboard.
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [false],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})

@@ -12,6 +12,7 @@ import {
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
+  LEARNER_SELECTION_KINDS,
   LEARNER_STARTED_STOP_REASONS,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
@@ -125,6 +126,7 @@ import {
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
 import { isDebugResumeMessage } from './runtimeSupport/utils/isDebugResumeMessage'
+import { isDebugStopsInvalidation } from './runtimeSupport/utils/isDebugStopsInvalidation'
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
@@ -585,8 +587,12 @@ export class StudyWorkspace {
   private readonly announcedStops = new Map<string, StopNote>()
   /** The debug sessions that started while this reader existed and have not ended, whose adapter's messages it therefore sees ({@link followStopsOf}); {@link forgetSession} takes a session out when it ends. A session that started before the reader has none to tell a stop from a selected frame. */
   private readonly followedSessions = new Set<string>()
-  /** Whether the stack frame the editor reports now came with a stop of the debugger, which opens the paused file with the keyboard; `false` for a frame the learner selected in the Call Stack view, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
+  /** Whether the stack frame the editor reports now came with a stop of the debugger, which opens the paused file with the keyboard; `false` for a frame the learner selected in the Call Stack view and for one the editor brought to the front later by itself, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
   private frameCameWithStop = false
+  /** Whether the learner gave a sign of working in the active text editor since the editor reported a frame without a stop ({@link noteLearnersSignAtFrame}): a pane or the captured source that covers that editor then takes the keyboard as at a stop. `false` at every new stack item ({@link judgeKeyboardAtStackItemChange}). */
+  private learnerChoseEditorAtFrame = false
+  /** The preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. */
+  private previewTabOfFrame?: vscode.Tab
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
   private leaseId?: string
@@ -2635,9 +2641,18 @@ export class StudyWorkspace {
   private watchKeyboardOutsideEditors(): void {
     const sample = (): void => this.sampleKeyboardOutsideEditors()
     this.disposables.push(
-      vscode.window.tabGroups.onDidChangeTabs(sample),
+      vscode.window.tabGroups.onDidChangeTabs(() => {
+        sample()
+        this.noteLearnersSignAtFrame(this.keptPreviewTabOfFrame())
+      }),
       vscode.window.tabGroups.onDidChangeTabGroups(sample),
-      vscode.window.onDidChangeActiveTextEditor(sample),
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        sample()
+        this.noteLearnersSignAtFrame(this.isLearnersEditor(editor))
+      }),
+      vscode.window.onDidChangeTextEditorSelection((change) =>
+        this.noteLearnersSignAtFrame(this.isLearnersSelection(change)),
+      ),
       vscode.debug.onDidChangeActiveStackItem(() =>
         this.judgeKeyboardAtStackItemChange(),
       ),
@@ -2653,7 +2668,7 @@ export class StudyWorkspace {
    * Follows the stops of one debug session for the reader; called by the editor through the tracker factory of {@link watchKeyboardOutsideEditors} when a session of any debug type starts.
    * The adapter's `stopped` event reaches this tracker in the extension host before the editor opens the paused file and reports the stack frame, so {@link cameWithStop} finds it when that frame arrives. The editor makes a tracker for every adapter it starts, also for the new adapter of a session it restarts under the same id, and tells it when that adapter is stopped or exits.
    * @param session - The session that starts.
-   * @returns The tracker, which notes each `stopped` event of that session ({@link noteStopOf}), doubts the note once the session goes on ({@link doubtStopOf}) and forgets the session when it ends ({@link forgetSession}).
+   * @returns The tracker, which reads each message of that session's adapter ({@link readAdaptersMessage}), doubts a noted stop once the editor lets the session go on ({@link doubtStopOf}) and forgets the session when it ends ({@link forgetSession}).
    * @example vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: (session) => this.followStopsOf(session) })
    */
   private followStopsOf(
@@ -2661,11 +2676,8 @@ export class StudyWorkspace {
   ): vscode.DebugAdapterTracker {
     this.followedSessions.add(session.id)
     return {
-      onDidSendMessage: (message: unknown): void => {
-        const stop = debugStopOf(message)
-        if (stop) this.noteStopOf(session.id, stop)
-        else if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
-      },
+      onDidSendMessage: (message: unknown): void =>
+        this.readAdaptersMessage(session.id, message),
       // An adapter need not send `continued` after the editor's own resume or step: the request says it too.
       onWillReceiveMessage: (message: unknown): void => {
         if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
@@ -2674,6 +2686,23 @@ export class StudyWorkspace {
       onWillStopSession: (): void => this.forgetSession(session.id),
       onExit: (): void => this.forgetSession(session.id),
     }
+  }
+
+  /**
+   * Reads one message of a debug adapter for what it says about the session's stops; called by the tracker of {@link followStopsOf} for every message the adapter sends.
+   * - A `stopped` event is noted ({@link noteStopOf}).
+   * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle the stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it.
+   * - A `continued` event puts the noted stop in doubt ({@link doubtStopOf}).
+   * @param sessionId - The session of the adapter.
+   * @param message - The message as the tracker receives it.
+   * @example onDidSendMessage: (message) => this.readAdaptersMessage(session.id, message)
+   */
+  private readAdaptersMessage(sessionId: string, message: unknown): void {
+    const stop = debugStopOf(message)
+    if (stop) this.noteStopOf(sessionId, stop)
+    else if (isDebugStopsInvalidation(message))
+      this.noteStopOf(sessionId, { reason: undefined, keepsFocus: false })
+    else if (isDebugResumeMessage(message)) this.doubtStopOf(sessionId)
   }
 
   /**
@@ -2688,7 +2717,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Notes a stop a debug adapter reported, for the frame the editor reports next, and ends the chat's record when the learner started that stop from an editor; called by the tracker of {@link followStopsOf} for every `stopped` event.
+   * Notes a stop a debug adapter reported, for the frame the editor reports next, and ends the chat's record when the learner started that stop from an editor; called by {@link readAdaptersMessage} for every `stopped` event, and for an `invalidated` event that makes the editor handle the session's stops again.
    * A stop after a step ({@link LEARNER_STARTED_STOP_REASONS}) that is reported while a text editor has the keyboard was made by a learner who works in that editor: the keyboard is not to go to the chat at this stop, at a later render of it or when the run goes on, however short a time ago the learner came from the chat. While no text editor is active (the chat has the keyboard, and the step came from the debug toolbar) the record stays.
    * The note says when the stop was read and whether the editor's own handling of it may leave it in the background ({@link StopNote}): both editors bring a stop to the front, with the keyboard into the paused file, only when the adapter did not ask to keep the focus and no frame of another session has it (VS Code 1.140 and Cursor 3.23, the stop handling of their debug sessions: `if(!p||p.thread.session===this)` for the view model's focused frame `p`).
    * @param sessionId - The session that stopped.
@@ -2720,7 +2749,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Marks the noted stop of a session that goes on as doubtful; called by the tracker of {@link followStopsOf} for the adapter's `continued` event and for the editor's resume and step requests ({@link isDebugResumeMessage}).
+   * Marks the noted stop of a session that goes on as doubtful; called by {@link readAdaptersMessage} for the adapter's `continued` event and by the tracker of {@link followStopsOf} for the editor's resume and step requests ({@link isDebugResumeMessage}).
    * The note is not dropped there: a run that resumes its own stop at once does so before the editor reported that stop's frame, and the frame still arrives, with the keyboard in the paused file. A frame that arrives later than {@link STOP_OWN_FOCUS_BOUND_MS} after the stop was read is none of that stop: the learner selected it (another thread of the session is still paused), and it is not taken for a stop the editor never showed.
    * @param sessionId - The session that goes on.
    * @example if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
@@ -2843,7 +2872,7 @@ export class StudyWorkspace {
   /**
    * Follows the pauses of the editor's debugger, on every change of Run and Debug's active stack item; called by the listener of {@link watchKeyboardOutsideEditors}.
    * - A stack frame that came with a stop of the debugger ({@link cameWithStop}) is a pause: the debugger opened the paused file with the keyboard ({@link judgeKeyboardAtPauseBegin}).
-   * - A stack frame without a stop is one the learner selected in the Call Stack view: the editor opened its file without the keyboard, which stays where the learner has it. The reader then takes nothing and returns nothing for that pause any more ({@link leavePauseToLearner}).
+   * - A stack frame without a stop is one the learner selected in the Call Stack view, or one the editor brought to the front without the keyboard: the editor opened its file without the keyboard, which stays where the learner has it. The reader then takes nothing and returns nothing for that pause any more ({@link leavePauseToLearner}), until the learner gives a sign of working in the editor it would cover ({@link noteLearnersSignAtFrame}).
    * - A thread without a frame, which the editor reports once the session runs again, and no item are the time between pauses ({@link judgeKeyboardAtPauseEnd}).
    * @example this.judgeKeyboardAtStackItemChange()
    */
@@ -2851,9 +2880,91 @@ export class StudyWorkspace {
     const item = vscode.debug.activeStackItem
     this.frameCameWithStop =
       isStackFrameItem(item) && this.cameWithStop(item.session.id)
+    // What the learner did before this item says nothing about it: the editor opened the frame's file before it reported the frame.
+    this.learnerChoseEditorAtFrame = false
+    this.previewTabOfFrame = this.previewTabInFront()
     if (this.frameCameWithStop) this.judgeKeyboardAtPauseBegin()
     else if (isStackFrameItem(item)) this.leavePauseToLearner()
     else this.judgeKeyboardAtPauseEnd()
+  }
+
+  /**
+   * Takes a sign that the learner works in the active text editor, while the editor shows a frame that came without a stop; called by the listeners of {@link watchKeyboardOutsideEditors} with what one of the three signs answered.
+   * For such a frame the editor opened the file without the keyboard, and nothing the editor reports says where the keyboard went afterwards: a click of the mouse into the Call Stack view, a double click or Enter there (which give the file the keyboard) and the editor's "Navigate Up/Down Call Stack" commands (which do too) all report the file's opening and then the frame, in that order. So the reader does not decide by the gesture. It takes what the editor reports after the frame: the learner clicked or typed in the active text editor ({@link isLearnersSelection}), a text editor became the active one ({@link isLearnersEditor}), or the frame's preview tab was kept open ({@link keptPreviewTabOfFrame}). From then on {@link replacesEditorFocusedByPause} and {@link keepsKeyboardFromPaneAtPause} treat the covered editor as at a stop. Without a sign the keyboard is taken to be where the learner had it.
+   * @param given - Whether the sign was given.
+   * @example this.noteLearnersSignAtFrame(this.isLearnersSelection(change))
+   */
+  private noteLearnersSignAtFrame(given: boolean): void {
+    if (given && this.showsFrameWithoutStop())
+      this.learnerChoseEditorAtFrame = true
+  }
+
+  /**
+   * Says whether Run and Debug shows a frame that came without a stop of the debugger; asked by {@link noteLearnersSignAtFrame}.
+   * @returns `true` for a frame the learner selected or the editor brought to the front later; `false` for a frame that came with a stop, for a thread and without an item.
+   * @example this.showsFrameWithoutStop() // => true after a click on a frame in the Call Stack view
+   */
+  private showsFrameWithoutStop(): boolean {
+    return (
+      !this.frameCameWithStop && isStackFrameItem(vscode.debug.activeStackItem)
+    )
+  }
+
+  /**
+   * Says whether a change of a text editor's selection is the learner's own in the active text editor: the first sign of {@link noteLearnersSignAtFrame}.
+   * The editor names how a selection changed: by the keyboard or the mouse for the learner's own typing, cursor keys and clicks, and by a command for everything else, which includes the editor's own jump to a frame's line and a selection an extension sets ({@link LEARNER_SELECTION_KINDS}).
+   * @param change - The change the editor reports.
+   * @returns `true` for a change by the keyboard or the mouse in the active text editor; `false` for any other kind, for none, and for another editor.
+   * @example this.isLearnersSelection(change) // => true after a click into the frame's file
+   */
+  private isLearnersSelection(
+    change: vscode.TextEditorSelectionChangeEvent,
+  ): boolean {
+    return (
+      change.kind !== undefined &&
+      LEARNER_SELECTION_KINDS.has(change.kind) &&
+      change.textEditor === vscode.window.activeTextEditor
+    )
+  }
+
+  /**
+   * Says whether a text editor that became the active one is a file of the learner's choice: the second sign of {@link noteLearnersSignAtFrame}.
+   * The editor opens a frame's file before it reports the frame, so a text editor that becomes active after the frame was opened by something else: the learner's click on a tab or into another group, or a file the learner opened. The reader's own captured source is none of that: the reader shows it at every render, with or without the keyboard. The price: a file the learner opens from the Explorer with one click becomes active without the keyboard and counts too.
+   * @param editor - The text editor the editor reports as the active one now, if any.
+   * @returns `true` for a text editor that shows no captured source; `false` for the captured source and for none.
+   * @example this.isLearnersEditor(vscode.window.activeTextEditor)
+   */
+  private isLearnersEditor(editor: vscode.TextEditor | undefined): boolean {
+    return (
+      editor !== undefined && editor.document.uri.scheme !== STUDY_SOURCE_SCHEME
+    )
+  }
+
+  /**
+   * Names the tab in front of the active group when it is a preview tab; read by {@link judgeKeyboardAtStackItemChange} at every stack item, for {@link keptPreviewTabOfFrame}.
+   * A frame's file that was not open before is opened as a preview tab by one click in the Call Stack view, and stays one until the learner keeps it.
+   * @returns The tab, or `undefined` for a tab that is kept open and for an empty group.
+   * @example this.previewTabOfFrame = this.previewTabInFront()
+   */
+  private previewTabInFront(): vscode.Tab | undefined {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab
+    return tab?.isPreview ? tab : undefined
+  }
+
+  /**
+   * Says whether the preview tab the editor showed for the frame was kept open since and is still in front: the third sign of {@link noteLearnersSignAtFrame}.
+   * A double click on a frame in the Call Stack view, and Enter there, open the frame's file a second time, with the keyboard and as a tab that is kept: for a frame that is already the selected one, the editor reports nothing else of it (no new frame, no new active editor, and the selection stays on the frame's line). A tab that is kept because its file was changed says nothing about the keyboard, since an agent's edit does that too.
+   * @returns `true` when the tab noted at the frame is no preview tab any more, shows no unsaved change and is the tab in front of the active group; `false` otherwise, and when the frame's tab was no preview tab.
+   * @example this.noteLearnersSignAtFrame(this.keptPreviewTabOfFrame())
+   */
+  private keptPreviewTabOfFrame(): boolean {
+    const tab = this.previewTabOfFrame
+    return (
+      tab !== undefined &&
+      !tab.isPreview &&
+      !tab.isDirty &&
+      vscode.window.tabGroups.activeTabGroup.activeTab === tab
+    )
   }
 
   /**
@@ -2989,7 +3100,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link isStoppedBesideLiveRun}, which also asks for a live run ({@link hasLiveRun}), and by {@link replacesEditorFocusedByPause}, which acts on the keyboard the editor's debugger gave the paused file whoever started that session.
+   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link isStoppedBesideLiveRun}, which also asks for a live run ({@link hasLiveRun}), and by {@link holdsKeyboardInEditorAtFrame} for {@link replacesEditorFocusedByPause}, which acts on the keyboard the editor's debugger gave the paused file whoever started that session.
    * A pause is told by a stack frame ({@link isStackFrameItem}): once the session runs again the editor reports its thread, which is no pause. The frame must have come with a stop ({@link cameWithStop}): for a frame the learner selected in the Call Stack view the editor opened the file without the keyboard. While a recording is open the frame is the historical debugger's, which opens no file with the keyboard for a new pause.
    * @returns `true` while Run and Debug's active stack item is a frame that came with a stop and no recording is open.
    * @example this.isStoppedOutsideRecording() // => false while the debugged program runs, after the learner selected another frame, and while a recording is replayed
@@ -3094,13 +3205,27 @@ export class StudyWorkspace {
   /**
    * Answers the Application pane's viewport, right before it reveals the pane over a text editor it takes for the one the debugger focused at a pause, whether the pane is to come to the front without the keyboard ({@link presentation}).
    * @returns
-   * - `true` after the learner selected a frame in the Call Stack view ({@link frameCameWithStop} is `false`): the editor opened that frame's file without the keyboard, which stays where the learner has it.
+   * - `false` after a frame without a stop once the learner gave a sign of working in the active text editor ({@link noteLearnersSignAtFrame}): the pane takes the keyboard, as at a stop without a chat to give it back to.
+   * - `true` after a frame without a stop and without such a sign ({@link frameCameWithStop} is `false`): the editor opened that frame's file without the keyboard, which stays where the learner has it.
    * - `true` when the chat that had the keyboard before the stop got it back now ({@link returnsKeyboardToChatAtPause}).
    * - `false` when the debugger gave the covered file the keyboard and the reader knows of nobody to give it back to: the pane takes it.
    * @example keepsKeyboardAtPause: () => this.keepsKeyboardFromPaneAtPause()
    */
   private async keepsKeyboardFromPaneAtPause(): Promise<boolean> {
+    if (this.learnerChoseEditorAtFrame) return false
     return !this.frameCameWithStop || this.returnsKeyboardToChatAtPause()
+  }
+
+  /**
+   * Says whether the active text editor has the keyboard at the frame the editor shows, outside a recording: by the debugger's stop, or by the learner's own sign after a frame without a stop; asked by {@link replacesEditorFocusedByPause}.
+   * @returns `true` when {@link isStoppedOutsideRecording} holds, and when the learner gave a sign at a frame without a stop ({@link noteLearnersSignAtFrame}) while no recording is open.
+   * @example this.holdsKeyboardInEditorAtFrame() // => true after the learner clicked into the file of a frame selected in the Call Stack view
+   */
+  private holdsKeyboardInEditorAtFrame(): boolean {
+    return (
+      this.isStoppedOutsideRecording() ||
+      (this.learnerChoseEditorAtFrame && !this.recordingActive)
+    )
   }
 
   /**
@@ -9207,7 +9332,7 @@ export class StudyWorkspace {
     source: vscode.Uri,
   ): boolean {
     return (
-      this.isStoppedOutsideRecording() &&
+      this.holdsKeyboardInEditorAtFrame() &&
       this.isFocusedGroupShowingOtherText(column, source) &&
       this.hasEditorFocusedOnBreak(column)
     )

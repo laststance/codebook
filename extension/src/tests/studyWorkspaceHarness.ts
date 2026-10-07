@@ -299,10 +299,16 @@ export async function workspaceHarness(
     visibleRanges: Range[]
     revealRange(range: Range, revealType?: number): void
   }
+  /** What the fake editor reports with a change of a text editor's selection: the editor, its selections, and how they changed by the number of the editor's `TextEditorSelectionChangeKind` (1 the keyboard, 2 the mouse, 3 a command, which is also what a selection set by an extension is reported as). A test that sets an editor's `selections` itself names no cause, and the change is reported without a kind, as the editor's API allows. */
+  type SelectionChange = {
+    textEditor: SourceEditor
+    selections: SourceEditor['selections']
+    kind: 1 | 2 | 3 | undefined
+  }
   const activeEditorListeners = new Set<
       (editor: SourceEditor | undefined) => void
     >(),
-    selectionListeners = new Set<() => void>()
+    selectionListeners = new Set<(change: SelectionChange) => void>()
   const activeTextEditorChanged = (editor: SourceEditor | undefined): void => {
     for (const listener of activeEditorListeners) listener(editor)
   }
@@ -1079,10 +1085,11 @@ export async function workspaceHarness(
    * Opens a learner-owned text document as the tab in front of a group, with its text editor visible there, and gives nothing the keyboard; the shared first step of `focusMutableDraft`, which then gives that editor the keyboard, and of `selectStackFrame`, which does not.
    * @param filename - The document's file name in the harness's folder.
    * @param column - The view column of the group.
+   * @param isPreview - Whether the tab is a preview tab without unsaved text, as the one the editor opens for a file at one click; left out, a kept tab with unsaved text.
    * @returns The document, its tab, its editor, the group, and `replaceText`, which changes the document's text and version.
    * @example const { editor, group } = openDraftTab('notes.txt', 2)
    */
-  function openDraftTab(filename: string, column: number) {
+  function openDraftTab(filename: string, column: number, isPreview = false) {
     let text = 'Original learner draft.\n'
     const document = {
       uri: Uri.file(join(harness.directory, filename)),
@@ -1092,8 +1099,9 @@ export async function workspaceHarness(
     const group = groups.find((group) => group.viewColumn === column)!
     const tab = {
       input: new TabInputText(document.uri),
-      isPreview: false,
-      isDirty: true,
+      isPreview,
+      // A draft has unsaved text; a file the editor opens as a preview tab has none.
+      isDirty: !isPreview,
     }
     const editor = Object.assign(sourceEditor(document, group), { group })
     let selections = editor.selections
@@ -1101,7 +1109,8 @@ export async function workspaceHarness(
       get: () => selections,
       set: (value: typeof selections) => {
         selections = value
-        for (const listener of selectionListeners) listener()
+        for (const listener of selectionListeners)
+          listener({ textEditor: editor, selections: value, kind: undefined })
       },
     })
     group.tabs.push(tab)
@@ -2206,6 +2215,7 @@ export async function workspaceHarness(
       Range,
       ViewColumn: { One: 1, Two: 2, Three: 3 },
       TextEditorRevealType: { Default: 0, AtTop: 3 },
+      TextEditorSelectionChangeKind: { Keyboard: 1, Mouse: 2, Command: 3 },
       ThemeColor: class {},
       RelativePattern,
       env: {
@@ -2767,7 +2777,9 @@ export async function workspaceHarness(
             },
           }
         },
-        onDidChangeTextEditorSelection: (callback: () => void) => {
+        onDidChangeTextEditorSelection: (
+          callback: (change: SelectionChange) => void,
+        ) => {
           selectionListeners.add(callback)
           return {
             dispose(): void {
@@ -2878,13 +2890,17 @@ export async function workspaceHarness(
             get: () => editor.selections,
             set: (selections: SourceEditor['selections']) => {
               editor.selections = selections
-              for (const listener of selectionListeners) listener()
+              for (const listener of selectionListeners)
+                listener({ textEditor: visible, selections, kind: undefined })
             },
           })
           visibleSourceEditors.push(visible)
+          // A document that comes to the front of the active group is the active text editor from then on, also when it was shown preserving the focus: the editor names the text editor in front of the active group while no text editor has the keyboard.
+          const comesToFrontOfActiveGroup =
+            showsAnotherTab && group.viewColumn === activeTabGroup.viewColumn
           // A tab that opened or became the one its group shows changed the tabs; the same tab shown again did not.
           if (showsAnotherTab) replaceGroupObjects()
-          if (!options?.preserveFocus)
+          if (!options?.preserveFocus || comesToFrontOfActiveGroup)
             activeTextEditorChanged(focusedSourceEditor())
           const displayed = nextSourceDisplay
           nextSourceDisplay = undefined
@@ -3727,22 +3743,88 @@ export async function workspaceHarness(
       for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
-     * Selects another frame of the paused thread as the Call Stack view does for a row chosen with the arrow keys or one click: the editor opens that frame's file in front of a group without giving it the keyboard, and reports the frame. The debug adapter reports nothing: no `stopped` event comes with a selection. The keyboard stays where it is (see `focusView`, or the chat).
+     * Selects another frame of the paused thread, by one of the three gestures the editor offers. The debug adapter reports nothing: no `stopped` event comes with a selection.
+     * - `click` (left out): the Call Stack view's row chosen with one click. The editor opens that frame's file in front of a group without giving it the keyboard, and reports the frame. The keyboard stays where it is (see `focusView`, or the chat).
+     * - `double-click`: the same, and then the second click, for which the editor opens the same file again, with the keyboard and as a kept tab (both editors: the tree's double click opens with `preserveFocus` off and `pinned` on). The frame is the selected one already, so the editor reports no frame, no active text editor and no selection for it: only the tab changes, from a preview tab to a kept one. The file must be opened in the active group, as the editor does. Enter on the selected row does the same as the second click.
+     * - `navigation-command`: the editor's "Navigate Up/Down Call Stack" commands, which open the frame's file with the keyboard and then report the frame (both editors: `focusStackFrame` with `preserveFocus` off). What the editor reports is the same as for a click: the file's opening, then the frame.
      * @param filename - The frame's file.
      * @param column - The view column of the group the editor opens it in.
+     * @param gesture - How the learner selects the frame.
      * @returns The document the editor opened.
      * @example
      * harness.focusView()
      * harness.selectStackFrame('login-form.tsx', 2)
      */
-    selectStackFrame(filename: string, column: number) {
+    selectStackFrame(
+      filename: string,
+      column: number,
+      gesture: 'click' | 'double-click' | 'navigation-command' = 'click',
+    ) {
       assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
-      const opened = openDraftTab(filename, column)
+      const opened = openDraftTab(filename, column, gesture === 'double-click')
+      if (gesture === 'navigation-command') giveDraftKeyboard(opened)
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
-      activeTextEditorChanged(focusedSourceEditor())
+      else activeTextEditorChanged(focusedSourceEditor())
       activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
       for (const listener of [...activeStackItemListeners]) listener()
+      if (gesture !== 'double-click') return opened.document
+      // The second click: the same file, with the keyboard and kept open.
+      assert.equal(opened.group, activeTabGroup)
+      opened.tab.isPreview = false
+      keyboardInView = false
+      keyboardOnBody = false
+      for (const listener of tabChangeListeners)
+        listener({ opened: [], closed: [], changed: [opened.tab] })
       return opened.document
+    },
+    /**
+     * Gives the text editor in front of the active group the keyboard as a learner's click into its text does, or shows the learner at work in it with the keyboard (a cursor key, a typed letter): the editor reports the new selection as one made with the mouse or with the keyboard, and nothing else when that editor was the active text editor already (the active tab group, its tab and the active text editor stay as they are).
+     * @param by - What the learner used.
+     * @example
+     * harness.selectStackFrame('login-form.tsx', 2)
+     * harness.workInActiveTextEditor('mouse')
+     */
+    workInActiveTextEditor(by: 'mouse' | 'keyboard'): void {
+      assert.ok(!separateEditorPart?.focused, 'The chat has the keyboard')
+      const editor = focusedSourceEditor()
+      assert.ok(editor, 'No text editor is in front of the active group')
+      keyboardInView = false
+      keyboardOnBody = false
+      for (const listener of selectionListeners)
+        listener({
+          textEditor: editor,
+          selections: editor.selections,
+          kind: by === 'keyboard' ? 1 : 2,
+        })
+    },
+    /**
+     * Moves the selection of the text editor in front of the active group as a command does: the editor's own jump to a line (Go to Line, a frame of the same file selected again) or a selection an extension sets. The editor reports the change with the kind of a command, and the keyboard stays where it is.
+     * @example
+     * harness.selectStackFrame('login-form.tsx', 2)
+     * harness.jumpInActiveTextEditor()
+     */
+    jumpInActiveTextEditor(): void {
+      const editor = focusedSourceEditor()
+      assert.ok(editor, 'No text editor is in front of the active group')
+      for (const listener of selectionListeners)
+        listener({ textEditor: editor, selections: editor.selections, kind: 3 })
+    },
+    /**
+     * Lets a debug adapter tell the editor that its stacks are no longer valid, as an adapter does when what a paused thread shows changed: the session's trackers see the `invalidated` event, and the editor then handles the session's stop again (both editors: `onDidInvalidated` runs the stop handling for every stored stop), which opens the paused file with the keyboard and reports a frame. No `stopped` event comes with it.
+     * @param paused - The paused file the editor opens with the keyboard.
+     * @example harness.invalidateStacks({ filename: 'actions.ts', column: 1 })
+     */
+    invalidateStacks(paused: { filename: string; column: number }): void {
+      assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
+      for (const tracker of trackersOf(activeStackItem.session))
+        tracker?.onDidSendMessage?.({
+          type: 'event',
+          event: 'invalidated',
+          body: { areas: ['stacks'] },
+        })
+      giveDraftKeyboard(openDraftTab(paused.filename, paused.column))
+      activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
+      for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
      * Ends a debug session as the editor does when the learner stops it or the debugged program exits: the session's trackers are told that the adapter is stopped and that it exited, the editor forgets them, and Run and Debug has no active stack item any more when it showed that session.

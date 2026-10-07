@@ -262,6 +262,11 @@ export const LEARNER_STARTED_STOP_REASONS: ReadonlySet<string> = new Set([
   'frame_entry',
 ])
 /**
+ * The ways a text editor's selection changes by the learner's own hand, by their numbers in the editor's `TextEditorSelectionChangeKind`: 1 is the keyboard (typing, the cursor keys) and 2 is the mouse (a click, a drag). Every other change is number 3, a command's: the editor's own jump to a line, as for a stack frame's file, and a selection an extension sets (VS Code 1.140 and Cursor 3.23 give 3 for the sources `api`, `code.jump` and `code.navigation`). {@link StudyWorkspace} takes a change of these kinds in the active text editor as a sign that the learner works in that editor. The numbers stand here, and not the editor's names, because this file is also loaded where the editor's API does not exist.
+ * @example LEARNER_SELECTION_KINDS.has(3) // => false
+ */
+export const LEARNER_SELECTION_KINDS: ReadonlySet<number> = new Set([1, 2])
+/**
  * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling may have left in the background (a frame of another session had the focus, the adapter asked to keep the focus, or the session went on first); {@link StudyWorkspace} takes a later frame as brought to the front without the keyboard.
  * The editor's handling of a stop takes the adapter's answers to a `threads` and a `stackTrace` request. Its pass of the focus to a session that is still stopped comes 800 ms after the session it showed went on, and it shows that session's frame for only 200 ms of them, so a stop read behind that frame is passed the focus at least 600 ms after it was read (VS Code 1.140 and Cursor 3.23).
  * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a server stop the editor shows 800 ms after the browser session went on
