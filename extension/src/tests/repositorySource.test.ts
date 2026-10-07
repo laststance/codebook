@@ -12,6 +12,7 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
+import { domainError } from '../errors'
 import { bookDocumentSchema } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
 
@@ -528,5 +529,107 @@ test('conflicting and excessive distinct citations fail preparation before any s
       })),
     ),
     /at most 32 distinct sources/,
+  )
+})
+
+// Value: protects=an agent whose project has no regular file where Git keeps its index (a folder at that path, or a link that leads to one); fails_when=the refusal carries the code SOURCE_UNAVAILABLE, whose recovery sends the agent to codebook_sources and codebook_source, which answer the same refusal until a regular index stands there, so the step it is told cannot work; why_new=Cycle 0046 row 319: the refusal carries the code whose recovery is true for it, as the check of .git beside it does; seam=none, real projects (the link is a junction on Windows, which every user may create)
+test('a project whose Git index is a folder, or a link to a folder, is refused by source discovery and by a source read as a missing prerequisite, which tells the agent to fix what the message names and to call codebook_status, and after a regular index stands at its path again the sources are listed and read', async (context) => {
+  // Arrange: two projects with one tracked source; in each the index is kept elsewhere, and a folder, or a link to a folder, stands at its path.
+  const withFolder = await sourceHarness(context),
+    withLink = await sourceHarness(context)
+  for (const project of [withFolder, withLink]) {
+    await project.track('src/module.ts')
+    await rename(
+      join(project.directory, '.git', 'index'),
+      join(project.directory, '.git', 'index-kept-elsewhere'),
+    )
+  }
+  await mkdir(join(withFolder.directory, '.git', 'index'))
+  await mkdir(join(withLink.directory, '.git', 'a-folder'))
+  await symlink(
+    join(withLink.directory, '.git', 'a-folder'),
+    join(withLink.directory, '.git', 'index'),
+    'junction',
+  )
+  const toldToTheAgent = (
+    calling: Promise<unknown>,
+  ): Promise<{ code: string; message: string; recovery: string } | string> =>
+    calling.then(
+      () => 'answered',
+      (error: unknown) => {
+        const { code, message, recovery } = domainError(error).describe()
+        return { code, message, recovery }
+      },
+    )
+
+  // Act
+  const refusals = {
+    folder: {
+      discovery: await toldToTheAgent(withFolder.sources.list()),
+      read: await toldToTheAgent(withFolder.sources.read('src/module.ts')),
+    },
+    linkToAFolder: {
+      discovery: await toldToTheAgent(withLink.sources.list()),
+      read: await toldToTheAgent(withLink.sources.read('src/module.ts')),
+    },
+  }
+  // The recovery is followed to the letter: the prerequisite the message names is fixed, a regular index stands at its path.
+  for (const project of [withFolder, withLink]) {
+    await rm(join(project.directory, '.git', 'index'), { recursive: true })
+    await rename(
+      join(project.directory, '.git', 'index-kept-elsewhere'),
+      join(project.directory, '.git', 'index'),
+    )
+  }
+  const afterwards = {
+    folder: {
+      discovery: (await withFolder.sources.list()).files,
+      read: await toldToTheAgent(withFolder.sources.read('src/module.ts')),
+    },
+    linkToAFolder: {
+      discovery: (await withLink.sources.list()).files,
+      read: await toldToTheAgent(withLink.sources.read('src/module.ts')),
+    },
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, afterwards },
+    {
+      refusals: {
+        folder: {
+          discovery: {
+            code: 'PREREQUISITE_MISSING',
+            message: 'Git index must be a regular file.',
+            recovery:
+              'Fix the named dependency or workspace prerequisite, then call codebook_status before a new start.',
+          },
+          read: {
+            code: 'PREREQUISITE_MISSING',
+            message: 'Git index must be a regular file.',
+            recovery:
+              'Fix the named dependency or workspace prerequisite, then call codebook_status before a new start.',
+          },
+        },
+        linkToAFolder: {
+          discovery: {
+            code: 'PREREQUISITE_MISSING',
+            message: 'Git index must be a regular file.',
+            recovery:
+              'Fix the named dependency or workspace prerequisite, then call codebook_status before a new start.',
+          },
+          read: {
+            code: 'PREREQUISITE_MISSING',
+            message: 'Git index must be a regular file.',
+            recovery:
+              'Fix the named dependency or workspace prerequisite, then call codebook_status before a new start.',
+          },
+        },
+      },
+      afterwards: {
+        folder: { discovery: ['src/module.ts'], read: 'answered' },
+        linkToAFolder: { discovery: ['src/module.ts'], read: 'answered' },
+      },
+    },
   )
 })

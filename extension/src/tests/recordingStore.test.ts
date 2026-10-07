@@ -7,6 +7,7 @@ import {
   open,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -749,4 +750,63 @@ test('a stray .DS_Store file and a link in the recording root leave a recording 
   )
   assert.equal(await readFile(join(root, '.DS_Store'), 'utf8'), 'Bud1')
   assert.deepEqual(await readdir(outside), [])
+})
+
+// Value: protects=a learner who keeps a folder of Codebook's recordings elsewhere behind a link (a larger disk), and the agent that reads the library; fails_when=every recording, every replay and the library's listing end with "Recording root is not a regular directory.", which names no path, while the folder lies in the editor's storage where nobody finds it, and the pane's own step (Retry storage) reads the same link again; or a step the sentence names does not end in a listing; why_new=Cycle 0046 row 311: the three places that refuse a recording root name its path and what to do; seam=none, the real links (junctions on Windows, which every user may create)
+test('a link where a folder of the recordings should be is refused by the listing and by a reading with the folder’s path, what stands there and what to do, at each of the three places that look at a root: after the learner puts the folder in the link’s place, or removes the link, the listing answers and a reading says that no recording is saved', async (context) => {
+  // Arrange: three stores. In the first the root a listing creates is a link, in the second another root a listing looks at, in the third the first root a reading looks at.
+  const created = await recordingHarness(context),
+    lookedAt = await recordingHarness(context),
+    read = await recordingHarness(context)
+  const linkAtTheCreatedRoot = join(created.directory, 'recordings.v2'),
+    linkAtAnotherRoot = join(lookedAt.directory, 'recordings.v1'),
+    linkAtTheReadRoot = join(read.directory, 'recordings.v3')
+  for (const [directory, link] of [
+    [created.directory, linkAtTheCreatedRoot],
+    [lookedAt.directory, linkAtAnotherRoot],
+    [read.directory, linkAtTheReadRoot],
+  ] as const) {
+    await mkdir(join(directory, 'kept-elsewhere'), { recursive: true })
+    await symlink(join(directory, 'kept-elsewhere'), link, 'junction')
+  }
+  const answerOf = (calling: Promise<unknown>): Promise<string> =>
+    calling.then(
+      (answer) => JSON.stringify(answer),
+      (error: Error) => error.message,
+    )
+
+  // Act
+  const refusals = {
+    createdRoot: await answerOf(created.store.list()),
+    anotherRoot: await answerOf(lookedAt.store.list()),
+    readRoot: await answerOf(read.store.read(read.binding.studyId)),
+  }
+  // The sentences are followed to the letter: the folder takes the link's place, or the link is removed.
+  await rm(linkAtTheCreatedRoot)
+  await rename(join(created.directory, 'kept-elsewhere'), linkAtTheCreatedRoot)
+  await rm(linkAtAnotherRoot)
+  await rm(linkAtTheReadRoot)
+  const afterwards = {
+    createdRoot: await answerOf(created.store.list()),
+    anotherRoot: await answerOf(lookedAt.store.list()),
+    readRoot: await answerOf(read.store.read(read.binding.studyId)),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, afterwards },
+    {
+      refusals: {
+        createdRoot: `Recording root is not a regular directory: ${linkAtTheCreatedRoot}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+        anotherRoot: `Recording root is not a regular directory: ${linkAtAnotherRoot}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+        readRoot: `Recording root is not a regular directory: ${linkAtTheReadRoot}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+      },
+      afterwards: {
+        createdRoot: '[]',
+        anotherRoot: '[]',
+        readRoot:
+          'No saved recording is available for this study. Open its available study history or select another recording.',
+      },
+    },
+  )
 })

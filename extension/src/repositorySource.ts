@@ -531,7 +531,13 @@ export class RepositorySourceService {
     }
   }
 
-  /** Distinguishes an empty new Git index from replaced/linked metadata for acquisition guards. @example await this.indexIdentity(indexPath) */
+  /**
+   * Distinguishes an empty new Git index from replaced metadata for acquisition guards; called by {@link catalog} for the path Git names as its index, and by {@link verifyCatalog} for the same path later.
+   * @param path - The index's path as `git rev-parse --git-path index` answers it. Git resolves a link at the index's own path before it answers, so a link to a regular file arrives here as that file.
+   * @returns The status of the regular file at the path, or undefined when nothing is there (a new repository has no index yet).
+   * @throws `PREREQUISITE_MISSING` for a path that holds no regular file (a folder, a link that leads to one, a pipe): no source tool can answer until a regular index stands there, so the refusal carries the code whose recovery says to fix the named prerequisite, as the check of `.git` in {@link catalog} does. `SOURCE_UNAVAILABLE` would send the agent to `codebook_sources`, which answers the same refusal.
+   * @example await this.indexIdentity(indexPath)
+   */
   private async indexIdentity(path: string): Promise<BigIntStats | undefined> {
     const identity = await lstat(path, { bigint: true }).catch((error) => {
       if (error.code === 'ENOENT') return undefined
@@ -539,7 +545,7 @@ export class RepositorySourceService {
     })
     if (identity && !identity.isFile())
       throw new StudyError(
-        'SOURCE_UNAVAILABLE',
+        'PREREQUISITE_MISSING',
         'Git index must be a regular file.',
       )
     return identity

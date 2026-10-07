@@ -542,7 +542,10 @@ export class LearningLibrary {
       const path = join(this.directory, filename),
         stat = await this.optionalStat(path)
       if (!stat) continue
-      if (!stat.isFile()) throw new Error('Progress is not a regular file.')
+      if (!stat.isFile())
+        throw new Error(
+          `Progress is not a regular file: ${path}. Put the file itself at that path, or move what stands there away, then try again.`,
+        )
       const value: unknown = JSON.parse(
         (await readBoundedFile(path, PROGRESS_LIMIT_BYTES)).toString(),
       )
