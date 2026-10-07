@@ -7425,12 +7425,13 @@ export class StudyWorkspace {
 
   /**
    * Gives the active editor group the keyboard once the Application pane a run's end closed is gone, and tells the learner; the second half of {@link closeApplicationPaneOfEndedRun}, for a pane that had the keyboard.
-   * @returns Once the focus command was answered; at once, with nothing run, when a newer run has made its pane meanwhile (it has its own reveal) or the reader is closing (a close settles the keyboard by its own rule).
+   * @returns Once the focus command was answered; with nothing run when the window lost focus during the close, a newer run made its pane (it has its own reveal), or the reader is closing (a close settles the keyboard by its own rule).
    * @example if (heldKeyboard) await this.settleKeyboardAfterRunClosedPane()
    */
   private async settleKeyboardAfterRunClosedPane(): Promise<void> {
     await this.closedPanesGone('codebook.scopedBrowser')
-    if (this.app || this.closing) return
+    // Native tab removal can outlast the learner leaving this window; the earlier focus sample no longer owns its keyboard.
+    if (this.app || this.closing || !vscode.window.state.focused) return
     await vscode.commands
       .executeCommand('workbench.action.focusActiveEditorGroup')
       .then(undefined, () => undefined)
@@ -7614,6 +7615,7 @@ export class StudyWorkspace {
   /**
    * Gives the main editor the layout it had before the Open, at the end of {@link close}, once the panes and the groups they left empty are gone; the note is forgotten either way.
    * The layout is applied only when the main editor answers ({@link isMainEditorLayout}) and the learner's groups are still the same ones ({@link hasLearnersGroupsOf}). A learner who opened, closed or moved a group during the session, or closed one of their tabs of before, keeps what they made, and so does a layout that is as before already. A reader that closes with its disposal applies nothing: no learner asked for that close.
+   * Group identity and columns must also stay unchanged across the layout read ({@link sameEditorGroups}): an old reply's group count cannot hide a group the learner opened while it waited.
    * What cannot be given back: the width of a side bar the editor narrowed to make room for the panes' groups (no command reads or sets it), and a learner's group that stood empty in front of one with tabs and that the editor removed when the pane left it (an empty group can be made again only behind the groups that stay).
    * @returns Once the editor answered the layout command, or at once when nothing is noted or nothing may be applied.
    * @example await this.giveLayoutOfBeforeOpenBack()
@@ -7623,8 +7625,17 @@ export class StudyWorkspace {
     this.layoutBeforeOpen = undefined
     if (!before || this.disposed) return
     await this.closedPanesGone()
+    const groups = vscode.window.tabGroups.all.map((group) => ({
+      group,
+      column: group.viewColumn,
+    }))
     const now = await this.readEditorLayout()
-    if (!this.owesLayoutOfBeforeOpen(before, now)) return
+    // Compare the complete native group model before trusting the reply's main-group count.
+    if (
+      !this.sameEditorGroups(groups, vscode.window.tabGroups.all) ||
+      !this.owesLayoutOfBeforeOpen(before, now)
+    )
+      return
     await vscode.commands
       .executeCommand('vscode.setEditorLayout', before.layout)
       .then(undefined, () => undefined)
