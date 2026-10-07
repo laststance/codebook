@@ -733,6 +733,23 @@ test('the packaged README says that a deadline’s failure text says where a par
   )
 })
 
+// Value: protects=a learner whose Cursor exposes no MCP registration and whom the refusal sends to an external MCP client: "For an external MCP client, run Codebook: Start Agent Server and Codebook: Copy Agent Connection."; fails_when=the README no longer names that way in those words, so the refusal names something the README does not have (it said "the public manual connection setup", which the README never had); why_new=Cycle 0046 row 303: the refusal uses the README's sentence; seam=none, the packaged README
+test('the packaged README names the way to an external MCP client in the words the refusal of a Cursor without MCP registration uses', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'For an external MCP client, run **Codebook: Start Agent Server** and **Codebook: Copy Agent Connection**.',
+  ])
+  const retired = ['public manual connection setup'].filter((words) =>
+    readme.includes(words),
+  )
+
+  // Assert
+  assert.deepEqual({ delivered, retired }, { delivered: [true], retired: [] })
+})
+
 // Value: protects=a learner whom a refusal for a damaged installation sends to the README: 'Install the verified VSIX again (README, "Install the private VSIX")'; fails_when=the README's section gets another heading, or no longer says how to install again, so the refusal names a place that is not there; why_new=Cycle 0046 row 285: the refusal names the section and uses its words; seam=none, the packaged README
 test('the packaged README has the section a refusal for a damaged installation names, and that section says how to install the verified VSIX again', async () => {
   // Arrange

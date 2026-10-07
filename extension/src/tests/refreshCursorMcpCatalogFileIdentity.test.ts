@@ -745,8 +745,7 @@ test(
           ownerMayWrite: (config.mode & 0o200) !== 0,
         },
         {
-          refresh:
-            'refused: Cursor MCP config cannot be refreshed because this user may not change it (the file may be read-only or belong to another user); Codebook left it unchanged. Allow writing to this file, then run Codebook: Set Up AI Chat again.',
+          refresh: `refused: Cursor MCP config cannot be refreshed because this user may not change it (the file may be read-only or belong to another user): ${folders.configPath}. Codebook left it unchanged. Allow writing to this file, then run Codebook: Set Up AI Chat again.`,
           config: configOfTheLearner,
           configLastWrittenAtMs: UNTOUCHED_AT_MS,
           ownerMayWrite: false,
@@ -811,8 +810,7 @@ test('a file that takes the Cursor MCP config’s path between its read and the 
       itsLastWriteAtMs: (await lstat(folders.configPath)).mtimeMs,
     },
     {
-      refresh:
-        'refused: Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.',
+      refresh: `refused: Cursor MCP config changed while Codebook refreshed it: ${folders.configPath}. Codebook left it unchanged. Run Codebook: Set Up AI Chat again.`,
       fileAtTheConfigPath: '{"mcpServers":{"another":{}}}\n',
       itsLastWriteAtMs: UNTOUCHED_AT_MS,
     },
@@ -979,8 +977,7 @@ test('a Cursor MCP config that another file replaces between the look at it and 
       itsLastWriteAtMs: (await lstat(folders.configPath)).mtimeMs,
     },
     {
-      refresh:
-        'refused: Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.',
+      refresh: `refused: Cursor MCP config changed while Codebook refreshed it: ${folders.configPath}. Codebook left it unchanged. Run Codebook: Set Up AI Chat again.`,
       fileAtTheConfigPath: '{"mcpServers":{"another":{}}}\n',
       itsLastWriteAtMs: UNTOUCHED_AT_MS,
     },
