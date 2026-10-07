@@ -2752,6 +2752,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     this.admitPause(name, event, journaled)
+    // Asked after a server pause too, where it finds nothing to take: the page's open pause was judged when the run sent its resume or when that pause was read.
     this.ownPagePauseUnderResume()
   }
 
@@ -2792,6 +2793,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Takes the page pause the run itself is resuming out of the bounds of a pause nobody owns and marks it with the declared server stop of that resume ({@link stopOfPageResume}); called by {@link resumeServerBreakpointInBrowser} when it sends that resume and by {@link onCdpPaused} for a page pause read while a resume has no answer yet, or in that stop's stub shortly after the debugger answered one. Such a pause can also be the one the debugger makes for itself at the module's first position before the pause at the breakpoint; it resumes that one within milliseconds, and the mark goes with the pause.
    * In a run without browser stops such a pause runs against the short bound of an unowned page pause, and in a run with browser stops a held pause that is resumed late is taken for a competing resume. Neither holds for a pause the run resumes itself: it is bounded by the request the run sent (the adapter's answer within the active bound) and by the action's own deadline, and either end names the pause and what became of the resume ({@link pageResumeFailure}, {@link withPagePauseUnderResume}).
+   * It reads only the run's resumes and the page's open pause, never which participant paused, so {@link onCdpPaused} asks it after a server pause as well, and a server pause never makes a waiting page pause the run's own: a resume marks every open page pause when it is sent, a page pause read while one has no answer is marked when it is read, and the bound of an answered resume only runs out, so a page pause that was not taken when it was read is taken later only by a resume the run sends then. The one thing a call after another pause can change is which of two declared stops an already taken pause is kept for (the oldest resume still without an answer).
    * @example
    * ```ts
    * this.ownPagePauseUnderResume() // clears the 250 ms timer of the page pause the run is resuming

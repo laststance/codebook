@@ -1448,6 +1448,109 @@ test('a page pause outside the stub of the server stop’s module that is read r
   )
 })
 
+// Cycle 0046 (row 352): the run asks after every pause it admits, also a server's, whether the page's open pause is its own to resume. A server pause decides nothing there: red if a pause of the server, read while a page pause waits that the run did not take, made that page pause the run's own, so that it lost its bound.
+test('a server pause that is read while a page pause in the stub of the server stop’s module waits, read too late after the debugger’s answer to be Codebook’s own, leaves that page pause its bound, and a run without browser stops ends 3,000 ms after the page paused', async (context) => {
+  // Arrange: the debugger answered the run's resume without resuming the page; 3,001 ms later the page's pause in the stub is read, so it is nobody's and has the stub's own bound.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.answerStubResumeWithoutResuming()
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length,
+    'the debugger answered the run’s resume',
+  )
+  harness.advance(3_001)
+  stub.pausedAtBreakpoint(10, 115)
+  harness.announceScript('server', 'hook', 'eval-ca9ab6a4.cdp')
+  // Act: 1,000 ms later the server pauses for the debugger's own hook and is resumed, while the page still waits; then the rest of the page pause's 3,000 ms pass.
+  harness.advance(1_000)
+  harness.emitUnannouncedPause('server', {
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  harness.emitResume('server')
+  harness.advance(1_999)
+  const failuresJustBeforeTheBound = harness.run.view().failures.join('; ')
+  harness.advance(1)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the unowned pause ended the run',
+  )
+  await harness.run.stop()
+  // Assert: the server's pause was admitted and retired, and the page's pause ended the run by its own bound.
+  assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 1)
+  assert.equal(failuresJustBeforeTheBound, '')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unowned browser stop remained paused',
+  )
+})
+
+// Cycle 0046 (row 352, the same order in a run that declares a browser stop too): red if the server's pause marked the held page pause as resumed by the run, so that the deadline named it with the sentences of a pause Codebook asked the debugger to resume ("The page paused at ..., at the breakpoint of declared server stop ... the debugger answered, but the page reported no resume.").
+test('a server pause that is read while a page pause in the stub of the server stop’s module waits, read too late after the debugger’s answer to be Codebook’s own, leaves it named at the action’s deadline as a pause without a debugger stop, in a run that declares a browser stop too', async (context) => {
+  // Arrange: as above, with a browser stop declared after the server stop, so the page pause is held instead of timed.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.answerStubResumeWithoutResuming()
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length,
+    'the debugger answered the run’s resume',
+  )
+  harness.advance(3_001)
+  stub.pausedAtBreakpoint(10, 115)
+  harness.announceScript('server', 'hook', 'eval-ca9ab6a4.cdp')
+  // Act: the server pauses for the debugger's own hook and is resumed, while the page still waits; then the rest of the action's 20 s pass.
+  harness.advance(1_000)
+  harness.emitUnannouncedPause('server', {
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  harness.emitResume('server')
+  harness.advance(15_999)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the action’s deadline ended the run',
+  )
+  await harness.run.stop()
+  // Assert: the server's pause was admitted and retired, and the deadline names the page's pause as nobody's.
+  assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 1)
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository input reached no verified pause: declared server stop src/mode.ts:1 (registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes. The browser is paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 11:116 without a debugger stop.",
+  )
+})
+
 // Cycle 0046 (row 158): red while a pause that arrived during the judgement by break locations stayed held after that judgement accepted its place: the stop was adopted only when the 3 s wait for its own pause ended, as the native journals of row 77 show.
 test('a server stop that pauses while the debugger still has to answer the break-location request is taken as soon as that judgement accepts its place, without the wait and without an adoption', async (context) => {
   // Arrange: the module is announced and the adapter's news names 7:3; the debugger's answer to the judgement that news starts is kept back. The wait for the stop's own pause never ends by itself.
