@@ -6253,18 +6253,7 @@ export class StudyWorkspace {
         await this.refreshCitations(true)
         // A study whose files the learner removed by hand is forgotten before the ledger is read and the selection written.
         const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
-        try {
-          this.progress = await this.library!.readProgress()
-          // Preserve the original item/version even when the learner has since selected another item.
-          if (this.pendingDecision) {
-            this.progress = await this.library!.decide(this.pendingDecision)
-            this.pendingDecision = undefined
-          }
-          await this.library!.select(this.selection)
-          this.errors.delete('progress')
-        } catch (error) {
-          this.report('progress', error)
-        }
+        // The archives are written before the selection: the library refuses a selection that names a study without its archive, and the study of a run whose archive could not be saved has none until this step writes it.
         try {
           for (const id of this.pendingArchives.keys())
             await this.persistArchive(id)
@@ -6292,6 +6281,18 @@ export class StudyWorkspace {
           }
         } catch (error) {
           this.report('archive', error)
+        }
+        try {
+          this.progress = await this.library!.readProgress()
+          // Preserve the original item/version even when the learner has since selected another item.
+          if (this.pendingDecision) {
+            this.progress = await this.library!.decide(this.pendingDecision)
+            this.pendingDecision = undefined
+          }
+          await this.library!.select(this.selection)
+          this.errors.delete('progress')
+        } catch (error) {
+          this.report('progress', error)
         }
       } finally {
         this.saving = false
