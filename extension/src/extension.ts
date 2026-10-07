@@ -68,6 +68,7 @@ import {
   currentStorageOwner,
   useEditorMachineId,
 } from './utils/currentStorageOwner'
+import { cursorCatalogCleanupNotice } from './utils/cursorCatalogCleanupNotice'
 import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
@@ -1464,10 +1465,7 @@ export function activate(
                 : 'Managed Cursor skill removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
             )
           } catch (error) {
-            void showNotice(
-              'warning',
-              `Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: ${String(error)}. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.`,
-            )
+            void showNotice('warning', cursorCatalogCleanupNotice(error))
           }
         } finally {
           cursorRemoving = false

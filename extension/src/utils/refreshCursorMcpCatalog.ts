@@ -71,9 +71,19 @@ async function regularDirectory(path: string): Promise<void> {
     )
 }
 
-/** What the learner reads for an ownership record that is no regular file of bounded size. */
-const RECORD_INVALID_SENTENCE =
-  'Cursor MCP catalog ownership record is invalid.'
+/**
+ * Builds the refusal for a record of the Cursor MCP catalog that cannot be trusted (edited by hand, damaged, no regular file, or written in a form this version does not read); every check of a receipt, a creation record or a removal record refuses through it, so each names the record and the same way out.
+ * Codebook deletes nothing on such a record: it proves no ownership. Deleting the record is enough for a setup to finish: without it Codebook treats the config as the learner's and only refreshes it.
+ * @param subject - What is invalid, as the sentence begins: "Cursor MCP catalog ownership record", for example.
+ * @param recordPath - The file that holds the invalid record.
+ * @returns The error, not thrown yet.
+ * @example throw invalidCatalogRecord('Cursor MCP catalog ownership record', '/private/cursor-mcp-catalog/receipt.json')
+ */
+function invalidCatalogRecord(subject: string, recordPath: string): Error {
+  return new Error(
+    `${subject} is invalid; Codebook preserved the config. To start over, delete ${recordPath}, then run Codebook: Set Up AI Chat again.`,
+  )
+}
 
 /** What the learner reads for a record path that {@link openWithoutFollowing} did not open, by the code of its refusal; each sentence names the path, which lies in Codebook's own storage. A pipe, a device or a folder reads as it does where the open lets it through and its status refuses it. */
 const RECORD_REFUSAL_SENTENCES: ReadonlyMap<string, (path: string) => string> =
@@ -83,7 +93,12 @@ const RECORD_REFUSAL_SENTENCES: ReadonlyMap<string, (path: string) => string> =
       (path: string) =>
         `Codebook will not read a Cursor MCP catalog ownership record through a link: ${path}. Remove the link, then run Codebook: Set Up AI Chat again.`,
     ],
-    ['ENOTREG', () => RECORD_INVALID_SENTENCE],
+    [
+      'ENOTREG',
+      (path: string) =>
+        invalidCatalogRecord('Cursor MCP catalog ownership record', path)
+          .message,
+    ],
     [
       'EREPLACED',
       (path: string) =>
@@ -103,6 +118,25 @@ function refusalOfRecordOpen(error: unknown, path: string): unknown {
   return sentence ? new Error(sentence(path), { cause: error }) : error
 }
 
+/**
+ * Parses the text of a catalog record, for {@link privateJson}; text that is no JSON is an invalid record like one with a wrong field.
+ * @param text - The record file's text.
+ * @param recordPath - The record file.
+ * @returns The parsed value, not validated yet.
+ * @throws With the sentence of an invalid record ({@link invalidCatalogRecord}) when the text is no JSON.
+ * @example parseRecordText('{"schemaVersion":1}', '/private/cursor-mcp-catalog/receipt.json') // => { schemaVersion: 1 }
+ */
+function parseRecordText(text: string, recordPath: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw invalidCatalogRecord(
+      'Cursor MCP catalog ownership record',
+      recordPath,
+    )
+  }
+}
+
 /** Reads a bounded private journal without following a replaced record path ({@link openWithoutFollowing}: a link is refused on every system, also where the open has no flag for it). @returns The parsed record, or undefined when the path holds nothing. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened ({@link refusalOfRecordOpen}). @example await privateJson('/private/receipt.json') */
 async function privateJson(path: string): Promise<unknown | undefined> {
   let handle
@@ -118,15 +152,19 @@ async function privateJson(path: string): Promise<unknown | undefined> {
       !status.isFile() ||
       status.size > CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES
     )
-      throw new Error(RECORD_INVALID_SENTENCE)
-    return JSON.parse(await handle.readFile('utf8'))
+      throw invalidCatalogRecord('Cursor MCP catalog ownership record', path)
+    return parseRecordText(await handle.readFile('utf8'), path)
   } finally {
     await handle.close()
   }
 }
 
-/** Validates the exact config identity before {@link removeOwnedCursorMcpCatalog} can retire it. @example parseReceipt(record, '/home/user/.cursor/mcp.json') */
-function parseReceipt(value: unknown, targetPath: string): CatalogReceipt {
+/** Validates the exact config identity before {@link removeOwnedCursorMcpCatalog} can retire it. @param recordPath - The file the value was read from (the receipt, or the creation or removal record that holds it as its owner), which the refusal names ({@link invalidCatalogRecord}). @example parseReceipt(record, '/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/receipt.json') */
+function parseReceipt(
+  value: unknown,
+  targetPath: string,
+  recordPath: string,
+): CatalogReceipt {
   const retiredPath =
     typeof value === 'object' && value !== null && 'retiredPath' in value
       ? value.retiredPath
@@ -154,8 +192,9 @@ function parseReceipt(value: unknown, targetPath: string): CatalogReceipt {
     (refreshId !== undefined &&
       (typeof refreshId !== 'string' || !/^[a-f0-9-]{36}$/.test(refreshId)))
   )
-    throw new Error(
-      'Cursor MCP catalog ownership record is invalid; Codebook preserved the config.',
+    throw invalidCatalogRecord(
+      'Cursor MCP catalog ownership record',
+      recordPath,
     )
   return {
     schemaVersion: 1,
@@ -416,7 +455,7 @@ async function advanceOwnedRefreshId(
 ): Promise<string | undefined> {
   const rawOwner = await privateJson(receiptPath)
   if (rawOwner === undefined) return undefined
-  const owner = parseReceipt(rawOwner, targetPath)
+  const owner = parseReceipt(rawOwner, targetPath, receiptPath)
   if (!owner.installed || !(await ownedFile(targetPath, owner)))
     return undefined
   const refreshId = randomUUID()
@@ -448,13 +487,15 @@ async function recoverCreation(
     dirname(record.stagedPath) !== cursorDirectory ||
     !/^\.codebook-[a-f0-9-]+\.mcp\.json$/.test(basename(record.stagedPath))
   )
-    throw new Error(
-      'Cursor MCP catalog creation record is invalid; Codebook preserved the config.',
+    throw invalidCatalogRecord(
+      'Cursor MCP catalog creation record',
+      pendingPath,
     )
-  const owner = parseReceipt(record.owner, targetPath)
+  const owner = parseReceipt(record.owner, targetPath, pendingPath)
   if (!owner.installed || owner.retiredPath !== undefined)
-    throw new Error(
-      'Cursor MCP catalog creation record is invalid; Codebook preserved the config.',
+    throw invalidCatalogRecord(
+      'Cursor MCP catalog creation record',
+      pendingPath,
     )
   const published = await ownedFile(targetPath, owner),
     staged = await ownedFile(record.stagedPath, owner)
@@ -517,10 +558,8 @@ async function recoverRemoval(
     dirname(record.retiredPath) !== storageDirectory ||
     !/^retired-[a-f0-9-]+\.mcp\.json$/.test(basename(record.retiredPath))
   )
-    throw new Error(
-      'Cursor MCP catalog removal record is invalid; Codebook preserved the config.',
-    )
-  const owner = parseReceipt(record.owner, targetPath)
+    throw invalidCatalogRecord('Cursor MCP catalog removal record', pendingPath)
+  const owner = parseReceipt(record.owner, targetPath, pendingPath)
   if (await ownedFile(record.retiredPath, owner)) {
     await atomicPrivateWrite(
       receiptPath,
@@ -588,7 +627,8 @@ export async function refreshCursorMcpCatalog(
         storageDirectory,
       )
       const previous = await privateJson(receiptPath)
-      if (previous !== undefined) parseReceipt(previous, targetPath)
+      if (previous !== undefined)
+        parseReceipt(previous, targetPath, receiptPath)
       let handle
       try {
         handle = await openConfigForRefresh(targetPath)
@@ -741,7 +781,7 @@ export async function removeOwnedCursorMcpCatalog(
       if (recovered) return recovered
       const rawReceipt = await privateJson(receiptPath)
       if (rawReceipt === undefined) return 'not-owned'
-      const owner = parseReceipt(rawReceipt, targetPath)
+      const owner = parseReceipt(rawReceipt, targetPath, receiptPath)
       if (
         expectedRefreshId !== undefined &&
         owner.refreshId !== expectedRefreshId

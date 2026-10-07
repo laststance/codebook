@@ -467,3 +467,103 @@ test('a Cursor MCP config that is rewritten right after Codebook published it is
     },
   )
 })
+
+// Value: protects=a learner whose record of the Cursor MCP catalog was edited by hand or damaged; fails_when=every Cursor registration of every window is refused for good with a sentence that names no file and no way out, or the way out it names does not end in a finished setup; why_new=Cycle 0046 row 212 (the catalog's receipt, creation record and removal record); seam=none, the real files
+test('a receipt, a creation record and a removal record of the Cursor MCP catalog that were edited by hand are each refused with a sentence that names the record, and after the learner deletes it the refresh finishes and the config is as it was', async (context) => {
+  // Arrange: three catalogs with Codebook's own config; in each one record with a schema version this build does not know.
+  const outcomes: Record<string, string[]> = {}
+  const expected: Record<string, string[]> = {}
+  for (const [record, subject] of [
+    ['receipt.json', 'Cursor MCP catalog ownership record'],
+    ['pending-creation.json', 'Cursor MCP catalog creation record'],
+    ['pending-removal.json', 'Cursor MCP catalog removal record'],
+  ] as const) {
+    const folders = await catalogFolders(context)
+    await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+    const recordPath = join(folders.recordDirectory, record)
+    const receipt: object = JSON.parse(
+      await readFile(join(folders.recordDirectory, 'receipt.json'), 'utf8'),
+    )
+    await writeFile(
+      recordPath,
+      JSON.stringify(
+        record === 'receipt.json'
+          ? { ...receipt, schemaVersion: 2 }
+          : { schemaVersion: 2, owner: receipt },
+      ),
+    )
+
+    // Act: the refusal is followed to the letter.
+    const refusal = await outcomeOf(
+      refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+    )
+    await rm(recordPath)
+    const refreshAfterTheRecordWasDeleted = await outcomeOf(
+      refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+    )
+    outcomes[record] = [
+      refusal,
+      refreshAfterTheRecordWasDeleted.replace(/[a-f0-9-]{36}$/, '<generation>'),
+      await readFile(folders.configPath, 'utf8'),
+    ]
+    expected[record] = [
+      `refused: ${subject} is invalid; Codebook preserved the config. To start over, delete ${recordPath}, then run Codebook: Set Up AI Chat again.`,
+      // Without its receipt the config counts as the learner's and gets no generation; with it, it is still Codebook's.
+      record === 'receipt.json'
+        ? 'answered undefined'
+        : 'answered <generation>',
+      EMPTY_CONFIG,
+    ]
+  }
+
+  // Assert
+  assert.deepEqual(outcomes, expected)
+})
+
+// Value: protects=the learner who has to find the one file that is wrong among the catalog's records; fails_when=a record that is no JSON ends with a bare parser error, or a creation record whose owner is invalid is blamed on the receipt; why_new=Cycle 0046 row 212: every check of a record refuses through one function; seam=none, the real files
+test('a Cursor MCP catalog receipt that is no JSON, and a creation record whose owner is invalid, are refused with the sentence of an invalid record that names the file each stands in', async (context) => {
+  // Arrange
+  const noJson = await catalogFolders(context),
+    invalidOwner = await catalogFolders(context)
+  for (const folders of [noJson, invalidOwner])
+    await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const receiptPath = join(noJson.recordDirectory, 'receipt.json')
+  await writeFile(receiptPath, '{"schemaVersion":1,')
+  const creationPath = join(
+    invalidOwner.recordDirectory,
+    'pending-creation.json',
+  )
+  const receipt: object = JSON.parse(
+    await readFile(join(invalidOwner.recordDirectory, 'receipt.json'), 'utf8'),
+  )
+  await writeFile(
+    creationPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      owner: { ...receipt, sha256: 'no digest' },
+      stagedPath: join(
+        invalidOwner.cursorDirectory,
+        '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json',
+      ),
+    }),
+  )
+
+  // Act
+  const refusals = {
+    noJson: await outcomeOf(
+      refreshCursorMcpCatalog(noJson.storageRoot, noJson.cursorDirectory),
+    ),
+    invalidOwner: await outcomeOf(
+      refreshCursorMcpCatalog(
+        invalidOwner.storageRoot,
+        invalidOwner.cursorDirectory,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(refusals, {
+    noJson: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${receiptPath}, then run Codebook: Set Up AI Chat again.`,
+    invalidOwner: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${creationPath}, then run Codebook: Set Up AI Chat again.`,
+  })
+})
