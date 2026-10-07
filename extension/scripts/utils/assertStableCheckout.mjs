@@ -29,6 +29,30 @@ function namedPaths(paths) {
 }
 
 /**
+ * Takes the paths out of what Git reports as changed, each whole; called by {@link dirtyStateChange} for the paths its sentence names.
+ * An entry is two status letters, a space and the path. A renamed or copied entry (a status letter `R` or `C`) is followed by its earlier path, which stands alone, without status letters. That path is told by its place and never by its form: a file name can look like an entry (`my file.md` has a space as its third character).
+ * @param changes - The entries in Git's order ({@link listCheckoutChanges}).
+ * @returns The paths in that order; for a rename or a copy the new path and then the earlier one.
+ * @example
+ * pathsOfChanges([' M PROJECT_STATE.md', '?? notes.txt']) // => ['PROJECT_STATE.md', 'notes.txt']
+ * pathsOfChanges(['R  x.md', 'my file.md'])               // => ['x.md', 'my file.md']
+ */
+function pathsOfChanges(changes) {
+  const paths = []
+  for (let index = 0; index < changes.length; index += 1) {
+    const entry = changes[index],
+      statusLetters = entry.slice(0, 'XY'.length)
+    paths.push(entry.slice('XY '.length))
+    // The entry after a rename or a copy is its earlier path.
+    if (/[RC]/.test(statusLetters) && index + 1 < changes.length) {
+      index += 1
+      paths.push(changes[index])
+    }
+  }
+  return paths
+}
+
+/**
  * Says how the dirty state of a checkout changed between two readings, with the paths Git names now; called by {@link assertStableCheckout}.
  * @param wasDirty - Whether the checkout counted as changed at the first reading.
  * @param isDirty - Whether it does now.
@@ -41,10 +65,7 @@ function namedPaths(paths) {
 function dirtyStateChange(wasDirty, isDirty, changes) {
   if (wasDirty === isDirty) return undefined
   if (!isDirty) return 'Git reported changes before and reports none now'
-  // An entry is two status letters, a space and the path; the earlier path of a rename stands alone.
-  const paths = changes.map((entry) =>
-    /^.. /.test(entry) ? entry.slice('XY '.length) : entry,
-  )
+  const paths = pathsOfChanges(changes)
   return paths.length > 0
     ? `Git reported no change before and reports changes now (${namedPaths(paths)})`
     : 'Git reported no change before and a package input differs from its revision now, although Git names no changed path'
