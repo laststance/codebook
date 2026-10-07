@@ -376,7 +376,11 @@ That tree is verified at `85816f2` and pushed: the build passes, the full suite 
 
 **Package SPD's rows 218 and 219 merged (`49aa8b3`).** Leaving Recording retires the line of a finished removal, by the rule that choosing another entry follows, and a change between Overview and Live keeps it (row 218). The pane's own files request is answered also while a presentation changes, pinned by a test that holds a change half-way: the request reads the library and touches no pane, and refused it would leave an open "Remove by hand" at "Listing this study's files..." (row 219, no code changed). The package found nothing more.
 
-181 of 222 rows are closed. Open: 25 rows that owe a native check, 3 whose fix is on a branch that is not merged, and 13 that their packages work on or that were just added.
+**CI on the pushed head `85816f2`: 27 of 27 checks pass.** The Windows job (run 37569310816, twenty-four test files, one at a time) ran 221 tests: 207 pass, 14 skipped with their reasons, none failed. New on Windows in this run and passing: the walk that removes without following a link, with junctions and against a file system whose links resist removal (row 187); the rule that undoes a move of a file that is not Codebook's, so `link` answers there what the rule relies on (row 188); the listing that does not follow a link at a folder's own path, with a junction (row 185); and the two tests that had skipped by the system's name (row 199), so that no test of the job skips for a right any more. The fourteen skips are for what Windows does not have (a named pipe in a folder, permission bits for a group and for others, an endless device at a path, `O_NOFOLLOW`, a pid namespace, `/bin/sh` for a stand-in, a file's times through a file opened for reading) and for the runner's large file ids.
+
+**Package WUB's rows 216 and 217 merged (`51ab4ae`).** The notification that watches an update says where the request went, in the words the confirmation uses, when the watch ends, and that a learner who refused a step of the chat presses Cancel; the README says the same for the command, which asks nothing (rows 216 and 217; that the editor does not cut the longer title was read in its source at both tags and is owed a native look). Found by it and now row 223: the page's line of a running update does not say it.
+
+183 of 223 rows are closed. Open: 25 rows that owe a native check, 1 whose fix is on a branch that is not merged, and 14 that their packages work on or that were just added.
 
 ## Result and decision
 
