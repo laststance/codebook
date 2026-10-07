@@ -21,12 +21,14 @@ import {
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_OFFER,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_CHAT_SESSION_START_TIMEOUT_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
   WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
   WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS,
   WIKI_UPDATE_MARKER_WRITE_GRACE_MS,
   WIKI_UPDATE_RUN_MARKER_SUFFIX,
+  WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
@@ -359,19 +361,26 @@ test('the packaged README says that a VS Code update sends its request into a ne
   const delivered = heldSentences(readme, [
     "In VS Code the update's request does not go into the chat you are using, with the one exception named below: Codebook reveals the chat, runs the editor's **New Chat** and sends the request into that new chat, so a request of yours that is in progress, waits for a confirmation or is queued is neither stopped nor held back, and the update does not wait behind it.",
     "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). New Chat closes the diff editors that show that chat's edits; the edits stay.",
-    "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work in the window (a file you open, a command you run) is not taken for a sign.",
+    "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work elsewhere in the window (a file you open, a command you run) is not taken for a sign. What the update's own steps touch counts whoever does it, because Codebook cannot tell you from the chat there: a file opened in the Wiki's folder, in a folder prepared beside it or in the Codebook skill's folder, a terminal command that names `publish-wiki.mjs` or the Wiki's folder, and a change in the Wiki's folder or in a folder prepared beside it.",
     'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
     'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
-    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced; the confirmation says so there. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
+    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command, and the notification that watches the update says `in the chat that is open` in either case. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
   ])
   const retired = [
     'Codebook takes its request back before it shows the sentence',
     "Requests of your own that wait in that chat's queue are removed with it, and a request of yours that is in progress there is left alone.",
+    'Your own work in the window (a file you open, a command you run) is not taken for a sign.',
+    'An editor without that command gets the request in the chat that is open',
   ].filter((sentence) => readme.includes(sentence))
 
-  // Assert: the README holds each sentence, and the product prints the sentences it quotes.
+  // Assert: the README holds each sentence, and the product prints the sentences it quotes and keeps the bound and the place it names for a request that got no chat of its own.
   assert.deepEqual(delivered, [true, true, true, true, true, true])
   assert.deepEqual(retired, [])
+  assert.equal(WIKI_CHAT_SESSION_START_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 5)
+  assert.equal(
+    describeWikiChatWatch('shared', WIKI_UPDATE_WATCH_TIMEOUT_MS),
+    'Watching for the LLM Wiki update in the chat that is open. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+  )
   assert.equal(
     describeUnansweredWikiChat('withdrawn', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
     'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
@@ -419,13 +428,21 @@ test('the packaged README says when the watch of a VS Code update ends and that 
 
   // Act
   const delivered = heldSentences(readme, [
-    "The watch ends when the new Wiki is published, when the chat's reply ends before the chat asked you to approve a step, when you press Cancel in the notification, or after those 15 minutes.",
+    "The watch ends when the new Wiki is published, when a file of your own in the Wiki folder is in the way of the publish (**Update stopped**), when a new site is on disk whose manifest Codebook still cannot read 10 seconds after it appeared, when the chat's reply ends before the chat asked you to approve a step, when you press Cancel in the notification, or after those 15 minutes.",
     'If you refuse a step, press Cancel in the notification: once the chat has asked you, Codebook does not see it stop, and would watch for the 15 minutes.',
     'Stop the chat itself to cancel the update. If it has already stopped (you refused a step), press **Update anyway** when you update again.',
   ])
 
-  // Assert: the README holds each sentence, and the notification names the same bound.
+  // Assert: the README holds each sentence with all six ends of the watch, and the notification names the same bound.
   assert.deepEqual(delivered, [true, true, true])
+  assert.equal(
+    readme.includes(
+      "The watch ends when the new Wiki is published, when the chat's reply ends",
+    ),
+    false,
+    'the README lists the ends of the watch without a file in the way and a manifest that cannot be read',
+  )
+  assert.equal(WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS, 10_000)
   assert.equal(
     describeWikiChatWatch('own', WIKI_UPDATE_WATCH_TIMEOUT_MS),
     'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
@@ -651,6 +668,15 @@ test('the packaged README says that Cursor setup needs a file system with hard l
     quotesTheRefusalOfTheSetup: paragraph.includes(
       `"${describeRefusedSkillLink('<path>', 'EPERM')}"`,
     ),
+    saysWhichSetupChangesNoFile: paragraph.includes(
+      "and a setup that had no skill of Codebook's to replace changes no file.",
+    ),
+    saysWhatARefusedUpdateLeaves: paragraph.includes(
+      "An update of a skill Codebook installed earlier has moved that skill aside before the link is tried; when the link is refused then, the previous skill stays under the name it was moved to, and the sentence says `Codebook's previous skill is kept as <kept path>; move it back to <path> to go on using it.` where the other says `No existing file was changed.`",
+    ),
+    saysOfEverySetupThatItChangesNoFile: paragraph.includes(
+      'again.", and changes no file.',
+    ),
     saysThatNoOtherWayIsTaken: paragraph.includes(
       'Codebook does not place the file another way.',
     ),
@@ -663,11 +689,18 @@ test('the packaged README says that Cursor setup needs a file system with hard l
     namesTheConfig: true,
     namesTheFileSystems: true,
     quotesTheRefusalOfTheSetup: true,
+    saysWhichSetupChangesNoFile: true,
+    saysWhatARefusedUpdateLeaves: true,
+    saysOfEverySetupThatItChangesNoFile: false,
     saysThatNoOtherWayIsTaken: true,
   })
   assert.equal(
     describeRefusedSkillLink('<path>', 'EPERM'),
     "Cursor skill could not be installed: the file system refused to put Codebook's new file in place as <path> (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.",
+  )
+  assert.equal(
+    describeRefusedSkillLink('<path>', 'EPERM', '<kept path>'),
+    "Cursor skill could not be installed: the file system refused to put Codebook's new file in place as <path> (EPERM). Codebook's previous skill is kept as <kept path>; move it back to <path> to go on using it. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.",
   )
 })
 
