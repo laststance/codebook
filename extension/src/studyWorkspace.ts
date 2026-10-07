@@ -6511,7 +6511,7 @@ export class StudyWorkspace {
 
   /**
    * Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels; called by the command "Codebook: Close Study Workspace".
-   * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: that close moves no keyboard and tells nothing.
+   * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: that close moves no keyboard and tells nothing, except during a Read, whose hidden side bars it shows again; showing them moves the keyboard, the active editor group takes it, and the learner is told ({@link movesKeyboardAfterClose}).
    * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
    * @throws When the editor refused to close a captured source's tab.
    * @example await workspace.close()
@@ -6622,11 +6622,10 @@ export class StudyWorkspace {
       this.app = undefined
       this.initialAppPlacement = undefined
       // The tabs are closed without moving the focus, so the keyboard would fall to the page body: the group the editor shows as active takes it.
-      if (
-        (leavesKeyboardNowhere || restoredSideBars) &&
-        vscode.window.state.focused
-      )
-        await this.giveActiveGroupKeyboardAfterClose(leavesKeyboardNowhere)
+      if (this.movesKeyboardAfterClose(leavesKeyboardNowhere, restoredSideBars))
+        await this.giveActiveGroupKeyboardAfterClose(
+          leavesKeyboardNowhere || this.disposed,
+        )
       clearTimeout(this.citationRefreshTimer)
       this.citationRevision++
       this.citationKey = undefined
@@ -6681,17 +6680,31 @@ export class StudyWorkspace {
   }
 
   /**
-   * Gives the active editor group the keyboard once {@link close} has closed the panes and the captured source, and tells the learner where it is; called by {@link close} in a focused window.
+   * Says whether {@link close} gives the active editor group the keyboard at its end; asked by {@link close} once the panes are disposed.
+   * A Close the learner asked for does, in a focused window, when closing the panes can leave the keyboard nowhere or when it showed the side bars a Read hid. A reader that closes with its disposal (the extension host ends, or the workspace folders changed) moves no keyboard, because no learner asked for that close, with one exception: a disposal during a Read shows the side bars the Read hid, and the editor's commands that show a bar give that bar the keyboard. The active editor group then takes it back, and the learner is told.
+   * @param leavesKeyboardNowhere - Whether closing the panes can leave the keyboard on no element.
+   * @param restoredSideBars - Whether this close showed a side bar a Read hid ({@link showSideBarsHiddenByRead}).
+   * @returns `true` in a focused window when a side bar was shown again, and for a Close that is no disposal when the keyboard could be left nowhere; `false` otherwise, and in a window without the focus.
+   * @example this.movesKeyboardAfterClose(true, false) // => false while the reader is being disposed
+   */
+  private movesKeyboardAfterClose(
+    leavesKeyboardNowhere: boolean,
+    restoredSideBars: boolean,
+  ): boolean {
+    if (!vscode.window.state.focused) return false
+    return restoredSideBars || (leavesKeyboardNowhere && !this.disposed)
+  }
+
+  /**
+   * Gives the active editor group the keyboard once {@link close} has closed the panes and the captured source, and tells the learner where it is; called by {@link close} when {@link movesKeyboardAfterClose} says so.
    * The focus command waits until the editor has closed the disposed panes' tabs and removed the groups they left empty: a group focused before that is the one that still shows a closing pane, and the keyboard goes with that tab a moment later; and the removal of a group rebuilds the editor grid, which takes the keyboard from the editor that had it.
-   * @param tellsLearner - Whether a pane, the captured source or the learner's own file was the active editor, so that the keyboard may have come from the terminal, a view or a chat; `false` when only the side bars a Read hid were shown again.
-   * @returns Once the focus command was answered; at once for a reader that is being disposed, which moves no keyboard.
-   * @example await this.giveActiveGroupKeyboardAfterClose(leavesKeyboardNowhere)
+   * @param tellsLearner - Whether the learner is told where the keyboard is: a pane, the captured source or the learner's own file was the active editor, so that the keyboard may have come from the terminal, a view or a chat; or the reader was disposed during a Read, whose side bars took the keyboard when they were shown again. `false` when a Close only showed the side bars a Read hid.
+   * @returns Once the focus command was answered.
+   * @example await this.giveActiveGroupKeyboardAfterClose(leavesKeyboardNowhere || this.disposed)
    */
   private async giveActiveGroupKeyboardAfterClose(
     tellsLearner: boolean,
   ): Promise<void> {
-    // A reader that closes with its disposal (the extension host ends, or the workspace folders changed) moves no keyboard and tells nothing: no learner asked for that close.
-    if (this.disposed) return
     await waitUntil(
       () =>
         !this.hasUnownedPaneTab(
