@@ -9,18 +9,27 @@ import {
 } from './waitForWikiChatAnswer'
 import { waitForWikiOutputChange } from './waitForWikiOutputChange'
 import {
+  watchWikiChatReply,
+  type WikiChatReplyWatch,
+} from './watchWikiChatReply'
+import {
   withdrawWikiChatRequest,
   type WikiChatWithdrawal,
 } from './withdrawWikiChatRequest'
 
 /** How the start of a VS Code Wiki update in the editor chat ended: the answers of {@link waitForWikiChatAnswer}, where `unanswered` also says which session the request went to and whether Codebook saw it leave the chat. */
-export type WikiChatStart =
+export type WikiChatStartOutcome =
   | Exclude<WikiChatAnswer, { outcome: 'unanswered' }>
   | {
       outcome: 'unanswered'
       session: WikiChatSession
       withdrawal: WikiChatWithdrawal
     }
+
+/** The start of a VS Code Wiki update in the editor chat: how it ended, and the watch of the reply's end, which the watch for the publish follows when the chat works on the request. */
+export type WikiChatStart = WikiChatStartOutcome & {
+  reply: WikiChatReplyWatch
+}
 
 /** The bounds of the start: of each command that starts the chat session, of the first sign, of each step of the withdrawal, and the time between two looks at the Wiki's output. */
 export type WikiChatStartBounds = {
@@ -43,14 +52,14 @@ export type WikiChatStartBounds = {
  * @param options.signal - Aborts the start (the window closes).
  * @param options.bounds - The bounds of the start.
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
- * @returns The answer of {@link waitForWikiChatAnswer}; for `unanswered` with the session and the withdrawal's result.
+ * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the session and the withdrawal's result, and with the watch of the reply's end ({@link watchWikiChatReply}).
  * @throws What `watchSigns` throws, before any command ran.
  *
  * @example
  * ```ts
  * await startWikiChatUpdate({ query, runCommand, watchSigns, readOutputStamp, signal, bounds })
- * // => { outcome: 'working' } once the chat read the manifest
- * // => { outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn' } for a chat that is not ready
+ * // => { outcome: 'working', reply } once the chat read the manifest
+ * // => { outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn', reply } for a chat that is not ready
  * ```
  */
 export async function startWikiChatUpdate(options: {
@@ -97,7 +106,9 @@ export async function startWikiChatUpdate(options: {
       timeoutMs: bounds.answerMs,
       sleep,
     })
-    if (answer.outcome !== 'unanswered') return answer
+    // The reply may end after the first answer; the watch for the publish follows it.
+    const reply = watchWikiChatReply(handOver)
+    if (answer.outcome !== 'unanswered') return { ...answer, reply }
     // The request the chat still holds is taken back before the result is published.
     const withdrawal = await withdrawWikiChatRequest({
       handOver,
@@ -107,7 +118,7 @@ export async function startWikiChatUpdate(options: {
       settleMs: bounds.withdrawSettleMs,
       sleep,
     })
-    return { outcome: 'unanswered', session, withdrawal }
+    return { outcome: 'unanswered', session, withdrawal, reply }
   } finally {
     ended.abort()
     for (const watch of watches) watch.dispose()

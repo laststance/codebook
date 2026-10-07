@@ -1,3 +1,7 @@
+import {
+  answerOfWikiChatReply,
+  type WikiChatReplyAnswer,
+} from './answerOfWikiChatReply'
 import { sleepUntilAborted } from './sleepUntilAborted'
 
 /**
@@ -10,63 +14,10 @@ import { sleepUntilAborted } from './sleepUntilAborted'
  * - `cancelled`: the signal aborted first
  */
 export type WikiChatAnswer =
-  | { outcome: 'working' }
-  | { outcome: 'replied' }
-  | { outcome: 'error-reply'; message: string | undefined }
+  | WikiChatReplyAnswer
   | { outcome: 'unanswered' }
   | { outcome: 'failed'; error: unknown }
   | { outcome: 'cancelled' }
-
-/**
- * Reads one property of what VS Code's chat command returned, whatever its type; called by {@link answerOfReply}.
- * @param reply - What `workbench.action.chat.open` with `blockOnResponse` resolved with.
- * @param name - The property's name.
- * @returns The property's value, or `undefined` when the reply is no object or has no such property.
- * @example
- * replyProperty({ type: 'confirmation' }, 'type') // => 'confirmation'
- * replyProperty('text', 'type')                   // => undefined
- */
-function replyProperty(reply: unknown, name: string): unknown {
-  if (typeof reply !== 'object' || reply === null) return undefined
-  return new Map<string, unknown>(Object.entries(reply)).get(name)
-}
-
-/**
- * Reads the message of the error a chat reply reports; called by {@link answerOfReply} for a reply with `errorDetails`.
- * @param errorDetails - The reply's `errorDetails`.
- * @returns The `message` when it is a text; `undefined` otherwise.
- * @example
- * errorMessageOf({ message: 'You have exceeded your quota.' }) // => 'You have exceeded your quota.'
- * errorMessageOf({})                                           // => undefined
- */
-function errorMessageOf(errorDetails: unknown): string | undefined {
-  const message = replyProperty(errorDetails, 'message')
-  return typeof message === 'string' ? message : undefined
-}
-
-/**
- * Says what a reply of VS Code's chat command means for the update; called by {@link waitForWikiChatAnswer} when the command settled with a response.
- *
- * Basis (VS Code source, `chatActions.ts` at tags 1.120.0 and 1.140.0): with `blockOnResponse` the command returns `{ ...response.result, ...confirmationInfo }` with `type: 'confirmation'` when the response waits for a confirmation (`getPendingConfirmationInfo`), and `{ ...response.result }` when the response is complete; a failed response carries `errorDetails` in its result.
- *
- * @param reply - What the command resolved with; never `undefined` here.
- * @returns
- * - A reply with `errorDetails`: `error-reply` with the error's message
- * - A reply with `type: 'confirmation'`: `working`
- * - Any other reply: `replied`
- * @example
- * answerOfReply({ type: 'confirmation', kind: 'toolInvocation' })            // => { outcome: 'working' }
- * answerOfReply({})                                                         // => { outcome: 'replied' }
- * answerOfReply({ errorDetails: { message: 'Sorry, your request failed.' } }) // => { outcome: 'error-reply', message: 'Sorry, your request failed.' }
- */
-function answerOfReply(reply: unknown): WikiChatAnswer {
-  const errorDetails = replyProperty(reply, 'errorDetails')
-  if (errorDetails !== undefined)
-    return { outcome: 'error-reply', message: errorMessageOf(errorDetails) }
-  return replyProperty(reply, 'type') === 'confirmation'
-    ? { outcome: 'working' }
-    : { outcome: 'replied' }
-}
 
 /**
  * Waits from the moment a VS Code Wiki update hands its request to the editor chat until the chat's first observable answer, the learner's cancel or the bound.
@@ -109,7 +60,7 @@ export async function waitForWikiChatAnswer(options: {
     return await Promise.race<WikiChatAnswer>([
       Promise.resolve(options.reply).then(
         (reply): Promise<WikiChatAnswer> | WikiChatAnswer =>
-          reply === undefined ? noAnswerYet : answerOfReply(reply),
+          reply === undefined ? noAnswerYet : answerOfWikiChatReply(reply),
         (error: unknown): WikiChatAnswer => ({ outcome: 'failed', error }),
       ),
       options.sign.then((): WikiChatAnswer => ({ outcome: 'working' })),

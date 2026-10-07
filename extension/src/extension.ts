@@ -70,6 +70,7 @@ import {
 } from './utils/currentStorageOwner'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
+import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
@@ -107,6 +108,7 @@ import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
 import { startWikiChatUpdate } from './utils/startWikiChatUpdate'
 import { thrownMessage } from './utils/thrownMessage'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
+import type { WikiChatReplyWatch } from './utils/watchWikiChatReply'
 import { watchWikiUpdateSigns } from './utils/watchWikiUpdateSigns'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
@@ -861,8 +863,11 @@ export function activate(
       },
     )
   }
-  /** Watches for the editor agent's publish after VS Code's chat opened, then records the run's result for the reader; settles when the watch has stopped. @example await watchVsCodeWikiUpdate(run) */
-  const watchVsCodeWikiUpdate = (run: WikiRun): Promise<void> =>
+  /** Watches for the editor agent's publish after VS Code's chat took up the request, then records the run's result for the reader; settles when the watch has stopped. @param reply - The watch of the chat's reply: when the reply ends, one more look decides and the run ends at once. @example await watchVsCodeWikiUpdate(run, chatStart.reply) */
+  const watchVsCodeWikiUpdate = (
+    run: WikiRun,
+    reply: WikiChatReplyWatch,
+  ): Promise<void> =>
     withCancellableProgress(
       `Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat)${run.isOutputOutsideProject ? `. ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`,
       run,
@@ -877,6 +882,8 @@ export function activate(
               inspectPublishedWiki(run.projectRoot, run.outputDirectory),
             unreadableGraceMs: WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
             findBlockingFiles: () => probeWikiCandidates(run),
+            // A chat whose reply ended has said its last word: the look after it decides, and the bound is not waited out.
+            replyEnded: reply.ended,
             signal: run.controller.signal,
             timeoutMs: run.timeoutMs,
             pollMs: WIKI_UPDATE_WATCH_POLL_MS,
@@ -886,6 +893,7 @@ export function activate(
             timedOut: result.outcome === 'timed-out',
             blockingPaths: result.outcome === 'blocked' ? result.paths : [],
             publish: result.outcome === 'published' ? result : undefined,
+            ...failureOfWikiChatReplyEnd(result.outcome, reply.end()),
           })
         } catch (error) {
           await finishWikiUpdate(run, { failure: thrownMessage(error) })
@@ -1241,6 +1249,7 @@ export function activate(
           }),
         }
         activeWikiRun = opening
+        let chatReply: WikiChatReplyWatch
         try {
           // The request gets a chat session of its own; only what the update's own steps name counts as a sign that the chat works on it, and a request without a sign within the bound is taken back.
           const chatStart = await startWikiChatUpdate({
@@ -1284,12 +1293,13 @@ export function activate(
             await finishWikiUpdate(run, startEnd)
             return
           }
+          chatReply = chatStart.reply
         } finally {
           if (activeWikiRun === opening) activeWikiRun = undefined
           reportOpeningEnded()
         }
-        // The chat's command says nothing more once the chat works, so the extension watches for the publish itself; the watch outlives this call.
-        void track(watchVsCodeWikiUpdate(run))
+        // A chat that works says nothing more until its reply ends, so the extension watches for the publish itself and for that end; the watch outlives this call.
+        void track(watchVsCodeWikiUpdate(run, chatReply))
       } catch (error) {
         // A run whose end was recorded has nothing left to end; what was thrown is the caller's.
         if (!wikiUpdateRun.isRunning()) throw error

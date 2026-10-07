@@ -2003,6 +2003,118 @@ test('a chat whose response is complete after it published ends the update as Up
   }
 })
 
+// Value: protects=the learner whose chat took up the update, then answered that it cannot publish and stopped; fails_when=nothing looks at the chat's reply after the first sign, so the page says "Updating LLM Wiki…" for 15 minutes, a reservation stays, and the next press is refused until then; why_new=Cycle 0046 row 196; seam=the chat's reply, which the test ends after the first sign
+test('a chat that shows a first sign after 5 seconds and completes its reply after 40 seconds without publishing ends the update at once with the sentence that it finished without publishing, leaves no marker, and the next press sends a request', async () => {
+  // Arrange: the chat opens the manifest and keeps its reply open until the test ends it.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+    clock.advance(5_000)
+    wiki.openDocument(wiki.manifestPath)
+    await press
+    const stateAfterTheFirstSign = wiki.status().state
+
+    // Act: 35 seconds later the chat's response is complete; nothing was published.
+    clock.advance(35_000)
+    request.end({})
+    const ended = await waitForEnd(wiki.status)
+    const markerAfterTheEnd = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    // The next press is given half a second to send its request; its chat then opens the manifest too, so the press ends.
+    const nextPress = wiki.clickUpdate()
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500))
+    const requestsAfterTheNextPress = wiki.chatRequests.length
+    wiki.openDocument(wiki.manifestPath)
+    await nextPress
+
+    // Assert
+    assert.equal(stateAfterTheFirstSign, 'running')
+    assert.equal(ended.state, 'failed')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.equal(markerAfterTheEnd, 'gone')
+    assert.equal(requestsAfterTheNextPress, 2)
+    assert.equal(wiki.errors.length, 1)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the chat's own message when it stops with an error after it took up the update (a quota that ran out in the middle); fails_when=the run ends with the sentence of a reply that finished without publishing, or is watched for 15 minutes; why_new=Cycle 0046 row 196, with row 148's sentence; seam=the chat's reply, which the test ends after the first sign
+test('a chat whose reply ends with an error after its first sign ends the update at once with the sentence that quotes the chat’s message', async () => {
+  // Arrange
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+    clock.advance(5_000)
+    wiki.openDocument(wiki.manifestPath)
+    await press
+
+    // Act
+    request.end({
+      errorDetails: {
+        message: 'You have exceeded your premium request allowance.',
+      },
+    })
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.equal(ended.state, 'failed')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The editor chat answered the update request with an error and stopped (You have exceeded your premium request allowance.). Read its message in the Chat view, then press Update LLM Wiki again.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the watch of a chat that asked the learner to approve a step after its first sign; fails_when=the chat command's return at a wait for a confirmation is taken for the reply's end, so the update ends as "finished without publishing" while the chat waits for the learner; why_new=Cycle 0046 row 196; seam=the chat's reply, which the test ends after the first sign
+test('a chat whose reply waits for a confirmation after its first sign stays watched', async () => {
+  // Arrange
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+    clock.advance(5_000)
+    wiki.openDocument(wiki.manifestPath)
+    await press
+
+    // Act: the chat asks to approve a command; ten looks of the watch pass.
+    request.end({ type: 'confirmation', kind: 'toolInvocation' })
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a chat that opens the Wiki’s manifest for the request before it replies is watched for its publish', async () => {
   // Arrange: the chat's reply never comes back to the command, as for a chat that works without asking for a confirmation.
   const { clock, sleep } = manualAnswerClock()
