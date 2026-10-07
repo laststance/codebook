@@ -241,7 +241,8 @@ test('Cursor MCP discovery refresh refuses redirected config files', async (cont
   context.after(() => rm(directory, { recursive: true, force: true }))
   const originalPath = join(directory, 'original.json')
   await writeFile(originalPath, '{"mcpServers":{"existing":{}}}\n')
-  await symlink(originalPath, join(directory, 'mcp.json'))
+  if (!(await createLinkIfAllowed(originalPath, join(directory, 'mcp.json'))))
+    return context.skip(LINK_NOT_ALLOWED)
   // Act / Assert
   await assert.rejects(
     refreshCursorMcpCatalog(join(directory, 'storage'), directory),
@@ -260,7 +261,8 @@ test('Cursor MCP discovery refresh refuses redirected config directories', async
   const actual = join(directory, 'actual')
   await mkdir(actual)
   const alias = join(directory, 'alias')
-  await symlink(actual, alias)
+  // A junction on Windows, which every user may create; elsewhere a symbolic link.
+  await symlink(actual, alias, 'junction')
   // Act / Assert
   await assert.rejects(
     refreshCursorMcpCatalog(join(directory, 'storage'), alias),
