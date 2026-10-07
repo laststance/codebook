@@ -43,6 +43,7 @@ import {
 import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
+import { loadSecondNameRulesOverHeldFiles } from './utils/loadSecondNameRulesOverHeldFiles'
 
 const INITIAL_SKILL =
   '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
@@ -5454,6 +5455,313 @@ test('an edited Cursor skill is left alone by setup, which says how to go on and
         renames: INITIAL_SKILL,
       },
       renamedFile: EDITED_SKILL,
+    },
+  )
+})
+
+/**
+ * Loads the skill deployment as a window in which a program holds the skill file for itself in the instant Codebook compares the file's two names, and only then: the two rules that remove a second name refuse the names a test calls held with `EBUSY`, every other read of the window opens the file.
+ * @param isHeld - Asked at every open of the two rules; `true` while the program holds the file under that path.
+ * @param fileSystemOfTheWindow - What the window gets for `node:fs/promises`, when something must happen between two of its steps.
+ * @returns The window.
+ */
+async function skillWindowWhoseSkillIsHeld(
+  isHeld: (path: string) => boolean,
+  fileSystemOfTheWindow: object = fileSystem,
+): Promise<typeof CursorSkillModule> {
+  const rules = await loadSecondNameRulesOverHeldFiles((path) =>
+    isHeld(path) ? 'EBUSY' : undefined,
+  )
+  return skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': fileSystemOfTheWindow,
+    './utils/dropSecondNameOfMovedFile': rules.ofMovedFile,
+    './utils/dropSecondNameOfOneFile': rules.ofOneFile,
+  })
+}
+
+// Value: protects=a learner whose editor holds the skill file for itself (Windows) in the instant a setup puts the edited file back after its move, or removes the staged name of a skill that was edited right after its publication; fails_when=setup answers "Cursor skill changed during an interrupted setup; … The file Codebook had moved away is kept as …", which names a second file that is not there and whose way out (delete the record) leaves the second name; or the next setup does not drop the name; why_new=Cycle 0046 row 308: a name that could not be opened has an answer of its own; seam=the opener of the two rules that remove a second name, which refuses the held file, and node:fs/promises rename and link of the loaded deployment, at which the skill is edited
+test('a skill file that a program holds for itself in the instant setup puts it back after a move, or removes its staged name, is answered with both paths and with the step to close the program and run the setup again: the record stays, and the setup after the program let go drops the name, leaves no record and answers for the file', async (context) => {
+  // Arrange: one installed skill that is edited right before an update moves it, and one first setup whose published skill is edited at once; in both windows a program holds the file under the names Codebook gave it.
+  const movedAway = await fixture(context),
+    publishedAndEdited = await fixture(context)
+  await deployCursorSkill(
+    movedAway.extensionPath,
+    movedAway.storageRoot,
+    movedAway.homeRoot,
+  )
+  await writeFile(movedAway.sourcePath, NEXT_SKILL)
+  let isProgramHoldingTheFile = true
+  const windowOfTheMove = await skillWindowWhoseSkillIsHeld(
+    (path) =>
+      isProgramHoldingTheFile &&
+      path.includes(join('codebook', '.codebook-displaced-')),
+    {
+      ...fileSystem,
+      rename: async (from: string, to: string) => {
+        if (from === movedAway.targetPath) await writeFile(from, EDITED_SKILL)
+        return fileSystem.rename(from, to)
+      },
+    },
+  )
+  const windowOfThePublication = await skillWindowWhoseSkillIsHeld(
+    (path) => isProgramHoldingTheFile && path.includes('.codebook-stage-'),
+    {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        await fileSystem.link(existingPath, newPath)
+        if (newPath === publishedAndEdited.targetPath)
+          await writeFile(newPath, EDITED_SKILL)
+      },
+    },
+  )
+  const setUp = (
+    window: typeof CursorSkillModule,
+    paths: typeof movedAway,
+  ): Promise<string> =>
+    statusOrRefusalOf(
+      window.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    )
+
+  // Act: the setups while the program holds the file, and then the sentence to the letter: the program lets go, and the setup is run again.
+  const setups = {
+    movedAway: await setUp(windowOfTheMove, movedAway),
+    publishedAndEdited: await setUp(windowOfThePublication, publishedAndEdited),
+  }
+  const filesWhileHeld = {
+    movedAway: await filesOfTheSetup(movedAway),
+    publishedAndEdited: await filesOfTheSetup(publishedAndEdited),
+  }
+  isProgramHoldingTheFile = false
+  const setupsAgain = {
+    movedAway: await setUp(windowOfTheMove, movedAway),
+    publishedAndEdited: await setUp(windowOfThePublication, publishedAndEdited),
+  }
+  const displacedName =
+    filesWhileHeld.movedAway.skillFolder.find((name) =>
+      name.startsWith('.codebook-displaced-'),
+    ) ?? 'no displaced name'
+  const stagedName =
+    filesWhileHeld.publishedAndEdited.temporaryNames[0] ?? 'no staged name'
+
+  // Assert
+  assert.deepEqual(
+    {
+      setups,
+      filesWhileHeld,
+      setupsAgain,
+      filesAfterwards: {
+        movedAway: await filesOfTheSetup(movedAway),
+        publishedAndEdited: await filesOfTheSetup(publishedAndEdited),
+      },
+      skills: [
+        await readFile(movedAway.targetPath, 'utf8'),
+        await readFile(publishedAndEdited.targetPath, 'utf8'),
+      ],
+    },
+    {
+      setups: {
+        movedAway: `The Cursor skill could not be opened, so Codebook left ${movedAway.targetPath} and the name it had given the file, ${join(movedAway.homeRoot, '.cursor', 'skills', 'codebook', displacedName)}, as they are. A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+        publishedAndEdited: `The Cursor skill could not be opened, so Codebook left ${publishedAndEdited.targetPath} and the name it had given the file, ${join(publishedAndEdited.homeRoot, '.cursor', 'skills', stagedName)}, as they are. A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+      },
+      filesWhileHeld: {
+        movedAway: {
+          skillFolder: [displacedName, 'SKILL.md'],
+          temporaryNames: [],
+          records: ['pending.json'],
+        },
+        publishedAndEdited: {
+          skillFolder: ['SKILL.md'],
+          temporaryNames: [stagedName],
+          records: ['pending.json'],
+        },
+      },
+      setupsAgain: {
+        movedAway:
+          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        publishedAndEdited: `A codebook skill directory already exists in Cursor: ${join(publishedAndEdited.homeRoot, '.cursor', 'skills', 'codebook')}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
+      },
+      filesAfterwards: {
+        movedAway: {
+          skillFolder: ['SKILL.md'],
+          temporaryNames: [],
+          records: [],
+        },
+        publishedAndEdited: {
+          skillFolder: ['SKILL.md'],
+          temporaryNames: [],
+          records: [],
+        },
+      },
+      skills: [EDITED_SKILL, EDITED_SKILL],
+    },
+  )
+})
+
+// Value: protects=a learner whose editor holds the skill file for itself in the instant a removal puts the edited file back after its move, and at the recovery of such a removal by a setup; fails_when=the removal answers "Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (…)", which names a second file that is not there, or names the setup to a learner who ran the removal; or the next run does not drop the name; why_new=Cycle 0046 row 308 (the removal, and its record's recovery with the command that was run); seam=the opener of the two rules that remove a second name, which refuses the held file, and node:fs/promises rename of the loaded deployment, before whose move the skill is edited
+test('a skill file that a program holds for itself in the instant a removal puts it back after its move is answered with both paths and names the removal as the command to run again, and the setup that recovers such a removal names the setup: the record stays, and the run after the program let go drops the name and answers for the edit', async (context) => {
+  // Arrange: one installed skill that is edited right before the removal moves it, and one whose removal stopped with the edited file under both names; a program holds the file under its displaced name.
+  const removed = await fixture(context),
+    recoveredBySetup = await fixture(context)
+  for (const paths of [removed, recoveredBySetup])
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+  const leftByAStoppedRemoval = await writeRemovalRecord(recoveredBySetup)
+  await writeFile(recoveredBySetup.targetPath, EDITED_SKILL)
+  await fileSystem.link(
+    recoveredBySetup.targetPath,
+    leftByAStoppedRemoval.displacedPath,
+  )
+  let isProgramHoldingTheFile = true
+  const isHeld = (path: string): boolean =>
+    isProgramHoldingTheFile &&
+    path.includes(join('codebook', '.codebook-displaced-'))
+  const windowOfTheRemoval = await skillWindowWhoseSkillIsHeld(isHeld, {
+    ...fileSystem,
+    rename: async (from: string, to: string) => {
+      if (from === removed.targetPath) await writeFile(from, EDITED_SKILL)
+      return fileSystem.rename(from, to)
+    },
+  })
+  const windowOfTheSetup = await skillWindowWhoseSkillIsHeld(isHeld)
+  const remove = (): Promise<string> =>
+    statusOrRefusalOf(
+      windowOfTheRemoval.removeManagedCursorSkill(
+        removed.storageRoot,
+        removed.homeRoot,
+      ),
+    )
+  const setUp = (): Promise<string> =>
+    statusOrRefusalOf(
+      windowOfTheSetup.deployCursorSkill(
+        recoveredBySetup.extensionPath,
+        recoveredBySetup.storageRoot,
+        recoveredBySetup.homeRoot,
+      ),
+    )
+
+  // Act: each command while the program holds the file, and then its sentence to the letter.
+  const whileHeld = { removal: await remove(), setup: await setUp() }
+  const filesWhileHeld = {
+    removed: await filesOfTheSetup(removed),
+    recoveredBySetup: await filesOfTheSetup(recoveredBySetup),
+  }
+  isProgramHoldingTheFile = false
+  const afterwards = { removal: await remove(), setup: await setUp() }
+  const displacedNameOfTheRemoval =
+    filesWhileHeld.removed.skillFolder.find((name) =>
+      name.startsWith('.codebook-displaced-'),
+    ) ?? 'no displaced name'
+
+  // Assert
+  assert.deepEqual(
+    {
+      whileHeld,
+      filesWhileHeld,
+      afterwards,
+      filesAfterwards: {
+        removed: await filesOfTheSetup(removed),
+        recoveredBySetup: await filesOfTheSetup(recoveredBySetup),
+      },
+    },
+    {
+      whileHeld: {
+        removal: `The Cursor skill could not be opened, so Codebook left ${removed.targetPath} and the name it had given the file, ${join(removed.homeRoot, '.cursor', 'skills', 'codebook', displacedNameOfTheRemoval)}, as they are. A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Remove Managed Cursor Skill again.`,
+        setup: `The Cursor skill could not be opened, so Codebook left ${recoveredBySetup.targetPath} and the name it had given the file, ${leftByAStoppedRemoval.displacedPath}, as they are. A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+      },
+      filesWhileHeld: {
+        removed: {
+          skillFolder: [displacedNameOfTheRemoval, 'SKILL.md'],
+          temporaryNames: [],
+          records: ['removal.json'],
+        },
+        recoveredBySetup: {
+          skillFolder: [
+            '.codebook-displaced-00000000-0000-0000-0000-000000000189.tmp',
+            'SKILL.md',
+          ],
+          temporaryNames: [],
+          records: ['removal.json'],
+        },
+      },
+      afterwards: {
+        removal:
+          'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+        setup:
+          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      },
+      filesAfterwards: {
+        removed: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+        recoveredBySetup: {
+          skillFolder: ['SKILL.md'],
+          temporaryNames: [],
+          records: [],
+        },
+      },
+    },
+  )
+})
+
+// Value: protects=a staged name that an earlier setup left as a second name of the skill file, while a program holds that file; fails_when=the setup's cleanup of names no record knows ends the setup with a refusal or the file system's text, or removes the name without knowing whose it is; why_new=Cycle 0046 row 308: in the cleanup a name that could not be opened stays, and a later setup looks at it again; seam=the opener of the two rules that remove a second name, which refuses the held file
+test('a staged name no record names, of a skill file that a program holds for itself, is left by setup, which finishes all the same, and is removed by the setup after the program let go', async (context) => {
+  // Arrange: the installed skill with a second name under a staged name, as a setup that stopped right after its publication leaves it once its record is gone.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const stagedName = '.codebook-stage-00000000-0000-0000-0000-000000000308.tmp'
+  await fileSystem.link(
+    paths.targetPath,
+    join(paths.homeRoot, '.cursor', 'skills', stagedName),
+  )
+  let isProgramHoldingTheFile = true
+  const window = await skillWindowWhoseSkillIsHeld(
+    (path) => isProgramHoldingTheFile && path === paths.targetPath,
+  )
+  const setUp = (): Promise<string> =>
+    statusOrRefusalOf(
+      window.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    )
+
+  // Act
+  const setupWhileHeld = await setUp()
+  const filesWhileHeld = await filesOfTheSetup(paths)
+  isProgramHoldingTheFile = false
+  const setupAfterwards = await setUp()
+
+  // Assert
+  assert.deepEqual(
+    {
+      setupWhileHeld,
+      filesWhileHeld,
+      setupAfterwards,
+      filesAfterwards: await filesOfTheSetup(paths),
+    },
+    {
+      setupWhileHeld: 'current',
+      filesWhileHeld: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [stagedName],
+        records: [],
+      },
+      setupAfterwards: 'current',
+      filesAfterwards: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [],
+        records: [],
+      },
     },
   )
 })

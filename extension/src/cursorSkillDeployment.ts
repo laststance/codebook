@@ -30,6 +30,7 @@ import {
   ALLOW_LINKS_THEN_SET_UP_AGAIN,
   describeRefusedSkillLink,
 } from './utils/describeRefusedSkillLink'
+import { describeUnopenedMovedFile } from './utils/describeUnopenedMovedFile'
 import { dropSecondNameOfMovedFile } from './utils/dropSecondNameOfMovedFile'
 import { dropSecondNameOfOneFile } from './utils/dropSecondNameOfOneFile'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
@@ -780,7 +781,7 @@ async function writeStagedBytes(
 
 /**
  * Removes a file under a staged name that no record names when it is provably Codebook's alone, for {@link removeUnrecordedStages}: removing it must lose nothing of the learner's.
- * A second name of the file at the skill's path goes as a name ({@link dropSecondNameOfOneFile}): that is a published skill's staged name, and the file keeps its own name, whoever wrote its bytes. A regular file that holds exactly the bundled skill as this installation packages it goes too. Everything else stays (other bytes under one name only, as an earlier version's staged skill or a file somebody wrote; a link; a folder).
+ * A second name of the file at the skill's path goes as a name ({@link dropSecondNameOfOneFile}): that is a published skill's staged name, and the file keeps its own name, whoever wrote its bytes. A regular file that holds exactly the bundled skill as this installation packages it goes too. Everything else stays (other bytes under one name only, as an earlier version's staged skill or a file somebody wrote; a link; a folder; a file that could not be opened at that moment).
  * @param stagedPath - A path whose name fits {@link STAGED_NAME_PATTERN}.
  * @param targetPath - The managed skill path.
  * @param packagedSha256 - Digest of the skill this installation packages.
@@ -791,7 +792,10 @@ async function removeProvablyCodebooksStage(
   targetPath: string,
   packagedSha256: string,
 ): Promise<void> {
-  if ((await dropSecondNameOfOneFile(targetPath, stagedPath)) === 'dropped')
+  // A name that was removed is settled; one whose file could not be opened stays, and a later setup looks at it again.
+  if (
+    (await dropSecondNameOfOneFile(targetPath, stagedPath)) !== 'not-one-file'
+  )
     return
   const look = await lookAtSkillFile(stagedPath)
   if (look.kind === 'read' && sha256(look.bytes) === packagedSha256)
@@ -898,26 +902,43 @@ async function removeOwnedDisplacement(
 }
 
 /**
- * Gives {@link dropSecondNameOfMovedFile} the sentence for a refused link back of the skill file, for the setup's and the removal's recoveries: the learner's changed file stays under the displaced name, and the sentence says where and what to do.
+ * Undoes what is left of a move of a skill file that is not Codebook's, for the setup's and the removal's recoveries ({@link settleDisplacedName}, {@link isRemovalOfChangedSkillUndone}, {@link removeManagedCursorSkill}): the file goes back to the skill's path where nothing stands there, and its displaced name is removed once it stands at its path ({@link dropSecondNameOfMovedFile}).
  * @param targetPath - The managed skill path.
  * @param displacedPath - The name the move gave the file.
- * @param commandToRunAgain - The command the learner ran.
- * @returns The wording for a code ({@link describeRefusedLinkBack}).
- * @example refusedSkillLinkBack(targetPath, displacedPath, 'Codebook: Set Up AI Chat')('EPERM')
+ * @param commandToRunAgain - The command the learner ran, which both refusals name as the one to run again.
+ * @returns `dropped` when no displaced name is left; `kept` when the displaced name holds a file and the skill's path another one.
+ * @throws
+ * - When the file system refuses to put the file back: the sentence that says where the file is kept ({@link describeRefusedLinkBack})
+ * - When the file could not be opened, so nothing is known of the two names: the sentence that says to free the file ({@link describeUnopenedMovedFile}); both names and the caller's record stay, and the next run settles them
+ * @example await undoMoveOfChangedSkill(targetPath, displacedPath, 'Codebook: Set Up AI Chat') // => 'dropped'
  */
-function refusedSkillLinkBack(
+async function undoMoveOfChangedSkill(
   targetPath: string,
   displacedPath: string,
   commandToRunAgain: string,
-): (code: string) => string {
-  return (code) =>
-    describeRefusedLinkBack(
-      'The Cursor skill',
-      targetPath,
-      code,
-      displacedPath,
-      commandToRunAgain,
+): Promise<'dropped' | 'kept'> {
+  const undoing = await dropSecondNameOfMovedFile(
+    targetPath,
+    displacedPath,
+    (code) =>
+      describeRefusedLinkBack(
+        'The Cursor skill',
+        targetPath,
+        code,
+        displacedPath,
+        commandToRunAgain,
+      ),
+  )
+  if (undoing === 'unopened')
+    throw new Error(
+      describeUnopenedMovedFile(
+        'The Cursor skill',
+        targetPath,
+        displacedPath,
+        commandToRunAgain,
+      ),
     )
+  return undoing
 }
 
 /**
@@ -960,7 +981,7 @@ async function restorePreviousSkill(
  * @param pending - The setup's record.
  * @param targetPath - The managed skill path.
  * @param pendingPath - The record's path, which a refusal names.
- * @throws When the displaced name holds a file that is neither Codebook's previous skill nor the file at the skill's path: both files and the record stay, and the sentence names the kept file and how to start over.
+ * @throws When the displaced name holds a file that is neither Codebook's previous skill nor the file at the skill's path: both files and the record stay, and the sentence names the kept file and how to start over. And when the skill file could not be opened, so that Codebook cannot tell whether the staged or the displaced name is a second name of it ({@link describeUnopenedMovedFile}): the names and the record stay, and the next setup settles them.
  * @example await settleChangedSkill(pending, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/pending.json')
  */
 async function settleChangedSkill(
@@ -969,7 +990,18 @@ async function settleChangedSkill(
   pendingPath: string,
 ): Promise<void> {
   // A skill edited in place after its publication is one file with the stage; a stage with the recorded bytes is removed by the caller. The name goes first, so that a refusal below, which keeps the record, leaves no staged name behind.
-  await dropSecondNameOfOneFile(targetPath, pending.stagedPath)
+  if (
+    (await dropSecondNameOfOneFile(targetPath, pending.stagedPath)) ===
+    'unopened'
+  )
+    throw new Error(
+      describeUnopenedMovedFile(
+        'The Cursor skill',
+        targetPath,
+        pending.stagedPath,
+        SET_UP_AI_CHAT_COMMAND,
+      ),
+    )
   await settleDisplacedName(pending, targetPath, pendingPath)
 }
 
@@ -1010,10 +1042,10 @@ async function settleDisplacedName(
     return removeOwnedDisplacement(pending, pendingPath)
   // Any other file there is the learner's: it goes back to the skill's path, or stays where another file took that path.
   if (
-    (await dropSecondNameOfMovedFile(
+    (await undoMoveOfChangedSkill(
       targetPath,
       displacedPath,
-      refusedSkillLinkBack(targetPath, displacedPath, SET_UP_AI_CHAT_COMMAND),
+      SET_UP_AI_CHAT_COMMAND,
     )) === 'kept'
   )
     throw new Error(
@@ -1139,7 +1171,7 @@ async function publishStagedSkill(
  * Says whether a removal's move was of a skill file that is not Codebook's, and undoes what is left of it, for {@link recoverRemoval} and for {@link removeManagedCursorSkill} when the file changed between its check and its move.
  * @param pending - The removal's record.
  * @param targetPath - The managed skill path.
- * @param commandToRunAgain - The command the learner ran (the setup or the removal), which the refusal of a link back names.
+ * @param commandToRunAgain - The command the learner ran (the setup or the removal), which the refusal of a link back and the one of a file that could not be opened name ({@link undoMoveOfChangedSkill}).
  * @returns
  * - `true`: neither the skill's path nor the displaced name holds Codebook's skill, and no second name is left (the file was linked back where the path held nothing, and its displaced name is removed; or nothing had been moved): the caller drops the record and goes on as for a file that was edited or replaced
  * - `false`: one of the two names holds Codebook's skill, both hold nothing, or they hold two different files: the removal's own recovery decides
@@ -1152,14 +1184,10 @@ async function isRemovalOfChangedSkillUndone(
 ): Promise<boolean> {
   if (await holdsSkillOfRemoval(pending, targetPath)) return false
   return (
-    (await dropSecondNameOfMovedFile(
+    (await undoMoveOfChangedSkill(
       targetPath,
       pending.displacedPath,
-      refusedSkillLinkBack(
-        targetPath,
-        pending.displacedPath,
-        commandToRunAgain,
-      ),
+      commandToRunAgain,
     )) === 'dropped'
   )
 }
@@ -1973,14 +2001,10 @@ export async function removeManagedCursorSkill(
     if (!(await matchesOwnedFile(displacedPath, receipt))) {
       // The file changed between the check and the move: it goes back to its place and stays the learner's.
       if (
-        (await dropSecondNameOfMovedFile(
+        (await undoMoveOfChangedSkill(
           targetPath,
           displacedPath,
-          refusedSkillLinkBack(
-            targetPath,
-            displacedPath,
-            REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
-          ),
+          REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
         )) === 'kept'
       )
         throw new Error(

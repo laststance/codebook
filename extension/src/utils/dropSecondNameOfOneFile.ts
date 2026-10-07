@@ -3,12 +3,16 @@ import { unlink, type FileHandle } from 'node:fs/promises'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { systemErrorCode } from './systemErrorCode'
 
-/** The codes of a name that holds no file this user can open: nothing (`ENOENT`), a link (`ELOOP`), and, where the opener looks at the path first, a pipe, a device or a folder (`ENOTREG`) or another file that took the name between the look and the open (`EREPLACED`); a file this user may not read (`EACCES`, `EPERM`), and one another program holds for itself (`EBUSY`, on Windows). */
+/** The codes of a name that holds no file to open: nothing (`ENOENT`), a link (`ELOOP`), and, where the opener looks at the path first, a pipe, a device or a folder (`ENOTREG`) or another file that took the name between the look and the open (`EREPLACED`). */
 const NO_FILE_TO_OPEN_CODES: ReadonlySet<string> = new Set([
   'ENOENT',
   'ELOOP',
   'ENOTREG',
   'EREPLACED',
+])
+
+/** The codes of a name that holds a file this user cannot open at this moment: no right to read it (`EACCES`, `EPERM`), or another program holds it for itself (`EBUSY`, on Windows). Once the file opens, the same call answers for it. */
+const FILE_NOT_OPENED_CODES: ReadonlySet<string> = new Set([
   'EACCES',
   'EPERM',
   'EBUSY',
@@ -21,19 +25,29 @@ const NAME_OF_OPEN_FILE_KEPT_CODES: ReadonlySet<string> = new Set([
   'EACCES',
 ])
 
-/** What became of a second name ({@link dropSecondNameOfOneFile}): it was removed, as a name of the file that keeps its own path; or the two names are not one file (two files, or a name that holds nothing, a link, or a file this user cannot open), and nothing was removed. */
-export type SecondNameDrop = 'dropped' | 'not-one-file'
+/**
+ * What became of a second name ({@link dropSecondNameOfOneFile}).
+ * - `dropped`: it was removed, as a name of the file that keeps its own path
+ * - `not-one-file`: the two names are not one file (two files, or a name that holds nothing or a link); nothing was removed
+ * - `unopened`: a name holds a file this user could not open at that moment, so nothing is known and nothing was removed; the caller says so, and the same call answers once the file opens
+ */
+export type SecondNameDrop = 'dropped' | 'not-one-file' | 'unopened'
+
+/** What {@link openName} found at a name: the open file, no file to open, or a file that could not be opened. */
+type OpenedName = FileHandle | Exclude<SecondNameDrop, 'dropped'>
 
 /**
  * Opens one of the two names for {@link dropSecondNameOfOneFile}, without following a link ({@link openWithoutFollowing}); a name that cannot be opened is an answer there, not an error.
  * @param path - The name.
- * @returns The open file, which the caller closes; undefined for a name that holds no file this user can open ({@link NO_FILE_TO_OPEN_CODES}).
+ * @returns The open file, which the caller closes; `not-one-file` for a name that holds no file to open ({@link NO_FILE_TO_OPEN_CODES}); `unopened` for a file this user cannot open at this moment ({@link FILE_NOT_OPENED_CODES}).
  * @throws Every other failure of the open (too many open files, a failing disk): nothing is known of the name then.
- * @example const file = await openName('/home/user/.cursor/mcp.json') // => undefined for a missing file
+ * @example const file = await openName('/home/user/.cursor/mcp.json') // => 'not-one-file' for a missing file
  */
-async function openName(path: string): Promise<FileHandle | undefined> {
+async function openName(path: string): Promise<OpenedName> {
   return openWithoutFollowing(path).catch((error: unknown) => {
-    if (NO_FILE_TO_OPEN_CODES.has(systemErrorCode(error))) return undefined
+    const code = systemErrorCode(error)
+    if (NO_FILE_TO_OPEN_CODES.has(code)) return 'not-one-file'
+    if (FILE_NOT_OPENED_CODES.has(code)) return 'unopened'
     throw error
   })
 }
@@ -87,7 +101,8 @@ async function unlinkNameOfOpenFile(
  * @param secondPath - The name to remove when it is a second name of that file.
  * @returns
  * - `dropped`: both names were one file, and the second name is removed; the file keeps its own path
- * - `not-one-file`: nothing was removed: the names hold two files, or one of them holds nothing, a link, or a file this user cannot open ({@link openName})
+ * - `not-one-file`: nothing was removed: the names hold two files, or one of them holds nothing or a link
+ * - `unopened`: nothing was removed: one of the names holds a file this user could not open at that moment ({@link openName}); the second name holds a file then
  * @throws A failure of an open that says nothing of the name (too many open files, a failing disk), every failure of a look at an open file, and a failure of the removal.
  * @example
  * await dropSecondNameOfOneFile('/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/retired-1.mcp.json') // => 'dropped' after the config was linked back
@@ -98,11 +113,11 @@ export async function dropSecondNameOfOneFile(
 ): Promise<SecondNameDrop> {
   // The second name is opened first: where it holds nothing, nothing is to remove, whatever stands at the own path.
   const second = await openName(secondPath)
-  if (!second) return 'not-one-file'
+  if (typeof second === 'string') return second
   try {
     // The second file stays open while the own path is opened: its number cannot go to another file meanwhile.
     const own = await openName(ownPath)
-    if (!own) return 'not-one-file'
+    if (typeof own === 'string') return own
     try {
       if (!(await isOneOpenFile(own, second))) return 'not-one-file'
       await unlinkNameOfOpenFile(secondPath, [second, own])

@@ -28,6 +28,7 @@ import {
 } from './utils/createLinkIfAllowed'
 import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
+import { loadSecondNameRulesOverHeldFiles } from './utils/loadSecondNameRulesOverHeldFiles'
 
 /** The config Codebook creates for a first-time Cursor user. */
 const EMPTY_CONFIG = '{"mcpServers":{}}\n'
@@ -760,6 +761,144 @@ test('a Cursor MCP config that is edited right before a removal moves it, on a f
       removalAfterTheMoveBack: 'answered preserved',
       config: EDITED_CONFIG,
       records: [],
+    },
+  )
+})
+
+/**
+ * Loads the Cursor MCP catalog as a window in which a program holds the config for itself in the instant Codebook compares the config's two names, and only then: the two rules that remove a second name refuse the names a test calls held with `EBUSY`, every other read of the catalog opens the file.
+ * @param isHeld - Asked at every open of the two rules; `true` while the program holds the file under that path.
+ * @param fileSystemOfTheCatalog - What the loaded catalog gets for `node:fs/promises`, so that something can happen between two of its steps.
+ * @returns The loaded catalog.
+ */
+async function loadCatalogWhoseConfigIsHeld(
+  isHeld: (path: string) => boolean,
+  fileSystemOfTheCatalog: object,
+): Promise<typeof CatalogModule> {
+  const rules = await loadSecondNameRulesOverHeldFiles((path) =>
+    isHeld(path) ? 'EBUSY' : undefined,
+  )
+  return loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      'node:fs/promises': fileSystemOfTheCatalog,
+      './dropSecondNameOfMovedFile': rules.ofMovedFile,
+      './dropSecondNameOfOneFile': rules.ofOneFile,
+    },
+    { Error },
+  )
+}
+
+// Value: protects=a learner whose editor (or Cursor itself) holds ~/.cursor/mcp.json for itself in the instant a removal puts the edited config back after its move, or a setup removes the staged name of a config that was rewritten right after its publication; fails_when=the catalog answers "Cursor MCP catalog changed during interrupted cleanup; … The file Codebook had moved away is kept as …", which names a second file that is not there, or leaves the staged name for good, or names the setup to a learner who ran the removal; why_new=Cycle 0046 row 308 (the catalog); seam=the opener of the two rules that remove a second name, which refuses the held file, and node:fs/promises rename and link of the loaded catalog, at which the config is edited
+test('a Cursor MCP config that a program holds for itself in the instant Codebook puts it back after a removal’s move, or removes its staged name, is answered with both paths and the command that was run: the record stays, and the run after the program let go drops the name and leaves the config as the learner’s', async (context) => {
+  // Arrange: one catalog whose own config is edited right before the removal moves it, and one whose first config is rewritten right after its publication; a program holds the config under the names Codebook gave it.
+  const removed = await catalogFolders(context),
+    published = await catalogFolders(context)
+  await refreshCursorMcpCatalog(removed.storageRoot, removed.cursorDirectory)
+  let isProgramHoldingTheFile = true
+  const catalogOfTheRemoval = await loadCatalogWhoseConfigIsHeld(
+    (path) => isProgramHoldingTheFile && basename(path).startsWith('retired-'),
+    {
+      ...fileSystem,
+      rename: async (from: string, to: string) => {
+        if (from === removed.configPath) await writeFile(from, EDITED_CONFIG)
+        return fileSystem.rename(from, to)
+      },
+    },
+  )
+  const catalogOfThePublication = await loadCatalogWhoseConfigIsHeld(
+    (path) =>
+      isProgramHoldingTheFile && basename(path).startsWith('.codebook-'),
+    {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        await fileSystem.link(existingPath, newPath)
+        await writeFile(newPath, EDITED_CONFIG)
+      },
+    },
+  )
+  const remove = (): Promise<string> =>
+    outcomeOf(
+      catalogOfTheRemoval.removeOwnedCursorMcpCatalog(
+        removed.storageRoot,
+        removed.cursorDirectory,
+        undefined,
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    )
+  const refresh = (): Promise<string> =>
+    outcomeOf(
+      catalogOfThePublication.refreshCursorMcpCatalog(
+        published.storageRoot,
+        published.cursorDirectory,
+      ),
+    )
+
+  // Act: the publication that finds its config rewritten; then each command while the program holds the file, and its sentence to the letter.
+  const publication = await refresh()
+  const whileHeld = { removal: await remove(), refresh: await refresh() }
+  const namesWhileHeld = {
+    retired:
+      (await readdir(removed.recordDirectory)).find((name) =>
+        name.startsWith('retired-'),
+      ) ?? 'no retired name',
+    staged:
+      (await readdir(published.cursorDirectory)).find((name) =>
+        name.startsWith('.codebook-'),
+      ) ?? 'no staged name',
+    recordsOfTheRemoval: (await readdir(removed.recordDirectory)).filter(
+      (name) => name.startsWith('pending-'),
+    ),
+    recordsOfThePublication: (await readdir(published.recordDirectory)).filter(
+      (name) => name.startsWith('pending-'),
+    ),
+  }
+  isProgramHoldingTheFile = false
+  const afterwards = { removal: await remove(), refresh: await refresh() }
+
+  // Assert
+  assert.deepEqual(
+    {
+      publication,
+      whileHeld,
+      records: [
+        namesWhileHeld.recordsOfTheRemoval,
+        namesWhileHeld.recordsOfThePublication,
+      ],
+      afterwards,
+      namesAfterwards: {
+        storageOfTheRemoval: (await readdir(removed.recordDirectory)).filter(
+          (name) => name.startsWith('pending-') || name.startsWith('retired-'),
+        ),
+        cursorFolderOfThePublication: (
+          await readdir(published.cursorDirectory)
+        ).sort(),
+        recordsOfThePublication: (
+          await readdir(published.recordDirectory)
+        ).filter((name) => name.startsWith('pending-')),
+      },
+      configs: [
+        await readFile(removed.configPath, 'utf8'),
+        await readFile(published.configPath, 'utf8'),
+      ],
+    },
+    {
+      publication: `refused: Cursor MCP config changed during publication: ${published.configPath}. Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.`,
+      whileHeld: {
+        removal: `refused: The Cursor MCP config could not be opened, so Codebook left ${removed.configPath} and the name it had given the file, ${join(removed.recordDirectory, namesWhileHeld.retired)}, as they are. A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Remove Managed Cursor Skill again.`,
+        refresh: `refused: The Cursor MCP config could not be opened, so Codebook left ${published.configPath} and the name it had given the file, ${join(published.cursorDirectory, namesWhileHeld.staged)}, as they are. A program may hold the file for itself, or this user may not read it. Close the program that holds it, or allow this user to read it, then run Codebook: Set Up AI Chat again.`,
+      },
+      records: [['pending-removal.json'], ['pending-creation.json']],
+      afterwards: {
+        removal: 'answered preserved',
+        refresh: 'answered undefined',
+      },
+      namesAfterwards: {
+        storageOfTheRemoval: [],
+        cursorFolderOfThePublication: ['mcp.json', 'storage'],
+        recordsOfThePublication: [],
+      },
+      configs: [EDITED_CONFIG, EDITED_CONFIG],
     },
   )
 })

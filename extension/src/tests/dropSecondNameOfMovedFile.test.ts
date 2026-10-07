@@ -465,8 +465,8 @@ async function loadRuleWatched(
   }
 }
 
-// Value: protects=the answer for a name the system does not open; fails_when=a name this user may not read counts as one file with another (a name is removed on no evidence), or a failure that says nothing of the name (too many open files) is answered "two files", so a recovery goes on as if it knew; or a file is left open; why_new=Cycle 0046 row 304: a name that cannot be opened is not "one file"; seam=the opener of the loaded rule, which refuses the second name with a code
-test('a second name of a file is not removed while this user may not open one of the two names, and a failure of the open that says nothing of the name is thrown as it is; no file is left open', async () => {
+// Value: protects=the answer for a name the system does not open; fails_when=a name this user may not read counts as one file with another (a name is removed on no evidence), or is answered as two files, so the caller speaks of a second file that is not there; or a failure that says nothing of the name (too many open files) is answered at all, so a recovery goes on as if it knew; or a file is left open; why_new=Cycle 0046 rows 304 and 308: a name that cannot be opened is not "one file" and has an answer of its own; seam=the opener of the loaded rule, which refuses a name with a code
+test('a second name of a file is not removed while this user cannot open one of the two names, which has an answer of its own, also from the undo of a move; a failure of the open that says nothing of the name is thrown as it is, and no file is left open', async () => {
   // Arrange: a file with two names, and rules whose opener refuses the second name with a code.
   const folder = await mkdtemp(join(tmpdir(), 'codebook-second-name-'))
   const filePath = join(folder, 'a-file'),
@@ -504,6 +504,22 @@ test('a second name of a file is not removed while this user may not open one of
         ),
       ownPathHeldByAnotherProgram:
         await whoseOwnPathIsHeld.dropSecondNameOfOneFile(filePath, linkedPath),
+      undoOfAMoveWhileTheFileIsHeld: await (
+        await loadModule<typeof DropSecondNameModule>(
+          resolve(__dirname, '../utils/dropSecondNameOfMovedFile.js'),
+          {
+            './dropSecondNameOfOneFile': {
+              dropSecondNameOfOneFile:
+                heldByAnotherProgram.dropSecondNameOfOneFile,
+            },
+          },
+          { Error },
+        )
+      ).dropSecondNameOfMovedFile(
+        filePath,
+        linkedPath,
+        sentenceOfARefusedLinkBack,
+      ),
     }
 
     // Assert
@@ -521,10 +537,11 @@ test('a second name of a file is not removed while this user may not open one of
       },
       {
         answers: {
-          noRightToRead: 'not-one-file',
-          heldByAnotherProgram: 'not-one-file',
+          noRightToRead: 'unopened',
+          heldByAnotherProgram: 'unopened',
           tooManyOpenFiles: 'thrown with EMFILE',
-          ownPathHeldByAnotherProgram: 'not-one-file',
+          ownPathHeldByAnotherProgram: 'unopened',
+          undoOfAMoveWhileTheFileIsHeld: 'unopened',
         },
         entries: ['a-file', 'its-second-name'],
         filesLeftOpen: [0, 0, 0, 0],
