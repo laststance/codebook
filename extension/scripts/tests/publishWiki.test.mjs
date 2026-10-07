@@ -2829,6 +2829,11 @@ for (const [what, markup, place] of [
     '<p id="a&lowbar;b">A note</p>',
     '<p id="a&lowbar;b">A note</p>',
   ],
+  [
+    'an id that ends with a name of the references without its semicolon',
+    '<p id="read&amp">A note</p>',
+    '<p id="read&amp">A note</p>',
+  ],
 ])
   test(`a page with ${what} is refused with the sentence that names the place and says what to write`, async () => {
     // Arrange
@@ -2846,7 +2851,7 @@ for (const [what, markup, place] of [
           outputDirectory: join(root, '.codebook/wiki'),
         }),
         {
-          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: ${place}`,
+          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: ${place}`,
         },
       )
     } finally {
@@ -2884,9 +2889,37 @@ test('a tag whose name is followed by a no-break space is refused: a browser sep
 
     // Assert
     assert.deepEqual(outcomes, [
-      'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: <h2\u00a0id="ghost">A ghost</h2>',
+      'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: <h2\u00a0id="ghost">A ghost</h2>',
       true,
     ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an id that holds an ampersand which begins no character reference, as a section about "R&D" may have; fails_when=the publisher refuses such an id although it and a browser read the same text, and tells the author to write as plain text what is plain text; why_new=Cycle 0046 row 236 (every ampersand before a letter, a digit or `#` was refused); seam=none
+test('an id with an ampersand that begins no character reference is published as authored: before one letter, a digit, another character or the id’s end', async () => {
+  // Arrange: no name of a browser's table of references has one character or begins with a digit, and `&#` begins a number only before a digit.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ampersand-id-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<h2 id="flow">Source flow</h2><p id="q&a">One</p><p id="R&D">Two</p><p id="a&1b">Three</p>' +
+      '<p id="x&-y">Four</p><p id="a&#b">Five</p><p id="a&#xg">Six</p><p id="end&">Seven</p>'
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
   } finally {
     await rm(root, { recursive: true, force: true })
   }

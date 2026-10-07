@@ -70,7 +70,7 @@ function validatePages(manifest) {
     if (hasEndlessComment(page.contentHtml)) throw new Error(`Wiki page ${page.path} has a comment that never ends; close it with -->.`);
     // A page is published only when every `<` of its content begins something the publisher reads exactly as a browser does; otherwise the two would not agree on the page's tags and ids, and markup that never ends would take the reader's own controls with it.
     const unread = unreadMarkupOf(page.contentHtml);
-    if (unread !== undefined) throw new Error(`Wiki page ${page.path} has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: ${unread}`);
+    if (unread !== undefined) throw new Error(`Wiki page ${page.path} has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: ${unread}`);
     if (!Array.isArray(page.sources) || !page.sources.length || !Array.isArray(page.outline)) throw new Error(`Wiki page ${page.path} needs source references and an outline.`);
     // An outline entry names an anchor of its page: an id an element of the content really carries, not one a code example or a comment only shows.
     const anchors = new Set(), contentIds = contentIdsOf(page.contentHtml);
