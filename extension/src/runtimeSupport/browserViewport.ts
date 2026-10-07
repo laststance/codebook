@@ -29,10 +29,10 @@ export interface ViewportLease {
   panel: vscode.WebviewPanel
   released(): void
   /**
-   * Asked right before the leased pane is revealed over the file the editor's debugger focused at a pause ({@link BrowserViewport.coversEditorFocusedByPause}): the pane's owner may give the keyboard back to whoever had it before the pause (a chat). The pane is then revealed without the keyboard. The owner is asked before the reveal and not told after it, because a webview's focus cannot be awaited: it reaches the pane's frame some time after `reveal()` returned, and a focus command run right behind the reveal could be undone by it.
-   * @returns `true` when the owner gave the keyboard to someone, `false` when the pane has to take it.
+   * Asked right before the leased pane is revealed over a text editor the viewport takes for the one the editor's debugger focused at a pause ({@link BrowserViewport.coversEditorFocusedByPause}): the pane's owner says whether the pane is to come to the front without the keyboard. It is, when the owner gave the keyboard back to whoever had it before the pause (a chat), and when the owner knows that the covered editor does not have the keyboard by a stop of the debugger (the learner selected its frame in the Call Stack view, which the viewport cannot tell from a stop). The owner is asked before the reveal and not told after it, because a webview's focus cannot be awaited: it reaches the pane's frame some time after `reveal()` returned, and a focus command run right behind the reveal could be undone by it.
+   * @returns `true` when the pane must not take the keyboard, `false` when it has to take it.
    */
-  returnsKeyboardAtPause?(): Promise<boolean>
+  keepsKeyboardAtPause?(): Promise<boolean>
   /** Called right after the leased pane took the keyboard from that file, because the owner gave it to nobody, so the owner can tell the learner where it is. */
   tookKeyboardAtPause?(): void
 }
@@ -470,19 +470,19 @@ export class BrowserViewport {
 
   /**
    * Decides whether the pane takes the keyboard when {@link revealNow} brings it to the front; called once before each reveal.
-   * A leased pane leaves the keyboard where it is, except over the file the debugger focused at a pause: hiding that editor would leave the focus nowhere ({@link coversEditorFocusedByPause}). There the lease's owner is asked first to give the keyboard back to whoever had it before the pause ({@link ViewportLease.returnsKeyboardAtPause}); only when it gave it to nobody does the pane take it.
+   * A leased pane leaves the keyboard where it is, except over the file the debugger focused at a pause: hiding that editor would leave the focus nowhere ({@link coversEditorFocusedByPause}). There the lease's owner is asked first whether the pane is to come without the keyboard ({@link ViewportLease.keepsKeyboardAtPause}): it gave the keyboard back to whoever had it before the pause, or it knows that the covered editor does not have it by a stop. Only when the owner says no does the pane take it.
    * @returns
    * - `false` at once when the pane covers no editor the debugger focused.
    * - `true` at once when it does and the lease has no owner to ask.
-   * - Otherwise a promise of whether the owner gave the keyboard to nobody; an owner that fails counts as that.
+   * - Otherwise a promise of whether the owner said that the pane has to take the keyboard; an owner that fails counts as saying so.
    * @example const takesKeyboard = this.takesKeyboardAtPause()
    */
   private takesKeyboardAtPause(): boolean | Promise<boolean> {
     if (!this.coversEditorFocusedByPause()) return false
-    const asked = this.lease?.returnsKeyboardAtPause?.()
+    const asked = this.lease?.keepsKeyboardAtPause?.()
     if (!asked) return true
     return asked.then(
-      (returned) => !returned,
+      (keeps) => !keeps,
       () => true,
     )
   }
