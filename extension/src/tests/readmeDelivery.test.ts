@@ -34,6 +34,7 @@ import {
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { cursorCatalogCleanupNotice } from '../utils/cursorCatalogCleanupNotice'
+import { describeBrokenWikiWatch } from '../utils/describeBrokenWikiWatch'
 import { describeRefusedSkillLink } from '../utils/describeRefusedSkillLink'
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from '../utils/describeWikiChatErrorReply'
@@ -417,6 +418,25 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
     'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
   )
   assert.deepEqual(delivered, [true])
+})
+
+// Value: protects=a learner reading in the README what a failed update says of the site when a chat or another window can still publish, and what a watch that broke off says; fails_when=the README says of every failed end that the last usable site is kept, quotes another sentence of a broken watch than the product prints, or leaves out that the next update is then answered with Update anyway; why_new=Cycle 0046 row 341; seam=none
+test('the packaged README says which failed ends say that nothing had been replaced by then in place of a kept site, and quotes the sentence of a watch that broke off', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "A sentence about a run that ended without success also says whether the site on disk was kept or replaced. Where a chat or another editor window can still publish after that end (a request Codebook could not take back at the 30 seconds, a watch of Codebook's that broke off with an error, a start refused because an earlier chat or another window is still updating), it says `Nothing had been replaced by then.` in place of `The last usable site is kept.`, so that a later publish does not make the notice untrue.",
+    'A watch that broke off reads `Codebook stopped watching the update because of an error (…). The VS Code chat was not stopped and can still publish: let it finish (the Wiki page says when it has), or stop it in the chat.`, and the next update is then answered as after a stopped watch, with **Update anyway**.',
+  ])
+
+  // Assert: the README holds both sentences, and the sentence it quotes is the product's.
+  assert.deepEqual(delivered, [true, true])
+  assert.equal(
+    describeBrokenWikiWatch('…'),
+    'Codebook stopped watching the update because of an error (…). The VS Code chat was not stopped and can still publish: let it finish (the Wiki page says when it has), or stop it in the chat.',
+  )
 })
 
 // Value: protects=a learner reading when Codebook stops waiting for a chat whose watch it had stopped; fails_when=the README still says only that Codebook waits until the named time, although the chat's own publish ends that wait and the next update then starts without a refusal; why_new=Cycle 0046 row 335; seam=none

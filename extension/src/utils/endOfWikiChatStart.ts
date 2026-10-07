@@ -4,9 +4,13 @@ import { describeWikiChatOpenFailure } from './describeWikiChatOpenFailure'
 import type { WikiChatStartOutcome } from './startWikiChatUpdate'
 import { thrownMessage } from './thrownMessage'
 
-/** What the extension records when the start of a VS Code update already ended the run: a failure sentence of Codebook's own, a cancel, or nothing more than "the run stopped" (the end then says what is on disk). */
+/** What the extension records when the start of a VS Code update already ended the run: a failure sentence of Codebook's own (marked `mayBeReplacedLater` when the chat may still hold the request and so can still publish), a cancel, or nothing more than "the run stopped" (the end then says what is on disk). */
 export type WikiChatStartEnd =
-  | { failure: string; isFailureCodebookSentence: true }
+  | {
+      failure: string
+      isFailureCodebookSentence: true
+      mayBeReplacedLater?: true
+    }
   | { cancelled: true }
   | Record<string, never>
 
@@ -63,6 +67,18 @@ function endWithoutFailure(
 }
 
 /**
+ * Says whether the chat may still hold the update's request after a start that failed; called by {@link endOfWikiChatStart} to mark such an end.
+ * @param start - How the start ended.
+ * @returns `true` only for a start without a sign whose request Codebook could not take back (`left`); `false` for a request taken back or never held, for a chat command that threw and for a reply that reported an error, after each of which the chat holds no request of the update.
+ * @example
+ * mayChatStillHoldRequest({ outcome: 'unanswered', session: 'own', withdrawal: 'left' })      // => true
+ * mayChatStillHoldRequest({ outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn' }) // => false
+ */
+function mayChatStillHoldRequest(start: WikiChatStartOutcome): boolean {
+  return start.outcome === 'unanswered' && start.withdrawal === 'left'
+}
+
+/**
  * Decides whether the start of a VS Code Wiki update in the editor chat already ended the run, and with what; called by the extension right after {@link startWikiChatUpdate}, before it starts the watch for the publish.
  *
  * Why: only a chat that works on the request is watched. A chat command that threw, a start without a sign, and a reply that reports an error each end the run as failed with their own sentence; a reply that says the response is complete ends it with one look at the disk (updated, or finished without publishing), with no watch and no reservation; a window that closes starts no watch its shutdown no longer finds.
@@ -70,7 +86,7 @@ function endWithoutFailure(
  * @param start - How the start ended.
  * @param answerTimeoutMs - The bound of the first sign.
  * @param isWindowClosing - Whether the window began to close meanwhile.
- * @returns The facts to end the run with, or `undefined` when the chat works on the request and the watch starts.
+ * @returns The facts to end the run with (a failure is marked `mayBeReplacedLater` when the chat may still hold the request, {@link mayChatStillHoldRequest}), or `undefined` when the chat works on the request and the watch starts.
  * @example
  * endOfWikiChatStart({ outcome: 'working' }, 30_000, false) // => undefined
  * endOfWikiChatStart({ outcome: 'replied' }, 30_000, false) // => {}
@@ -83,7 +99,10 @@ export function endOfWikiChatStart(
   isWindowClosing: boolean,
 ): WikiChatStartEnd | undefined {
   const failure = failureOfWikiChatStart(start, answerTimeoutMs)
-  return failure === undefined
-    ? endWithoutFailure(start.outcome, isWindowClosing)
+  if (failure === undefined)
+    return endWithoutFailure(start.outcome, isWindowClosing)
+  // A request Codebook did not see leave the chat can still be worked on and published.
+  return mayChatStillHoldRequest(start)
+    ? { failure, isFailureCodebookSentence: true, mayBeReplacedLater: true }
     : { failure, isFailureCodebookSentence: true }
 }

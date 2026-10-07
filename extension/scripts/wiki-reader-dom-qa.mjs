@@ -41,7 +41,7 @@ const OPEN_TARGET = {
 }
 /** How many entries the sample overview's outline has: more than the outline shows at once where the rail is a row. */
 const OUTLINE_ENTRY_COUNT = 40
-/** Why a start was refused in the owned clone's native check W-3: another window appeared to be updating. The page words it into its longest sentence of a refused update (about 336 characters with its lead words and its end). */
+/** Why a start was refused in the owned clone's native check W-3: another window appeared to be updating. The page words it into its longest sentence of a refused update (about 341 characters with its lead words and its end). */
 const REFUSAL_REASON =
   'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification.'
 /** The pages a conflict names in the check: more than the sentence names, so the page offers the whole list. */
@@ -1222,8 +1222,8 @@ async function check(page, options, collected) {
         ...railChecks(measured),
         isSentenceOfTheRefusal:
           measured.statusText.startsWith('Update failed at '),
-        doesSentenceSayWhatIsKept: measured.statusText.endsWith(
-          'choose Update anyway in the editor’s notification. The last usable site is kept.',
+        doesSentenceSayWhatHeldThen: measured.statusText.endsWith(
+          'choose Update anyway in the editor’s notification. Nothing had been replaced by then.',
         ),
         doesPanelNameTheOutput:
           measured.outputLine === 'Output: .codebook/wiki',
@@ -1693,6 +1693,8 @@ const updateStatuses = {
     finishedAt: new Date().toISOString(),
     reason: REFUSAL_REASON,
     isCodebookSentence: true,
+    // The start check marks a refusal that names somebody who is still updating: the page then says what held at that time.
+    mayBeReplacedLater: true,
     site: 'kept',
     outputDirectory: wiki.outputDirectory,
     outputLabel: '.codebook/wiki',
