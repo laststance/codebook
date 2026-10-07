@@ -1366,7 +1366,7 @@ test('a renamed content id takes a name the page does not carry, its id lists an
     )
     assert.equal(
       contentOf('pages/my page.html'),
-      '<h2 ID=page-theme-toggle>The theme</h2><p><a href="../index.html#page-qa-form-2">The form</a></p>',
+      '<h2 ID="page-theme-toggle">The theme</h2><p><a href="../index.html#page-qa-form-2">The form</a></p>',
     )
     assert.ok(
       pages
@@ -1374,6 +1374,47 @@ test('a renamed content id takes a name the page does not carry, its id lists an
         .includes(
           '<ul class="outline"><li><a href="#page-qa-form-2">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
         ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an attribute the publisher changed whose value the author wrote without quotes; fails_when=the changed value is printed bare again, so a value that holds a space after its character references are read (`qa-form&#32;flow`, `my&#32;page.html#qa-form`) ends at that space in a browser: the id list loses its second id to a stray attribute, and the link leads to another address; why_new=Cycle 0046 row 235; seam=none
+test('a changed attribute value that the author wrote without quotes is printed in double quotes, so a space in it does not end it', async () => {
+  // Arrange: an id list and a link, both bare and both with a space written as a character reference; the heading they name carries an id of the reader.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-bare-value-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id=qa-form>The form</h2><h3 id="flow">Flow</h3>' +
+      '<p aria-labelledby=qa-form&#32;flow><a href=my&#32;page.html#qa-form>There</a> <a href=#qa-form>Up</a></p>'
+    manifest.pages[0].outline = [{ id: 'qa-form', label: 'The form' }]
+    manifest.pages.push({
+      path: 'my page.html',
+      title: 'Another page',
+      section: 'Guide & concepts',
+      contentHtml: '<h2 id="qa-form">A form</h2><p>Explained from source.</p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [{ id: 'qa-form', label: 'A form' }],
+    })
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<h2 id="page-qa-form">The form</h2><h3 id="flow">Flow</h3>' +
+          '<p aria-labelledby="page-qa-form flow"><a href="my page.html#page-qa-form">There</a> <a href="#page-qa-form">Up</a></p>',
+      ),
     )
   } finally {
     await rm(root, { recursive: true, force: true })

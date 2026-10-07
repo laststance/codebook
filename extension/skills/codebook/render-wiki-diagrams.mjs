@@ -223,9 +223,9 @@ export const unreadMarkupOf = html => {
   }
   return undefined;
 };
-/** The quote an attribute's value stands in, by which of the two quoted forms {@link ATTRIBUTE} matched; none for a bare value. Called by {@link withAttributeValues}. @example quoteOf(undefined, 'a') // => "'" */
-const quoteOf = (double, single) => double !== undefined ? '"' : single !== undefined ? "'" : '';
-/** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped, in the quotes the author used. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
+/** The quote a changed attribute value is printed in: the author's single quotes, and double quotes otherwise, also where the author wrote the value bare, because the changed text may hold a space, which would end a bare value. Called by {@link withAttributeValues}. @example quoteOf('a') // => "'"; quoteOf(undefined) // => '"' */
+const quoteOf = single => single === undefined ? '"' : "'";
+/** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped and in quotes: the author's, or double quotes where the author used none. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
 export const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_START_TAG, markup => {
   if (markup.startsWith('<!--')) return markup;
   // The tag's name ends at the first space, slash or closing bracket; what follows are its attributes.
@@ -235,7 +235,7 @@ export const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_ST
     if (equals === undefined) return attribute;
     const text = attributeText(writtenValue(double, single, bare)), rewritten = rewrite(name.toLowerCase(), text);
     // An unchanged attribute keeps its exact text.
-    return rewritten === text ? attribute : `${lead}${name}${equals}${quoteOf(double, single)}${escapeHtml(rewritten)}${quoteOf(double, single)}`;
+    return rewritten === text ? attribute : `${lead}${name}${equals}${quoteOf(single)}${escapeHtml(rewritten)}${quoteOf(single)}`;
   });
 });
 /** Lists the ids the elements of authored HTML carry, as a browser reads them: from start tags alone, with character references read. Called by {@link renderWikiDiagrams} for the ids a diagram generates, and by the page renderer for a page's outline and for the ids the reader uses itself. @example contentIdsOf('<h2 id="flow">Flow</h2><p id=note>…</p><!-- <p id="old"> --><code>&lt;p id="shown"&gt;</code>') // => Set { 'flow', 'note' } */
