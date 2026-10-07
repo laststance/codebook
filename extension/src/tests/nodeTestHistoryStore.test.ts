@@ -825,6 +825,102 @@ test('of two windows that start a Node test with one place left, one history is 
   assert.deepEqual(await readdir(directory), [NODE_TEST_HISTORY_DIRECTORY])
 })
 
+// Value: protects=the saved study limit when a start is asked for twice with one study id while it is under way; fails_when=the starts under way are noted by study id, so the second start, which is refused, takes the one note the first start still needs when it ends, and a third test is then admitted beside the first, above the limit (Cycle 0046 row 191); why_new=every test started each history once; since rows 190 and 191 no start is noted at all: the storage lock holds every other start back until the first has written its header; seam=the creation of the first history's header file, which the test holds
+test('of two starts with one study id and a third Node test asked for while the first is being started under a limit of one, only the first is admitted', async (context) => {
+  // Arrange: a limit of one. The first start is held between its folder and its header.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-one-id-twice-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
+  const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
+  const first = nodeTestHistoryHeader(workspaceKey),
+    third = nodeTestHistoryHeader(workspaceKey)
+  const held = holdHeaderCreation(
+    context,
+    join(historyDirectory, first.studyId, 'header.json'),
+  )
+  const outcomeOf = (starting: Promise<unknown>): Promise<string> =>
+    starting.then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+  // Act: the same history is asked for again, and then another one. Both wait for the storage lock the first start holds; were the lock not held, they would be decided at once and in this order, so they are awaited before the first start goes on.
+  const firstStart = outcomeOf(store.start(first))
+  await held.folderMade
+  const isLockHeldWhileStarting = (await readdir(directory)).includes(
+    'writer.lock',
+  )
+  const secondStartOfTheSameId = outcomeOf(store.start(first))
+  if (!isLockHeldWhileStarting) await secondStartOfTheSameId
+  const thirdStart = outcomeOf(store.start(third))
+  if (!isLockHeldWhileStarting) await thirdStart
+  held.letGoOn()
+  const outcomes = {
+    first: await firstStart,
+    secondOfTheSameId: await secondStartOfTheSameId,
+    third: await thirdStart,
+  }
+  // Assert
+  assert.deepEqual(outcomes, {
+    first: 'admitted',
+    secondOfTheSameId:
+      'Error: Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+    third:
+      'Error: Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+  })
+  assert.deepEqual(await readdir(historyDirectory), [first.studyId])
+  assert.deepEqual(
+    (await store.list()).map((entry) => entry.studyId),
+    [first.studyId],
+  )
+})
+
+// Value: protects=a Node test is refused as "full" only by what the store holds when the test is decided; fails_when=a start remembers the starts that were under way when it was asked for and counts them although it is decided after they ended, so a test asked for during a start that then fails is refused while the store is empty (Cycle 0046 row 191: the note of the starts under way, which the storage lock of row 190 made unnecessary, is gone); why_new=no test made a start fail while another one waited; seam=the creation of the first history's header file, which the test holds and then refuses as a full disk does
+test('a Node test asked for while another start is under way is admitted when that start fails', async (context) => {
+  // Arrange: a limit of one. The first start is held between its folder and its header, and its header file is then refused.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-failed-first-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
+  const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
+  const first = nodeTestHistoryHeader(workspaceKey),
+    second = nodeTestHistoryHeader(workspaceKey)
+  const held = holdHeaderCreation(
+    context,
+    join(historyDirectory, first.studyId, 'header.json'),
+  )
+  const outcomeOf = (starting: Promise<unknown>): Promise<string> =>
+    starting.then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+  // Act: the second test is asked for while the first start holds the storage lock, and is decided once the first has failed and removed its folder.
+  const firstStart = outcomeOf(store.start(first))
+  await held.folderMade
+  const isLockHeldWhileStarting = (await readdir(directory)).includes(
+    'writer.lock',
+  )
+  const secondStart = outcomeOf(store.start(second))
+  if (!isLockHeldWhileStarting) await secondStart
+  held.letGoOn(
+    Object.assign(new Error('ENOSPC: no space left on device, open'), {
+      code: 'ENOSPC',
+    }),
+  )
+  const outcomes = [await firstStart, await secondStart]
+  // Assert
+  assert.equal(isLockHeldWhileStarting, true)
+  assert.deepEqual(outcomes, [
+    'Error: ENOSPC: no space left on device, open',
+    'admitted',
+  ])
+  assert.deepEqual(await readdir(historyDirectory), [second.studyId])
+})
+
 // Value: protects=a Node test is not started beside a writer of another window, and a learner or an agent whose start is refused learns which file holds the lock; fails_when=the start of a history ignores the storage lock (Cycle 0046 row 190), or a refused start leaves a folder behind; why_new=the history store never took the storage lock; seam=the lock file, which names a real running process of this machine with its real start, as a window that is writing does
 test('a Node test asked for while another window holds the storage lock is refused with the lock’s sentence, and nothing is written', async (context) => {
   // Arrange: the storage lock of another running window of this machine.
