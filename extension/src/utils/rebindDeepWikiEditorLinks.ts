@@ -10,9 +10,9 @@ const OPEN_ENTRY_LABEL =
 const OPEN_ENTRY_WITHOUT_TARGET =
   /(<p class="open-in-editor"><a )([^>]*)(>[^<]*<\/a>)(<\/p>)/g
 
-/** A comment or a start tag of a page: what {@link withEditorSchemeInLinks} tells apart from the page's text. A comment is passed over whole; a start tag is where the address of a link stands, and a quoted attribute value in it may hold a `>`. An escaped code example holds no `<` before a letter, so it is text. */
+/** A comment or a start tag of a page: what {@link withEditorSchemeInLinks} tells apart from the page's text. A comment is passed over whole; a start tag is where the address of a link stands, read up to the `>` that ends it as a browser reads it: a quoted attribute value in it may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). An escaped code example holds no `<` before a letter, so it is text. */
 const COMMENT_OR_START_TAG =
-  /<!--[\s\S]*?(?:-->|$)|<[A-Za-z][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/g
+  /<!--[\s\S]*?(?:-->|$)|<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g
 /** The start of a Codebook address in the `href` of a start tag, with the scheme of either editor; the third group is the action the address names. */
 const CODEBOOK_ADDRESS_START =
   /(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g

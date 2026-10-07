@@ -176,8 +176,8 @@ function sequenceSvg(diagram, prefix) {
 
 /** A comment of authored HTML, also one that never ends: a browser reads everything after its start as comment then. */
 const COMMENT = /<!--[\s\S]*?(?:-->|$)/;
-/** A start tag of authored HTML; a quoted attribute value may hold a `>`. Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
-const START_TAG = /<[A-Za-z][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/;
+/** A start tag of authored HTML, read up to the `>` that ends it as a browser reads it: a quoted attribute value may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
+const START_TAG = /<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/;
 /** A comment or a start tag of authored HTML, the two things {@link withAttributeValues} tells apart from text. A comment is passed over whole, so an element inside it is no element of the page. */
 const COMMENT_OR_START_TAG = new RegExp(`${COMMENT.source}|${START_TAG.source}`, 'g');
 /** One attribute of a start tag, read in the order a browser reads them: what stands before its name (spaces, a slash, or nothing after a closing quote), its name, and, when it has a value, its equals sign and the value in double quotes, in single quotes or bare. */

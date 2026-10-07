@@ -2633,6 +2633,104 @@ test('a page that shows a form, a script and authored SVG as escaped text is pub
   }
 })
 
+// Value: protects=the ids of a page after an attribute whose bare value holds "<!--", which a browser reads as a character of the tag; fails_when=the publisher takes that place for the start of a comment again, so every id after it is unseen: an outline anchor there is refused although the heading is in the page, and an id of the reader there is published a second time; why_new=Cycle 0046 row 193 (a start tag was read up to the next "<"); seam=none
+test('after a bare attribute value that holds <!-- the ids of the page are read as a browser reads them: an outline anchor is accepted and an id of the reader is renamed', async () => {
+  // Arrange: a paragraph whose title is the bare value <!--, then a heading that carries qa-form and one that carries flow; the outline names both.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-bare-value-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<p title=<!-- >A note</p><h2 id="qa-form">The form</h2><h3 id="flow">Flow</h3>'
+    manifest.pages[0].outline = [
+      { id: 'qa-form', label: 'The form' },
+      { id: 'flow', label: 'Flow' },
+    ]
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<p title=<!-- >A note</p><h2 id="page-qa-form">The form</h2><h3 id="flow">Flow</h3>',
+      ),
+    )
+    assert.ok(
+      html.includes(
+        '<ul class="outline"><li><a href="#page-qa-form">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the ids a diagram generates on a page with such an attribute; fails_when=an element after a bare attribute value "<!--" that carries a generated diagram id is unseen and the page is published with the id twice; why_new=Cycle 0046 row 193; seam=none
+test('after a bare attribute value that holds <!-- an element that carries a generated diagram id is seen and the page is refused', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-bare-value-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml +=
+      '<p title=<!-- >A note</p><p id="codebook-diagram-4-flow">Another note</p>'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      { message: 'Article IDs must not collide with generated diagram IDs.' },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page, whose tags and ids the publisher and a browser must read alike, and the reader's own form, rail and script after the article; fails_when=a page with an element whose content a browser reads as text (or keeps out of the document, as a template's) is published: the publisher reads tags in that content that are none, and one such element that is never closed takes everything after it; why_new=Cycle 0046 row 193; seam=none
+for (const element of [
+  '<textarea>Notes</textarea>',
+  '<xmp><b>shown as text</b></xmp>',
+  '<noembed>No plug-in</noembed>',
+  '<noframes>No frames</noframes>',
+  '<plaintext>',
+  '<noscript><p>No script</p></noscript>',
+  '<template><h3 id="hidden">Not in the page</h3></template>',
+])
+  test(`a page that holds ${element.slice(0, element.indexOf('>') + 1)} is refused like a page that holds a form or a script`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-text-element-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html must contain article sections, not a document, form or script.',
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
 // Value: protects=a page that explains the reader's own markup, for example a section about how diagrams are published; fails_when=the diagram renderer reads the page's text again, so a page that only shows a generated diagram id in an escaped code example or inside a comment is refused as if an element carried it; why_new=Cycle 0046 row 184 (the check looked for the text id="codebook-diagram-…" anywhere in the page's content); seam=none
 test('a page that only shows a generated diagram id in an escaped code example or inside a comment is published', async () => {
   // Arrange: the diagram "flow" generates the ids codebook-diagram-4-flow, …-title and …-arrow; the page shows two of them as text and none on an element.
