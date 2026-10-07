@@ -656,6 +656,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/removeStaleStorageClaims.ts',
     'extension/src/utils/removeStaleStorageLock.ts',
     'extension/src/utils/removeWithoutFollowing.ts',
+    'extension/src/utils/startOverBy.ts',
     'extension/src/utils/systemErrorCode.ts',
     'extension/src/utils/withStorageLock.ts',
     'extension/src/utils/withoutBootTime.ts',

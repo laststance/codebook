@@ -28,11 +28,14 @@ import {
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
+import { cursorCatalogCleanupNotice } from '../utils/cursorCatalogCleanupNotice'
+import { describeRefusedSkillLink } from '../utils/describeRefusedSkillLink'
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from '../utils/describeWikiChatErrorReply'
 import { describeWikiChatHandOver } from '../utils/describeWikiChatHandOver'
 import { describeWikiChatWatch } from '../utils/describeWikiChatWatch'
 import { savedLaterNote } from '../utils/savedLaterNote'
+import { startOverBy } from '../utils/startOverBy'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
 
 /**
@@ -546,4 +549,83 @@ test('the packaged README keeps the removal of the managed Cursor skill as step 
   )
   assert.equal(removalLine - noteLine, 2)
   assert.equal(noteLine > 0, true)
+})
+
+// Value: protects=a learner whose home folder is on a file system without hard links reading, before or after Cursor setup refused, that this is a limit of Codebook and which sentence it ends with; fails_when=the README does not state the limit, names another sentence than the setup words, or leaves out one of the two files or the kinds of file system; why_new=Cycle 0046 row 214: the limit stood in no document; seam=none
+test('the packaged README says that Cursor setup needs a file system with hard links, names the skill and the config it links and the file systems that have none, and quotes the refusal as the setup words it', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const paragraphs = readme.split('\n').filter((line) => line.trim() !== '')
+
+  // Act: the paragraph, and the one right before it.
+  const at = paragraphs.findIndex((line) =>
+    line.startsWith('**Cursor setup needs a file system with hard links.**'),
+  )
+  const paragraph = paragraphs[at] ?? ''
+  const facts = {
+    standsAfterTheLockParagraph: (paragraphs[at - 1] ?? '').startsWith(
+      'A Cursor setup/update/removal that an editor or process crash interrupted leaves its `writer.lock` behind.',
+    ),
+    namesTheSkill: paragraph.includes('`~/.cursor/skills/codebook/SKILL.md`'),
+    namesTheConfig: paragraph.includes('`~/.cursor/mcp.json`'),
+    namesTheFileSystems: paragraph.includes(
+      '(exFAT, FAT, some network shares)',
+    ),
+    quotesTheRefusalOfTheSetup: paragraph.includes(
+      `"${describeRefusedSkillLink('<path>', 'EPERM')}"`,
+    ),
+    saysThatNoOtherWayIsTaken: paragraph.includes(
+      'Codebook does not place the file another way.',
+    ),
+  }
+
+  // Assert: the README's quotation is the sentence the setup builds, word for word.
+  assert.deepEqual(facts, {
+    standsAfterTheLockParagraph: true,
+    namesTheSkill: true,
+    namesTheConfig: true,
+    namesTheFileSystems: true,
+    quotesTheRefusalOfTheSetup: true,
+    saysThatNoOtherWayIsTaken: true,
+  })
+  assert.equal(
+    describeRefusedSkillLink('<path>', 'EPERM'),
+    "Cursor skill could not be installed: the file system refused to put Codebook's new file in place as <path> (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.",
+  )
+})
+
+// Value: protects=a learner who follows the README after a Cursor setup or removal was refused; fails_when=the README still forbids deleting a record that a refusal now tells the learner to delete, still sends a learner whose config cleanup failed through Restore Managed Cursor Skill, which installs again the skill that was just removed, or does not say what to do about a skill file that was edited or replaced; why_new=Cycle 0046 rows 188, 211 to 213 and 222 changed what these refusals say and what the removal command does; seam=none
+test('the packaged README agrees with the refusals of a Cursor setup or removal: a record a refusal names may be deleted as the refusal says, a failed config cleanup is finished by the removal command itself, and an edited or replaced skill file is deleted or renamed', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const endOfTheCleanupWarning = cursorCatalogCleanupNotice(
+    new Error('<cause>.'),
+    false,
+  ).slice('<cause>. '.length)
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "A skill file that was edited or replaced after setup is left alone too, as long as it is there: delete or rename that file, then run the command again; setup then installs Codebook's skill again, and the removal finishes.",
+    "Do not delete a pending or removal record, a retained file or another user's skill/config on your own to force setup through.",
+    `The one exception is a record that a refusal names: where Codebook can neither finish nor undo an interrupted step by itself, or cannot read a record, the refusal names what to delete and ends with how to start over, for example \`${startOverBy('<record path>').trim()}\``,
+    `If catalog cleanup alone failed after skill removal, the warning leads with the cause and ends \`${endOfTheCleanupWarning}\``,
+    'Resolve that cause, then run **Codebook: Remove Managed Cursor Skill** again: it retires the empty config Codebook created and leaves an existing or changed config in place.',
+  ])
+  const retired = [
+    'Never delete a pending/removal record, retained file or another user',
+    'If catalog cleanup alone failed after skill removal, run **Codebook: Restore Managed Cursor Skill**',
+    'If another skill or a manual edit is present, leave it in place and resolve that conflict yourself',
+  ].filter((sentence) => readme.includes(sentence))
+
+  // Assert: the README holds each sentence and none of the earlier ones, and the two quotations are the product's words.
+  assert.deepEqual(delivered, [true, true, true, true, true])
+  assert.deepEqual(retired, [])
+  assert.equal(
+    startOverBy('<record path>').trim(),
+    'To start over, delete <record path>, then run Codebook: Set Up AI Chat again.',
+  )
+  assert.equal(
+    endOfTheCleanupWarning,
+    'The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
+  )
 })

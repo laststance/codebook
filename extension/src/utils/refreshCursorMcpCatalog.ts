@@ -27,6 +27,7 @@ import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { recordedFileId, type RecordedFileId } from './recordedFileId'
+import { startOverBy } from './startOverBy'
 import { systemErrorCode } from './systemErrorCode'
 import { withStorageLock } from './withStorageLock'
 
@@ -81,7 +82,7 @@ async function regularDirectory(path: string): Promise<void> {
  */
 function invalidCatalogRecord(subject: string, recordPath: string): Error {
   return new Error(
-    `${subject} is invalid; Codebook preserved the config. To start over, delete ${recordPath}, then run Codebook: Set Up AI Chat again.`,
+    `${subject} is invalid; Codebook preserved the config.${startOverBy(recordPath)}`,
   )
 }
 
@@ -527,7 +528,7 @@ async function leaveChangedConfigInPlace(
 ): Promise<void> {
   if ((await dropSecondNameOfMovedFile(targetPath, retiredPath)) === 'kept')
     throw new Error(
-      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath)}`,
     )
 }
 
