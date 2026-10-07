@@ -56,7 +56,26 @@ type PendingRemoval = {
   owner: CatalogReceipt
   retiredPath: string
 }
-export type CursorCatalogCleanup = 'removed' | 'preserved' | 'not-owned'
+/**
+ * What became of the Cursor MCP config at a removal ({@link removeOwnedCursorMcpCatalog}).
+ * - `removed`: the empty config Codebook created was retired
+ * - `preserved`: a config stands at the path that is not that unchanged file (it was changed or replaced, a newer setup of another window refreshed it, or it cannot be retired into Codebook's storage); it stays
+ * - `already-retired`: an earlier removal retired the config Codebook created; nothing was left to do
+ * - `not-owned`: Codebook owns no config: it never created one here (a config that existed before stays as it is), or the one it created is gone from its path
+ */
+export type CursorCatalogCleanup =
+  'removed' | 'preserved' | 'already-retired' | 'not-owned'
+
+/** Why a removal retires no config, as {@link captureOwnedCursorMcpCatalogGeneration} and {@link removeOwnedCursorMcpCatalog} answer it. */
+type UnretiredCatalogCleanup = Exclude<CursorCatalogCleanup, 'removed'>
+
+/**
+ * What a removal learns of the Cursor MCP config before it takes the skill away ({@link captureOwnedCursorMcpCatalogGeneration}).
+ * - `ownedGeneration`: the config is the unchanged file Codebook created; the generation is handed to {@link removeOwnedCursorMcpCatalog}, which retires the config only while no newer setup refreshed it
+ * - `unowned`: nothing is there to retire, and why; the removal's notice says so
+ */
+export type CursorCatalogCapture =
+  { ownedGeneration: string } | { unowned: UnretiredCatalogCleanup }
 
 /** Recognizes an absent path during catalog reads without hiding access failures. @example isMissing(error) */
 function isMissing(error: unknown): boolean {
@@ -485,6 +504,52 @@ async function setTimesOfOpenConfig(
   }
 }
 
+/**
+ * Says why a removal retires nothing for a receipt whose config is not the unchanged file Codebook created at its path, for {@link whyNoConfigIsOwned} and {@link removeOwnedCursorMcpCatalog}; the removal's notice words the answer ({@link cursorRemovalNotice}).
+ * @param owner - The catalog's receipt.
+ * @param targetPath - The config's path.
+ * @returns
+ * - `already-retired`: the receipt says an earlier removal retired the config
+ * - `not-owned`: the config Codebook created is gone from its path, which holds nothing
+ * - `preserved`: the path holds something that is not the unchanged file Codebook created
+ * @example await whyNothingIsRetired({ ...receipt, installed: false }, '/home/user/.cursor/mcp.json') // => 'already-retired'
+ */
+async function whyNothingIsRetired(
+  owner: CatalogReceipt,
+  targetPath: string,
+): Promise<UnretiredCatalogCleanup> {
+  if (!owner.installed) return 'already-retired'
+  const isPathEmpty = await lstat(targetPath).then(
+    () => false,
+    (error: unknown) => {
+      if (isMissing(error)) return true
+      throw error
+    },
+  )
+  return isPathEmpty ? 'not-owned' : 'preserved'
+}
+
+/**
+ * Says why {@link captureOwnedCursorMcpCatalogGeneration} found no config to reserve, so that the removal's notice does not call a config preserved where none is.
+ * @param receiptPath - The catalog's receipt.
+ * @param targetPath - The config's path.
+ * @param commandToRunAgain - The command the learner ran, which a refusal of the receipt names as the one to run again.
+ * @returns `not-owned` without a receipt; otherwise what {@link whyNothingIsRetired} says.
+ * @example await whyNoConfigIsOwned(receiptPath, targetPath, 'Codebook: Remove Managed Cursor Skill') // => 'not-owned' for a learner who never set Cursor chat up
+ */
+async function whyNoConfigIsOwned(
+  receiptPath: string,
+  targetPath: string,
+  commandToRunAgain: string,
+): Promise<UnretiredCatalogCleanup> {
+  const rawOwner = await privateJson(receiptPath, commandToRunAgain)
+  if (rawOwner === undefined) return 'not-owned'
+  return whyNothingIsRetired(
+    parseReceipt(rawOwner, targetPath, receiptPath, commandToRunAgain),
+    targetPath,
+  )
+}
+
 /** Advances a verified empty config's private generation so a later cleanup cannot retire a newer window's refresh. @param commandToRunAgain - The command the learner ran, which a refusal of the receipt names as the one to run again. @example await advanceOwnedRefreshId(receiptPath, targetPath, 'Codebook: Set Up AI Chat') */
 async function advanceOwnedRefreshId(
   receiptPath: string,
@@ -801,12 +866,12 @@ export async function refreshCursorMcpCatalog(
   )
 }
 
-/** Reserves the current owned catalog generation before explicit skill removal without creating or touching a user config. @param commandToRunAgain - The command the learner ran, which a refusal of one of the catalog's records names as the one to run again: the removal command hands in its own title, so that its warning leaves one next step. @example await captureOwnedCursorMcpCatalogGeneration('/private') */
+/** Reserves the current owned catalog generation before explicit skill removal without creating or touching a user config, or says why there is no config to retire ({@link CursorCatalogCapture}). @param commandToRunAgain - The command the learner ran, which a refusal of one of the catalog's records names as the one to run again: the removal command hands in its own title, so that its warning leaves one next step. @example await captureOwnedCursorMcpCatalogGeneration('/private') */
 export async function captureOwnedCursorMcpCatalogGeneration(
   storageRoot: string,
   cursorDirectory = join(homedir(), '.cursor'),
   commandToRunAgain: string = SET_UP_AI_CHAT_COMMAND,
-): Promise<string | undefined> {
+): Promise<CursorCatalogCapture> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
   return withCatalogLockRetry(() =>
     withStorageLock(storageDirectory, async () => {
@@ -827,7 +892,21 @@ export async function captureOwnedCursorMcpCatalogGeneration(
         storageDirectory,
         commandToRunAgain,
       )
-      return advanceOwnedRefreshId(receiptPath, targetPath, commandToRunAgain)
+      const ownedGeneration = await advanceOwnedRefreshId(
+        receiptPath,
+        targetPath,
+        commandToRunAgain,
+      )
+      // Without a generation nothing is retired later; the removal's notice says why.
+      return ownedGeneration === undefined
+        ? {
+            unowned: await whyNoConfigIsOwned(
+              receiptPath,
+              targetPath,
+              commandToRunAgain,
+            ),
+          }
+        : { ownedGeneration }
     }),
   )
 }
@@ -875,7 +954,7 @@ export async function removeOwnedCursorMcpCatalog(
       )
         return 'preserved'
       if (!owner.installed || !(await ownedFile(targetPath, owner)))
-        return 'preserved'
+        return whyNothingIsRetired(owner, targetPath)
       // Retain the actual file privately; a concurrent edit or replacement must never be unlinked after a stale check.
       if (
         (await lstat(cursorDirectory, { bigint: true })).dev !==

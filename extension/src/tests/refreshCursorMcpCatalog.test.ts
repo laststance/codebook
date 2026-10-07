@@ -67,11 +67,12 @@ test('an earlier Cursor removal cannot retire the empty catalog refreshed by a n
     configPath = join(directory, 'mcp.json')
   const firstRefresh = await refreshCursorMcpCatalog(storageRoot, directory)
   assert.ok(firstRefresh)
-  const removalGeneration = await captureOwnedCursorMcpCatalogGeneration(
+  const reserved = await captureOwnedCursorMcpCatalogGeneration(
     storageRoot,
     directory,
   )
-  assert.ok(removalGeneration)
+  assert.ok('ownedGeneration' in reserved)
+  const removalGeneration = reserved.ownedGeneration
   const secondRefresh = await refreshCursorMcpCatalog(storageRoot, directory)
   assert.ok(secondRefresh)
 

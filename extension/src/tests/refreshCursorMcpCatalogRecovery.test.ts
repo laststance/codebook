@@ -647,3 +647,53 @@ test('a record of the Cursor MCP catalog that is a link is refused under a remov
     `refused: Codebook will not read a Cursor MCP catalog ownership record through a link: ${receiptPath}. Remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
   )
 })
+
+// Value: protects=the notice of a Cursor removal that retires no config; fails_when=the catalog answers one word for every such removal, so the notice calls a config preserved that an earlier removal retired, that the learner deleted, or that Codebook never created; why_new=Cycle 0046 row 246; seam=none, the real files
+test('before a removal the Cursor MCP catalog says why there is no config to retire: Codebook never created one, an earlier removal retired it, it is gone from its path, or it was changed', async (context) => {
+  // Arrange: four homes. One was never set up; in the others Codebook created the config, which was then retired, deleted by the learner, or changed.
+  const neverSetUp = await catalogFolders(context),
+    retired = await catalogFolders(context),
+    deleted = await catalogFolders(context),
+    changed = await catalogFolders(context)
+  for (const folders of [retired, deleted, changed])
+    await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  await removeOwnedCursorMcpCatalog(
+    retired.storageRoot,
+    retired.cursorDirectory,
+  )
+  await rm(deleted.configPath)
+  await writeFile(changed.configPath, EDITED_CONFIG)
+
+  // Act
+  const captures = {
+    neverSetUp: await captureOwnedCursorMcpCatalogGeneration(
+      neverSetUp.storageRoot,
+      neverSetUp.cursorDirectory,
+    ),
+    retired: await captureOwnedCursorMcpCatalogGeneration(
+      retired.storageRoot,
+      retired.cursorDirectory,
+    ),
+    deleted: await captureOwnedCursorMcpCatalogGeneration(
+      deleted.storageRoot,
+      deleted.cursorDirectory,
+    ),
+    changed: await captureOwnedCursorMcpCatalogGeneration(
+      changed.storageRoot,
+      changed.cursorDirectory,
+    ),
+    retiredAndRemovedAgain: await removeOwnedCursorMcpCatalog(
+      retired.storageRoot,
+      retired.cursorDirectory,
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(captures, {
+    neverSetUp: { unowned: 'not-owned' },
+    retired: { unowned: 'already-retired' },
+    deleted: { unowned: 'not-owned' },
+    changed: { unowned: 'preserved' },
+    retiredAndRemovedAgain: 'already-retired',
+  })
+})

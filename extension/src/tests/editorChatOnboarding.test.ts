@@ -233,9 +233,9 @@ async function boundary(
           return catalogGeneration
         },
         captureOwnedCursorMcpCatalogGeneration: async () => {
-          if (!catalogPresent) return undefined
+          if (!catalogPresent) return { unowned: 'not-owned' }
           catalogGeneration = `captured-${catalogRefreshes}`
-          return catalogGeneration
+          return { ownedGeneration: catalogGeneration }
         },
         removeOwnedCursorMcpCatalog: async (
           _storageRoot: string,

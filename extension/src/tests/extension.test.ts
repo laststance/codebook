@@ -2239,7 +2239,9 @@ test('a managed Cursor skill removal whose catalog cleanup error quotes a comman
         removeManagedCursorSkill: async () => ({ status: 'removed' }),
       },
       './utils/refreshCursorMcpCatalog': {
-        captureOwnedCursorMcpCatalogGeneration: async () => 'generation-1',
+        captureOwnedCursorMcpCatalogGeneration: async () => ({
+          ownedGeneration: 'generation-1',
+        }),
         removeOwnedCursorMcpCatalog: async () => {
           throw new Error(
             "EACCES: permission denied, unlink '/home/[Open](command:x)/.cursor/mcp.json'",
@@ -3140,7 +3142,7 @@ test('a Remove Managed Cursor Skill whose Cursor MCP catalog record is damaged r
         skillAfterTheFirstRemoval: 'ENOENT',
         configAfterTheFirstRemoval: '{"mcpServers":{}}\n',
         informations: [
-          'The managed Cursor skill was already removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+          'The managed Cursor skill was already removed. Codebook owns no Cursor MCP config; none was changed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
         ],
         configAfterTheSecondRemoval: '{"mcpServers":{}}\n',
       },
@@ -3168,6 +3170,39 @@ test('a Cursor MCP catalog record that is damaged between the two catalog steps 
           `Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${cursor.catalogReceiptPath}, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.`,
         ],
         informations: [],
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=the learner who runs Remove Managed Cursor Skill again after a removal that finished; fails_when=the notice says "Existing or changed Cursor MCP config preserved." although no config is there, because every removal that retires nothing is worded as a preserved config; why_new=Cycle 0046 row 246: the notice tells a config that was already retired from one that was preserved; seam=the removal command with the real skill and catalog over a temporary home
+test('a Remove Managed Cursor Skill that is run again after one that finished says that the skill was already removed and that Codebook’s config was already retired, not that a config was preserved', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  try {
+    // Act
+    await cursor.runRemoval()
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        config: await access(cursor.configPath).then(
+          () => 'still there',
+          (error: { code?: string }) => error.code,
+        ),
+      },
+      {
+        informations: [
+          'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+          "The managed Cursor skill was already removed. Codebook's empty Cursor MCP config was already retired; no config was changed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.",
+        ],
+        warnings: [],
+        config: 'ENOENT',
       },
     )
   } finally {
