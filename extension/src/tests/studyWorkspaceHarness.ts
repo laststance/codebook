@@ -3721,6 +3721,15 @@ export async function workspaceHarness(
       closeDisposedPanelTabsLater = true
     },
     /**
+     * Delivers queued native tab changes after a regression changes window focus, for delayed pane-disposal checks.
+     * @returns Once the pending changes ran; their automatic timers then have nothing left to deliver.
+     * @example harness.closePendingDisposedPanelTabs() // the disposed Application tab leaves its group
+     */
+    closePendingDisposedPanelTabs(): void {
+      // Take each pending change before delivery so its later automatic timer cannot repeat it.
+      for (const close of pendingDisposedTabCloses.splice(0)) close()
+    },
+    /**
      * Makes the fake editor close a disposed panel's tab a moment after the disposal ({@link DISPOSED_TAB_CLOSE_DELAY_MS}), and the group that tab left empty while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). A layout read that arrives before the tab closed is interrupted by both closes. The reader's listeners see a close before the read it interrupts is answered. That the group's close falls into a layout read is the model's choice of moment: the trace gives the order of the two closes and their distance of 11 ms, not what the reader awaited.
      * @example
      * harness.replaceGroupObjectsOnTabChanges()

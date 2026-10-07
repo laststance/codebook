@@ -2621,3 +2621,61 @@ test('a reader that is disposed while its Study pane is the active editor leaves
     await harness.close()
   }
 })
+
+// Value: protects=the learner who leaves the editor window while a run's disposed Application tab still waits to close; fails_when=run-end focus sampled before that wait sends a later keyboard command and notice after the window lost focus; why_new=Cycle 0046 row 364; seam=delayed native tab close, the original run-end continuation observed without changing its behavior, and window focus loss
+test('a run that ends with its Application pane active sends no keyboard command or notice when the window loses focus while the disposed tab waits to close', async () => {
+  // Arrange: Study is closed, a live run's pane has the keyboard, and native disposal waits.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  const settleKeyboard = harness.reader[
+    'settleKeyboardAfterRunClosedPane'
+  ].bind(harness.reader)
+  let settling: Promise<void> | undefined
+  harness.reader['settleKeyboardAfterRunClosedPane'] = (): Promise<void> => {
+    // Observe completion of the real continuation; the public lease release still triggers it.
+    settling = settleKeyboard()
+    return settling
+  }
+  try {
+    harness.focusMutableDraft('learner-file.ts', 1)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    const live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.reader['app']!.reveal(undefined, false)
+    const commandsBefore = harness.commands.length
+
+    // Act: end the run, lose window focus while its tab remains, then deliver the native close.
+    live.close()
+    assert.ok(settling, 'The run did not start its keyboard continuation')
+    assert.equal(harness.groups[0]!.tabs.length, 3)
+    harness.changeWindowFocus(false)
+    harness.closePendingDisposedPanelTabs()
+    await settling
+
+    // Assert: after the actual continuation settled, no later keyboard operation or notice ran.
+    assert.deepEqual(
+      {
+        panels: harness.counts().panels,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        notices: harness.informationMessages,
+      },
+      { panels: 0, focusCommands: [], notices: [] },
+    )
+  } finally {
+    harness.reader['settleKeyboardAfterRunClosedPane'] = settleKeyboard
+    await harness.close()
+  }
+})

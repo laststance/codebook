@@ -2041,6 +2041,88 @@ test('Close Study Workspace after the learner opened another editor group during
   }
 })
 
+// Value: protects=the learner's group opened while Close awaits a layout read captured before that group existed; fails_when=Close truncates the current groups with the old reply's count and applies a two-group original layout that merges the new third group; why_new=Cycle 0046 row 365; seam=a test-local native command response hold after its snapshot, learner layout/group creation, and the original column kept active
+test('Close Study Workspace applies no original layout and keeps all three learner groups when a captured two-group layout reply waits while the third group is opened', async (context) => {
+  // Arrange: Open used the learner's two columns; their native tabs close before Close reads the remaining rows.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 0.7 }, { size: 0.3 }],
+  })
+  harness.closeDisposedPanelTabsLater()
+  let releaseRead = (): void => {}
+  let reportReadCaptured = (): void => {}
+  const readCaptured = new Promise<void>((resolve) => {
+    reportReadCaptured = resolve
+  })
+  const readReleased = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  let closing: Promise<void> | undefined
+  try {
+    const firstFile = harness.focusMutableDraft('first-learner-file.ts', 1)
+    harness.focusMutableDraft('second-learner-file.ts', 2)
+    await harness.reader.open()
+    harness.focusExistingSource(firstFile.editor)
+    const executeCommand = harness.editor.commands.executeCommand
+    let holdsRead = true
+    let capturedLayout: unknown
+    context.mock.method(
+      harness.editor.commands,
+      'executeCommand',
+      async (...arguments_: Parameters<typeof executeCommand>) => {
+        const answer = await Reflect.apply(
+          executeCommand,
+          harness.editor.commands,
+          arguments_,
+        )
+        // Hold the captured answer, rather than delaying the read until after learner input.
+        if (arguments_[0] === 'vscode.getEditorLayout' && holdsRead) {
+          holdsRead = false
+          capturedLayout = answer
+          reportReadCaptured()
+          await readReleased
+        }
+        return answer
+      },
+    )
+
+    // Act: after the old two-group snapshot, the learner adds a third group and returns to the original column.
+    closing = harness.reader.close()
+    await readCaptured
+    assert.deepEqual(capturedLayout, {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [{ size: 0.4 }, { size: 0.35 }, { size: 0.25 }],
+    })
+    const newFile = harness.focusMutableDraft('new-third-file.ts', 3)
+    harness.focusExistingSource(firstFile.editor)
+    const commandsBeforeReply = harness.commands.length
+    releaseRead()
+    await closing
+
+    // Assert: the stale answer gives no permission to merge away the new learner group.
+    assert.deepEqual(
+      {
+        restorationCommands: harness.commands
+          .slice(commandsBeforeReply)
+          .filter((command) => command === 'vscode.setEditorLayout'),
+        groups: harness.groups.length,
+        thirdGroupKeptItsFile:
+          harness.groups[2]?.tabs.includes(newFile.tab) ?? false,
+      },
+      { restorationCommands: [], groups: 3, thirdGroupKeptItsFile: true },
+    )
+  } finally {
+    releaseRead()
+    await closing?.catch(() => undefined)
+    await harness.close()
+  }
+})
+
 for (const situation of [
   {
     name: 'the learner replaced the file of the second group by another one during the session',
