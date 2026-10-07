@@ -911,8 +911,6 @@ export function activate(
     >
   > & {
     publish?: { token: string; published: WikiUpdateEndFacts['published'] }
-    /** Set when the watch of a VS Code update threw while its chat worked: the chat was not stopped, so the run leaves the reservation a stopped watch leaves. */
-    didWatchBreak?: boolean
   }
   /** Reads the published manifest at a run's end, and only when the site on disk is not the one the run started from; called by {@link readWikiSiteAtEnd}. @example await readPublishedIfReplaced(run, 'a@1') // => undefined for a run that started from 'a@1' */
   const readPublishedIfReplaced = async (
@@ -975,12 +973,13 @@ export function activate(
     )
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
-    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
+    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off or a request that could not be taken back; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
     const mayAgentStillWork = mayWikiChatStillPublish(
       run.host,
       stoppedAs,
       isExtensionStopping,
-      observed.didWatchBreak ?? false,
+      // An end the run itself marks as one its chat can publish after (a watch that broke off, a request not taken back) leaves the reservation a stopped watch leaves.
+      observed.mayBeReplacedLater ?? false,
     )
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
@@ -1095,7 +1094,6 @@ export function activate(
         failure: describeBrokenWikiWatch(thrownMessage(error)),
         isFailureCodebookSentence: true,
         mayBeReplacedLater: true,
-        didWatchBreak: true,
       }
     }
   }

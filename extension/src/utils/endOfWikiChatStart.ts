@@ -101,7 +101,7 @@ export function endOfWikiChatStart(
   const failure = failureOfWikiChatStart(start, answerTimeoutMs)
   if (failure === undefined)
     return endWithoutFailure(start.outcome, isWindowClosing)
-  // A request Codebook did not see leave the chat can still be worked on and published.
+  // A request Codebook did not see leave the chat can still be worked on and published: the mark also makes the run leave the reservation of a stopped watch.
   return mayChatStillHoldRequest(start)
     ? { failure, isFailureCodebookSentence: true, mayBeReplacedLater: true }
     : { failure, isFailureCodebookSentence: true }
