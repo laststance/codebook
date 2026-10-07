@@ -135,3 +135,33 @@ test('a reconnect refusal for a missing Cursor folder, which ends with its own s
     'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/user/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
   )
 })
+
+// Value: protects=the notice a learner reads at editor start, or after a start, when the skill check ends with a refusal that names its own step after "then run"; fails_when=the helper knows the setup step only as "Run Codebook: Set Up AI Chat" with a capital R and says the step a second time after "…, then run Codebook: Set Up AI Chat again."; why_new=Cycle 0046 row 284: every refusal of the Cursor setup of this cycle ends that way; seam=none
+test('a reconnect or registration refusal that names the setup command after "then run" is shown without a second setup step', () => {
+  // Arrange: the refusal for a link at ~/.cursor/skills, as the skill check words it.
+  const refusal = new Error(
+    "Codebook will not follow a missing or redirected skill directory: /home/user/.cursor/skills. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
+  )
+
+  // Act
+  const notices = {
+    reconnect: noticeWithSetupStep(
+      'Codebook AI chat did not reconnect',
+      refusal,
+      'Run Codebook: Set Up AI Chat.',
+    ),
+    registration: noticeWithSetupStep(
+      'Codebook agent server started, but Cursor MCP registration failed',
+      refusal,
+      'Run Codebook: Set Up AI Chat to repair the connection.',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(notices, {
+    reconnect:
+      "Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/user/.cursor/skills. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
+    registration:
+      "Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/user/.cursor/skills. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
+  })
+})
