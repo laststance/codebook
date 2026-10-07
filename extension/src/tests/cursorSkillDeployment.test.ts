@@ -2455,7 +2455,7 @@ test('the record and the second name that a refused removal of an edited Cursor 
 })
 
 // Value: protects=the learner who meets one of the states a removal's record is kept for; fails_when=the refusal names no file and no next step, so the learner cannot tell what to delete to get setup and removal back; why_new=Cycle 0046 row 188: every sentence of a record that is kept says what the learner does next; seam=none, the files as each state leaves them
-test('each refusal that keeps a removal’s record of the Cursor skill names the record and how to start over, with the removal as the command to run again: two different files at the two names, a foreign file at the displaced name, a skill that is gone before its receipt said so, and a moved skill whose retained name is taken', async (context) => {
+test('each refusal that keeps a removal’s record of the Cursor skill names the record, every file it keeps and how to start over, with the removal as the command to run again: two different files at the two names, a foreign file at the displaced name, a skill that is gone before its receipt said so, and a moved skill whose retained name is taken', async (context) => {
   // Arrange: four setups, each with a removal's record. First: an edited skill under the displaced name and another file at the skill's path. Second: Codebook's skill at its path and a foreign file at the displaced name. Third: neither name holds anything, and the receipt still says installed. Fourth: Codebook's skill under the displaced name, and a file under the retained name too.
   const twoFiles = await fixture(context),
     foreignFile = await fixture(context),
@@ -2514,22 +2514,24 @@ test('each refusal that keeps a removal’s record of the Cursor skill names the
     {
       refusals: {
         twoFiles: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${first.displacedPath}). To start over, delete ${first.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
-        foreignFile: `The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record. To start over, delete ${second.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+        foreignFile: `The displaced Cursor skill changed during removal; Codebook preserved it as ${second.displacedPath}, with its recovery record. To start over, delete ${second.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
         goneSkill: `Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record. To start over, delete ${third.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
-        retainedNameTaken: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection. To start over, delete ${fourth.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+        retainedNameTaken: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection: ${fourth.displacedPath} and ${join(retainedNameTaken.storageRoot, 'cursor-skill', 'retired-00000000-0000-0000-0000-000000000189.SKILL.md')}. To start over, delete ${fourth.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
       },
       movedAwayOfTheFirst: EDITED_SKILL,
     },
   )
 })
 
-// Value: protects=the learner who meets one of the states a setup's record is kept for after its skill was published; fails_when=the refusal names no record and no next step, so the learner cannot tell what to delete to get setup back; why_new=Cycle 0046 row 188: every sentence of a record that is kept says what the learner does next; seam=none, the files as each state leaves them
-test('each refusal that keeps a setup’s record of the Cursor skill names the record and how to start over: a displaced and a retained file that both exist, a retained file that changed, and a displacement without its previous owner', async (context) => {
+// Value: protects=the learner who meets one of the states a setup's record is kept for after its skill was published, and what deleting that record leaves; fails_when=the refusal names no record and no next step, or tells the learner to delete the one file that names where their bytes are kept without naming that place, or the deleted record leaves the staged file behind for good; why_new=Cycle 0046 rows 188 and 247; seam=none, the files as each state leaves them
+test('each refusal that keeps a setup’s record of the Cursor skill names the record, every file it keeps and how to start over, and leaves no staged file: a displaced and a retained file that both exist, a retained file that changed, and a displacement without its previous owner; after the learner deletes the record, setup finds the skill current', async (context) => {
   // Arrange: three updates that published the new skill and were interrupted before they retained the old one. First: the old skill stands under its displaced name and a file stands under the retained name too. Second: the retained file is not the old skill. Third: the record names a displaced file and no previous owner.
   const bothExist = await fixture(context),
     retainedChanged = await fixture(context),
     noPreviousOwner = await fixture(context)
-  const records: Record<string, string> = {}
+  const records: Record<string, string> = {},
+    displaced: Record<string, string> = {},
+    retained: Record<string, string> = {}
   for (const [name, paths] of Object.entries({
     bothExist,
     retainedChanged,
@@ -2562,39 +2564,55 @@ test('each refusal that keeps a setup’s record of the Cursor skill names the r
       await writeFile(record.pendingPath, JSON.stringify(written))
     }
     records[name] = record.pendingPath
+    displaced[name] = record.displacedPath
+    retained[name] = retainedPath
   }
+  const setUp = (paths: typeof bothExist): Promise<string> =>
+    statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
 
-  // Act
+  // Act: each refusal, what it left under Codebook's temporary names, and then its way out followed to the letter.
   const refusals = {
-    bothExist: await statusOrRefusalOf(
-      deployCursorSkill(
-        bothExist.extensionPath,
-        bothExist.storageRoot,
-        bothExist.homeRoot,
-      ),
-    ),
-    retainedChanged: await statusOrRefusalOf(
-      deployCursorSkill(
-        retainedChanged.extensionPath,
-        retainedChanged.storageRoot,
-        retainedChanged.homeRoot,
-      ),
-    ),
-    noPreviousOwner: await statusOrRefusalOf(
-      deployCursorSkill(
-        noPreviousOwner.extensionPath,
-        noPreviousOwner.storageRoot,
-        noPreviousOwner.homeRoot,
-      ),
-    ),
+    bothExist: await setUp(bothExist),
+    retainedChanged: await setUp(retainedChanged),
+    noPreviousOwner: await setUp(noPreviousOwner),
+  }
+  const stagedFilesAfterTheRefusals = [
+    (await filesOfTheSetup(bothExist)).temporaryNames,
+    (await filesOfTheSetup(retainedChanged)).temporaryNames,
+    (await filesOfTheSetup(noPreviousOwner)).temporaryNames,
+  ]
+  for (const recordPath of Object.values(records)) await rm(recordPath)
+  const setupsAfterTheRecordWasDeleted = {
+    bothExist: await setUp(bothExist),
+    retainedChanged: await setUp(retainedChanged),
+    noPreviousOwner: await setUp(noPreviousOwner),
   }
 
   // Assert
-  assert.deepEqual(refusals, {
-    bothExist: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection. To start over, delete ${records.bothExist}, then run Codebook: Set Up AI Chat again.`,
-    retainedChanged: `The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery. To start over, delete ${records.retainedChanged}, then run Codebook: Set Up AI Chat again.`,
-    noPreviousOwner: `Cursor skill displacement has no complete recovery record. To start over, delete ${records.noPreviousOwner}, then run Codebook: Set Up AI Chat again.`,
-  })
+  assert.deepEqual(
+    {
+      refusals,
+      stagedFilesAfterTheRefusals,
+      setupsAfterTheRecordWasDeleted,
+      keptRetainedFile: await readFile(retained.retainedChanged ?? '', 'utf8'),
+    },
+    {
+      refusals: {
+        bothExist: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection: ${displaced.bothExist} and ${retained.bothExist}. To start over, delete ${records.bothExist}, then run Codebook: Set Up AI Chat again.`,
+        retainedChanged: `The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery as ${retained.retainedChanged}. To start over, delete ${records.retainedChanged}, then run Codebook: Set Up AI Chat again.`,
+        noPreviousOwner: `Cursor skill displacement has no complete recovery record; Codebook left what stands under the displaced name ${displaced.noPreviousOwner} as it is. To start over, delete ${records.noPreviousOwner}, then run Codebook: Set Up AI Chat again.`,
+      },
+      stagedFilesAfterTheRefusals: [[], [], []],
+      setupsAfterTheRecordWasDeleted: {
+        bothExist: 'current',
+        retainedChanged: 'current',
+        noPreviousOwner: 'current',
+      },
+      keptRetainedFile: 'The retained file, changed.\n',
+    },
+  )
 })
 
 // Value: protects=a learner whose editor saves the skill file while setup stages its update, before setup moves anything; fails_when=setup refuses and keeps its staged file and its record, after which every setup is refused as interrupted and removal points back to setup; why_new=Cycle 0046 row 188 (the check before the move); seam=node:fs/promises lstat of the loaded deployment, at whose look at the staged file the skill file is written
@@ -3622,9 +3640,7 @@ test('a second and a third setup of the Cursor skill on a file system that still
 
   // Act: three setups without the move back, then the sentence followed to the letter.
   const firstSetup = await setUpOnThatFileSystem()
-  const filesAfterTheFirstSetup = await filesOfTheSetup(paths)
-  const [displacedName] = filesAfterTheFirstSetup.skillFolder
-  const [stagedName] = filesAfterTheFirstSetup.temporaryNames
+  const [displacedName] = (await filesOfTheSetup(paths)).skillFolder
   const displacedPath = join(
     paths.homeRoot,
     '.cursor',
@@ -3658,10 +3674,10 @@ test('a second and a third setup of the Cursor skill on a file system that still
       firstSetup: refusal,
       secondSetup: refusal,
       thirdSetup: refusal,
-      // The first setup's staged file and record, and no second one.
+      // The first setup's record and no second one; its staged file, which the record proved, went at the second try.
       filesAfterTheThirdSetup: {
         skillFolder: [displacedName],
-        temporaryNames: [stagedName],
+        temporaryNames: [],
         records: ['pending.json'],
       },
       previousSkillUnderItsOtherName: INITIAL_SKILL,
@@ -3840,6 +3856,168 @@ test('a Cursor skill that is edited right before a setup or a removal moves it, 
         records: [],
       },
       skillOfTheRemoval: EDITED_SKILL,
+    },
+  )
+})
+
+// Value: protects=the learner's skills folder after a setup that was killed between staging its new skill and writing its record, or whose record the learner deleted; fails_when=the staged file stays in ~/.cursor/skills for good, because only a record leads a setup to it, or a setup removes a file under such a name that is not provably Codebook's; why_new=Cycle 0046 row 247: a setup removes staged files no record names when they hold the bundled skill or are a second name of the installed skill; seam=none, the real files
+test('a setup removes the staged files of earlier setups that no record names when they hold the bundled skill or are a second name of the file at the skill’s path, and leaves a file under such a name that holds other bytes', async (context) => {
+  // Arrange: the installed skill, which the learner edited since, and three files under staged names: the bundled skill as a killed setup staged it, a second name of the skill file, and a file with bytes of the learner.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.targetPath, EDITED_SKILL)
+  const stagedName = (suffix: string): string =>
+    join(
+      paths.homeRoot,
+      '.cursor',
+      'skills',
+      `.codebook-stage-00000000-0000-0000-0000-00000000024${suffix}.tmp`,
+    )
+  await writeFile(stagedName('1'), INITIAL_SKILL)
+  await fileSystem.link(paths.targetPath, stagedName('2'))
+  await writeFile(stagedName('3'), 'Bytes of the learner.\n')
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      files: await filesOfTheSetup(paths),
+      keptFile: await readFile(stagedName('3'), 'utf8'),
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      setup:
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+      files: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [
+          '.codebook-stage-00000000-0000-0000-0000-000000000243.tmp',
+        ],
+        records: [],
+      },
+      keptFile: 'Bytes of the learner.\n',
+      skill: EDITED_SKILL,
+    },
+  )
+})
+
+// Value: protects=bytes somebody wrote into the file a setup staged, when that setup's record must stay; fails_when=the refusal's way out deletes the record and names nothing else, so the changed file under the staged name is left without any sentence that names it, or Codebook deletes it although the record no longer proves it; why_new=Cycle 0046 row 247: a staged file that cannot be proven Codebook's is named in the way out; seam=none, the files as the state leaves them
+test('a refusal that keeps a setup’s record of the Cursor skill names what stands under the staged name when that is not the file Codebook wrote, and leaves it there', async (context) => {
+  // Arrange: an update that was interrupted after it moved the installed skill away, whose retained name is taken; the staged file was overwritten since.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const record = await writeUpdateRecord(paths)
+  const retainedPath = join(
+    paths.storageRoot,
+    'cursor-skill',
+    'retired-00000000-0000-0000-0000-000000000188.SKILL.md',
+  )
+  await writeFile(retainedPath, 'Another file.\n')
+  await writeFile(record.stagedPath, 'Bytes somebody wrote.\n')
+  await writeFile(record.displacedPath, 'A foreign file.\n')
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { setup, stagedFile: await readFile(record.stagedPath, 'utf8') },
+    {
+      setup: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection: ${record.displacedPath} and ${retainedPath}. To start over, delete ${record.pendingPath}, then run Codebook: Set Up AI Chat again. What stands under the staged name ${record.stagedPath} is not the file Codebook wrote there; Codebook left it, so look at it before you delete it.`,
+      stagedFile: 'Bytes somebody wrote.\n',
+    },
+  )
+})
+
+// Value: protects=the skills folder of a learner whose changed skill file Codebook could not put back because another file took the skill's path; fails_when=the refusal keeps the setup's record and its way out deletes that record, while the staged file, which only the record named, stays in ~/.cursor/skills for good; why_new=Cycle 0046 row 247: the staged file the record proves goes before a refusal that keeps the record; seam=node:fs/promises rename of the loaded deployment, before whose move the skill is edited and after whose move another file takes its path; and for the recovery the files as the state leaves them
+test('a setup that keeps its record because another file took the skill’s path leaves no staged file behind, in the setup that moved the edited skill away and in the recovery of a published skill that was edited', async (context) => {
+  // Arrange: two installed skills whose extension brings a new one. First: the skill is edited right before the setup moves it, and another file takes its path right after. Second: an interrupted update that published the new skill, which was edited in place since, with a foreign file under the displaced name.
+  const duringSetup = await fixture(context),
+    duringRecovery = await fixture(context)
+  for (const paths of [duringSetup, duringRecovery]) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    await writeFile(paths.sourcePath, NEXT_SKILL)
+  }
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      rename: async (from: string, to: string) => {
+        if (from !== duringSetup.targetPath) return fileSystem.rename(from, to)
+        await writeFile(from, EDITED_SKILL)
+        await fileSystem.rename(from, to)
+        await writeFile(from, 'A newer file of the learner.\n')
+      },
+    },
+  })
+  const record = await writeUpdateRecord(duringRecovery)
+  await rm(duringRecovery.targetPath)
+  await fileSystem.link(record.stagedPath, duringRecovery.targetPath)
+  await writeFile(duringRecovery.targetPath, EDITED_SKILL)
+  await writeFile(record.displacedPath, 'A foreign file.\n')
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      duringSetup.extensionPath,
+      duringSetup.storageRoot,
+      duringSetup.homeRoot,
+    ),
+  )
+  const recovery = await statusOrRefusalOf(
+    deployCursorSkill(
+      duringRecovery.extensionPath,
+      duringRecovery.storageRoot,
+      duringRecovery.homeRoot,
+    ),
+  )
+
+  // Assert
+  const filesOfTheSetupThatMoved = await filesOfTheSetup(duringSetup)
+  const displacedOfTheSetup = join(
+    duringSetup.homeRoot,
+    '.cursor',
+    'skills',
+    'codebook',
+    filesOfTheSetupThatMoved.skillFolder[0] ?? 'no displaced file',
+  )
+  assert.deepEqual(
+    {
+      setup,
+      stagedFilesOfTheSetup: filesOfTheSetupThatMoved.temporaryNames,
+      recovery,
+      stagedFilesOfTheRecovery: (await filesOfTheSetup(duringRecovery))
+        .temporaryNames,
+      editedSkillOfTheRecovery: await readFile(
+        duringRecovery.targetPath,
+        'utf8',
+      ),
+    },
+    {
+      setup: `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedOfTheSetup}. To start over, delete ${join(duringSetup.storageRoot, 'cursor-skill', 'pending.json')}, then run Codebook: Set Up AI Chat again.`,
+      stagedFilesOfTheSetup: [],
+      recovery: `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${record.displacedPath}. To start over, delete ${record.pendingPath}, then run Codebook: Set Up AI Chat again.`,
+      stagedFilesOfTheRecovery: [],
+      editedSkillOfTheRecovery: EDITED_SKILL,
     },
   )
 })
