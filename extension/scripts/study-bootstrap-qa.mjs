@@ -165,17 +165,64 @@ async function check(page, options, collected) {
         `${focused.tagName.toLowerCase()}: ${focused.textContent.trim()}`
       )
     })
-  /** Takes the focus from the pane the way the editor does while the learner works in another part of it: the document reports that it has none. */
+  /**
+   * Takes the focus from the pane the way the editor does when the learner goes to another part of it, as seen in VS Code 1.140.0 (row 326): the webview first takes the focus from the control (a focusout without a related target, after which the active element is the page body), then the window gets its blur event, and the document reports that it has no focus.
+   * Until row 326 this helper left the active element in place, which no editor does: every case that holds the pane out of focus was untrue to the editor in that point.
+   */
   const leavePane = () =>
     page.evaluate(() => {
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement && focused !== document.body)
+        focused.blur()
       document.hasFocus = () => false
+      window.dispatchEvent(new Event('blur'))
     })
-  /** Gives the pane the focus back and tells it so with the window's focus event. */
+  /** Gives the pane the focus back the way the editor's Focus into Panel command does: the window's focus event, at which the active element is still the page body. */
   const returnToPane = () =>
     page.evaluate(() => {
       delete document.hasFocus
       window.dispatchEvent(new Event('focus'))
     })
+  /** Finds a point of the pane's background: a place whose element, and everything around it, takes no focus when it is pressed. */
+  const backgroundPoint = () =>
+    page.evaluate(() => {
+      for (let y = 4; y < innerHeight; y += 8)
+        for (let x = innerWidth - 4; x > 0; x -= 8)
+          if (
+            !document
+              .elementFromPoint(x, y)
+              ?.closest(
+                'button,a[href],input,select,textarea,summary,label,[tabindex],[contenteditable]',
+              )
+          )
+            return { x, y }
+      throw new Error('The pane shows no background to press.')
+    })
+  /**
+   * Returns to the pane with a real pointer press at a point, in one of the two orders in which the window's focus event and the press can reach the page; the pane must handle both, because the editor's order is not fixed by anything the pane can rely on.
+   * `focus-first`: the focus event fires before the pane sees the press (a capturing listener on the window runs ahead of the pane's on the document). `press-first`: it fires after the pane saw the pointerdown and before the browser's own handling of the press, which takes the focus off a control when the press is on the background (a bubbling listener on the document).
+   */
+  const returnToPaneByPressAt = async (point, order) => {
+    await page.evaluate((order) => {
+      const giveFocusBack = () => {
+        delete document.hasFocus
+        window.dispatchEvent(new Event('focus'))
+      }
+      if (order === 'focus-first')
+        window.addEventListener('pointerdown', giveFocusBack, {
+          capture: true,
+          once: true,
+        })
+      else
+        document.addEventListener('pointerdown', giveFocusBack, { once: true })
+    }, order)
+    await page.mouse.click(point.x, point.y)
+  }
+  /** The middle of one control of the pane, for a press on it. */
+  const middleOf = async (selector) => {
+    const box = await page.locator(selector).first().boundingBox()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }
   /** Reads one status region of the pane: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor has the `hidden` attribute or `display:none`, and when a closed disclosure holds it; a region that is rendered exists for assistive technology before its first text. */
   const statusRegion = (id) =>
     page.evaluate((id) => {
@@ -2690,16 +2737,11 @@ async function check(page, options, collected) {
       await publish(withoutValues)
       await page.locator('#playback-show-variables').focus()
       await page.keyboard.press('Enter')
-      await page.evaluate(() => {
-        document.hasFocus = () => false
-      })
+      await leavePane()
       // Act: the values load while the learner is in Run and Debug; later the learner returns to the pane.
       await publish(withValues)
       const focusWhileAway = await focusedControl()
-      await page.evaluate(() => {
-        delete document.hasFocus
-        window.dispatchEvent(new Event('focus'))
-      })
+      await returnToPane()
       const focusOnReturn = await focusedControl()
       // Assert
       cases.push({
@@ -3618,25 +3660,84 @@ async function check(page, options, collected) {
       expected: ['button: Restore', 'read-app'],
     },
   ])
-  // Arrange: Play holds the focus and the learner leaves the pane, so the document has no focus when the next message arrives and nothing is settled for it.
+  // Arrange: Play holds the focus in the pane, which has the focus (found with row 85, rewritten with row 326: until then the case let the learner take the focus off Play by the click that returned to the pane, and such a click must give the focus back).
   await publish(recordingAt(2000))
   await page.locator('#playback-toggle').focus()
-  await page.evaluate(() => {
-    document.hasFocus = () => false
-  })
+  const paneBackground = await backgroundPoint()
+  // Act: the learner presses the pane's background, which takes the focus off Play; then leaves the pane, a message arrives, and the learner returns.
+  await page.mouse.click(paneBackground.x, paneBackground.y)
+  const focusAfterPressOnBackground = await focusName()
+  await leavePane()
   await publish(recordingAt(2000))
-  // Act: the learner comes back with a click on a place that takes no focus, which takes it off Play; the pane gets its focus event.
-  await page.evaluate(() => {
-    document.activeElement.blur()
-    delete document.hasFocus
-    window.dispatchEvent(new Event('focus'))
-  })
+  await returnToPane()
   const focusAfterLearnerLeftControl = await focusName()
   // Assert
   cases.push({
-    name: 'a focus the learner took off a control that is shown and can be used is not put back at the pane’s next focus event',
-    actual: focusAfterLearnerLeftControl,
-    passed: focusAfterLearnerLeftControl === 'body',
+    name: 'a focus the learner took off a control that is shown and can be used, by a press on the pane’s background, is not put back when the learner leaves the pane and returns',
+    actual: { focusAfterPressOnBackground, focusAfterLearnerLeftControl },
+    passed:
+      focusAfterPressOnBackground === 'body' &&
+      focusAfterLearnerLeftControl === 'body',
+  })
+
+  // Arrange: Play holds the focus, and nothing changes while the learner is away (row 326: the editor takes the focus from the control when the pane is left, and the pane gives it back).
+  await page.locator('#playback-toggle').focus()
+  // Act: the learner leaves and returns four times: by the editor's command, by a press on the pane's background in either order of the focus event and the press, and by a press on another control.
+  await leavePane()
+  const focusWhileAway = await focusName()
+  await publish(recordingAt(2000))
+  const focusAfterMessageWhileAway = await focusName()
+  await returnToPane()
+  const focusOnReturnByCommand = await focusName()
+  await leavePane()
+  await returnToPaneByPressAt(paneBackground, 'focus-first')
+  const focusOnReturnByPressAfterFocusEvent = await focusName()
+  await leavePane()
+  await returnToPaneByPressAt(paneBackground, 'press-first')
+  const focusOnReturnByPressBeforeFocusEvent = await focusName()
+  await leavePane()
+  await returnToPaneByPressAt(await middleOf('#next-moment'), 'focus-first')
+  const focusOnReturnByPressOnAnotherControl = await focusName()
+  await page.locator('#playback-toggle').focus()
+  await leavePane()
+  await returnToPaneByPressAt(await middleOf('#next-moment'), 'press-first')
+  const focusOnReturnByEarlierPressOnAnotherControl = await focusName()
+  // Assert
+  cases.push({
+    name: 'a learner who leaves the pane while a control has the keyboard and returns finds the keyboard on that control again when nothing changed: after the editor’s focus command, and after a press on the pane’s background whichever of the focus event and the press comes first; a return by a press on another control leaves the keyboard on that control; and the pane takes no focus while it is away',
+    actual: {
+      focusWhileAway,
+      focusAfterMessageWhileAway,
+      focusOnReturnByCommand,
+      focusOnReturnByPressAfterFocusEvent,
+      focusOnReturnByPressBeforeFocusEvent,
+      focusOnReturnByPressOnAnotherControl,
+      focusOnReturnByEarlierPressOnAnotherControl,
+    },
+    passed:
+      focusWhileAway === 'body' &&
+      focusAfterMessageWhileAway === 'body' &&
+      focusOnReturnByCommand === 'playback-toggle' &&
+      focusOnReturnByPressAfterFocusEvent === 'playback-toggle' &&
+      focusOnReturnByPressBeforeFocusEvent === 'playback-toggle' &&
+      focusOnReturnByPressOnAnotherControl === 'next-moment' &&
+      focusOnReturnByEarlierPressOnAnotherControl === 'next-moment',
+  })
+
+  // Arrange: Stop holds the focus of a running study, and the learner has left the pane (rows 85 and 326: the control the learner left is the one the editor took the focus from).
+  await publish(liveRun)
+  await page.locator('[data-action="stop"]').focus()
+  await leavePane()
+  // Act: the run stops while the learner is away, so the live strip leaves; later the learner returns.
+  await publish(stoppedRun)
+  const stopFocusWhileAway = await focusName()
+  await returnToPane()
+  const stopFocusOnReturn = await focusName()
+  // Assert
+  cases.push({
+    name: 'when the run stops while the learner, who left the pane with the keyboard on Stop, is away, the pane takes no focus, and on return the keyboard is on the selected content tab, not on the document body',
+    actual: { stopFocusWhileAway, stopFocusOnReturn },
+    passed: stopFocusWhileAway === 'body' && stopFocusOnReturn === 'live-tab',
   })
 
   // Arrange: the bottom panel's pane, which has no content tabs: a focus that loses its control goes to Play while the transport is shown, else to the first control the pane shows.
@@ -3747,6 +3848,42 @@ async function check(page, options, collected) {
       { playbackPanelVisible: true },
     ),
   )
+
+  // Arrange: the bottom panel's pane lists one observed moment, which holds the focus, and the learner has left the panel for the editor (row 326, the run of the native round).
+  const panelMoment = (number) => ({
+    id: `observed-${number}`,
+    itemId: options.message.model.selection.itemId,
+    title: 'Observed stop',
+    at: '2026-09-27T00:00:00.000Z',
+  })
+  const panelMoments = (count) => ({
+    ...options.message,
+    studies: [savedOne],
+    moments: Array.from({ length: count }, (_, index) =>
+      panelMoment(index + 1),
+    ),
+  })
+  await publish(panelMoments(1))
+  await page.locator('#moments button').first().focus()
+  await leavePane()
+  // Act: a run observes five more moments, so the list is rendered again five times under the moment the learner left; later the learner returns with the editor's command.
+  const panelFocusWhileAway = []
+  for (let count = 2; count <= 6; count++) {
+    await publish(panelMoments(count))
+    panelFocusWhileAway.push(await focusName())
+  }
+  await returnToPane()
+  const panelMomentOnReturn = await page.evaluate(
+    () => document.activeElement.dataset.observation,
+  )
+  // Assert
+  cases.push({
+    name: 'in the bottom panel, when five more moments are observed while the learner, who left the panel with the keyboard on an observed moment, is in the editor, the panel takes no focus, and on return the keyboard is on the same moment of the list that was rendered again',
+    actual: { panelFocusWhileAway, panelMomentOnReturn },
+    passed:
+      panelFocusWhileAway.join() === 'body,body,body,body,body' &&
+      panelMomentOnReturn === 'observed-1',
+  })
 
   // Arrange: the bottom panel's pane with one saved study chosen, in a window with a Trash; no removal has an outcome (row 200).
   const withStudyChosen = {

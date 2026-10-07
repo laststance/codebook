@@ -1024,5 +1024,7 @@ export const OPEN_REPLAY_RESULT_WAIT_MS =
   RECORDING_WINDOW_FOCUS_WAIT_MS + PRESENTATION_SETTLE_CEILING_MS
 /** How long the reader waits, after the Learning summary's view was hidden while its document held the keyboard focus, for that document's report that it lost the focus. The report travels from the webview and can arrive after the editor's visibility event: when it comes (the learner opened another view or part), nothing is done; when it does not, the focus is still in the hidden webview and goes to the active editor group. */
 export const SUMMARY_FOCUS_RELEASE_WAIT_MS = 300
+/** How long after the window's focus event a pointer press in a Study pane still counts as the press the learner returned to the pane with. The editor reports the focus and the press of one click a few milliseconds apart, in an order the pane cannot rely on; a press on the pane's background that comes later is the learner's own choice to take the focus off a control. */
+export const STUDY_PANE_RETURN_PRESS_WINDOW_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1

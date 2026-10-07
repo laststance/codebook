@@ -9065,6 +9065,40 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Says whether the reader itself is changing the editor's tabs now: it is closing, loading a selection, reserving or arranging its panes, or changing the presentation. Asked by {@link publishAfterTabChange}: a tab event during such an operation is the reader's own, and the operation tells the panes when it ends.
+   * @example if (this.changesTabsItself()) return
+   */
+  private changesTabsItself(): boolean {
+    return (
+      this.closing ||
+      this.loading ||
+      this.sourceEntryPending ||
+      this.isArrangingPresentation()
+    )
+  }
+
+  /** Says whether an arrangement or a change of the presentation is under way; asked by {@link changesTabsItself}. @example this.isArrangingPresentation() // => true while Restore applies its layout */
+  private isArrangingPresentation(): boolean {
+    return (
+      this.placingPresentation ||
+      this.arranging !== undefined ||
+      this.presentationTransition !== undefined
+    )
+  }
+
+  /**
+   * Tells the panes what a change of the editor's tabs did to the layout's confirmation; called at every tab and tab-group event of the editor.
+   * The presentation of a Study message is read from the tabs as they are, but no message was published when the learner closed the captured source's tab or a pane's tab by hand: an agent's status read answered "not confirmed" at once, and the pane's status line stayed empty until some other action published.
+   * The rule: while the reader is open and is not changing tabs itself ({@link changesTabsItself}), a tab event publishes. {@link publish} sends nothing when the Study message is the same and changes no tab, so events that change nothing cost one comparison, and the reader cannot publish in a loop on tab events.
+   * What the line can still miss: a change that no tab event tells, a sash the learner drags for example, is seen only when the layout is read, at an agent's status read or at Restore ({@link readPresentationState}); and a tab the learner closes while the reader changes tabs itself is told when that operation ends.
+   * @example this.publishAfterTabChange()
+   */
+  private publishAfterTabChange(): void {
+    if (!this.opened || this.changesTabsItself()) return
+    this.publish()
+  }
+
   /** Publishes a matching projection with stable DOM controls, excluding images from the context channel. @example this.publish() */
   private publish(): void {
     this.publishLearningSave()
@@ -10539,9 +10573,10 @@ export class StudyWorkspace {
     this.observeEditorGroups()
     this.watchKeyboardOutsideEditors()
     this.disposables.push(
-      vscode.window.tabGroups.onDidChangeTabGroups((event) =>
-        this.observeEditorGroups(event),
-      ),
+      vscode.window.tabGroups.onDidChangeTabGroups((event) => {
+        this.observeEditorGroups(event)
+        this.publishAfterTabChange()
+      }),
     )
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabs((event) => {
@@ -10554,6 +10589,7 @@ export class StudyWorkspace {
               (this.webviewCloseRevisions.get(kind) ?? 0) + 1,
             )
           }
+        this.publishAfterTabChange()
       }),
     )
     this.highlight = vscode.window.createTextEditorDecorationType({
