@@ -25,12 +25,17 @@ import {
 } from './constants'
 import { areNamesOfOneFile } from './utils/areNamesOfOneFile'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import {
+  ALLOW_LINKS_THEN_SET_UP_AGAIN,
+  describeRefusedSkillLink,
+} from './utils/describeRefusedSkillLink'
 import { dropSecondNameOfMovedFile } from './utils/dropSecondNameOfMovedFile'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
 import { isRecordedFileId } from './utils/isRecordedFileId'
 import { isSameFileId } from './utils/isSameFileId'
 import { openWithoutFollowing } from './utils/openWithoutFollowing'
 import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
+import { startOverBy } from './utils/startOverBy'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -69,16 +74,6 @@ const SKILL_REPLACED_BEFORE_REMOVAL = `The Cursor skill was replaced after setup
 
 /** What removal answers for the installed skill file with other bytes than Codebook wrote. */
 const SKILL_EDITED_BEFORE_REMOVAL = `The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
-
-/**
- * Says what the learner does about a recovery record that Codebook keeps because it cannot finish or undo the step itself; the end of every refusal that leaves such a record.
- * @param recordPath - The record in Codebook's storage (`pending.json` of a setup, `removal.json` of a removal).
- * @returns The sentence, with a space before it.
- * @example startOverBy('/private/cursor-skill/pending.json') // => ' To start over, delete /private/cursor-skill/pending.json, then run Codebook: Set Up AI Chat again.'
- */
-function startOverBy(recordPath: string): string {
-  return ` To start over, delete ${recordPath}, then run Codebook: Set Up AI Chat again.`
-}
 
 /** The publisher a deployed skill names, as its receipt records it: the deploying installation's `publish-wiki.mjs`. Absent for a skill that names no publisher and in a record written before the path was recorded. */
 type RecordedPublisher = { publisherPath?: string }
@@ -683,10 +678,6 @@ async function abandonSetupOfChangedSkill(
   await unlink(pendingPath)
 }
 
-/** What every refused link of the skill setup ends with: what the folder must allow, and the command to run again. A file system without hard links (exFAT, some network shares) refuses every such link. */
-const ALLOW_LINKS_THEN_SET_UP_AGAIN =
-  'Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.'
-
 /**
  * Turns a failure to keep a copy of the installed skill in Codebook's storage into a sentence, for {@link deploySkill} before it updates the skill: the copy is put under its name with a hard link, which the file system can refuse.
  * @param error - What `link` threw.
@@ -711,7 +702,7 @@ function refusalOfBackupLink(error: unknown, backupPath: string): unknown {
  * @param pending - The setup's record.
  * @param targetPath - The managed skill path.
  * @param pendingPath - The record's path.
- * @returns The sentence.
+ * @returns The sentence ({@link describeRefusedSkillLink}).
  * @example await sentenceOfRefusedSkillLink('EPERM', next, targetPath, pendingPath)
  */
 async function sentenceOfRefusedSkillLink(
@@ -720,13 +711,12 @@ async function sentenceOfRefusedSkillLink(
   targetPath: string,
   pendingPath: string,
 ): Promise<string> {
-  const refused = `Cursor skill could not be installed: the file system refused to put Codebook's new file in place as ${targetPath} (${code}).`
   const displacedPath = pending.displacedPath
   if (displacedPath && (await inspectedPath(displacedPath)))
-    return `${refused} Codebook's previous skill is kept as ${displacedPath}; move it back to ${targetPath} to go on using it. ${ALLOW_LINKS_THEN_SET_UP_AGAIN}`
+    return describeRefusedSkillLink(targetPath, code, displacedPath)
   await removeOwnedStage(pending)
   await unlink(pendingPath)
-  return `${refused} No existing file was changed. ${ALLOW_LINKS_THEN_SET_UP_AGAIN}`
+  return describeRefusedSkillLink(targetPath, code)
 }
 
 /**
