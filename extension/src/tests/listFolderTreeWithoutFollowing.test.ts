@@ -8,10 +8,15 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type * as lookModule from '../utils/isFolderOfItsOwn'
+import type * as listingModule from '../utils/listFolderTreeWithoutFollowing'
 import { listFolderTreeWithoutFollowing } from '../utils/listFolderTreeWithoutFollowing'
+
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { loadModule } from './utils/loadModule'
 
 /**
  * Makes a temporary folder that is removed with the test, holding a folder `elsewhere` with two files: what a link of a test leads to.
@@ -28,12 +33,15 @@ async function folderWithFilesElsewhere(context: TestContext): Promise<string> {
 
 /**
  * Names what a listing answered as `/`-separated paths below the listed folder, sorted, or says that nothing was listed.
+ * @param directory - The folder to list.
+ * @param list - The listing to ask; the real one unless a test loaded it on a file system of its own.
  * @example await namesListedBelow('/tmp/x/wiki') // => ['index.html', 'pages', 'pages/overview.html']
  */
 async function namesListedBelow(
   directory: string,
+  list: typeof listFolderTreeWithoutFollowing = listFolderTreeWithoutFollowing,
 ): Promise<string[] | 'not listed'> {
-  const entries = await listFolderTreeWithoutFollowing(directory)
+  const entries = await list(directory)
   if (entries === undefined) return 'not listed'
   return entries
     .map((entry) =>
@@ -98,4 +106,72 @@ test('a file at the folder’s own path is not listed, and a path that holds not
     { fileAtThePath, nothingAtThePath },
     { fileAtThePath: 'not listed', nothingAtThePath: 'ENOENT' },
   )
+})
+
+// Value: protects=the looks at a Wiki's output folder when the look without following is wrong about the entry there (on Windows the file system layer of Node.js calls a junction whose target is a volume a directory); fails_when=the listing lists whatever that look calls a directory, so the folder behind the entry is walked and its files are reported as the Wiki's (row 227); why_new=Cycle 0046 row 227: a folder is listed only as its parent's own entry; seam=a file system whose lstat calls a link a directory
+test('an entry the look calls a directory although it leads elsewhere is not listed: its real path is not its name under its parent', async (context) => {
+  // Arrange
+  const folder = await folderWithFilesElsewhere(context)
+  await symlink(join(folder, 'elsewhere'), join(folder, 'wiki'), 'junction')
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const { listFolderTreeWithoutFollowing: listWhereTheLookIsWrong } =
+    await loadModule<typeof listingModule>(
+      resolve(__dirname, '../utils/listFolderTreeWithoutFollowing.js'),
+      { 'node:fs/promises': wrongLook.fileSystem, './isFolderOfItsOwn': look },
+    )
+
+  // Act
+  const listed = await namesListedBelow(
+    join(folder, 'wiki'),
+    listWhereTheLookIsWrong,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { listed, listings: wrongLook.listed },
+    { listed: 'not listed', listings: [] },
+  )
+})
+
+// Value: protects=every project that is opened through a link (a home folder on another disk, a mapped drive, the temporary folder of macOS): its Wiki folder is still a folder of its own; fails_when=the folder's real path is compared with the path as written instead of with its name under its parent's real path, so every look answers "no folder" and no update starts (row 227); why_new=Cycle 0046 row 227; seam=none (a junction on Windows)
+test('a folder of its own in a project that is reached through a link is listed', async (context) => {
+  // Arrange: the project lies in `elsewhere` and is named through a link to it.
+  const folder = await folderWithFilesElsewhere(context)
+  await mkdir(join(folder, 'elsewhere', 'wiki'))
+  await writeFile(join(folder, 'elsewhere', 'wiki', 'index.html'), '<p>x</p>')
+  await symlink(join(folder, 'elsewhere'), join(folder, 'project'), 'junction')
+
+  // Act
+  const listed = await namesListedBelow(join(folder, 'project', 'wiki'))
+
+  // Assert
+  assert.deepEqual(listed, ['index.html'])
+})
+
+// Value: protects=a learner on Windows or macOS whose setting names the Wiki folder in another case than the folder has on disk; fails_when=the folder's real name is compared with the written name letter for letter, so the folder counts as one that leads elsewhere and every update is refused (row 227); why_new=Cycle 0046 row 227: the real path answers the name as it is on disk; seam=none
+test('a folder named in another case than it has on disk is listed where the file system ignores case', async (context) => {
+  // Arrange
+  const folder = await folderWithFilesElsewhere(context)
+  await mkdir(join(folder, 'Wiki'))
+  await writeFile(join(folder, 'Wiki', 'index.html'), '<p>x</p>')
+  const ignoresCase = await realpath(join(folder, 'wiki')).then(
+    () => true,
+    () => false,
+  )
+  if (!ignoresCase)
+    return context.skip(
+      'this file system tells upper and lower case apart, so no folder has two spellings',
+    )
+
+  // Act
+  const listed = await namesListedBelow(join(folder, 'wiki'))
+
+  // Assert
+  assert.deepEqual(listed, ['index.html'])
 })

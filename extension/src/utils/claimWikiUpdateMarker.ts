@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import type { Stats } from 'node:fs'
 import { lstat, readdir, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -19,6 +18,7 @@ import {
   type StorageLockTakeoverClaim,
 } from './claimStorageLockTakeover'
 import { currentStorageOwner } from './currentStorageOwner'
+import { isFolderOfItsOwn } from './isFolderOfItsOwn'
 import { listPlacedClaims } from './listPlacedClaims'
 import { placeStorageLock } from './placeStorageLock'
 import {
@@ -188,19 +188,21 @@ async function readMarkerText(markerPath: string): Promise<string | undefined> {
 }
 
 /**
- * Reads the owner that an entry beside the marker records, unless the entry is a link; called by {@link isExpiredMarkerClaim} with what its look at the entry found.
- * Why: a link is no claim and no prepared file, whatever it leads to, so its age alone decides and nothing is read through it: neither the file a link at a claim's or a prepared marker's name leads to, nor a file in the folder a link at a prepared claim's name leads to.
- * @param entry - What the look at the entry found, without following a link.
- * @param ownerPath - The file that records the owner of that entry.
- * @returns The recorded owner ({@link readRecordedOwner}); `undefined` for a link, and for a record that is no regular file or cannot be read.
+ * Reads the owner that an entry beside the marker records, without reading through anything that leads elsewhere; called by {@link isExpiredMarkerClaim} after its look at the entry.
+ * Why: a link is no claim and no prepared file, whatever it leads to, so its age alone decides and nothing is read through it. An entry that records its owner itself (a claim file, a prepared marker) is read by {@link readRecordedOwner}, which refuses a link at the path it is handed. A prepared claim folder records its owner in a file below it, and that read guards only its last part: the file is read only below a real directory that is its parent's own entry ({@link isFolderOfItsOwn}), so neither a link at the folder's name nor an entry the look calls a directory although it leads elsewhere has a file behind it opened.
+ * @param path - The entry: a claim's owner file, a prepared claim folder or a prepared marker file.
+ * @param ownerPath - The file that records the owner of that entry: the entry itself, or a file below a prepared claim folder.
+ * @returns The recorded owner; `undefined` for a link, for a folder that leads elsewhere, and for a record that is no regular file or cannot be read.
  * @example
- * await readOwnerOfEntry(await lstat(claimPath), claimPath) // => { pid: 4242, machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', processStart: 'linux:16362446' }
+ * await readOwnerOfEntry(claimPath, claimPath) // => { pid: 4242, machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', processStart: 'linux:16362446' }
  */
 async function readOwnerOfEntry(
-  entry: Stats,
+  path: string,
   ownerPath: string,
 ): Promise<RecordedOwner | undefined> {
-  return entry.isSymbolicLink() ? undefined : readRecordedOwner(ownerPath)
+  const mayBeRead =
+    ownerPath === path || (await isFolderOfItsOwn(path).catch(() => false))
+  return mayBeRead ? readRecordedOwner(ownerPath) : undefined
 }
 
 /**
@@ -221,7 +223,7 @@ async function isExpiredMarkerClaim(
 ): Promise<boolean> {
   const entry = await lstat(path).catch(() => undefined)
   if (!entry) return false
-  const owner = await readOwnerOfEntry(entry, ownerPath)
+  const owner = await readOwnerOfEntry(path, ownerPath)
   if (owner && canJudgeOwnerHere(owner, identity)) return false
   return now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
 }
