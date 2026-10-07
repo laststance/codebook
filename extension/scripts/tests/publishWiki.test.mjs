@@ -1366,7 +1366,7 @@ test('a renamed content id takes a name the page does not carry, its id lists an
     )
     assert.equal(
       contentOf('pages/my page.html'),
-      '<h2 ID=page-theme-toggle>The theme</h2><p><a href="../index.html#page-qa-form-2">The form</a></p>',
+      '<h2 ID="page-theme-toggle">The theme</h2><p><a href="../index.html#page-qa-form-2">The form</a></p>',
     )
     assert.ok(
       pages
@@ -1374,6 +1374,47 @@ test('a renamed content id takes a name the page does not carry, its id lists an
         .includes(
           '<ul class="outline"><li><a href="#page-qa-form-2">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
         ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an attribute the publisher changed whose value the author wrote without quotes; fails_when=the changed value is printed bare again, so a value that holds a space after its character references are read (`qa-form&#32;flow`, `my&#32;page.html#qa-form`) ends at that space in a browser: the id list loses its second id to a stray attribute, and the link leads to another address; why_new=Cycle 0046 row 235; seam=none
+test('a changed attribute value that the author wrote without quotes is printed in double quotes, so a space in it does not end it', async () => {
+  // Arrange: an id list and a link, both bare and both with a space written as a character reference; the heading they name carries an id of the reader.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-bare-value-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id=qa-form>The form</h2><h3 id="flow">Flow</h3>' +
+      '<p aria-labelledby=qa-form&#32;flow><a href=my&#32;page.html#qa-form>There</a> <a href=#qa-form>Up</a></p>'
+    manifest.pages[0].outline = [{ id: 'qa-form', label: 'The form' }]
+    manifest.pages.push({
+      path: 'my page.html',
+      title: 'Another page',
+      section: 'Guide & concepts',
+      contentHtml: '<h2 id="qa-form">A form</h2><p>Explained from source.</p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [{ id: 'qa-form', label: 'A form' }],
+    })
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<h2 id="page-qa-form">The form</h2><h3 id="flow">Flow</h3>' +
+          '<p aria-labelledby="page-qa-form flow"><a href="my page.html#page-qa-form">There</a> <a href="#page-qa-form">Up</a></p>',
+      ),
     )
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -1615,6 +1656,34 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
     'shortcut-title',
     'shortcut-tooltip',
   ])
+})
+
+// Value: protects=a page that the publisher let through and the reader serves: both tell its comments and start tags apart from its text, the publisher to read ids and the reader to give links the serving editor's scheme; fails_when=one of the two copies of that pattern is changed alone, so the reader passes over a link the publisher read as a link, or rewrites text the publisher read as text, unseen; why_new=Cycle 0046 row 241 (the reader cannot import from the bundled skill's scripts, so each carries the pattern); seam=none
+test('the reader and the publisher tell a comment and a start tag of a page apart from its text by the same pattern', async () => {
+  // Arrange: the publisher's tag reader and the reader's scheme rewrite, as text.
+  const textOf = (path) =>
+    readFile(new URL(`../../${path}`, import.meta.url), 'utf8')
+  const publisher = await textOf('skills/codebook/render-wiki-diagrams.mjs')
+  const reader = await textOf('src/utils/rebindDeepWikiEditorLinks.ts')
+
+  // Act: the publisher writes the pattern as two (a comment, a start tag) and joins them; the reader writes it as one.
+  const patternOf = (source, name) =>
+    new RegExp(`const ${name} =\\s*/(.+)/[a-z]*;?\\n`).exec(source)?.[1]
+  const howThePublisherJoins = /const COMMENT_OR_START_TAG = (.+);\n/.exec(
+    publisher,
+  )?.[1]
+  const patterns = {
+    publisher: `${patternOf(publisher, 'COMMENT')}|${patternOf(publisher, 'START_TAG')}`,
+    reader: patternOf(reader, 'COMMENT_OR_START_TAG'),
+  }
+
+  // Assert
+  assert.equal(
+    howThePublisherJoins,
+    "new RegExp(`${COMMENT.source}|${START_TAG.source}`, 'g')",
+  )
+  assert.equal(typeof patterns.reader, 'string')
+  assert.equal(patterns.reader, patterns.publisher)
 })
 
 test('a page opened from disk shows the freshness label, the update button and an offline note as one group', async () => {
@@ -2788,6 +2857,11 @@ for (const [what, markup, place] of [
     '<p id="a&lowbar;b">A note</p>',
     '<p id="a&lowbar;b">A note</p>',
   ],
+  [
+    'an id that ends with a name of the references without its semicolon',
+    '<p id="read&amp">A note</p>',
+    '<p id="read&amp">A note</p>',
+  ],
 ])
   test(`a page with ${what} is refused with the sentence that names the place and says what to write`, async () => {
     // Arrange
@@ -2805,13 +2879,278 @@ for (const [what, markup, place] of [
           outputDirectory: join(root, '.codebook/wiki'),
         }),
         {
-          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: ${place}`,
+          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: ${place}`,
         },
       )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+// Value: protects=the ids the publisher reads in a tag that holds a space character a browser does not separate at; fails_when=the publisher separates a tag's name and attributes at every character JavaScript calls white space, so for `<h2\u00a0id="ghost">` it reads an id where a browser reads a tag named `h2\u00a0id="ghost"` without one, and an outline entry for that id is accepted and leads nowhere; why_new=Cycle 0046 row 234 (the patterns used JavaScript's white space class); seam=none
+test('a tag whose name is followed by a no-break space is refused: a browser separates a tag at tab, line feed, form feed, carriage return and space alone', async () => {
+  // Arrange: a heading whose id follows a no-break space, named by the outline; and the same heading with a form feed there, which a browser does separate at.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-tag-space-')),
+  )
+  try {
+    const withNoBreakSpace = await readerInput(root)
+    withNoBreakSpace.pages[0].contentHtml = '<h2\u00a0id="ghost">A ghost</h2>'
+    withNoBreakSpace.pages[0].outline = [{ id: 'ghost', label: 'A ghost' }]
+    const withFormFeed = await readerInput(root)
+    withFormFeed.pages[0].contentHtml = '<h2\fid="real">A heading</h2>'
+    withFormFeed.pages[0].outline = [{ id: 'real', label: 'A heading' }]
+
+    // Act
+    const outcomes = []
+    for (const manifest of [withNoBreakSpace, withFormFeed])
+      outcomes.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          (pages) =>
+            pages.get('index.html').includes('<a href="#real">A heading</a>'),
+          (error) => error.message,
+        ),
+      )
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: <h2\u00a0id="ghost">A ghost</h2>',
+      true,
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's question form, its rail and its layout on a page whose content leaves an element open or closes one too many; fails_when=the publisher publishes content that is not balanced, so a table left open takes the question form's field and button out of the form and the rail into the article, an end tag too many closes the reader's layout, and a link or an emphasis left open is opened again around everything after the article; why_new=Cycle 0046 row 233 (the publisher read tags and not which elements are open); seam=none
+test('a page whose content leaves a table or an inline element open, or closes a div it did not open, is refused with the tag and what to do', async () => {
+  // Arrange: the three pages of the review, the third with each of its inline elements.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-unbalanced-')),
+  )
+  try {
+    const contents = [
+      '<h2 id="flow">Source flow</h2><table><tr><td>cell</td></tr>',
+      '<h2 id="flow">Source flow</h2><div><p>x</p></div></div><p>After the section.</p>',
+      '<h2 id="flow">Source flow</h2><p>Explained.</p><a href="#flow">A link',
+      '<h2 id="flow">Source flow</h2><p>Explained with <strong>emphasis.</p>',
+      '<h2 id="flow">Source flow</h2><p>Explained with <code>code',
+    ]
+
+    // Act
+    const messages = []
+    for (const contentHtml of contents) {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = contentHtml
+      messages.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+    }
+
+    // Assert
+    assert.deepEqual(messages, [
+      "Wiki page index.html opens <table> and never closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html has </div> without a <div> it opens; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <a> and never closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <strong> and does not close it before </p>; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <code> and never closes it; close every element inside the page's content, the last opened first.",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's layout on a page whose every start tag has an end tag, but in an order a browser does not keep; fails_when=the publisher counts tags instead of following which element is open, so it publishes elements closed out of order, or an element that a browser closes by force at a list item, a button, a link, a heading or a table inside it, whose own end tag then closes the reader's layout or whose id then stands twice in the page; why_new=Cycle 0046 row 233 (found by comparing the rule with the browser's own parser on generated pages); seam=none
+test('a page whose elements are closed out of order, or which a browser would close by force at a list item, a button, a link, a heading or a table, is refused with the element left open and the tag it is open at', async () => {
+  // Arrange: in each content every start tag has its end tag.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-out-of-order-')),
+  )
+  try {
+    const contents = [
+      '<h2 id="flow">Source flow</h2><p><b><i>x</b></i></p>',
+      '<h2 id="flow">Source flow</h2><ul><li><div>a<li>b</div></ul>',
+      '<h2 id="flow">Source flow</h2><button type="button"><span>a<button type="button">b</button></span></button>',
+      '<h2 id="flow">Source flow</h2><table><tr><table><tr><td>x</td></tr></table></tr></table>',
+      '<h2 id="flow">Source flow</h2><table><tr><td><div>a<tr><td>b</div></table>',
+      '<h2 id="flow">Source flow</h2><math><mrow><mi>x</mi></math>',
+      '<h2 id="flow">Source flow</h2><p><a href="#flow" id="more">More <span>with <a href="#flow">a link inside</a></span></a></p>',
+      '<h2 id="flow">Source flow<h3>A part</h3></h2>',
+    ]
+
+    // Act
+    const messages = []
+    for (const contentHtml of contents) {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = contentHtml
+      messages.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+    }
+
+    // Assert
+    assert.deepEqual(messages, [
+      "Wiki page index.html opens <i> and does not close it before </b>; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <div> and does not close it before <li>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <button> and does not close it before <button>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <table> and does not close it before <table>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <div> and does not close it before <tr>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <mrow> and does not close it before </math>; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <a> and does not close it before <a>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <h2> and does not close it before <h3>, where a browser closes it; close every element inside the page's content, the last opened first.",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's layout on a page that writes an HTML block in the markup of mathematics; fails_when=the publisher takes everything between <math> and </math> for nested markup, while a browser ends the mathematics at an HTML start tag such as <li> or <div> and reads it in the page around it, where a list item closes a div by force and that div's own end tag then closes the reader's layout; or it takes an element a page names `mi` outside mathematics for the boundary that a text element of mathematics is; why_new=Cycle 0046 row 233 (found while checking the rule against the parsing rules of mathematics); seam=none
+test('an HTML element in the markup of mathematics, where a browser ends the mathematics, is refused; in a text element of mathematics it is published', async () => {
+  // Arrange: a list item in the markup of mathematics; the same nesting with an element named `mi` and no mathematics; and HTML inside `mtext`, with a line break as HTML has it and a paragraph that does not end the one around the mathematics.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-math-')),
+  )
+  try {
+    const contents = [
+      '<h2 id="flow">Source flow</h2><ul><li><div><math><li>x</li></math></div></li></ul>',
+      '<h2 id="flow">Source flow</h2><ul><li><div><mi><li>x</li></mi></div></li></ul>',
+      '<h2 id="flow">Source flow</h2><p>With <math><mrow><mtext>a <b>bold</b> word<br><p>and a paragraph</p></mtext><mi>x</mi></mrow></math></p>',
+    ]
+
+    // Act
+    const outcomes = []
+    for (const contentHtml of contents) {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = contentHtml
+      outcomes.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          (pages) => pages.get('index.html').includes(contentHtml),
+          (error) => error.message,
+        ),
+      )
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'Wiki page index.html has <li> inside <math> outside its text; inside mathematics write HTML elements only in <mi>, <mo>, <mn>, <ms> or <mtext>.',
+      "Wiki page index.html opens <div> and does not close it before <li>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      true,
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an outline entry that names a table part written outside a table; fails_when=the publisher reads `<td id="part">` outside a table as an element with that id, which a browser drops when it builds the page, so the outline entry is accepted and leads nowhere, and the dropped part counts as a boundary that hides an element left open behind it; why_new=Cycle 0046 row 233 (the first line of the limit stated with row 215); seam=none
+test('a table part outside a table is refused: a browser drops its tag, so an outline entry for its id would lead nowhere', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-table-part-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><td id="part">A cell</td>'
+    manifest.pages[0].outline = [{ id: 'part', label: 'A cell' }]
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          "Wiki page index.html has <td> outside a table; write a table's parts inside a <table>.",
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=pages written the way HTML allows, without the end tags of paragraphs, list items, description terms and details, table parts, options and the parts of a ruby, and with void elements, mathematics and an element of any name; fails_when=the balance rule asks for an end tag HTML lets an author leave out, takes a void element for an open one, or closes inside a table cell or a nested list what belongs to the table or list around it, so the publisher refuses a page a browser builds exactly as written; why_new=Cycle 0046 row 233 (the rule may refuse no page that is balanced); seam=none
+test('a page that leaves out the end tags HTML lets an author leave out is published as written, with void elements, nested lists and tables, and mathematics', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-optional-end-tags-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const contentHtml =
+      '<h2 id="flow">Source flow</h2>' +
+      '<p>one<p>two<ul><li>a<li>b<p>c<ul><li>inner</ul><li>d</ul>' +
+      '<dl><dt>term<dd>detail<dt>second term<dd>second detail</dl>' +
+      '<table><caption>Calls<colgroup><col><col><thead><tr><th>from<th>to<tbody><tr><td>a<td>b<tr><td>c<td><p>d<table><tr><td>inner</table></table>' +
+      '<div><p>with <a href="#flow"><strong>a link</strong> and <code>code</code></a><br><img src="assets/a.png" alt="A"><image src="assets/b.png" alt="B"><hr></div>' +
+      '<blockquote><p>quoted</blockquote><details><summary>More</summary><p>detail</details>' +
+      '<ruby>漢<rp>(<rt>kan<rp>)</ruby><button type="button">Go</button>' +
+      '<datalist id="names"><option value="a"><option value="b"></datalist>' +
+      '<constructor>an element of a name JavaScript objects have</constructor>' +
+      '<math><mrow><mi>x</mi><mo>+</mo><mspace width="1em"/><mn>1</mn></mrow></math>' +
+      '<p>the last paragraph'
+    manifest.pages[0].contentHtml = contentHtml
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.equal(html.includes(contentHtml), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an id that holds an ampersand which begins no character reference, as a section about "R&D" may have; fails_when=the publisher refuses such an id although it and a browser read the same text, and tells the author to write as plain text what is plain text; why_new=Cycle 0046 row 236 (every ampersand before a letter, a digit or `#` was refused); seam=none
+test('an id with an ampersand that begins no character reference is published as authored: before one letter, a digit, another character or the id’s end', async () => {
+  // Arrange: no name of a browser's table of references has one character or begins with a digit, and `&#` begins a number only before a digit.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ampersand-id-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<h2 id="flow">Source flow</h2><p id="q&a">One</p><p id="R&D">Two</p><p id="a&1b">Three</p>' +
+      '<p id="x&-y">Four</p><p id="a&#b">Five</p><p id="a&#xg">Six</p><p id="end&">Seven</p>'
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 // Value: protects=the markup an article is written in, which the rule above must not refuse; fails_when=the publisher refuses a `<` that is text for a browser (before a space, a digit or the page's end), a tag with a slash before its end, a bare attribute value, an attribute directly after a closing quote, an ampersand in an address, an id written with `&amp;` or a numeric reference, a custom element, or mathematics with an id inside, whose id it must read and rename like any other; why_new=Cycle 0046 row 206 (the rule was run over the 104 pages of the real Wikis on this machine first and refused none); seam=none
 test('a page whose every < is text, a comment that ends, an end tag or a plainly written start tag is published as authored, and an id inside mathematics is read like any other', async () => {
@@ -2894,6 +3233,8 @@ for (const [name, element] of [
   ['plaintext', '<plaintext>'],
   ['noscript', '<noscript><p>No script</p></noscript>'],
   ['template', '<template><h3 id="hidden">Not in the page</h3></template>'],
+  ['frame', '<frame src="other.html" id="pane"></frame>'],
+  ['frameset', '<frameset><frame src="other.html"></frameset>'],
 ])
   test(`a page that holds <${name}> is refused like a page that holds a form or a script`, async () => {
     // Arrange
