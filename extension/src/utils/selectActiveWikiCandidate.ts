@@ -12,6 +12,8 @@ export const wikiLastRunSchema = z.object({
   endedAtMs: z.number(),
   /** Whether the agent may still be working after the run ended: true only for a VS Code watch that was cancelled or timed out, since stopping the watch does not stop the chat. */
   mayAgentStillWork: z.boolean(),
+  /** Folder names of the candidates the run's looks saw that were written since its start; the next start tells the chat's own publish by them ({@link hasWikiPublishEndedWait}). Absent in a record an earlier version kept, which then counts as a run that saw none. */
+  candidateNames: z.array(z.string()).optional(),
 })
 
 /** The record {@link wikiLastRunSchema} describes. */

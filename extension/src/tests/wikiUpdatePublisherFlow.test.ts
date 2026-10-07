@@ -565,7 +565,7 @@ test(
       assert.equal(wiki.errors.length, 1)
       assert.match(
         wiki.errors[0] ?? '',
-        /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing has been replaced\. Check the VS Code chat: it may be waiting for you or have reported a problem\. Press Update LLM Wiki to start again\.$/,
+        /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing had been replaced by then\. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working \(it can still publish, and the Wiki page says when it has\)\. If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat\.$/,
       )
       assert.equal(await wiki.hashOutput(), hashBefore)
     } finally {

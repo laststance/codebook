@@ -125,7 +125,7 @@ function rethrowUnlessMarkerExists(error: unknown): void {
 /**
  * Names what a look found that holds the Wiki against this start; called by {@link claimOfHolder} for the look before a removal.
  * @param look - What {@link readLiveWikiUpdateMarker} answered.
- * @returns The live marker of another window's run, or the marker another window is writing; `undefined` for no marker, for one that is nobody's and for a stopped watch's reservation, which the start check has let this start pass (its bound is over, or the learner chose to go on).
+ * @returns The live marker of another window's run, or the marker another window is writing; `undefined` for no marker, for one that is nobody's and for a stopped watch's reservation, which the start check has let this start pass (its bound is over, a publish since the watch's end ended the wait for its chat, or the learner chose to go on).
  * @example
  * holderIn({ kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } })                                // => that marker
  * holderIn({ kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000, watchEndedAtMs: 1790000060000 } }) // => undefined

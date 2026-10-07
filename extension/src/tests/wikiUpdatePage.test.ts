@@ -643,6 +643,46 @@ test('a publish that lands after a watch timed out is shown also when Codebook c
   assert.equal(page.find('[data-codebook-reload]'), undefined)
 })
 
+// Value: protects=a learner who stays on the Wiki page after the watch of a VS Code update passed its 15 minutes while the chat still works; fails_when=the page's sentence says in the present that nothing has been replaced or sends the learner to a press that Codebook refuses, or the page stops saying by itself that the chat published, which the sentence promises; why_new=Cycle 0046 row 330 (native run in VS Code 1.140.0: the chat published two minutes after the bound); seam=none
+test('the page of a VS Code watch that passed its 15 minutes says what held when the watch stopped and what to do for a chat that waits, still works or stopped, and says by itself that a new site was published once the chat publishes', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'timed-out',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        timeoutMs: 900_000,
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const textBeforeThePublish = status?.textContent
+
+  // Act: the chat, which was not stopped with the watch, publishes two minutes later.
+  page.reader.sitePublishedAt = '2026-10-03T12:00:10.000Z'
+  page.reader.publication = 'publication-after-the-watch'
+  page.reader.freshness = 'current'
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    textBeforeThePublish,
+    'No new site appeared within 15 minutes, so Codebook stopped watching at 11:58. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
+  )
+  assert.equal(
+    status?.textContent,
+    'A new site was published after this run ended and matches the source. Reload is offered below.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'late-publish')
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
+})
+
 test('a page loaded after the late publish says so without asking for another reload', async () => {
   // Arrange
   const script = await readServedWikiScript()
@@ -1174,7 +1214,7 @@ test('a start refused for an unfinished publish names the recovery request on th
   )
 })
 
-// Value: protects=the page's running line of a VS Code update whose output lies outside the project; fails_when=the page writes its own copy of the note the editor shows in its confirmation and progress title, so a change of that note leaves the page saying something else; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=the constants of the loaded reader, whose note is reworded
+// Value: protects=the page's running line of a VS Code update whose output lies outside the project; fails_when=the page writes its own copy of the note the editor shows in its confirmation, so a change of that note leaves the page saying something else; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=the constants of the loaded reader, whose note is reworded
 test('the running line of a VS Code update whose output lies outside the project ends with the note the editor shows, also after the note is reworded', async () => {
   // Arrange: a reader whose editor note on approvals outside the project reads differently from today's.
   const editorNote =
@@ -1215,8 +1255,8 @@ test('the running line of a VS Code update whose output lies outside the project
   }
 })
 
-// Value: protects=the advice after a refused step, which the editor's notification and the page's running line both give; fails_when=the page writes its own copy of the advice, so a change of the notification's words leaves the page with the old ones, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223; seam=the reader's constants, of which the advice is reworded
-test('the running line of a VS Code update gives the advice after a refused step in the words of the editor’s notification, also after the advice is reworded', async () => {
+// Value: protects=the advice after a refused step, which only the page's running line gives since the notification of the watch has two lines; fails_when=the page writes its own copy of the advice, so a change of the extension's wording leaves the page with the old one, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223, renamed with row 336; seam=the reader's constants, of which the advice is reworded
+test('the running line of a VS Code update gives the advice after a refused step in the words the extension hands the page, also after the advice is reworded', async () => {
   // Arrange: a reader whose advice after a refused step reads differently from today's.
   const editorAdvice = 'After you refused a step of the chat, choose Cancel'
   const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(

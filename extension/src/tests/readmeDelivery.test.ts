@@ -22,6 +22,7 @@ import {
   SUMMARY_PLACEMENT_OFFER,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
+  WIKI_CHAT_WATCH_TITLE,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
   WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
@@ -37,7 +38,6 @@ import { describeRefusedSkillLink } from '../utils/describeRefusedSkillLink'
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from '../utils/describeWikiChatErrorReply'
 import { describeWikiChatHandOver } from '../utils/describeWikiChatHandOver'
-import { describeWikiChatWatch } from '../utils/describeWikiChatWatch'
 import { pagePauseUnderResumeText } from '../utils/pagePauseUnderResumeText'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { startOverBy } from '../utils/startOverBy'
@@ -360,13 +360,15 @@ test('the packaged README says that a VS Code update sends its request into a ne
   // Act
   const delivered = heldSentences(readme, [
     "In VS Code the update's request does not go into the chat you are using, with the one exception named below: Codebook reveals the chat, runs the editor's **New Chat** and sends the request into that new chat, so a request of yours that is in progress, waits for a confirmation or is queued is neither stopped nor held back, and the update does not wait behind it.",
-    "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). New Chat closes the diff editors that show that chat's edits; the edits stay.",
+    "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). The update asks nothing about edits of that chat you have not decided on yet: they stay pending in their chat, with Keep and Undo, and the **Suggested Edits** editor that shows them stays open.",
     "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work elsewhere in the window (a file you open, a command you run) is not taken for a sign. What the update's own steps touch counts whoever does it, because Codebook cannot tell you from the chat there: a file opened in the Wiki's folder, in a folder prepared beside it or in the Codebook skill's folder, a terminal command that names `publish-wiki.mjs` or the Wiki's folder, and a change in the Wiki's folder or in a folder prepared beside it.",
     'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
     'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
-    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command, and the notification that watches the update says `in the chat that is open` in either case. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
+    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command; where the reveal or New Chat failed, nothing says so before, and the Chat view shows the request in the chat that was open. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
   ])
   const retired = [
+    // Row 337: read in the editor's source, and not what the editor does (seen in VS Code 1.140.0).
+    'New Chat closes the diff editors',
     'Codebook takes its request back before it shows the sentence',
     "Requests of your own that wait in that chat's queue are removed with it, and a request of yours that is in progress there is left alone.",
     'Your own work in the window (a file you open, a command you run) is not taken for a sign.',
@@ -377,10 +379,6 @@ test('the packaged README says that a VS Code update sends its request into a ne
   assert.deepEqual(delivered, [true, true, true, true, true, true])
   assert.deepEqual(retired, [])
   assert.equal(WIKI_CHAT_SESSION_START_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 5)
-  assert.equal(
-    describeWikiChatWatch('shared', WIKI_UPDATE_WATCH_TIMEOUT_MS),
-    'Watching for the LLM Wiki update in the chat that is open. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
-  )
   assert.equal(
     describeUnansweredWikiChat('withdrawn', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
     'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
@@ -410,7 +408,7 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
 
   // Act
   const delivered = heldSentences(readme, [
-    `The button asks for confirmation in the editor first; in VS Code the confirmation says where the request goes: \`${confirmation}\` The command starts at once and asks nothing: its request goes into a new chat in the same way and replaces a draft in an empty chat in the same way, and the notification that watches the update says where the request is.`,
+    `The button asks for confirmation in the editor first; in VS Code the confirmation says where the request goes: \`${confirmation}\` The command starts at once and asks nothing: its request goes into a new chat in the same way (into the chat the Chat view restores, if that view opens only now) and replaces a draft in an empty chat in the same way; the Chat view shows the chat with the request. When the watch ends and what to do after you refused a step of the chat are in the row **Updating LLM Wiki…** below.`,
   ])
 
   // Assert
@@ -419,6 +417,58 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
     'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
   )
   assert.deepEqual(delivered, [true])
+})
+
+// Value: protects=a learner reading when Codebook stops waiting for a chat whose watch it had stopped; fails_when=the README still says only that Codebook waits until the named time, although the chat's own publish ends that wait and the next update then starts without a refusal; why_new=Cycle 0046 row 335; seam=none
+test('the packaged README says that the wait for a chat whose watch stopped ends when that chat publishes, so the next update starts without the sentence that names Update anyway', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until. The wait for a chat whose watch stopped ends earlier when that chat publishes: once a site was published after the watch stopped, the next update starts without this sentence (in the window that watched only when the candidate folder its watch saw is gone too).',
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true])
+})
+
+// Value: protects=a learner whose chat's Stop or input lies under the notification of the watch, and the learner of the command, who reads no confirmation; fails_when=the README quotes another title than the editor shows, no longer says that the notification can be hidden while the watch goes on and where its Cancel then is, or no longer says for the command where the request goes and where the ends of the watch are named; why_new=Cycle 0046 row 336 (the title lost the sentences of rows 216, 217 and 261, which the README must now carry for the command); seam=none
+test('the packaged README quotes the two-line title of the notification that watches a VS Code update, says that the notification can be hidden while the watch goes on, and says for the command where the request goes and where the ends of the watch are named', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'While Codebook watches a VS Code update the editor shows the notification `Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.` at the lower right of the window, for as long as the watch lasts.',
+    "The editor shows the Chat view there too by default, so the title is kept to two lines: the buttons of a step the chat asks you to approve then stay free. The chat's Stop button and the bottom of its input can still lie under the notification; that placement is the editor's.",
+    'Hide the notification when it is in the way: the watch goes on, and its Cancel is in the notification list behind the bell in the status bar.',
+    "The title says the same wherever the request went (a new chat, the chat the Chat view restored, or the chat that was open); where it went is said by the confirmation and above, and when the watch ends and what to do after a refused step by the page's running line and the table.",
+    "Where the Wiki's output folder lies outside the project, the chat asks you to approve each step there (an output inside the project, `codebook.wikiOutputDirectory`, needs none); the confirmation and the page's running line say so, the notification does not.",
+    'The command starts at once and asks nothing: its request goes into a new chat in the same way (into the chat the Chat view restores, if that view opens only now) and replaces a draft in an empty chat in the same way; the Chat view shows the chat with the request. When the watch ends and what to do after you refused a step of the chat are in the row **Updating LLM Wiki…** below.',
+  ])
+
+  // Assert: the README holds each sentence, and the title it quotes is the editor's.
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  assert.equal(
+    WIKI_CHAT_WATCH_TITLE,
+    'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+  )
+})
+
+// Value: protects=a learner reading in the README what the end of a VS Code watch after its 15 minutes means; fails_when=the row of "No new site appeared" no longer says that the chat was not stopped and can still publish, or names for a chat that stopped a press without the Update anyway that press needs while Codebook waits for the chat; why_new=Cycle 0046 row 330 (the row told the learner only that the chat may be waiting or have reported a problem); seam=none
+test('the packaged README says for a VS Code watch that passed its 15 minutes that nothing had been replaced by then, that the chat can still publish, and what to do for a chat that waits, still works or stopped', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'Nothing was published within 15 minutes, so Codebook stopped watching; nothing had been replaced by then. The chat was not stopped with the watch: it may still be working and can still publish, and the page says when it has (**A new site was published**).',
+    "Check the chat. If it waits for you, answer it. If it is still working, let it finish. If it stopped or reported a problem, update again, then press **Update anyway** in the editor's notification if Codebook still waits for that chat.",
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true, true])
 })
 
 // Value: protects=a learner reading when Codebook stops watching a VS Code update and what to do after they refused a step of the chat; fails_when=the update table no longer names the ends of the watch, or leaves out that a refused step is followed by Cancel and, at the next update, by Update anyway; why_new=Cycle 0046 row 217; seam=none
@@ -433,7 +483,7 @@ test('the packaged README says when the watch of a VS Code update ends and that 
     'Stop the chat itself to cancel the update. If it has already stopped (you refused a step), press **Update anyway** when you update again.',
   ])
 
-  // Assert: the README holds each sentence with all six ends of the watch, and the notification names the same bound.
+  // Assert: the README holds each sentence with all six ends of the watch.
   assert.deepEqual(delivered, [true, true, true])
   assert.equal(
     readme.includes(
@@ -443,10 +493,6 @@ test('the packaged README says when the watch of a VS Code update ends and that 
     'the README lists the ends of the watch without a file in the way and a manifest that cannot be read',
   )
   assert.equal(WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS, 10_000)
-  assert.equal(
-    describeWikiChatWatch('own', WIKI_UPDATE_WATCH_TIMEOUT_MS),
-    'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
-  )
 })
 
 // Value: protects=a learner reading the two cases in which the update's request does not get a new chat of the Chat view, and the sentence of a chat that never held the request; fails_when=the README says without exception that the request does not go into a chat of the learner's, although a Chat view that opens only now sends it into the chat it restores and a chat in an editor tab gets the new chat in its tab, or it quotes two of the three sentences of the bound; why_new=Cycle 0046 row 261; seam=none
@@ -456,12 +502,12 @@ test('the packaged README names the Chat view that opens only now and the chat i
 
   // Act
   const delivered = heldSentences(readme, [
-    'Two limits, the first of them that exception. When the Chat view has not been opened in the window yet, it may still be restoring your last chat while New Chat runs: New Chat then does nothing, and the request goes into that restored chat; the confirmation and the notification name this case.',
+    'Two limits, the first of them that exception. When the Chat view has not been opened in the window yet, it may still be restoring your last chat while New Chat runs: New Chat then does nothing, and the request goes into that restored chat; the confirmation names this case.',
     'When the chat you focused last is a chat in an editor tab, the new chat starts in that tab, and the chat that was shown there keeps its place in the chat list.',
     "If the chat's command had returned without the chat taking a request, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.`",
   ])
 
-  // Assert: the README holds each sentence, and the product prints the sentence and names the case in its confirmation and its notification.
+  // Assert: the README holds each sentence, and the product prints the sentence and names the case in its confirmation.
   assert.deepEqual(delivered, [true, true, true])
   assert.equal(
     describeUnansweredWikiChat('not-sent', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
@@ -470,12 +516,6 @@ test('the packaged README names the Chat view that opens only now and the chat i
   assert.equal(
     describeWikiChatHandOver(['workbench.action.chat.newChat']).includes(
       'If the Chat view has not been opened in this window yet, the request may go into the chat it restores.',
-    ),
-    true,
-  )
-  assert.equal(
-    describeWikiChatWatch('own', WIKI_UPDATE_WATCH_TIMEOUT_MS).includes(
-      'in a new chat (in the chat the Chat view restored, if it opened only now)',
     ),
     true,
   )

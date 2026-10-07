@@ -30,7 +30,7 @@ test('without the New Chat command the confirmation says that the request goes i
   )
 })
 
-// Value: protects=the truth of the confirmation and of the notification when the Chat view opens for the first time in a window, where New Chat may find no chat to renew and the request goes into the chat the view restores; fails_when=one of the two texts promises a new chat without naming that case; why_new=Cycle 0046 row 261; seam=none
+// Value: protects=the truth of the confirmation when the Chat view opens for the first time in a window, where New Chat may find no chat to renew and the request goes into the chat the view restores; fails_when=the confirmation promises a new chat without naming that case; why_new=Cycle 0046 row 261 (since row 336 the confirmation alone names the case in the editor: the watch's notification names no place); seam=none
 test('the confirmation of an editor with New Chat names the Chat view that has not been opened yet, and the confirmation of an editor without New Chat does not', () => {
   // Act
   const withNewChat = describeWikiChatHandOver([

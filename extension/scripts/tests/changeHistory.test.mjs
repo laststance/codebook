@@ -41,18 +41,6 @@ const COMPOSED_QUOTATIONS = new Map([
     ],
   ],
   [
-    'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
-    [
-      'Watching for the LLM Wiki update ${}. The watch ends when the new Wiki is published, after ${} ${}, or with Cancel, which stops watching, not the chat. ${}.',
-      '${} (${}); the chat you had open ${}',
-      'in a new chat',
-      'in the chat the Chat view restored, if it opened only now',
-      'keeps its place in the chat list',
-      'minutes',
-      'If you refuse a step of the chat, press Cancel',
-    ],
-  ],
-  [
     'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     [
       'Codebook saw no sign of the update in the editor chat within ${}${}',
