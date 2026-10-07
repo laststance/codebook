@@ -643,6 +643,46 @@ test('a publish that lands after a watch timed out is shown also when Codebook c
   assert.equal(page.find('[data-codebook-reload]'), undefined)
 })
 
+// Value: protects=a learner who stays on the Wiki page after the watch of a VS Code update passed its 15 minutes while the chat still works; fails_when=the page's sentence says in the present that nothing has been replaced or sends the learner to a press that Codebook refuses, or the page stops saying by itself that the chat published, which the sentence promises; why_new=Cycle 0046 row 330 (native run in VS Code 1.140.0: the chat published two minutes after the bound); seam=none
+test('the page of a VS Code watch that passed its 15 minutes says what held when the watch stopped and what to do for a chat that waits, still works or stopped, and says by itself that a new site was published once the chat publishes', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'timed-out',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        timeoutMs: 900_000,
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const textBeforeThePublish = status?.textContent
+
+  // Act: the chat, which was not stopped with the watch, publishes two minutes later.
+  page.reader.sitePublishedAt = '2026-10-03T12:00:10.000Z'
+  page.reader.publication = 'publication-after-the-watch'
+  page.reader.freshness = 'current'
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    textBeforeThePublish,
+    'No new site appeared within 15 minutes, so Codebook stopped watching at 11:58. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
+  )
+  assert.equal(
+    status?.textContent,
+    'A new site was published after this run ended and matches the source. Reload is offered below.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'late-publish')
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
+})
+
 test('a page loaded after the late publish says so without asking for another reload', async () => {
   // Arrange
   const script = await readServedWikiScript()

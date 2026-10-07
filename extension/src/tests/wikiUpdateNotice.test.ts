@@ -103,7 +103,7 @@ test('a cancelled Cursor update is an information notice, not an error', () => {
   })
 })
 
-test('a watch that reached its bound is an error notice with Open LLM Wiki that sends the learner to the chat', () => {
+test('a watch that reached its bound is an error notice with Open LLM Wiki whose sentence stays true when the chat publishes later and names a step for a chat that waits, still works or stopped', () => {
   // Act
   const notice = wikiUpdateNotice(
     {
@@ -122,7 +122,7 @@ test('a watch that reached its bound is an error notice with Open LLM Wiki that 
     severity: 'error',
     actions: ['Open LLM Wiki'],
     message:
-      'No new site appeared within 15 minutes, so Codebook stopped watching at 21:10. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.',
+      'No new site appeared within 15 minutes, so Codebook stopped watching at 21:10. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
   })
 })
 

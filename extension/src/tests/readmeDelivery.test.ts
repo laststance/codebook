@@ -421,6 +421,21 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
   assert.deepEqual(delivered, [true])
 })
 
+// Value: protects=a learner reading in the README what the end of a VS Code watch after its 15 minutes means; fails_when=the row of "No new site appeared" no longer says that the chat was not stopped and can still publish, or names for a chat that stopped a press without the Update anyway that press needs while Codebook waits for the chat; why_new=Cycle 0046 row 330 (the row told the learner only that the chat may be waiting or have reported a problem); seam=none
+test('the packaged README says for a VS Code watch that passed its 15 minutes that nothing had been replaced by then, that the chat can still publish, and what to do for a chat that waits, still works or stopped', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'Nothing was published within 15 minutes, so Codebook stopped watching; nothing had been replaced by then. The chat was not stopped with the watch: it may still be working and can still publish, and the page says when it has (**A new site was published**).',
+    "Check the chat. If it waits for you, answer it. If it is still working, let it finish. If it stopped or reported a problem, update again, then press **Update anyway** in the editor's notification if Codebook still waits for that chat.",
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true, true])
+})
+
 // Value: protects=a learner reading when Codebook stops watching a VS Code update and what to do after they refused a step of the chat; fails_when=the update table no longer names the ends of the watch, or leaves out that a refused step is followed by Cancel and, at the next update, by Update anyway; why_new=Cycle 0046 row 217; seam=none
 test('the packaged README says when the watch of a VS Code update ends and that a learner who refused a step of the chat ends it with Cancel', async () => {
   // Arrange

@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
+import { sleepUntilAborted } from '../utils/sleepUntilAborted'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
@@ -2694,6 +2695,104 @@ test('a VS Code watch that was stopped before the chat staged anything still ref
       'Update anyway',
       'Open LLM Wiki',
     ])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=a learner whose VS Code chat still works when Codebook's watch passes its 15 minutes (a learner who reads each approval meets this end often); fails_when=the notice of the bound, which the editor keeps on screen, says in the present that nothing has been replaced, so the chat's later publish makes it untrue, or tells the learner to press Update LLM Wiki to start again although that press is refused while Codebook waits for the chat, or the refused press no longer offers Update anyway; why_new=Cycle 0046 row 330 (native run in VS Code 1.140.0: watch stopped at 18:09, chat published at 18:11); seam=the watch's clock
+test('a VS Code watch that passes its 15 minutes while the chat still works says what held then and what each state of the chat asks for; a press before the chat publishes is refused with Update anyway, as the notice says, and after the chat’s publish nothing the notice says is untrue and a press finds the Wiki current', async () => {
+  // Arrange: the watch's clock is the test's, so its fifteen minutes pass at once; the chat is not stopped with the watch.
+  let nowMs = 0
+  const wiki = await openWikiWindow({
+    watchClock: {
+      now: () => nowMs,
+      sleep: async (delayMs) => {
+        nowMs += delayMs
+      },
+    },
+  })
+  const manifestAtTheStart = await readFile(wiki.manifestPath, 'utf8')
+  try {
+    await wiki.clickUpdate()
+    const atTheBound = await waitForEnd(wiki.status)
+    const manifestAtTheBound = await readFile(wiki.manifestPath, 'utf8')
+
+    // Act: the learner presses before the chat has published; then the chat publishes a site that matches the source, and the learner presses again.
+    await wiki.clickUpdate()
+    const pressedBeforeThePublish = wiki.status()
+    const offeredAtTheRefusal = wiki.offeredActions.at(-1)?.actions
+    wiki.setFreshness(CURRENT)
+    await wiki.publish('b'.repeat(64))
+    const manifestAfterThePublish = await readFile(wiki.manifestPath, 'utf8')
+    await wiki.clickUpdate()
+    const pressedAfterThePublish = wiki.status()
+
+    // Assert: the notice of the bound, whole.
+    assert.equal(atTheBound.state, 'timed-out')
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^No new site appeared within 15 minutes, so Codebook stopped watching at ${CLOCK_TIME}\\. Nothing had been replaced by then\\. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working \\(it can still publish, and the Wiki page says when it has\\)\\. If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat\\.$`,
+      ),
+    )
+    // "Nothing had been replaced by then" is about the bound, where it held; the publish came after it.
+    assert.equal(
+      atTheBound.state === 'timed-out' ? atTheBound.site : '',
+      'kept',
+    )
+    assert.equal(manifestAtTheBound, manifestAtTheStart)
+    assert.notEqual(manifestAfterThePublish, manifestAtTheBound)
+    // "press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat": the press sends no second request, says that Codebook waits and offers the override.
+    assert.equal(pressedBeforeThePublish.state, 'failed')
+    assert.match(
+      pressedBeforeThePublish.state === 'failed'
+        ? pressedBeforeThePublish.reason
+        : '',
+      /^The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at \d{1,2}:\d{2}[^.]* and waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
+    )
+    assert.deepEqual(offeredAtTheRefusal, ['Update anyway', 'Open LLM Wiki'])
+    // "it can still publish": after the publish the press finds the Wiki current, and still only the first request was sent.
+    assert.equal(pressedAfterThePublish.state, 'already-current')
+    assert.equal(wiki.chatRequests.length, 1)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=a learner whose VS Code chat stopped or reported a problem after Codebook's watch passed its 15 minutes; fails_when=the step the notice of the bound names for that case does not start an update: the press is refused without Update anyway, or Update anyway sends no request; why_new=Cycle 0046 row 330 (the old sentence said "Press Update LLM Wiki to start again", which that press does not do while Codebook waits for the chat); seam=the watch's clock
+test('after a VS Code watch passed its 15 minutes, a press on Update LLM Wiki followed by Update anyway in the notification of the refusal starts the update again, the step the notice of the bound names for a chat that stopped', async () => {
+  // Arrange: the first watch's fifteen minutes pass at once; the watch after it waits in real time, so the second run stays running.
+  let nowMs = 0
+  let hasBoundPassed = false
+  const wiki = await openWikiWindow({
+    watchClock: {
+      now: () => nowMs,
+      sleep: async (delayMs, signal) => {
+        if (hasBoundPassed) return sleepUntilAborted(delayMs, signal)
+        nowMs += delayMs
+      },
+    },
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Update anyway'),
+  })
+  try {
+    await wiki.clickUpdate()
+    const atTheBound = await waitForEnd(wiki.status)
+    hasBoundPassed = true
+
+    // Act: the learner presses Update LLM Wiki; the notification of the refusal offers Update anyway, which is chosen.
+    await wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests, 2)
+
+    // Assert
+    assert.equal(atTheBound.state, 'timed-out')
+    assert.deepEqual(
+      wiki.offeredActions.map((offered) => offered.actions),
+      [['Open LLM Wiki'], ['Update anyway', 'Open LLM Wiki']],
+    )
     assert.equal(wiki.status().state, 'running')
     assert.equal(wiki.chatRequests.length, 2)
   } finally {

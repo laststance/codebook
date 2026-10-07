@@ -317,7 +317,7 @@ export function describeWikiUpdate(
    * @param timedOut - The timed-out state.
    * @param at - When the run was stopped, as the learner's local time.
    * @param replaced - Whether the site on disk was replaced before the stop.
-   * @returns The description: "Update timed out" for Cursor, "No new site appeared" for VS Code, each with the bound in minutes and the next step.
+   * @returns The description: "Update timed out" for Cursor, whose agent was stopped, with the bound in minutes and the next step; "No new site appeared" for VS Code, whose chat was not stopped with the watch and can still publish: what held when the watch stopped, in words that stay true after a later publish, and a step for a chat that waits for the learner, one that still works and one that stopped (the press that Codebook refuses while it waits for that chat, and the override the refusal offers).
    * @example describeTimedOut(timedOut, '21:15', false).lead // => 'Update timed out'
    */
   const describeTimedOut = (
@@ -345,7 +345,8 @@ export function describeWikiUpdate(
         at +
         (replaced
           ? '. The site on disk changed during the watch; ' + freshnessStep
-          : '. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.'),
+          : // The editor keeps this notice on screen and the chat goes on: nothing here may say "now", and each state the chat can be in gets a step that works (a press is refused while Codebook waits for that chat).
+            '. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.'),
     )
   }
   /**

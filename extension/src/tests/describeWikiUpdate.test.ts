@@ -405,7 +405,8 @@ test('a cancel that came after the site was replaced does not claim the old site
   )
 })
 
-test('a VS Code watch that ran out names its bound and sends the learner to the chat', () => {
+// Value: protects=a learner who reads the end of a VS Code watch in a notice the editor keeps on screen while the chat goes on; fails_when=the sentence says in the present that nothing has been replaced, which a later publish of the chat makes untrue, or leaves out the chat that still works and can still publish, or tells the learner to press Update LLM Wiki to start again although Codebook refuses that press while it waits for the chat; why_new=Cycle 0046 row 330 (native run in VS Code 1.140.0: the chat published two minutes after the watch's bound); seam=none
+test('a VS Code watch that ran out says what held when it stopped in words a later publish leaves true, and names a step for a chat that waits, one that still works and one that stopped', () => {
   // Arrange
   const status = {
     state: 'timed-out',
@@ -425,7 +426,7 @@ test('a VS Code watch that ran out names its bound and sends the learner to the 
   // Assert
   assert.equal(
     sentenceOf(described),
-    'No new site appeared within 15 minutes, so Codebook stopped watching at 21:18. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.',
+    'No new site appeared within 15 minutes, so Codebook stopped watching at 21:18. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
   )
 })
 
