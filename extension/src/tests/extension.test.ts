@@ -2250,7 +2250,7 @@ test('a managed Cursor skill removal whose catalog cleanup error quotes a comman
 
     // Assert
     assert.deepEqual(warnings, [
-      "Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: Error: EACCES: permission denied, unlink '/home/[Open] (command:x)/.cursor/mcp.json'. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.",
+      "EACCES: permission denied, unlink '/home/[Open] (command:x)/.cursor/mcp.json'. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file.",
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
