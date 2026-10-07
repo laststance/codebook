@@ -663,3 +663,22 @@ test('the packaged README agrees with the refusals of a Cursor setup or removal:
     'The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
   )
 })
+
+// Value: protects=a learner whom a refusal for a damaged installation sends to the README: 'Install the verified VSIX again (README, "Install the private VSIX")'; fails_when=the README's section gets another heading, or no longer says how to install again, so the refusal names a place that is not there; why_new=Cycle 0046 row 285: the refusal names the section and uses its words; seam=none, the packaged README
+test('the packaged README has the section a refusal for a damaged installation names, and that section says how to install the verified VSIX again', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const section =
+    readme.split('\n## Install the private VSIX\n')[1]?.split('\n## ')[0] ??
+    'no section "Install the private VSIX"'
+
+  // Assert
+  assert.deepEqual(
+    heldSentences(section, [
+      'To update or reinstall, stop active Codebook runs, close the affected editor windows, install the desired verified VSIX with the same command and reopen the same workspace/profile.',
+    ]),
+    [true],
+  )
+})

@@ -106,7 +106,7 @@ test('a failed Cursor registration whose reason has no full stop gets exactly on
   const notice = noticeWithSetupStep(
     'Codebook agent server started, but Cursor MCP registration failed',
     new Error(
-      'Codebook will not change a non-regular skill file: /home/user/.cursor/extensions/laststance.codebook-0.2.30/skills/codebook/SKILL.md',
+      "EACCES: permission denied, open '/home/user/.cursor/skills/codebook/SKILL.md'",
     ),
     'Run Codebook: Set Up AI Chat to repair the connection.',
   )
@@ -114,7 +114,7 @@ test('a failed Cursor registration whose reason has no full stop gets exactly on
   // Assert
   assert.equal(
     notice,
-    'Codebook agent server started, but Cursor MCP registration failed: Codebook will not change a non-regular skill file: /home/user/.cursor/extensions/laststance.codebook-0.2.30/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat to repair the connection.',
+    "Codebook agent server started, but Cursor MCP registration failed: EACCES: permission denied, open '/home/user/.cursor/skills/codebook/SKILL.md'. Run Codebook: Set Up AI Chat to repair the connection.",
   )
 })
 

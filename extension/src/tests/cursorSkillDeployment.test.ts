@@ -2164,7 +2164,7 @@ test('a Cursor skill that is edited between setup’s last check and its move is
         records: [],
       },
       nextSetup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       nextRemoval:
         'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       skillAfterTheRefusals: EDITED_SKILL,
@@ -2206,7 +2206,7 @@ test('the record, the staged file and the second name that a refused setup of an
     },
     {
       setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -2246,7 +2246,7 @@ test('an edited Cursor skill that a setup moved away and never put back is put b
     },
     {
       setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       skill: EDITED_SKILL,
     },
@@ -2401,7 +2401,7 @@ test('a Cursor skill that is edited between the removal’s check and its move i
       nextRemoval:
         'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       nextSetup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       skill: EDITED_SKILL,
     },
   )
@@ -2439,7 +2439,7 @@ test('the record and the second name that a refused removal of an edited Cursor 
     },
     {
       setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -2675,7 +2675,7 @@ test('a Cursor skill that is edited while setup stages its update, before anythi
         records: [],
       },
       nextSetup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       skillAfterTheRefusals: EDITED_SKILL,
       setupAfterTheFileWasDeleted: 'restored',
       skill: NEXT_SKILL,
@@ -3836,7 +3836,7 @@ test('a Cursor skill that is edited right before a setup or a removal moves it, 
       firstSetup: refusalOfTheSetup,
       secondSetup: refusalOfTheSetup,
       setupAfterTheMoveBack:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       filesOfTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -3893,7 +3893,7 @@ test('a setup removes the staged files of earlier setups that no record names wh
     },
     {
       setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
+        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       files: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [
@@ -5024,6 +5024,279 @@ test('a removal that finds the record of an interrupted setup names the setup to
       },
       skillsFolderOfTheUpdate: [],
       skillsFolderOfTheFirstInstall: [],
+    },
+  )
+})
+
+// Value: protects=a learner whose installed extension is damaged: a folder stands where its bundled skill or its Wiki publisher should be; fails_when=setup ends with "Codebook will not change a non-regular skill file: …" and no step, or with a step for a file the learner does not repair (delete or rename it), after which setup answers that the installation is missing that file; why_new=Cycle 0046 row 285; seam=none, the real folders, and an installation put in place anew as a reinstall does
+test('a folder where the bundled skill or the Wiki publisher of the installation should be is refused by setup with a sentence that says to install the VSIX again and names the setup: after the installation is put in place anew, setup installs the skill', async (context) => {
+  // Arrange: two homes, each with its own installed extension; in one the bundled skill is a folder, in the other the Wiki publisher.
+  const withFolderAtSkill = await fixture(context),
+    withFolderAtPublisher = await fixture(context)
+  const bundledSkillPath = join(
+      withFolderAtSkill.extensionPath,
+      'skills',
+      'codebook',
+      'SKILL.md',
+    ),
+    publisherPath = join(
+      withFolderAtPublisher.extensionPath,
+      'skills',
+      'codebook',
+      'publish-wiki.mjs',
+    )
+  await rm(bundledSkillPath)
+  await mkdir(bundledSkillPath)
+  await writeFile(withFolderAtPublisher.sourcePath, PUBLISHER_SKILL)
+  await mkdir(publisherPath)
+
+  // Act
+  const refusals = {
+    folderAtSkill: await statusOrRefusalOf(
+      deployCursorSkill(
+        withFolderAtSkill.extensionPath,
+        withFolderAtSkill.storageRoot,
+        withFolderAtSkill.homeRoot,
+      ),
+    ),
+    folderAtPublisher: await statusOrRefusalOf(
+      deployCursorSkill(
+        withFolderAtPublisher.extensionPath,
+        withFolderAtPublisher.storageRoot,
+        withFolderAtPublisher.homeRoot,
+      ),
+    ),
+  }
+  // The sentences are followed to the letter: installing the VSIX again replaces the extension's folder with the packaged files.
+  for (const paths of [withFolderAtSkill, withFolderAtPublisher]) {
+    await rm(paths.extensionPath, { recursive: true })
+    await mkdir(join(paths.extensionPath, 'skills', 'codebook'), {
+      recursive: true,
+    })
+    await writeFile(paths.sourcePath, PUBLISHER_SKILL)
+    await writeFile(
+      join(paths.extensionPath, 'skills', 'codebook', 'publish-wiki.mjs'),
+      '// publisher\n',
+    )
+  }
+  const setupsAfterTheReinstall = {
+    folderAtSkill: await statusOrRefusalOf(
+      deployCursorSkill(
+        withFolderAtSkill.extensionPath,
+        withFolderAtSkill.storageRoot,
+        withFolderAtSkill.homeRoot,
+      ),
+    ),
+    folderAtPublisher: await statusOrRefusalOf(
+      deployCursorSkill(
+        withFolderAtPublisher.extensionPath,
+        withFolderAtPublisher.storageRoot,
+        withFolderAtPublisher.homeRoot,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      setupsAfterTheReinstall,
+      skills: [
+        await readFile(withFolderAtSkill.targetPath, 'utf8'),
+        await readFile(withFolderAtPublisher.targetPath, 'utf8'),
+      ],
+    },
+    {
+      refusals: {
+        folderAtSkill: `Codebook will not change a non-regular skill file: ${bundledSkillPath}. That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.`,
+        folderAtPublisher: `Codebook will not change a non-regular skill file: ${publisherPath}. That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.`,
+      },
+      setupsAfterTheReinstall: {
+        folderAtSkill: 'installed',
+        folderAtPublisher: 'installed',
+      },
+      skills: [
+        publisherSkillOf(withFolderAtSkill.extensionPath),
+        publisherSkillOf(withFolderAtPublisher.extensionPath),
+      ],
+    },
+  )
+})
+
+// Value: protects=a learner whose installed extension holds a link where its bundled skill should be; fails_when=setup says "Put the file itself at that path or remove the link", after which (the link removed) setup answers that the installation is missing its bundled skill instead of finishing; why_new=Cycle 0046 row 285, found beside it in the sentences the row changes; seam=none, the real link
+test('a link where the bundled skill of the installation should be is refused by setup with a sentence that says to install the VSIX again, and after the installation is put in place anew, setup installs the skill', async (context) => {
+  // Arrange: the bundled skill is kept elsewhere and a link stands in its place.
+  const paths = await fixture(context)
+  const keptSkillPath = join(paths.homeRoot, 'kept-SKILL.md')
+  await rename(paths.sourcePath, keptSkillPath)
+  if (!(await createLinkIfAllowed(keptSkillPath, paths.sourcePath)))
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  const refusal = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+  // The sentence is followed to the letter: installing the VSIX again replaces the extension's folder with the packaged files.
+  await rm(paths.extensionPath, { recursive: true })
+  await mkdir(join(paths.extensionPath, 'skills', 'codebook'), {
+    recursive: true,
+  })
+  await writeFile(paths.sourcePath, INITIAL_SKILL)
+  const setupAfterTheReinstall = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      setupAfterTheReinstall,
+      skill: await readFile(paths.targetPath, 'utf8'),
+      keptSkill: await readFile(keptSkillPath, 'utf8'),
+    },
+    {
+      refusal: `Codebook will not read through a link: ${paths.sourcePath}. That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.`,
+      setupAfterTheReinstall: 'installed',
+      skill: INITIAL_SKILL,
+      keptSkill: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=a learner in whose Codebook storage a folder stands where an update keeps the copy of the installed skill; fails_when=every update ends with "Codebook will not change a non-regular skill file: …" and no step, or the step does not end in an updated skill, or the installed skill is changed by the refusal; why_new=Cycle 0046 row 285 (the storage's copy); seam=none, the real folder
+test('a folder where Codebook keeps the copy of the installed skill in its storage is refused by an update with a sentence that says to delete or rename it and names the setup: after the learner renames it, setup updates the skill', async (context) => {
+  // Arrange: the installed skill, an extension that brings a new one, and a folder under the name of the copy.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const copyPath = join(
+    paths.storageRoot,
+    'cursor-skill',
+    `${createHash('sha256').update(INITIAL_SKILL).digest('hex')}.SKILL.md`,
+  )
+  await mkdir(copyPath)
+
+  // Act
+  const refusal = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+  const skillAfterTheRefusal = await readFile(paths.targetPath, 'utf8')
+  const filesAfterTheRefusal = await filesOfTheSetup(paths)
+  // The sentence is followed to the letter: what stands at the path gets another name.
+  await rename(copyPath, `${copyPath}.aside`)
+  const setupAfterTheRename = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      skillAfterTheRefusal,
+      filesAfterTheRefusal,
+      setupAfterTheRename,
+      skill: await readFile(paths.targetPath, 'utf8'),
+      copy: await readFile(copyPath, 'utf8'),
+    },
+    {
+      refusal: `Codebook will not change a non-regular skill file: ${copyPath}. Delete or rename what stands at that path, then run Codebook: Set Up AI Chat again.`,
+      skillAfterTheRefusal: INITIAL_SKILL,
+      filesAfterTheRefusal: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [],
+        records: [],
+      },
+      setupAfterTheRename: 'updated',
+      skill: NEXT_SKILL,
+      copy: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=a learner who edited the installed skill file and then runs the setup; fails_when=the refusal says "Restore or remove that edit manually before updating." and names no command, or a way it names does not end in a finished setup, or the learner's renamed file is changed; why_new=Cycle 0046 row 285 (the edited skill); seam=none, the real files
+test('an edited Cursor skill is left alone by setup, which says how to go on and names the setup as the command to run again: after the learner undoes the edit in the file, setup updates the skill; after the learner deletes the file, or renames it, setup restores the skill and the renamed file is unchanged', async (context) => {
+  // Arrange: three homes with an installed skill that the learner edited in place; the extension of the first brings a new skill.
+  const homeThatUndoes = await fixture(context),
+    homeThatDeletes = await fixture(context),
+    homeThatRenames = await fixture(context)
+  for (const paths of [homeThatUndoes, homeThatDeletes, homeThatRenames]) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    await writeFile(paths.targetPath, EDITED_SKILL)
+  }
+  await writeFile(homeThatUndoes.sourcePath, NEXT_SKILL)
+  const setUp = (paths: typeof homeThatUndoes): Promise<string> =>
+    statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
+
+  // Act
+  const refusals = {
+    undoes: await setUp(homeThatUndoes),
+    deletes: await setUp(homeThatDeletes),
+    renames: await setUp(homeThatRenames),
+  }
+  // The sentence is followed to the letter, each of its three ways in one home.
+  await writeFile(homeThatUndoes.targetPath, INITIAL_SKILL)
+  await rm(homeThatDeletes.targetPath)
+  await rename(
+    homeThatRenames.targetPath,
+    join(homeThatRenames.homeRoot, '.cursor', 'skills', 'codebook', 'MINE.md'),
+  )
+  const setupsAgain = {
+    undoes: await setUp(homeThatUndoes),
+    deletes: await setUp(homeThatDeletes),
+    renames: await setUp(homeThatRenames),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      setupsAgain,
+      skills: {
+        undoes: await readFile(homeThatUndoes.targetPath, 'utf8'),
+        deletes: await readFile(homeThatDeletes.targetPath, 'utf8'),
+        renames: await readFile(homeThatRenames.targetPath, 'utf8'),
+      },
+      renamedFile: await readFile(
+        join(
+          homeThatRenames.homeRoot,
+          '.cursor',
+          'skills',
+          'codebook',
+          'MINE.md',
+        ),
+        'utf8',
+      ),
+    },
+    {
+      refusals: {
+        undoes:
+          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        deletes:
+          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        renames:
+          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      },
+      setupsAgain: {
+        undoes: 'updated',
+        deletes: 'restored',
+        renames: 'restored',
+      },
+      skills: {
+        undoes: NEXT_SKILL,
+        deletes: INITIAL_SKILL,
+        renames: INITIAL_SKILL,
+      },
+      renamedFile: EDITED_SKILL,
     },
   )
 })
