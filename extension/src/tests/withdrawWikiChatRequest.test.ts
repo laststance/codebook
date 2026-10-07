@@ -241,3 +241,61 @@ test('a hand-over command that throws once the chat’s Cancel stopped its reque
   // Assert
   assert.equal(withdrawal, 'withdrawn')
 })
+
+// Value: protects=the truth of "took its request back, so no update is running" when the chat reaches its first approval while Codebook takes the request back (the learner showed another session, so the Cancel acted there); fails_when=any return of the hand-over command counts as the end of the request, also one that says the chat waits for the learner, so a chat that waits for an approval and can publish is reported as withdrawn; why_new=Cycle 0046 row 257; seam=the withdrawal's sleep, on a manual clock that is not moved
+test('a hand-over command that returns a reply that waits for a confirmation while the Cancel runs is not the end of the request: the withdrawal ends as left, without waiting out the settle time', async () => {
+  // Arrange: the chat's Cancel stops nothing of this request, and the chat asks for its first approval while it runs.
+  const { sleep } = manualSleep()
+  let answer: (reply: unknown) => void = () => {}
+  const handOver = new Promise((resolveReply) => {
+    answer = resolveReply
+  })
+
+  // Act: the clock stands still.
+  const withdrawal = await withdrawWikiChatRequest({
+    handOver,
+    session: 'own',
+    runChatCommand: async (command) => {
+      if (command === 'workbench.action.chat.cancel')
+        answer({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+    signal: new AbortController().signal,
+    settleMs: 2_000,
+    sleep,
+  })
+
+  // Assert
+  assert.equal(withdrawal, 'left')
+})
+
+// Value: protects=the same truth in a session shared with the learner; fails_when=a reply that waits for a confirmation, returned while the queue's command runs, is taken for a queued request that was removed, so no Cancel runs and the result is withdrawn; why_new=Cycle 0046 row 257; seam=the withdrawal's sleep, on a manual clock that is not moved
+test('in a shared session a reply that waits for a confirmation during the queue’s command is no removed request: the Cancel still runs, and the withdrawal ends as left', async () => {
+  // Arrange: the chat asks for its first approval while the queue's command runs.
+  const ranCommands: string[] = []
+  const { sleep } = manualSleep()
+  let answer: (reply: unknown) => void = () => {}
+  const handOver = new Promise((resolveReply) => {
+    answer = resolveReply
+  })
+
+  // Act
+  const withdrawal = await withdrawWikiChatRequest({
+    handOver,
+    session: 'shared',
+    runChatCommand: async (command) => {
+      ranCommands.push(command)
+      if (command === 'workbench.action.chat.removeAllPendingRequests')
+        answer({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+    signal: new AbortController().signal,
+    settleMs: 2_000,
+    sleep,
+  })
+
+  // Assert
+  assert.deepEqual(ranCommands, [
+    'workbench.action.chat.removeAllPendingRequests',
+    'workbench.action.chat.cancel',
+  ])
+  assert.equal(withdrawal, 'left')
+})

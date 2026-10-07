@@ -1577,6 +1577,40 @@ test('a request that is still pending after the chat’s Cancel returned is repo
   }
 })
 
+// Value: protects=the page and the notice when the chat reaches its first approval while Codebook takes the request back at the bound (the learner showed another session, so the chat's Cancel acted there); fails_when=the return of the chat command at that approval is taken for the end of the request, so the page says "took its request back, so no update is running" while the chat waits for an approval and can publish with no watch; why_new=Cycle 0046 row 257; seam=the editor's commands, of which the chat's Cancel leaves the request alone and the chat then asks for an approval
+test('a chat that asks for its first approval while Codebook takes the request back at the bound is reported as a request that may still be in the chat, not as an update that is not running', async () => {
+  // Arrange: the Cancel stops nothing of this request; the chat command returns at the chat's first approval.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.cancel')
+        request.end({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act
+    clock.advance(30_000)
+    await press
+
+    // Assert: the run has ended, with no watch.
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
 // Value: protects=the update in an editor that has no New Chat command: the request still goes to the chat, the learner's request in progress there is not stopped, and the sentence does not blame Copilot Chat for a chat that may only be busy; fails_when=the update fails outright without the command, or the shared chat is treated as Codebook's own (the Cancel alone, which stops the learner's request and leaves Codebook's in the queue), or the notice says only "Check that Copilot Chat is enabled"; why_new=Cycle 0046 row 129 (the fallback), with row 82's order; seam=the editor's commands, of which New Chat throws and "Remove All Queued" ends the queued request
 test('in an editor without the New Chat command the request goes into the open chat; queued there behind a request of the learner it is taken out of the queue at the bound, the chat’s Cancel is not run, and the sentence says the chat may be busy', async () => {
   // Arrange: no New Chat command; the chat queued Codebook's request, and removing it from the queue ends the chat command without a reply.
