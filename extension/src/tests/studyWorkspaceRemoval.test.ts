@@ -766,6 +766,77 @@ test('an unknown entry, a Node test history and the study of a run that has not 
   }
 })
 
+// Value: protects=the learner who was told to leave Recording before deleting a study and did so: the sentence is gone, and the delete button, which can be used again, stands without it; fails_when=the refusal's line is retired only by another entry or a new run, so "Choose Overview or Live to leave Recording before deleting this study." stays under the button after the learner chose Overview or Live; why_new=Cycle 0046 row 218; seam=the Study pane's tab messages
+for (const tab of ['overview', 'live'] as const)
+  test(`after a delete request was refused because Recording is open, choosing ${tab === 'overview' ? 'Overview' : 'Live'} retires that line`, async () => {
+    // Arrange: a saved recorded run whose recording is open, and a delete request that is refused for it.
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await waitUntil(
+        () => harness.controller.state().readiness === 'ready',
+        'the opened recording',
+        2_000,
+      )
+      await requestRemoval(harness, harness.studyId)
+      const refusal = structuredClone(
+        harness.reader.inspect().view!.studyRemoval,
+      )
+      // Act: the learner leaves Recording.
+      await readerSeams(harness).receive(
+        {
+          type: 'tab',
+          revision: harness.reader.inspect().view!.revision,
+          tab,
+        },
+        'context',
+      )
+      // Assert
+      const view = harness.reader.inspect().view!
+      assert.deepEqual(refusal, {
+        status: 'refused',
+        studyId: harness.studyId,
+        text: 'Choose Overview or Live to leave Recording before deleting this study.',
+      })
+      assert.equal(view.contentTab, tab)
+      assert.equal(view.studyRemoval, undefined)
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the line of a removal's outcome staying while the learner only moves between Overview and Live: nothing it says has become untrue; fails_when=every tab change retires it, so a refusal the learner has just read is gone at the next look at Live; why_new=Cycle 0046 row 218 (the rule's edge: only leaving Recording retires the line); seam=the Study pane's tab messages
+test('a refused delete request’s line stays when the learner changes between Overview and Live without having been in Recording', async () => {
+  // Arrange: an open Study workspace on Overview, and a delete request for a saved Node test history, which is refused.
+  const harness = await workspaceHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const tabTo = (tab: 'overview' | 'live'): Promise<void> =>
+      readerSeams(harness).receive(
+        { type: 'tab', revision: harness.reader.inspect().view!.revision, tab },
+        'context',
+      )
+    await tabTo('overview')
+    await requestRemoval(harness, nodeHistory.studyId)
+    // Act
+    await tabTo('live')
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.contentTab, 'live')
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'refused',
+      studyId: nodeHistory.studyId,
+      text: 'Node test histories cannot be deleted here yet.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=while Recording is open no study is removed, also when Recording opens while the dialog waits for its answer; fails_when=a recording that is being played loses its files, or the answer is applied to a reader that changed meanwhile; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('a removal is refused while Recording is open, also when Recording opens while the confirmation is waiting', async () => {
   // Arrange: a saved recorded run; its recording is open.
