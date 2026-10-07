@@ -4788,6 +4788,13 @@ export function readerSeams(harness: {
     checkpoint: (
       ...input: Parameters<WorkspaceReader['checkpoint']>
     ): Promise<void> => reader['checkpoint'](...input),
+    /** The reader's checkpoint of one run; a test replaces it to fail a forced checkpoint before anything is written, as a capture that changed under it does. */
+    get checkpointStep(): WorkspaceReader['checkpoint'] {
+      return reader['checkpoint'].bind(reader)
+    },
+    set checkpointStep(step: WorkspaceReader['checkpoint']) {
+      reader['checkpoint'] = step
+    },
     readSavedArchive: (studyId: string) => reader['readSavedArchive'](studyId),
     saveSelection: (): Promise<void> => reader['saveSelection'](),
     /** The reader's step that starts or replaces the historical debugger before a recording load; a test replaces it to hold or fail that load. */

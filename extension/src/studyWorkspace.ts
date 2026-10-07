@@ -6099,7 +6099,7 @@ export class StudyWorkspace {
           }
           if (action === 'stop') {
             await service.stop(identity)
-            await this.checkpoint(service, record, true)
+            await this.checkpointStoppedRun(service, record)
           }
         }
         this.errors.delete('control')
@@ -7001,6 +7001,28 @@ export class StudyWorkspace {
       this.liveEntryRunId = current.id
       // Return-current already owns its navigation gate; finish that same intent without admitting another control.
       await this.open(signal, this.returningCurrent ? 'presentation' : 'study')
+    }
+  }
+
+  /**
+   * Makes the last checkpoint of a run that Stop has just ended and tells a failure of it once, as the archive line that Retry storage / refresh answers; called by {@link action} for Stop.
+   * The run did stop, so the failure is no refused control. Thrown on, it became a control line beside the archive line, and only the learner's next choice retires a control line: it stayed after the Retry that saved the study, with no Retry beside it.
+   * @param service - The service of the stopped run.
+   * @param record - The stopped run.
+   * @returns Nothing: a checkpoint that failed leaves the line "History not saved: …" and the run's failed history receipt, and does not reject.
+   * @example
+   * await service.stop(identity)
+   * await this.checkpointStoppedRun(service, record) // => the line "History not saved: Error: disk is read-only" while the library cannot be written
+   */
+  private async checkpointStoppedRun(
+    service: StudyService,
+    record: StudyRecord,
+  ): Promise<void> {
+    try {
+      await this.checkpoint(service, record, true)
+    } catch (error) {
+      // A write that failed has reported this very line ({@link persistArchive}); a capture that failed before any write has no line yet.
+      this.report('archive', new Error(`History not saved: ${String(error)}`))
     }
   }
 

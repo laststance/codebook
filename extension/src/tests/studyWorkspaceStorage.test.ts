@@ -314,13 +314,20 @@ test('a successful runtime with a rejected final history write stays partial in 
     })
     await harness.reader.open()
     // Act
-    await assert.rejects(harness.reader.action('stop'), /archive size limit/)
+    await harness.reader.action('stop')
     const stopped = await service.stop({
         instanceId: service.instanceId,
         runId: record.id,
       }),
       reader = harness.reader.inspect().view!
-    // Assert
+    // Assert: the run stopped, and the rejected write is told once, in the line that Retry answers and not as a refused control (row 280).
+    assert.equal(
+      reader.errors.includes(
+        'Error: History not saved: Error: Injected archive size limit',
+      ),
+      true,
+    )
+    assert.equal(readerSeams(harness).hasErrorOfKind('control'), false)
     assert.equal(stopped.finalOutcome, 'demonstrated')
     assert.equal(stopped.historyOutcome.status, 'failed')
     assert.equal(stopped.studyOutcome, 'partial')
@@ -1262,9 +1269,18 @@ test('an older successful save cannot erase the failed final archive from explic
     await opening
     await waitUntil(() => writes === 2, 'final archive write', 1_000)
     releaseFinal()
-    await assert.rejects(stopping, /Final archive write denied/)
+    await stopping
+    const linesAfterStop = readerSeams(harness).errorLines(),
+      hasControlLineAfterStop = readerSeams(harness).hasErrorOfKind('control')
     await harness.reader.action('retry')
-    // Assert
+    // Assert: Stop told the denied final write once, in the line that Retry answers and not as a refused control (row 280).
+    assert.equal(
+      linesAfterStop.includes(
+        'Error: History not saved: Error: Final archive write denied',
+      ),
+      true,
+    )
+    assert.equal(hasControlLineAfterStop, false)
     const directory = harness.reader.inspect().libraryDirectory!,
       library = new LearningLibrary(directory, directory.split('/').at(-1)!)
     assert.equal(
