@@ -20,6 +20,11 @@ import { z } from 'zod'
 import { readRecordedOwner } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
+
 /** The owner record as 0.2.29.0 reads it: its schema, copied from that release (`utils/readRecordedOwner.ts`), which knows neither digests nor a process start. */
 const ownerSchemaOfRelease0229 = z.object({
   pid: z.number().int().positive(),
@@ -154,32 +159,24 @@ test(
 )
 
 // Value: protects=the judgement of what lies beside a Wiki update's marker in a project folder: only a record that is a file of its own names an owner; fails_when=the read follows a link, so a file elsewhere that names a running process makes a link count as that process's claim; why_new=Cycle 0046 row 110; seam=none
-test(
-  'an owner record whose path holds a link is not followed: the record of a running process that the link leads to is not read as its owner',
-  {
-    skip:
-      process.platform === 'win32'
-        ? 'a link to a file needs a right on Windows that a user may lack'
-        : false,
-  },
-  async (context) => {
-    // Arrange
-    const directory = await storageDirectory(context)
-    const recordElsewhere = join(directory, 'a-record-elsewhere.json')
-    await writeFile(recordElsewhere, `{"pid":${process.pid}}`)
-    const recordPath = join(directory, 'wiki.update-run.json.pending-a-link')
-    await symlink(recordElsewhere, recordPath)
+test('an owner record whose path holds a link is not followed: the record of a running process that the link leads to is not read as its owner', async (context) => {
+  // Arrange: the link is tried on every system; only a user whom the system refuses the creation skips.
+  const directory = await storageDirectory(context)
+  const recordElsewhere = join(directory, 'a-record-elsewhere.json')
+  await writeFile(recordElsewhere, `{"pid":${process.pid}}`)
+  const recordPath = join(directory, 'wiki.update-run.json.pending-a-link')
+  if (!(await createLinkIfAllowed(recordElsewhere, recordPath)))
+    return context.skip(LINK_NOT_ALLOWED)
 
-    // Act
-    const owners = {
-      throughTheLink: await readRecordedOwner(recordPath),
-      ofTheFileItself: await readRecordedOwner(recordElsewhere),
-    }
+  // Act
+  const owners = {
+    throughTheLink: await readRecordedOwner(recordPath),
+    ofTheFileItself: await readRecordedOwner(recordElsewhere),
+  }
 
-    // Assert
-    assert.deepEqual(owners, {
-      throughTheLink: undefined,
-      ofTheFileItself: { pid: process.pid },
-    })
-  },
-)
+  // Assert
+  assert.deepEqual(owners, {
+    throughTheLink: undefined,
+    ofTheFileItself: { pid: process.pid },
+  })
+})
