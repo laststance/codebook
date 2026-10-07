@@ -32,6 +32,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
+  REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
 } from './constants'
 import { StudyError } from './errors'
@@ -107,6 +108,7 @@ import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
+import { isPageStubOfSource } from './utils/isPageStubOfSource'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
@@ -2682,7 +2684,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         timer: setTimeout(() => {
           if (this.transientBrowserPause === transient)
             this.fail('Unowned browser stop remained paused')
-        }, 250),
+        }, this.unownedPagePauseLimitMs(event)),
         event,
         journaled,
       }
@@ -2696,6 +2698,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.admitPause(name, event, journaled)
     this.ownPagePauseUnderResume()
+  }
+
+  /**
+   * Chooses how long a page pause may last in a run that declares no browser stop, for the timer {@link onCdpPaused} starts for it.
+   * The debugger also sets a server stop's breakpoint in the page, and the page pauses there in its stub of the server module. The debug adapter reports that pause as a stop that names the server breakpoint, which the run then resumes itself ({@link resumeServerBreakpointInBrowser}); it may first resolve which breakpoints were hit, so that report can come later than the short bound of a pause nobody owns. Such a pause is known by its place before the report arrives, and has the bound of a pause of the adapter's own until then.
+   * @param event - The page's pause.
+   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageStubOfSource}); {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
+   * @example
+   * ```ts
+   * this.unownedPagePauseLimitMs(event) // 3000 for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts, otherwise 250
+   * ```
+   */
+  private unownedPagePauseLimitMs(
+    event: Protocol.Debugger.PausedEvent,
+  ): number {
+    const scriptId = event.callFrames[0]?.location.scriptId,
+      scriptUrl =
+        scriptId === undefined
+          ? undefined
+          : this.participants.browser.scriptUrls.get(scriptId)
+    const isInServerStub = this.stops.some(
+      (stop) =>
+        stop.participant === 'server' &&
+        isPageStubOfSource(scriptUrl, stop.source.path),
+    )
+    return isInServerStub
+      ? REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
+      : REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS
   }
 
   /**
