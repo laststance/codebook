@@ -875,7 +875,7 @@ export function activate(
     { session, reply }: WatchedWikiChat,
   ): Promise<void> =>
     withCancellableProgress(
-      `${describeWikiChatWatch(session)}${run.isOutputOutsideProject ? `. ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`,
+      `${describeWikiChatWatch(session, run.timeoutMs)}${run.isOutputOutsideProject ? ` ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`,
       run,
       async () => {
         try {

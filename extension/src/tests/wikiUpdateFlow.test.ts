@@ -187,7 +187,7 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
       ['vscode', 'kept'],
     )
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list (Cancel stops watching, not the chat)',
+      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.equal(wiki.notices.length, 1)
     assert.match(
@@ -233,7 +233,7 @@ test('every Wiki update shows one progress notification that can be cancelled, a
 
     // Assert
     assert.deepEqual(vsCodeWiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list (Cancel stops watching, not the chat)',
+      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.deepEqual(cursorWiki.progressTitles, [
       'Updating LLM Wiki with Cursor Agent',
@@ -719,7 +719,7 @@ test('the update command and the browser link pressed while the first start is s
       ['workbench.action.chat.open'],
     )
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list (Cancel stops watching, not the chat)',
+      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
@@ -1935,7 +1935,7 @@ test('a chat whose reply waits for a confirmation 20 seconds after it took the r
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list (Cancel stops watching, not the chat)',
+      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -2976,7 +2976,26 @@ test('the notification that watches an update started with the command says that
     // Assert: the command asked for no confirmation.
     assert.deepEqual(wiki.confirmations, [])
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list (Cancel stops watching, not the chat)',
+      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner who refused a step the chat asked them to approve: Codebook does not see the chat stop then, and the watch would go on for 15 minutes; fails_when=the notification no longer says when the watch ends, or no longer tells the learner to press Cancel after a refused step; why_new=Cycle 0046 row 217 (a limit of the editor: its chat command returns at the first wait for a confirmation); seam=none
+test('the notification that watches an update says when the watch ends and that a learner who refused a step of the chat presses Cancel', async () => {
+  // Arrange: the chat asks to approve a step at once, so the update is watched.
+  const wiki = await openWikiWindow({
+    chatReply: async () => ({ type: 'confirmation', kind: 'toolInvocation' }),
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.progressTitles, [
+      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -2995,7 +3014,7 @@ test('in an editor without the New Chat command the notification that watches th
 
     // Assert
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in the chat that is open (Cancel stops watching, not the chat)',
+      'Watching for the LLM Wiki update in the chat that is open. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -3040,7 +3059,7 @@ test('the confirmation of an update whose output lies outside the project says t
       [fromTheCommand, runningFromTheCommand],
     ] as const) {
       assert.deepEqual(window.progressTitles, [
-        `Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list (Cancel stops watching, not the chat). ${approvalsNote}`,
+        `Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel. ${approvalsNote}`,
       ])
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,

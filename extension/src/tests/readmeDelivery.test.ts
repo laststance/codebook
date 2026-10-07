@@ -31,6 +31,7 @@ import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from '../utils/describeWikiChatErrorReply'
 import { describeWikiChatHandOver } from '../utils/describeWikiChatHandOver'
+import { describeWikiChatWatch } from '../utils/describeWikiChatWatch'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
 
@@ -381,6 +382,26 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
     'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
   )
   assert.deepEqual(delivered, [true])
+})
+
+// Value: protects=a learner reading when Codebook stops watching a VS Code update and what to do after they refused a step of the chat; fails_when=the update table no longer names the ends of the watch, or leaves out that a refused step is followed by Cancel and, at the next update, by Update anyway; why_new=Cycle 0046 row 217; seam=none
+test('the packaged README says when the watch of a VS Code update ends and that a learner who refused a step of the chat ends it with Cancel', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "The watch ends when the new Wiki is published, when the chat's reply ends before the chat asked you to approve a step, when you press Cancel in the notification, or after those 15 minutes.",
+    'If you refuse a step, press Cancel in the notification: once the chat has asked you, Codebook does not see it stop, and would watch for the 15 minutes.',
+    'Stop the chat itself to cancel the update. If it has already stopped (you refused a step), press **Update anyway** when you update again.',
+  ])
+
+  // Assert: the README holds each sentence, and the notification names the same bound.
+  assert.deepEqual(delivered, [true, true, true])
+  assert.equal(
+    describeWikiChatWatch('own', WIKI_UPDATE_WATCH_TIMEOUT_MS),
+    'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+  )
 })
 
 // Value: protects=a client author reading the same limit of explanations the service enforces and an agent reads in its refusal; fails_when=the README counts "explanation intents" again, or names another number than the budget; why_new=Cycle 0046 row 56: row 25 reworded the refusal to "explanation budget (32 keys)" and the README kept the old words; seam=none
