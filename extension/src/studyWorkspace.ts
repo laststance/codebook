@@ -13,6 +13,7 @@ import {
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
   LEARNER_SELECTION_KINDS,
+  LEARNER_SIGN_FRESH_MS,
   LEARNER_STARTED_STOP_REASONS,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
@@ -25,6 +26,7 @@ import {
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
   OPEN_REPLAY_RESULT_WAIT_MS,
+  PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
   PAUSE_FOCUS_LOOKBACK_MS,
   STOP_OWN_FOCUS_BOUND_MS,
   PRESENTATION_PREFERENCE_KEY,
@@ -438,7 +440,7 @@ interface KeyboardPauseOfRecord {
  * if (keyboardNoticesTold.has('close')) return
  * keyboardNoticesTold.add('close')
  */
-const keyboardNoticesTold = new Set<'close' | 'pause'>()
+const keyboardNoticesTold = new Set<'close' | 'pause' | 'chosen'>()
 
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
@@ -589,8 +591,10 @@ export class StudyWorkspace {
   private readonly followedSessions = new Set<string>()
   /** Whether the stack frame the editor reports now came with a stop of the debugger, which opens the paused file with the keyboard; `false` for a frame the learner selected in the Call Stack view and for one the editor brought to the front later by itself, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
   private frameCameWithStop = false
-  /** Whether the learner gave a sign of working in the active text editor since the editor reported a frame without a stop ({@link noteLearnersSignAtFrame}): a pane or the captured source that covers that editor then takes the keyboard as at a stop. `false` at every new stack item ({@link judgeKeyboardAtStackItemChange}). */
+  /** Whether the learner gave a sign of working in the active text editor since the editor reported a frame whose file it opened without the keyboard ({@link noteLearnersSignAtFrame}): a pane or the captured source that covers that editor then takes the keyboard as at a stop. `false` at every new stack item ({@link judgeKeyboardAtStackItemChange}). */
   private learnerChoseEditorAtFrame = false
+  /** The moment the learner last clicked or pressed a key in the active text editor ({@link noteLearnersSelection}); read while no frame is shown, where it counts for {@link LEARNER_SIGN_FRESH_MS} ({@link workedInEditorJustNow}). */
+  private learnerWorkedInEditorAtMs?: number
   /** The preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. */
   private previewTabOfFrame?: vscode.Tab
   private moments?: vscode.WebviewView
@@ -2651,7 +2655,7 @@ export class StudyWorkspace {
         this.noteLearnersSignAtFrame(this.isLearnersEditor(editor))
       }),
       vscode.window.onDidChangeTextEditorSelection((change) =>
-        this.noteLearnersSignAtFrame(this.isLearnersSelection(change)),
+        this.noteLearnersSelection(change),
       ),
       vscode.debug.onDidChangeActiveStackItem(() =>
         this.judgeKeyboardAtStackItemChange(),
@@ -2889,24 +2893,78 @@ export class StudyWorkspace {
   }
 
   /**
-   * Takes a sign that the learner works in the active text editor, while the editor shows a frame that came without a stop; called by the listeners of {@link watchKeyboardOutsideEditors} with what one of the three signs answered.
-   * For such a frame the editor opened the file without the keyboard, and nothing the editor reports says where the keyboard went afterwards: a click of the mouse into the Call Stack view, a double click or Enter there (which give the file the keyboard) and the editor's "Navigate Up/Down Call Stack" commands (which do too) all report the file's opening and then the frame, in that order. So the reader does not decide by the gesture. It takes what the editor reports after the frame: the learner clicked or typed in the active text editor ({@link isLearnersSelection}), a text editor became the active one ({@link isLearnersEditor}), or the frame's preview tab was kept open ({@link keptPreviewTabOfFrame}). From then on {@link replacesEditorFocusedByPause} and {@link keepsKeyboardFromPaneAtPause} treat the covered editor as at a stop. Without a sign the keyboard is taken to be where the learner had it.
+   * Takes a sign that the learner works in the active text editor, while the editor shows a frame whose file it opened without the keyboard ({@link showsFrameOpenedWithoutKeyboard}); called by the listeners of {@link watchKeyboardOutsideEditors} with what the second or the third sign answered, and by {@link noteLearnersSelection} for the first.
+   * For such a frame nothing the editor reports says where the keyboard went afterwards: a click of the mouse into the Call Stack view, a double click or Enter there (which give the file the keyboard) and the editor's "Navigate Up/Down Call Stack" commands (which do too) all report the file's opening and then the frame, in that order. So the reader does not decide by the gesture. It takes what the editor reports after the frame: the learner clicked or typed in the active text editor ({@link isLearnersSelection}), a text editor became the active one ({@link isLearnersEditor}), or the frame's preview tab was kept open ({@link keptPreviewTabOfFrame}). From then on {@link replacesEditorFocusedByPause} and {@link keepsKeyboardFromPaneAtPause} treat the covered editor as one that has the keyboard. Without a sign the keyboard is taken to be where the learner had it.
    * @param given - Whether the sign was given.
-   * @example this.noteLearnersSignAtFrame(this.isLearnersSelection(change))
+   * @example this.noteLearnersSignAtFrame(this.isLearnersEditor(editor))
    */
   private noteLearnersSignAtFrame(given: boolean): void {
-    if (given && this.showsFrameWithoutStop())
+    if (given && this.showsFrameOpenedWithoutKeyboard())
       this.learnerChoseEditorAtFrame = true
   }
 
   /**
-   * Says whether Run and Debug shows a frame that came without a stop of the debugger; asked by {@link noteLearnersSignAtFrame}.
-   * @returns `true` for a frame the learner selected or the editor brought to the front later; `false` for a frame that came with a stop, for a thread and without an item.
-   * @example this.showsFrameWithoutStop() // => true after a click on a frame in the Call Stack view
+   * Takes the first sign, a selection the learner made in the active text editor, wherever the debugger stands; called by the selection listener of {@link watchKeyboardOutsideEditors}.
+   * At a frame it counts like the other signs, until the next stack item ({@link noteLearnersSignAtFrame}). While no frame is shown (a session runs, or none exists) it is the only sign, and it counts for a short time only ({@link workedInEditorJustNow}).
+   * @param change - The change the editor reports.
+   * @example vscode.window.onDidChangeTextEditorSelection((change) => this.noteLearnersSelection(change))
    */
-  private showsFrameWithoutStop(): boolean {
+  private noteLearnersSelection(
+    change: vscode.TextEditorSelectionChangeEvent,
+  ): void {
+    if (!this.isLearnersSelection(change)) return
+    this.learnerWorkedInEditorAtMs = performance.now()
+    this.noteLearnersSignAtFrame(true)
+  }
+
+  /**
+   * Says whether Run and Debug shows a frame whose file the editor opened without giving it the keyboard; asked by {@link noteLearnersSignAtFrame}.
+   * @returns `true` for a frame that came without a stop (the learner selected it, or the editor brought it to the front later), and for a frame of a stop while the learner's `debug.focusEditorOnBreak` is off; `false` for a stop's frame whose file the debugger gave the keyboard, for a thread and without an item.
+   * @example this.showsFrameOpenedWithoutKeyboard() // => true after a click on a frame in the Call Stack view
+   */
+  private showsFrameOpenedWithoutKeyboard(): boolean {
     return (
-      !this.frameCameWithStop && isStackFrameItem(vscode.debug.activeStackItem)
+      isStackFrameItem(vscode.debug.activeStackItem) &&
+      !this.debuggerGaveEditorKeyboard()
+    )
+  }
+
+  /**
+   * Says whether the editor's debugger gave the file of the frame it shows the keyboard; asked by {@link showsFrameOpenedWithoutKeyboard}, {@link keepsKeyboardFromPaneAtPause}, {@link holdsKeyboardInActiveEditor} and {@link tellPaneTookKeyboard}.
+   * @returns `true` while the frame of a stop is shown ({@link frameCameWithStop}) and `debug.focusEditorOnBreak` is not turned off; `false` for a frame without a stop, with that setting off, for a thread and without an item.
+   * @example this.debuggerGaveEditorKeyboard() // => false at a stop of a learner who turned "debug.focusEditorOnBreak" off
+   */
+  private debuggerGaveEditorKeyboard(): boolean {
+    return (
+      this.frameCameWithStop &&
+      vscode.workspace
+        .getConfiguration('debug')
+        .get<boolean>('focusEditorOnBreak') !== false
+    )
+  }
+
+  /**
+   * Says whether the learner gave a sign of working in the active text editor that still holds; asked by {@link keepsKeyboardFromPaneAtPause} and {@link holdsKeyboardInActiveEditor}.
+   * @returns At a frame, what {@link noteLearnersSignAtFrame} noted since that frame; while no frame is shown, whether the learner clicked or pressed a key in the active text editor a moment ago ({@link workedInEditorJustNow}).
+   * @example if (this.learnerWorksInActiveEditor()) return false
+   */
+  private learnerWorksInActiveEditor(): boolean {
+    return isStackFrameItem(vscode.debug.activeStackItem)
+      ? this.learnerChoseEditorAtFrame
+      : this.workedInEditorJustNow()
+  }
+
+  /**
+   * Says whether the learner clicked or pressed a key in the active text editor within {@link LEARNER_SIGN_FRESH_MS}; the half of {@link learnerWorksInActiveEditor} for the time without a frame.
+   * While a session runs nothing the editor reports ends a sign: a learner who goes from the file to a side-view chat, the terminal or a view is not reported. So only a fresh sign counts there, and a text editor that merely becomes active counts for nothing, since the Explorer, Quick Open and an agent that opens the files it edits make one active all through a run without giving it the keyboard.
+   * @returns `true` within that time after the last such selection; `false` later and without one.
+   * @example this.workedInEditorJustNow() // => false five seconds after the learner's last key press in the file
+   */
+  private workedInEditorJustNow(): boolean {
+    return (
+      this.learnerWorkedInEditorAtMs !== undefined &&
+      performance.now() - this.learnerWorkedInEditorAtMs <=
+        LEARNER_SIGN_FRESH_MS
     )
   }
 
@@ -3099,7 +3157,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link isStoppedBesideLiveRun}, which also asks for a live run ({@link hasLiveRun}), and by {@link holdsKeyboardInEditorAtFrame} for {@link replacesEditorFocusedByPause}, which acts on the keyboard the editor's debugger gave the paused file whoever started that session.
+   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link isStoppedBesideLiveRun}, which also asks for a live run ({@link hasLiveRun}).
    * A pause is told by a stack frame ({@link isStackFrameItem}): once the session runs again the editor reports its thread, which is no pause. The frame must have come with a stop ({@link cameWithStop}): for a frame the learner selected in the Call Stack view the editor opened the file without the keyboard. While a recording is open the frame is the historical debugger's, which opens no file with the keyboard for a new pause.
    * @returns `true` while Run and Debug's active stack item is a frame that came with a stop and no recording is open.
    * @example this.isStoppedOutsideRecording() // => false while the debugged program runs, after the learner selected another frame, and while a recording is replayed
@@ -3124,7 +3182,7 @@ export class StudyWorkspace {
     const gaveBack = await this.returnsKeyboardToChatAtPause().catch(
       () => false,
     )
-    if (tookKeyboard && !gaveBack) this.tellPaneTookPausedFocus()
+    if (tookKeyboard && !gaveBack) this.tellPaneTookKeyboard()
   }
 
   /**
@@ -3202,28 +3260,29 @@ export class StudyWorkspace {
   }
 
   /**
-   * Answers the Application pane's viewport, right before it reveals the pane over a text editor it takes for the one the debugger focused at a pause, whether the pane is to come to the front without the keyboard ({@link presentation}).
+   * Answers the Application pane's viewport, right before it reveals the pane over the active text editor, whether the pane is to come to the front without the keyboard ({@link presentation}).
    * @returns
-   * - `false` after a frame without a stop once the learner gave a sign of working in the active text editor ({@link noteLearnersSignAtFrame}): the pane takes the keyboard, as at a stop without a chat to give it back to.
-   * - `true` after a frame without a stop and without such a sign ({@link frameCameWithStop} is `false`): the editor opened that frame's file without the keyboard, which stays where the learner has it.
+   * - `false` once the learner gave a sign of working in that editor that still holds ({@link learnerWorksInActiveEditor}): the pane takes the keyboard, since a hidden editor cannot keep it.
+   * - `true` without such a sign whenever the debugger did not give that editor the keyboard ({@link debuggerGaveEditorKeyboard}): at a frame without a stop, at a stop with `debug.focusEditorOnBreak` off, and while no frame is shown. The keyboard stays where the learner has it.
    * - `true` when the chat that had the keyboard before the stop got it back now ({@link returnsKeyboardToChatAtPause}).
    * - `false` when the debugger gave the covered file the keyboard and the reader knows of nobody to give it back to: the pane takes it.
    * @example keepsKeyboardAtPause: () => this.keepsKeyboardFromPaneAtPause()
    */
   private async keepsKeyboardFromPaneAtPause(): Promise<boolean> {
-    if (this.learnerChoseEditorAtFrame) return false
-    return !this.frameCameWithStop || this.returnsKeyboardToChatAtPause()
+    if (this.learnerWorksInActiveEditor()) return false
+    if (!this.debuggerGaveEditorKeyboard()) return true
+    return this.returnsKeyboardToChatAtPause()
   }
 
   /**
-   * Says whether the active text editor has the keyboard at the frame the editor shows, outside a recording: by the debugger's stop, or by the learner's own sign after a frame without a stop; asked by {@link replacesEditorFocusedByPause}.
-   * @returns `true` when {@link isStoppedOutsideRecording} holds, and when the learner gave a sign at a frame without a stop ({@link noteLearnersSignAtFrame}) while no recording is open.
-   * @example this.holdsKeyboardInEditorAtFrame() // => true after the learner clicked into the file of a frame selected in the Call Stack view
+   * Says whether the active text editor has the keyboard as far as the reader can know, outside a recording: by the debugger's stop, or by the learner's own sign; asked by {@link replacesEditorFocusedByPause}.
+   * @returns `true` when the debugger gave the frame's file the keyboard ({@link debuggerGaveEditorKeyboard}) or the learner gave a sign that still holds ({@link learnerWorksInActiveEditor}), while no recording is open.
+   * @example this.holdsKeyboardInActiveEditor() // => true after the learner clicked into the file of a frame selected in the Call Stack view
    */
-  private holdsKeyboardInEditorAtFrame(): boolean {
+  private holdsKeyboardInActiveEditor(): boolean {
     return (
-      this.isStoppedOutsideRecording() ||
-      (this.learnerChoseEditorAtFrame && !this.recordingActive)
+      !this.recordingActive &&
+      (this.debuggerGaveEditorKeyboard() || this.learnerWorksInActiveEditor())
     )
   }
 
@@ -5639,7 +5698,7 @@ export class StudyWorkspace {
           panel,
           // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
           keepsKeyboardAtPause: () => this.keepsKeyboardFromPaneAtPause(),
-          tookKeyboardAtPause: () => this.tellPaneTookPausedFocus(),
+          tookKeyboardAtPause: () => this.tellPaneTookKeyboard(),
           released: () => {
             // A retired runtime cannot close or replace the panel attached to a newer lease.
             if (this.leaseId !== leaseId) return
@@ -9307,7 +9366,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether showing the captured source in a group would hide the text editor that the editor's debugger focused at a live pause; called by {@link renderSelection} before it shows the source.
+   * Says whether showing the captured source in a group would hide a text editor that has the keyboard, as far as the reader can know: the one the editor's debugger focused at a pause, or one the learner gave a sign of working in ({@link holdsKeyboardInActiveEditor}); called by {@link renderSelection} before it shows the source.
    *
    * At a breakpoint the editor opens the paused file in the active group and gives it the keyboard focus (`debug.focusEditorOnBreak`,
    * on by default). When that group is the source group, the captured source takes that file's place, and showing it while preserving
@@ -9321,7 +9380,7 @@ export class StudyWorkspace {
    *
    * @param column - The group the captured source is shown in.
    * @param source - The captured source; a group that shows it already loses no editor.
-   * @returns `true` only while a debug session is paused beside a live run, the window is focused, and the group is the active group showing another text tab whose editor is the active text editor, with `debug.focusEditorOnBreak` not turned off.
+   * @returns `true` only while {@link holdsKeyboardInActiveEditor} holds (the frame of a stop is shown with `debug.focusEditorOnBreak` not turned off, or the learner gave a sign), the window is focused, and the group is the active group showing another text tab whose editor is the active text editor.
    * @example
    * ```ts
    * preserveFocus: preserveFocus && !this.replacesEditorFocusedByPause(targetColumn, document.uri)
@@ -9332,17 +9391,43 @@ export class StudyWorkspace {
     source: vscode.Uri,
   ): boolean {
     return (
-      this.holdsKeyboardInEditorAtFrame() &&
+      this.holdsKeyboardInActiveEditor() &&
       this.isFocusedGroupShowingOtherText(column, source) &&
-      this.hasEditorFocusedOnBreak(column)
+      vscode.window.activeTextEditor?.viewColumn === column
     )
   }
 
   /**
-   * Tells the learner, once in an editor session, that one of the reader's panes took the keyboard from the file the debugger opened at a pause; called by {@link settleKeyboardAtPause} when the captured source took it, and through the viewport's lease ({@link presentation}) when the Application pane did, each time because the reader knew of no chat to give it back to.
+   * Tells the learner that one of the reader's panes took the keyboard from a text editor, with the sentence that fits why that editor had it; called by {@link settleKeyboardAtPause} when the captured source took it, and through the viewport's lease ({@link presentation}) when the Application pane did.
+   * @example tookKeyboardAtPause: () => this.tellPaneTookKeyboard()
+   */
+  private tellPaneTookKeyboard(): void {
+    // The debugger gave the paused file the keyboard: the learner may have been typing somewhere else. Otherwise the learner worked in that file.
+    if (this.debuggerGaveEditorKeyboard()) this.tellPaneTookPausedFocus()
+    else this.tellPaneTookChosenEditor()
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that one of the reader's panes came to the front over the file the learner was working in and has the keyboard now; the half of {@link tellPaneTookKeyboard} for an editor the debugger did not give the keyboard.
+   * The pane took the keyboard because a hidden editor cannot keep it: it would be on no element. The learner did nothing to move it, so the sentence says where it is.
+   * @returns Once the notification is shown, or at once after the first time.
+   * @example this.tellPaneTookChosenEditor()
+   */
+  private tellPaneTookChosenEditor(): void {
+    if (keyboardNoticesTold.has('chosen')) return
+    keyboardNoticesTold.add('chosen')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+    )
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that one of the reader's panes took the keyboard from the file the debugger opened at a pause; the half of {@link tellPaneTookKeyboard} for a file the debugger gave the keyboard, when the reader knew of no chat to give it back to.
    * Where the chat is a side view (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar) the extension API reads the same whether the keyboard was in the paused file or in the chat input, so the keyboard cannot be given back to the chat without taking it from a learner who works in a file; the sentence says where it is and what to do.
    * @returns Once the notification is shown, or at once after the first time.
-   * @example if (tookKeyboard && !gaveBack) this.tellPaneTookPausedFocus()
+   * @example if (this.debuggerGaveEditorKeyboard()) this.tellPaneTookPausedFocus()
    */
   private tellPaneTookPausedFocus(): void {
     if (keyboardNoticesTold.has('pause')) return
@@ -9385,21 +9470,6 @@ export class StudyWorkspace {
       vscode.window.state.focused &&
       group.viewColumn === column &&
       this.isTextInputOtherThan(shown, source)
-    )
-  }
-
-  /**
-   * Says whether the editor's debugger focused the text editor of a group at the pause; the second half of {@link replacesEditorFocusedByPause}.
-   * @param column - The group the captured source is shown in.
-   * @returns `true` when the active text editor is in that group and `debug.focusEditorOnBreak` is not turned off.
-   * @example this.hasEditorFocusedOnBreak(targetColumn)
-   */
-  private hasEditorFocusedOnBreak(column: vscode.ViewColumn): boolean {
-    return (
-      vscode.window.activeTextEditor?.viewColumn === column &&
-      vscode.workspace
-        .getConfiguration('debug')
-        .get<boolean>('focusEditorOnBreak') !== false
     )
   }
 

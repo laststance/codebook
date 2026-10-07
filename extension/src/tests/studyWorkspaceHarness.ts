@@ -3798,6 +3798,18 @@ export async function workspaceHarness(
         })
     },
     /**
+     * Opens a file in front of a group without giving it the keyboard, as the Explorer does at one click, as an agent does for a file it edits, and as the editor's debugger does for the paused file while the learner's `debug.focusEditorOnBreak` is off: the tab is a preview tab, the editor reports it as the active text editor when the group is the active one, and the keyboard stays where it is.
+     * @param filename - The file.
+     * @param column - The view column of the group.
+     * @example
+     * harness.focusView()
+     * harness.openFileWithoutKeyboard('page.tsx', 1)
+     */
+    openFileWithoutKeyboard(filename: string, column: number): void {
+      openDraftTab(filename, column, true)
+      activeTextEditorChanged(focusedSourceEditor())
+    },
+    /**
      * Moves the selection of the text editor in front of the active group as a command does: the editor's own jump to a line (Go to Line, a frame of the same file selected again) or a selection an extension sets. The editor reports the change with the kind of a command, and the keyboard stays where it is.
      * @example
      * harness.selectStackFrame('login-form.tsx', 2)

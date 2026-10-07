@@ -269,6 +269,12 @@ export const LEARNER_SELECTION_KINDS: ReadonlySet<number | undefined> = new Set<
   number | undefined
 >([1, 2])
 /**
+ * How long a selection the learner made in the active text editor (a click, a key press) counts as a sign that the keyboard is in that editor, while no stack frame is shown: a session runs, or none exists. {@link StudyWorkspace} then lets a pane or the captured source that covers that editor take the keyboard, which a hidden editor cannot keep.
+ * Nothing the editor reports ends such a sign: a learner who goes on to a side-view chat, the terminal or a view is not reported. A learner who types produces a selection change with every key; one who left for the chat needs longer than this to click there, write a request and have a run reach its next reveal. The price on the other side: a learner who clicked into a file and has read it for longer than this without a key press is not known to be there.
+ * @example performance.now() - learnerWorkedInEditorAtMs <= LEARNER_SIGN_FRESH_MS // => true one second after the last key press
+ */
+export const LEARNER_SIGN_FRESH_MS = 3_000
+/**
  * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling may have left in the background (a frame of another session had the focus, the adapter asked to keep the focus, or the session went on first); {@link StudyWorkspace} takes a later frame as brought to the front without the keyboard.
  * The editor's handling of a stop takes the adapter's answers to a `threads` and a `stackTrace` request. Its pass of the focus to a session that is still stopped comes 800 ms after the session it showed went on, and it shows that session's frame for only 200 ms of them, so a stop read behind that frame is passed the focus at least 600 ms after it was read (VS Code 1.140 and Cursor 3.23).
  * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a server stop the editor shows 800 ms after the browser session went on
@@ -291,6 +297,12 @@ export const STUDY_CLOSE_KEYBOARD_MESSAGE =
  */
 export const SOURCE_TOOK_PAUSED_FOCUS_MESSAGE =
   'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.'
+/**
+ * What the reader tells the learner, once in an editor session, when one of its panes (the Application pane or the captured source) came to the front over a file the learner was working in and took the keyboard, without the debugger having given that file the keyboard: after a frame the learner selected in the Call Stack view, at a stop with `debug.focusEditorOnBreak` off, and while a session runs. A hidden editor cannot keep the keyboard, so the pane takes it and Codebook says where it is.
+ * @example void showPlainNotice(vscode.window, 'information', PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE)
+ */
+export const PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE =
+  'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

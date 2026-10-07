@@ -5,10 +5,12 @@ import { test } from 'node:test'
 
 import {
   API_VERSION,
+  LEARNER_SIGN_FRESH_MS,
   MAX_EXPLANATIONS,
   MAX_SESSIONS,
   MILLISECONDS_PER_SECOND,
   MS_PER_MINUTE,
+  PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
@@ -518,6 +520,26 @@ test('the packaged README quotes the notice of Close Study Workspace about the k
     SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
     'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
   )
+})
+
+// Value: protects=a learner who reads the notice of a Codebook pane that took the keyboard from a file they were working in finding in the README when Codebook shows it and what counts as working in a file; fails_when=the README loses the notice, quotes another sentence than the reader shows, or no longer says that only a click or key press of the last three seconds counts while the debugged program runs; why_new=Cycle 0046 row 293 (a third keyboard notice, for a file the debugger did not give the keyboard); seam=none
+test('the packaged README quotes the notice of a Codebook pane that took the keyboard from a file the learner was working in as the reader shows it, and says when a file counts as worked in', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'Codebook also takes the keyboard to be in a file when you click or press a key in it. A Codebook pane that then comes to the front over that file takes the keyboard, because a hidden file cannot keep it, and the first time in an editor session Codebook says where it is: `A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.`',
+    "That holds at a pause for a frame you selected in the Call Stack view and for a stop while the editor's `debug.focusEditorOnBreak` setting is off, where a file you go to and a frame's file you open with a double click count too, and while the debugged program runs, where only a click or a key press of the last three seconds counts.",
+  ])
+
+  // Assert: the README holds both sentences, the reader shows the sentence it quotes, and the three seconds are the reader's.
+  assert.deepEqual(delivered, [true, true])
+  assert.equal(
+    PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+    'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.',
+  )
+  assert.equal(LEARNER_SIGN_FRESH_MS, 3_000)
 })
 
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.

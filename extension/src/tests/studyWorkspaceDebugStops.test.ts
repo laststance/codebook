@@ -623,3 +623,179 @@ test('a pause whose stacks the adapter declares invalid gives the paused file th
     await harness.close()
   }
 })
+
+for (const learner of [
+  'clicks into the paused file',
+  'leaves the keyboard in the view',
+] as const)
+  // Value: protects=the keyboard of a learner who turned debug.focusEditorOnBreak off, at a stop of a live run: the debugger opens the paused file without the keyboard, so the Application pane that covers it leaves the keyboard where it is; once the learner clicked into that file the pane takes the keyboard, so it is on an element, and Codebook says where it is with the sentence for a file the learner worked in; fails_when=with the setting off nothing the learner does counts, so the pane covers the file the learner clicked into without taking the keyboard, which is then on no element; or the reader takes every stop for one that gave the file the keyboard, takes the keyboard from the view and tells that the debugger opened the file with it; why_new=Cycle 0046 row 293 (the setting was read by the viewport alone, which knows nothing of the learner's signs); seam=workspace harness with the controlled runtime, a live run's viewport, focusMutableDraft, focusView, openFileWithoutKeyboard, pauseDebugger with the setting off, workInActiveTextEditor, revealApplicationPaneOverPausedFile, the information messages
+  test(`at a stop with debug.focusEditorOnBreak off, a learner who ${learner} ${learner === 'clicks into the paused file' ? 'has the keyboard in that file: the Application pane that covers it takes the keyboard and Codebook says so' : 'keeps it there: the Application pane that covers the paused file comes without the keyboard and nothing is told'}`, async () => {
+    // Arrange: a live run; the Application pane's group is the active one, the learner works in a view, and the debugger opens the paused file there without the keyboard and reports the stop.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      harness.focusMutableDraft('learner-notes.ts', 1)
+      harness.focusView()
+      harness.openFileWithoutKeyboard('actions.ts', 1)
+      harness.pauseDebugger({ focusesEditorOnBreak: false })
+      const revealsBefore = harness.panelReveals().length
+
+      // Act: the learner clicks into the paused file, or does not; then the Application pane comes to the front over it.
+      if (learner === 'clicks into the paused file')
+        harness.workInActiveTextEditor('mouse')
+      await harness.revealApplicationPaneOverPausedFile()
+
+      // Assert
+      assert.deepEqual(
+        harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .map((reveal) => reveal.preserveFocus),
+        [learner !== 'clicks into the paused file'],
+      )
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        learner === 'clicks into the paused file'
+          ? [
+              'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.',
+            ]
+          : [],
+      )
+      assert.equal(
+        harness.keyboardInView(),
+        learner !== 'clicks into the paused file',
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner who clicks into a file in the Application pane's group while a live run's session runs: the pane that comes to the front over that file takes the keyboard, so it is on an element, and Codebook says where it is; fails_when=while no frame is shown the pane always comes preserving the focus, because the keyboard "cannot be told", so it covers the editor the learner just clicked into and the keyboard is on no element; why_new=Cycle 0046 row 293 (the learner's own selection tells it); seam=workspace harness with the controlled runtime, a live run's viewport, focusMutableDraft, pauseDebugger and resumeDebugger (the session's thread), workInActiveTextEditor, revealApplicationPaneOverPausedFile, the information messages
+test('a learner who clicks into a file while the session runs has the keyboard in that file: the Application pane that covers it takes the keyboard and Codebook says so', async () => {
+  // Arrange: a live run whose session stopped once and runs again; a file of the learner's is in front of the Application pane's group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.pauseDebugger()
+    harness.resumeDebugger()
+    harness.focusView()
+    const revealsBefore = harness.panelReveals().length
+
+    // Act: the learner clicks into the file, and the Application pane comes to the front over it.
+    harness.workInActiveTextEditor('mouse')
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the pane took the keyboard, and the sentence for a file the learner worked in was told.
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [false],
+    )
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.',
+      ],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+for (const since of [
+  'clicked into that file four seconds ago',
+  'had the file opened from the Explorer with one click',
+] as const)
+  // Value: protects=the keyboard of a learner who types in a side-view chat, the terminal or a view while a live run's session runs and the Application pane comes to the front over a file: the keyboard stays where it is and nothing is told; fails_when=a click into the file counts for the rest of the run, although nothing reports that the learner went on to the chat, or every text editor that becomes active counts, although the Explorer, Quick Open and an agent that opens the files it edits make one active without the keyboard, so the pane takes the keyboard from the chat input; why_new=Cycle 0046 row 293 (the bounds of its fix while a session runs: only the learner's own selection counts, and only for three seconds); seam=workspace harness with the controlled runtime, a live run's viewport, focusMutableDraft, pauseDebugger and resumeDebugger, workInActiveTextEditor, focusView, openFileWithoutKeyboard, the clock of performance.now held for the editor events, revealApplicationPaneOverPausedFile
+  test(`a learner who ${since} while the session runs is not taken to have the keyboard in it: the Application pane that covers the file leaves the keyboard in the view and nothing is told`, async (t) => {
+    // Arrange: a live run whose session stopped once and runs again; a file of the learner's is in front of the Application pane's group.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      harness.focusMutableDraft('actions.ts', 1)
+      harness.pauseDebugger()
+      harness.resumeDebugger()
+      const revealsBefore = harness.panelReveals().length
+
+      // Act: on a held clock the learner clicks into the file and then into a view, and four seconds pass; or the learner, in a view, opens another file from the Explorer with one click. Then the Application pane comes to the front over that group.
+      let clockMs = Math.floor(performance.now())
+      const clock = t.mock.method(performance, 'now', () => clockMs)
+      if (since === 'clicked into that file four seconds ago') {
+        harness.workInActiveTextEditor('mouse')
+        harness.focusView()
+        clockMs += 4_000
+      } else {
+        harness.focusView()
+        harness.openFileWithoutKeyboard('page.tsx', 1)
+      }
+      await harness.revealApplicationPaneOverPausedFile()
+      clock.mock.restore()
+
+      // Assert: the pane came without the keyboard, which is still in the view, and nothing was told.
+      assert.deepEqual(
+        harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .map((reveal) => reveal.preserveFocus),
+        [true],
+      )
+      assert.equal(harness.keyboardInView(), true)
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
