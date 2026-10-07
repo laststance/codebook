@@ -10,6 +10,7 @@ import {
   PRESENTATION_READING_VISITED,
   PRESENTATION_FOCUS_IDS,
   PRESENTATION_FOCUS_ACTIONS,
+  STUDY_PANE_RETURN_PRESS_WINDOW_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
@@ -152,6 +153,8 @@ export const STUDY_UI_OPTIONS = {
     remedy: `${REPLAY_COVERED_LABEL}. ${APPLICATION_COVERED_ANNOUNCEMENT}`,
     announcement: APPLICATION_COVERED_ANNOUNCEMENT,
   },
+  // How long after the window's focus event a press still counts as the press the learner returned to the pane with.
+  returnPressWindowMs: STUDY_PANE_RETURN_PRESS_WINDOW_MS,
   // Where the keyboard focus goes when a Show Variables button leaves while it holds the focus: Play, else the first of these that is shown and enabled.
   replayTransportFocus: [
     '#playback-toggle',
