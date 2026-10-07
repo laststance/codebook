@@ -589,3 +589,126 @@ test('while the reply is open the sleep between two looks is given a signal that
   // Assert
   assert.deepEqual(abortedByTheReplysEnd, [true])
 })
+
+// Value: protects=the reason of a refusal when the chat stopped because a file of the learner is in the way; fails_when=a probe for blocking files that fails at the look after the reply's end is taken for "nothing blocks", so the watch ends as reply-ended and the run says the chat finished without publishing, with no word of the file; why_new=Cycle 0046 row 232; seam=the probe, which throws once
+test('after the reply’s end a probe for blocking files that fails once is taken again, and the watch ends with the refusal’s files', async () => {
+  // Arrange: the reply has ended; the probe fails at the first look and names the learner's file at the second.
+  const replyEnded = new AbortController()
+  replyEnded.abort()
+  let probes = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => 'old@1',
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    findBlockingFiles: async () => {
+      probes += 1
+      if (probes === 1) throw new Error('ENOENT: the stage folder vanished')
+      return ['pages/notes.html']
+    },
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => 0,
+    sleep: async () => {},
+  })
+
+  // Assert
+  assert.deepEqual(result, { outcome: 'blocked', paths: ['pages/notes.html'] })
+  assert.equal(probes, 2)
+})
+
+// Value: protects=a publish whose site is being replaced at the moment the chat's reply ends; fails_when=a publish token that cannot be read at the look after the reply's end is taken for "nothing new", so the watch ends as reply-ended before the new site can be read; why_new=Cycle 0046 row 232; seam=the token reader, which answers nothing once
+test('after the reply’s end a publish token that cannot be read once is read again, and the watch ends with the publish', async () => {
+  // Arrange: the reply has ended; the site is mid-replacement at the first look and published at the second.
+  const replyEnded = new AbortController()
+  replyEnded.abort()
+  let reads = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => {
+      reads += 1
+      return reads === 1 ? undefined : 'new@2'
+    },
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => 0,
+    sleep: async () => {},
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(reads, 2)
+})
+
+// Value: protects=row 196 for a Wiki that has no publication record yet, whose token cannot be read from the start; fails_when=every unreadable token counts as a look that could not finish, so such a watch never ends at the reply's end and goes on to its bound; why_new=Cycle 0046 row 232; seam=none
+test('a watch that started without a readable publish token still ends at the reply’s end when the token stays unreadable', async () => {
+  // Arrange
+  const replyEnded = new AbortController()
+  replyEnded.abort()
+  let nowMs = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: undefined,
+    readToken: async () => undefined,
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 10_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+    },
+  })
+
+  // Assert: at the first look, before any sleep.
+  assert.deepEqual(result, { outcome: 'reply-ended' })
+  assert.equal(nowMs, 0)
+})
+
+// Value: protects=the end of a watch whose looks cannot finish; fails_when=a probe that fails at every look after the reply's end keeps the watch for good, past its bound; why_new=Cycle 0046 row 232; seam=the watch's clock, which its sleeps move
+test('after the reply’s end a probe that fails at every look ends the watch at its bound as timed out, not before and not later', async () => {
+  // Arrange
+  const replyEnded = new AbortController()
+  replyEnded.abort()
+  let nowMs = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => 'old@1',
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    findBlockingFiles: async () => {
+      throw new Error('ENOENT: the stage folder vanished')
+    },
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 10_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, { outcome: 'timed-out' })
+  assert.equal(nowMs, 10_000)
+})
