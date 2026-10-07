@@ -6,6 +6,7 @@ import * as vscode from 'vscode'
 import type { z } from 'zod'
 
 import {
+  LEARNER_SELECTION_KINDS,
   REPOSITORY_FIXED_READING_SECTIONS,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_SCHEME,
@@ -780,9 +781,7 @@ export class RepositoryReader {
         selectionEvent.textEditor.document.uri.toString() ===
           activeEditor.document.uri.toString() &&
         selectionEvent.textEditor.viewColumn === activeEditor.viewColumn &&
-        (selectionEvent.kind ===
-          vscode.TextEditorSelectionChangeKind.Keyboard ||
-          selectionEvent.kind === vscode.TextEditorSelectionChangeKind.Mouse)
+        LEARNER_SELECTION_KINDS.has(selectionEvent.kind)
       )
         changed = true
       if (initial === undefined && acquire) {

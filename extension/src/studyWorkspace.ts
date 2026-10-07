@@ -2921,7 +2921,6 @@ export class StudyWorkspace {
     change: vscode.TextEditorSelectionChangeEvent,
   ): boolean {
     return (
-      change.kind !== undefined &&
       LEARNER_SELECTION_KINDS.has(change.kind) &&
       change.textEditor === vscode.window.activeTextEditor
     )
