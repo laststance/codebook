@@ -5,6 +5,7 @@ import { basename, isAbsolute, relative } from 'node:path'
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import * as vscode from 'vscode'
 
+import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_MAX_DEPTH,
@@ -23,6 +24,7 @@ import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
 import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
@@ -60,7 +62,7 @@ export type NodeTestSourceStop = {
   debuggerSnapshot: ReplayDebugSnapshot
 }
 
-/** Owns a checked repository Vitest process and ordered native source pauses until explicit release. Called by the Node profile runtime after citation checks. @example const run = new OwnedNodeTestRun(workspace, config, node, record); await run.prepare(); while (run.hasNextStop()) await run.advance(); await run.complete(); await run.stop() */
+/** Owns a checked repository Vitest process and ordered native source pauses until explicit release. Called by the Node profile runtime after citation checks. @example const run = new OwnedNodeTestRun(workspace, config, node, record, descriptor.sources); await run.prepare(); while (run.hasNextStop()) await run.advance(); await run.complete(); await run.stop() */
 export class OwnedNodeTestRun {
   readonly id = randomUUID()
   private readonly abort = new AbortController()
@@ -91,6 +93,8 @@ export class OwnedNodeTestRun {
     private readonly configuration: NodeTestConfiguration,
     private readonly node: string,
     private readonly record: (type: string, detail?: unknown) => unknown,
+    /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run while the editor holds other text for one of them. A trial without an article gives none. */
+    private readonly citedSources: ConfiguredDescriptor['sources'],
   ) {
     this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
       createDebugAdapterTracker: (session) => {
@@ -173,7 +177,22 @@ export class OwnedNodeTestRun {
     return this.preparation
   }
 
+  /**
+   * Checks, launches and attaches the cited test up to its first declared stop; the work behind {@link prepare}, which releases everything when this rejects.
+   * @returns The first declared stop, captured at its native pause.
+   * @throws A `SOURCE_CHANGED` {@link StudyError} before Vitest is asked anything while the editor holds other text for a cited source than the article cites; otherwise the failure of the check, the launch, the attach or the wait that failed.
+   * @example
+   * ```ts
+   * this.preparation = this.prepareOwned() // => the stop at theme.ts:1:14 with its variables and facts
+   * ```
+   */
   private async prepareOwned(): Promise<NodeTestSourceStop> {
+    // The debugger is started without saving, so the editor would show unsaved lines at a pause while the test executes the saved file: refused first, before the listing, the terminal, the test and the debugger.
+    assertConfiguredSourceDocuments(
+      this.workspace,
+      this.citedSources,
+      vscode.workspace.textDocuments,
+    )
     const signal = AbortSignal.any([
       this.abort.signal,
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
@@ -237,6 +256,8 @@ export class OwnedNodeTestRun {
         sourceMaps: true,
         timeout: NODE_TEST_ATTACH_TIMEOUT_MS,
       },
+      // Without this the editor saves every modified editor of the learner as the session starts; a learner's document is saved by the learner alone.
+      { suppressSaveBeforeStart: true },
     )
     signal.throwIfAborted()
     if (!started)

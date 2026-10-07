@@ -53,17 +53,25 @@ test('unchanged native BOM and mixed-EOL source buffers pass identity guards whi
     }
   // Act / Assert
   assert.doesNotThrow(() =>
-    assertConfiguredSourceDocuments('/repository', definition, [document]),
+    assertConfiguredSourceDocuments(
+      '/repository',
+      definition.descriptor.sources,
+      [document],
+    ),
   )
   assert.throws(
     () =>
-      assertConfiguredSourceDocuments('/repository', definition, [
-        {
-          ...document,
-          getText: () =>
-            'const nextTheme = "light";\n// Retained second line.\n',
-        },
-      ]),
+      assertConfiguredSourceDocuments(
+        '/repository',
+        definition.descriptor.sources,
+        [
+          {
+            ...document,
+            getText: () =>
+              'const nextTheme = "light";\n// Retained second line.\n',
+          },
+        ],
+      ),
     { code: 'SOURCE_CHANGED' },
   )
   assert.equal(

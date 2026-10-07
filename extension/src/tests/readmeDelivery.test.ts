@@ -768,3 +768,18 @@ test('the packaged README has the section a refusal for a damaged installation n
     [true],
   )
 })
+
+// Value: protects=a learner or an agent who reads in the README why a start was refused with SOURCE_CHANGED and that Codebook does not save a document when it starts a debugger; fails_when=the recovery table loses the sentence, or says again only that the editor file differs; why_new=Cycle 0046 row 314: a chat request saved the learner's unsaved documents and failed its own run, and the README named neither the cause nor the way on; seam=none
+test('the packaged README says for SOURCE_CHANGED that a start saves no document and is refused while a cited source is open in the editor with other text, and what the learner and the agent do then', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    '| `SOURCE_CHANGED` ',
+    '| Read the captured source resource; the current editor file differs from it. A start is refused with it, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with other text than the article cites: Codebook starts its debuggers without saving a document, so the learner saves the file (the agent then reads the source and publishes the article again) or reverts it before a new run. ',
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true, true])
+})

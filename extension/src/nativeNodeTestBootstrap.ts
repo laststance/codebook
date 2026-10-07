@@ -37,6 +37,8 @@ export async function run(): Promise<void> {
     (type, detail) => {
       events.push(`${type} ${JSON.stringify(detail)}`)
     },
+    // This trial runs a test without an article, so there is no cited text to compare the editor's documents with.
+    [],
   )
   try {
     report.sourceStop = await run.prepare()

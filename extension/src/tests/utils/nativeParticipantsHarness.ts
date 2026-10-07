@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 
-import type { DebugSession } from 'vscode'
+import type { DebugSession, DebugSessionOptions } from 'vscode'
 
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
@@ -146,7 +146,9 @@ export async function nativeParticipantsHarness(
   const commands: { participant: Participant; method: string }[] = [],
     released: string[] = []
   const identities: Participant[] = [],
-    launches: DebugSession['configuration'][] = []
+    launches: DebugSession['configuration'][] = [],
+    // What the run asked of the editor beside each configuration of `launches`, in the same order: `undefined` for a start that named no options.
+    launchOptions: (DebugSessionOptions | undefined)[] = []
   let run: ConfiguredBrowserRun,
     sequence = 0,
     breakpointNumber = 0,
@@ -777,8 +779,10 @@ export async function nativeParticipantsHarness(
       async startDebugging(
         _folder: unknown,
         config: DebugSession['configuration'],
+        startOptions?: DebugSessionOptions,
       ) {
         launches.push(config)
+        launchOptions.push(startOptions)
         Object.assign(serverParent.configuration, config)
         run.addSession(serverParent)
         if (serverChild) run.addSession(serverChild)
@@ -964,6 +968,7 @@ export async function nativeParticipantsHarness(
     released,
     identities,
     launches,
+    launchOptions,
     breakpoints,
     sessions,
     proxies,

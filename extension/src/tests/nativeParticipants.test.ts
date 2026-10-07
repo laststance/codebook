@@ -4869,3 +4869,26 @@ test('the deadline text of a server stop requested after its declared line names
     "Repository input reached no verified pause: declared server stop src/mode.ts:1 (requested at 2:1, registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.",
   )
 })
+
+// Cycle 0046 (row 314): red while the run attached its server debugger without the option, so the editor saved every modified editor of the learner at that moment and a cited source that was written then ended the run with SOURCE_CHANGED before it was ready.
+test('a run with a server stop attaches its server debugger without making the editor save the learner’s unsaved documents', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  // Act
+  await harness.run.prepare()
+  await harness.run.stop()
+  // Assert: the one debug session the run asks the editor for itself is the server attach (the browser's launch belongs to the host browser).
+  assert.deepEqual(
+    harness.launches.map((launch) => ({
+      type: launch.type,
+      request: launch.request,
+    })),
+    [{ type: 'pwa-node', request: 'attach' }],
+  )
+  assert.deepEqual(
+    harness.launchOptions.map(
+      (startOptions) => startOptions?.suppressSaveBeforeStart,
+    ),
+    [true],
+  )
+})

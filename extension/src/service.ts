@@ -2616,6 +2616,7 @@ export class StudyService {
             })
             return historyWrite
           },
+          record.nodePrepared.descriptor.sources,
         )
         if (this.stopping || record.stopping) return
         const firstStop = await record.nodeRun.prepare()

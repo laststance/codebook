@@ -1,5 +1,6 @@
 import type {
   ConfiguredDefinition,
+  ConfiguredDescriptor,
   ConfiguredObservation,
   ConfiguredStudy,
 } from './configuredStudySchemas'
@@ -147,5 +148,7 @@ export interface StudyEnvironment {
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
     record: (type: string, detail?: unknown) => unknown,
+    /** The article's text of every source the selected node cites: the run refuses its start while the editor holds other text for one of them. */
+    citedSources: ConfiguredDescriptor['sources'],
   ): Promise<NodeTestRuntime>
 }
