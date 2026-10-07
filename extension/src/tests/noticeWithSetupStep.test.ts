@@ -8,7 +8,7 @@ test('a reconnect refusal that already names the setup step is shown once, witho
   const notice = noticeWithSetupStep(
     'Codebook AI chat did not reconnect',
     new Error(
-      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      'Cursor skill is missing or was changed: /home/user/.cursor/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
     ),
     'Run Codebook: Set Up AI Chat.',
   )
@@ -16,7 +16,7 @@ test('a reconnect refusal that already names the setup step is shown once, witho
   // Assert
   assert.equal(
     notice,
-    'Codebook AI chat did not reconnect: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+    'Codebook AI chat did not reconnect: Cursor skill is missing or was changed: /home/user/.cursor/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
   )
 })
 
@@ -72,7 +72,7 @@ test('a failed Cursor registration whose reason already names the setup step is 
   const notice = noticeWithSetupStep(
     'Codebook agent server started, but Cursor MCP registration failed',
     new Error(
-      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      'Cursor skill is missing or was changed: /home/user/.cursor/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
     ),
     'Run Codebook: Set Up AI Chat to repair the connection.',
   )
@@ -80,7 +80,7 @@ test('a failed Cursor registration whose reason already names the setup step is 
   // Assert
   assert.equal(
     notice,
-    'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+    'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed: /home/user/.cursor/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
   )
 })
 

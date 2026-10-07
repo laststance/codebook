@@ -2278,6 +2278,135 @@ test('a Cursor that exposes no MCP registration is answered with what works, to 
   }
 })
 
+// Value: protects=a learner whose agent server is stopped (by another command of the window) while Set Up AI Chat connects Cursor; fails_when=the setup ends with "Codebook server did not start.", which is not what happened and names no step, where the same state a line earlier reads "Codebook server is not running. Run Codebook: Set Up AI Chat again."; or the setup run again does not finish; why_new=Cycle 0046, the pass over every sentence of the Cursor setup after rows 277 to 309; seam=the refresh of the Cursor MCP catalog of the loaded extension, during whose first call the server is stopped
+test('a Set Up AI Chat in Cursor whose server is stopped while it connects says that the server is not running and names the setup as the command to run again, and that setup finishes', async () => {
+  // Arrange: a Cursor window without a saved setup; the first refresh of the Cursor MCP catalog stops the agent server.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-setup-stopped-')),
+  )
+  const commands = new Map<string, () => Promise<unknown>>(),
+    informations: string[] = []
+  let isServerStoppedOnce = false
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<unknown>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          getConfiguration: () => ({
+            get: (_setting: string, fallback: string) => fallback,
+          }),
+        },
+        window: {
+          showInformationMessage(message: string) {
+            informations.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => ({
+          listening: true,
+          resourcesReleased: true,
+          descriptor: {
+            url: 'http://127.0.0.1/instance-1/mcp',
+            token: 'token-instance-1',
+            instanceId: 'instance-1',
+            workspace: directory,
+            apiVersion: '1.5',
+          },
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        deployCursorSkill: async () => ({ status: 'current' }),
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+      },
+      './utils/refreshCursorMcpCatalog': {
+        refreshCursorMcpCatalog: async () => {
+          if (!isServerStoppedOnce) {
+            isServerStoppedOnce = true
+            await commands.get('codebook.stopAgentServer')!()
+          }
+          return 'generation-1'
+        },
+      },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/usr/local/bin/node',
+      },
+    },
+  )
+  const setUp = (): Promise<string> =>
+    commands.get('codebook.setupAiChat')!().then(
+      () => 'finished',
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    )
+  try {
+    // Act: the setup during which the server is stopped, and then its sentence to the letter.
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: { get: () => undefined, update: async () => {} },
+    })
+    const setup = await setUp()
+    const setupRunAgain = await setUp()
+
+    // Assert
+    assert.deepEqual(
+      { setup, setupRunAgain, informations },
+      {
+        setup:
+          'Codebook server is not running. Run Codebook: Set Up AI Chat again.',
+        setupRunAgain: 'finished',
+        informations: [
+          'Codebook skill and workspace setup saved. Check Cursor Customize > MCPs for Codebook before using /codebook; if absent, close and reopen this work window.',
+        ],
+      },
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('Update LLM Wiki without a Wiki, in an output folder named like a command link, shows no clickable link', async () => {
   // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax and the folder holds no manifest.
   const projectRoot = await realpath(
@@ -3208,7 +3337,7 @@ test('a reconnect that finds the Cursor skill edited says once what happened and
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook AI chat did not reconnect: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      `Codebook AI chat did not reconnect: Cursor skill is missing or was changed: ${join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
     ])
   } finally {
     await boundary.deactivate()
@@ -3412,7 +3541,7 @@ test('a Cursor chat registration that finds the skill edited says once what happ
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      `Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed: ${join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
     ])
   } finally {
     await boundary.deactivate()

@@ -20,10 +20,17 @@ import {
   PRIVATE_FILE_MODE,
 } from '../constants'
 
-import { areNamesOfOneFile } from './areNamesOfOneFile'
 import { atomicPrivateWrite } from './atomicPrivateWrite'
 import { describeRefusedLinkBack } from './describeRefusedLinkBack'
-import { dropSecondNameOfMovedFile } from './dropSecondNameOfMovedFile'
+import { describeUnopenedMovedFile } from './describeUnopenedMovedFile'
+import {
+  dropSecondNameOfMovedFile,
+  type MovedFileUndoing,
+} from './dropSecondNameOfMovedFile'
+import {
+  dropSecondNameOfOneFile,
+  type SecondNameDrop,
+} from './dropSecondNameOfOneFile'
 import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
@@ -735,11 +742,43 @@ async function recoverCreation(
       owner,
       CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
     )
-  // A config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
-  if (staged || (await areNamesOfOneFile(targetPath, record.stagedPath)))
-    await unlink(record.stagedPath)
+  // Codebook's own unpublished file goes; a config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
+  if (staged) await unlink(record.stagedPath)
+  else
+    refuseUnopenedConfig(
+      await dropSecondNameOfOneFile(targetPath, record.stagedPath),
+      targetPath,
+      record.stagedPath,
+      commandToRunAgain,
+    )
   // A changed target remains user-owned; only the exact staged inode is discarded.
   await unlink(pendingPath)
+}
+
+/**
+ * Refuses when Codebook could not open the config to tell whether a name it had given the file is a second name of it, for {@link recoverCreation} (the staged name of a published config) and {@link leaveChangedConfigInPlace} (the retired name of a config a removal moved): nothing is known of the two names then, so both stay with the caller's record, and the same command settles them once the file opens.
+ * @param answer - What became of the second name ({@link dropSecondNameOfOneFile}, {@link dropSecondNameOfMovedFile}).
+ * @param targetPath - The config's path.
+ * @param secondPath - The name Codebook had given the file.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
+ * @throws For `unopened`, with the sentence that says to free the file ({@link describeUnopenedMovedFile}).
+ * @example refuseUnopenedConfig('unopened', targetPath, retiredPath, 'Codebook: Remove Managed Cursor Skill') // throws
+ */
+function refuseUnopenedConfig(
+  answer: MovedFileUndoing | SecondNameDrop,
+  targetPath: string,
+  secondPath: string,
+  commandToRunAgain: string,
+): void {
+  if (answer === 'unopened')
+    throw new Error(
+      describeUnopenedMovedFile(
+        'The Cursor MCP config',
+        targetPath,
+        secondPath,
+        commandToRunAgain,
+      ),
+    )
 }
 
 /**
@@ -748,7 +787,7 @@ async function recoverCreation(
  * @param retiredPath - The name in Codebook's storage that the removal moved the config to.
  * @param pendingPath - The removal's recovery record, which the caller removes afterwards.
  * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
- * @throws When the config's path holds another file than the one that was moved away: both files and the record stay, and the sentence names the kept file and what the learner does next. Also when the file system refuses to put the config back ({@link describeRefusedLinkBack}): the config stays under its retired name with the record.
+ * @throws When the config's path holds another file than the one that was moved away: both files and the record stay, and the sentence names the kept file and what the learner does next. Also when the file system refuses to put the config back ({@link describeRefusedLinkBack}): the config stays under its retired name with the record. And when the config could not be opened ({@link refuseUnopenedConfig}): both names and the record stay.
  * @example await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath, 'Codebook: Remove Managed Cursor Skill')
  */
 async function leaveChangedConfigInPlace(
@@ -765,15 +804,15 @@ async function leaveChangedConfigInPlace(
       retiredPath,
       commandToRunAgain,
     )
-  if (
-    (await dropSecondNameOfMovedFile(
-      targetPath,
-      retiredPath,
-      describeRefusal,
-    )) === 'kept'
+  const undoing = await dropSecondNameOfMovedFile(
+    targetPath,
+    retiredPath,
+    describeRefusal,
   )
+  refuseUnopenedConfig(undoing, targetPath, retiredPath, commandToRunAgain)
+  if (undoing === 'kept')
     throw new Error(
-      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath, commandToRunAgain)}`,
+      `Cursor MCP catalog changed during interrupted cleanup: ${targetPath}. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath, commandToRunAgain)}`,
     )
 }
 
@@ -951,7 +990,7 @@ export async function refreshCursorMcpCatalog(
         if (!handle) {
           if (!(await ownedFile(targetPath, owner)))
             throw new Error(
-              'Cursor MCP config changed during publication; Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.',
+              `Cursor MCP config changed during publication: ${targetPath}. Codebook preserved it and its recovery record. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
             )
           await atomicPrivateWrite(
             receiptPath,
