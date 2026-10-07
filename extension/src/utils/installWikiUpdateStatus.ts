@@ -44,6 +44,8 @@ export type WikiUpdatePageSettings = {
   recoveryRequest: string
   /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, handed to the embedded sentence writer like the recovery request, so the running line says what the editor says. */
   outsideOutputApprovalsNote: string
+  /** What a learner does after they refused a step of VS Code's chat, handed to the embedded sentence writer like the note above, so the running line gives the advice of the editor's notification. */
+  refusedStepAdvice: string
   /** How long after the window's `load` event the line that says the overview stands in for a missing page gets its sentence (ms); the line is in the page, empty, before that. */
   missingPageTextDelayMs: number
   /** How many characters of the missing page's path that line shows at most; a longer value of the address gets the sentence without the path. */
@@ -77,6 +79,7 @@ export type WikiUpdatePageSettings = {
  *   msPerMinute: 60_000,
  *   recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project',
  *   outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+ *   refusedStepAdvice: 'If you refuse a step of the chat, press Cancel',
  *   missingPageTextDelayMs: 150,
  *   missingPagePathLimitChars: 200,
  * })
@@ -536,6 +539,7 @@ export function installWikiUpdateStatus(
       msPerMinute: settings.msPerMinute,
       recoveryRequest: settings.recoveryRequest,
       outsideOutputApprovalsNote: settings.outsideOutputApprovalsNote,
+      refusedStepAdvice: settings.refusedStepAdvice,
       // The page shows the freshness label above the update line.
       freshnessLabelPlace: 'above',
       // The host names both publications, so the browser's clock decides nothing.

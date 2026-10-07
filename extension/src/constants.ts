@@ -595,6 +595,9 @@ export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
 /** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. */
 export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
   'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
+/** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Cancel. The watch's notification ends with it ({@link describeWikiChatWatch}) and, handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it, so the editor and the page give the same advice. */
+export const WIKI_REFUSED_STEP_ADVICE =
+  'If you refuse a step of the chat, press Cancel'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request. */
 export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */

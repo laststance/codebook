@@ -20,6 +20,7 @@ import {
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
+  WIKI_REFUSED_STEP_ADVICE,
   WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
   WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
@@ -86,7 +87,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)}, outsideOutputApprovalsNote: ${JSON.stringify(WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE)}, missingPageTextDelayMs: ${WIKI_MISSING_PAGE_TEXT_DELAY_MS}, missingPagePathLimitChars: ${WIKI_MISSING_PAGE_PATH_LIMIT_CHARS} });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)}, outsideOutputApprovalsNote: ${JSON.stringify(WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE)}, refusedStepAdvice: ${JSON.stringify(WIKI_REFUSED_STEP_ADVICE)}, missingPageTextDelayMs: ${WIKI_MISSING_PAGE_TEXT_DELAY_MS}, missingPagePathLimitChars: ${WIKI_MISSING_PAGE_PATH_LIMIT_CHARS} });
   // The shell's form by its element and its id together: a page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article, which stands before the form.
   var form = document.querySelector('form#qa-form, [data-codebook-question]');
   if (!form) return;

@@ -28,6 +28,8 @@ export type WikiUpdateWording = {
   recoveryRequest: string
   /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, as the editor's confirmation and progress title say it ({@link WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}); the function is embedded into the page and cannot import the constant. */
   outsideOutputApprovalsNote: string
+  /** What a learner does after they refused a step of VS Code's chat, as the watch's notification says it ({@link WIKI_REFUSED_STEP_ADVICE}), without its full stop; the running line of a VS Code update goes on from it with where Cancel is and what happens otherwise. The function is embedded into the page and cannot import the constant. */
+  refusedStepAdvice: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
   /** Whether the reading page was served from another publication than the one on disk now; omitted by the editor, which never offers a reload. */
@@ -57,7 +59,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.', freshnessLabelPlace: 'above' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.', refusedStepAdvice: 'If you refuse a step of the chat, press Cancel', freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -131,7 +133,7 @@ export function describeWikiUpdate(
    * @param running - The running state.
    * @param since - When the request was sent, as the learner's local time.
    * @param bound - The watch's bound in whole minutes, for example "15 minutes".
-   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step.
+   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step; the line ends with what to do after a refused step, in the words of the editor's notification.
    * @example describeRunningInVsCode(running, '21:00', '15 minutes').lead // => 'Updating LLM Wiki…'
    */
   const describeRunningInVsCode = (
@@ -153,7 +155,13 @@ export function describeWikiUpdate(
         // The chat asks for each step outside the workspace; the learner should know why and how to avoid it.
         (running.isOutputOutsideProject
           ? ' ' + wording.outsideOutputApprovalsNote
-          : ''),
+          : '') +
+        // Once the chat asked for an approval Codebook does not see it stop: a learner who refused a step and stays on this page would wait out the bound.
+        ' ' +
+        wording.refusedStepAdvice +
+        ' in the editor’s notification; otherwise Codebook keeps watching for the whole ' +
+        bound +
+        '.',
     )
   /**
    * Words a run that is still under way, by its host; called by {@link describeWikiUpdate} for the state `running`.
