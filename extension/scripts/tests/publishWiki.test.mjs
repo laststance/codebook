@@ -2568,12 +2568,12 @@ for (const [place, content, sentence] of [
   [
     'a comment that shows a script',
     '<h2 id="flow">Source flow</h2><!-- <script>track()</script> -->',
-    'Wiki page index.html must contain article sections, not a document, form or script.',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <script>.',
   ],
   [
     'an attribute value that shows a form',
     '<h2 id="flow">Source flow</h2><p title="put it into a <form> element">Where the question goes.</p>',
-    'Wiki page index.html must contain article sections, not a document, form or script.',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <form>.',
   ],
   [
     'a comment that shows authored SVG',
@@ -2634,11 +2634,11 @@ test('a page with custom elements whose names start with the name of an element 
 for (const [element, sentence] of [
   [
     '<main>',
-    'Wiki page index.html must contain article sections, not a document, form or script.',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <main>.',
   ],
   [
     '<link/>',
-    'Wiki page index.html must contain article sections, not a document, form or script.',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <link>.',
   ],
   [
     '<svg\nwidth="10">',
@@ -2666,6 +2666,43 @@ for (const [element, sentence] of [
       await rm(root, { recursive: true, force: true })
     }
   })
+
+// Value: protects=the agent's way from the refusal to the place in a long page; fails_when=the refusal for an element a page must not hold no longer names the element it found, so the agent has to search the page for two dozen names, or names another than the first one, or copies the page's capitals or the slash of an end tag into the name; why_new=Cycle 0046 row 205 (the sentence named the page alone); seam=none
+test('the refusal for an element a page must not hold names the first one it found, in small letters and without the slash of an end tag', async () => {
+  // Arrange: a page whose first such tag is the end tag of a form in capitals inside a comment, with a template after it; and a page that holds a meta element.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-names-element-')),
+  )
+  try {
+    const endTagInCapitals = await readerInput(root)
+    endTagInCapitals.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><!-- </FORM> --><template></template>'
+    const metaElement = await readerInput(root)
+    metaElement.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><meta charset="utf-8">'
+
+    // Act
+    const refusals = []
+    for (const manifest of [endTagInCapitals, metaElement])
+      refusals.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+
+    // Assert
+    assert.deepEqual(refusals, [
+      'Wiki page index.html must contain article sections, not a document, form or script: it holds <form>.',
+      'Wiki page index.html must contain article sections, not a document, form or script: it holds <meta>.',
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 // Value: protects=a page that writes about such elements in an escaped code example, as the bundled skill asks for source code; fails_when=the raw-text check takes escaped text for a tag, so an article about a form or a script can no longer be published; why_new=Cycle 0046 row 192; seam=none
 test('a page that shows a form, a script and authored SVG as escaped text is published with the text as authored', async () => {
@@ -2761,16 +2798,16 @@ test('after a bare attribute value that holds <!-- an element that carries a gen
 })
 
 // Value: protects=a published page, whose tags and ids the publisher and a browser must read alike, and the reader's own form, rail and script after the article; fails_when=a page with an element whose content a browser reads as text (or keeps out of the document, as a template's) is published: the publisher reads tags in that content that are none, and one such element that is never closed takes everything after it; why_new=Cycle 0046 row 193; seam=none
-for (const element of [
-  '<textarea>Notes</textarea>',
-  '<xmp><b>shown as text</b></xmp>',
-  '<noembed>No plug-in</noembed>',
-  '<noframes>No frames</noframes>',
-  '<plaintext>',
-  '<noscript><p>No script</p></noscript>',
-  '<template><h3 id="hidden">Not in the page</h3></template>',
+for (const [name, element] of [
+  ['textarea', '<textarea>Notes</textarea>'],
+  ['xmp', '<xmp><b>shown as text</b></xmp>'],
+  ['noembed', '<noembed>No plug-in</noembed>'],
+  ['noframes', '<noframes>No frames</noframes>'],
+  ['plaintext', '<plaintext>'],
+  ['noscript', '<noscript><p>No script</p></noscript>'],
+  ['template', '<template><h3 id="hidden">Not in the page</h3></template>'],
 ])
-  test(`a page that holds ${element.slice(0, element.indexOf('>') + 1)} is refused like a page that holds a form or a script`, async () => {
+  test(`a page that holds <${name}> is refused like a page that holds a form or a script`, async () => {
     // Arrange
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-reader-text-element-')),
@@ -2786,8 +2823,7 @@ for (const element of [
           outputDirectory: join(root, '.codebook/wiki'),
         }),
         {
-          message:
-            'Wiki page index.html must contain article sections, not a document, form or script.',
+          message: `Wiki page index.html must contain article sections, not a document, form or script: it holds <${name}>.`,
         },
       )
     } finally {
