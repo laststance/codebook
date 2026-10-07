@@ -532,8 +532,7 @@ test('an interrupted setup whose published skill the learner edited keeps that e
       ),
     },
     {
-      setup:
-        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      setup: `The managed Cursor skill was replaced after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`,
       skill: 'Learner changed the interrupted skill',
       recordsLeft: [],
     },
@@ -1188,8 +1187,8 @@ test('a replaced or edited Cursor skill is refused at reconnect as missing or ch
         : reconnect.status,
     ),
     [
-      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
-      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      `Cursor skill is missing or was changed: ${edited.targetPath}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
+      `Cursor skill is missing or was changed: ${replaced.targetPath}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
     ],
   )
 })
@@ -1312,10 +1311,8 @@ test('a Cursor skill replaced by a file with the same bytes, whose file id diffe
     {
       idsDiffer: true,
       idsAsNumbers: [210_824_757_556_437_120, 210_824_757_556_437_120],
-      update:
-        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
-      reconnect:
-        'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      update: `The managed Cursor skill was replaced after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`,
+      reconnect: `Cursor skill is missing or was changed: ${paths.targetPath}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
       copy: INITIAL_SKILL,
     },
   )
@@ -2157,17 +2154,14 @@ test('a Cursor skill that is edited between setup’s last check and its move is
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The Cursor skill was edited during setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
       },
-      nextSetup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
-      nextRemoval:
-        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      nextSetup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
+      nextRemoval: `The Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       skillAfterTheRefusals: EDITED_SKILL,
       setupAfterTheEditWasUndone: 'updated',
       skill: NEXT_SKILL,
@@ -2206,15 +2200,13 @@ test('the record, the staged file and the second name that a refused setup of an
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
       },
-      removal:
-        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      removal: `The Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       skill: EDITED_SKILL,
     },
   )
@@ -2246,8 +2238,7 @@ test('an edited Cursor skill that a setup moved away and never put back is put b
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       skill: EDITED_SKILL,
     },
@@ -2286,14 +2277,13 @@ test('an edited Cursor skill that a setup moved away, with another file at the s
   assert.deepEqual(
     { setup, filesWhileTheRecordIsKept, setupAfterTheRecordWasDeleted },
     {
-      setup: `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+      setup: `Cursor skill changed during an interrupted setup: ${paths.targetPath}. Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
       filesWhileTheRecordIsKept: {
         skill: 'A newer file of the learner.\n',
         movedAway: EDITED_SKILL,
         records: ['pending.json'],
       },
-      setupAfterTheRecordWasDeleted:
-        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      setupAfterTheRecordWasDeleted: `The managed Cursor skill was replaced after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`,
     },
   )
 })
@@ -2342,8 +2332,7 @@ test('a Cursor skill that is edited right after a first setup published it is ke
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        "The published Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
+      setup: `The published Cursor skill changed during setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.`,
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -2392,17 +2381,14 @@ test('a Cursor skill that is edited between the removal’s check and its move i
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      removal:
-        'The Cursor skill changed during removal; Codebook did not remove it and left it in place. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      removal: `The Cursor skill changed during removal: ${paths.targetPath}. Codebook did not remove it and left it in place. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       filesAfterTheRemoval: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
       },
-      nextRemoval:
-        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
-      nextSetup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      nextRemoval: `The Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
+      nextSetup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       skill: EDITED_SKILL,
     },
   )
@@ -2439,15 +2425,13 @@ test('the record and the second name that a refused removal of an edited Cursor 
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
       },
-      removal:
-        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      removal: `The Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       skill: EDITED_SKILL,
     },
   )
@@ -2512,7 +2496,7 @@ test('each refusal that keeps a removal’s record of the Cursor skill names the
     },
     {
       refusals: {
-        twoFiles: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${first.displacedPath}). To start over, delete ${first.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+        twoFiles: `Cursor skill changed during interrupted removal: ${twoFiles.targetPath}. Codebook preserved it and the displaced file (${first.displacedPath}). To start over, delete ${first.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
         foreignFile: `The displaced Cursor skill changed during removal; Codebook preserved it as ${second.displacedPath}, with its recovery record. To start over, delete ${second.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
         goneSkill: `Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record. To start over, delete ${third.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
         retainedNameTaken: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection: ${fourth.displacedPath} and ${join(retainedNameTaken.storageRoot, 'cursor-skill', 'retired-00000000-0000-0000-0000-000000000189.SKILL.md')}. To start over, delete ${fourth.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
@@ -2668,15 +2652,13 @@ test('a Cursor skill that is edited while setup stages its update, before anythi
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The Cursor skill was edited during setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
       },
-      nextSetup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      nextSetup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       skillAfterTheRefusals: EDITED_SKILL,
       setupAfterTheFileWasDeleted: 'restored',
       skill: NEXT_SKILL,
@@ -2747,13 +2729,11 @@ test('a file that took the place of the installed Cursor skill is left alone by 
       ),
     },
     {
-      setup:
-        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      setup: `The managed Cursor skill was replaced after setup: ${forSetup.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`,
       fileAfterTheRefusedSetup: 'A file of the learner.\n',
       setupAfterTheFileWasDeleted: 'restored',
       skillAfterThatSetup: INITIAL_SKILL,
-      removal:
-        'The Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      removal: `The Cursor skill was replaced after setup: ${forRemoval.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       fileAfterTheRefusedRemoval: 'A file of the learner.\n',
       removalAfterTheFileWasRenamed: 'removed',
       skillFolderAfterThatRemoval: ['mine.md'],
@@ -2802,8 +2782,7 @@ test('an edited Cursor skill is left alone by removal, which says what to do: af
       laterSetup,
     },
     {
-      removal:
-        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      removal: `The Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       fileAfterTheRefusedRemoval: 'An edit made by the learner.\n',
       removalAfterTheFileWasDeleted: 'removed',
       skillFolderAfterThatRemoval: [],
@@ -3300,8 +3279,7 @@ test('a file that takes the Cursor skill’s path in the instant before a first 
   assert.deepEqual(
     { setup, files, fileAtTheSkillPath, setupAfterTheFileWasDeleted },
     {
-      setup:
-        "The Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
+      setup: `The Cursor skill changed during setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.`,
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       fileAtTheSkillPath: 'A file of the learner.\n',
       setupAfterTheFileWasDeleted: 'installed',
@@ -3396,7 +3374,7 @@ test('a removal whose skill file was edited before its move, and whose path anot
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      refusal: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${join(skillFolder, displacedName)}). To start over, delete ${join(paths.storageRoot, 'cursor-skill', 'removal.json')}, then run Codebook: Remove Managed Cursor Skill again.`,
+      refusal: `Cursor skill changed during interrupted removal: ${paths.targetPath}. Codebook preserved it and the displaced file (${join(skillFolder, displacedName)}). To start over, delete ${join(paths.storageRoot, 'cursor-skill', 'removal.json')}, then run Codebook: Remove Managed Cursor Skill again.`,
       displaced: EDITED_SKILL,
       skill: 'A newer file of the learner.\n',
     },
@@ -3536,20 +3514,16 @@ test('a file that is created at the skill’s path right after the skill was del
     },
     {
       setups: {
-        renames:
-          'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
-        undoes:
-          'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        renames: `The Cursor skill was edited during setup: ${homeThatRenames.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
+        undoes: `The Cursor skill was edited during setup: ${homeThatUndoes.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       },
       filesAfterTheSetups: {
         renames: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
         undoes: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       },
       nextSetups: {
-        renames:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
-        undoes:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        renames: `The managed Cursor skill was edited after setup: ${homeThatRenames.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
+        undoes: `The managed Cursor skill was edited after setup: ${homeThatUndoes.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       },
       setupsAfterTheStep: { renames: 'restored', undoes: 'updated' },
       skills: { renames: NEXT_SKILL, undoes: NEXT_SKILL },
@@ -3648,8 +3622,7 @@ test('an installed Cursor skill that another file replaces, or that is taken awa
       setupRunAgain,
     },
     {
-      setupOfTheReplaced:
-        "The Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
+      setupOfTheReplaced: `The Cursor skill changed during setup: ${replaced.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.`,
       filesOfTheReplaced: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -3657,8 +3630,7 @@ test('an installed Cursor skill that another file replaces, or that is taken awa
       },
       fileOfTheLearner: 'A file of the learner.\n',
       setupAfterTheFileWasMovedOut: 'restored',
-      setupOfTheRemoved:
-        'The Cursor skill was removed while setup ran; Codebook changed no file. Run Codebook: Set Up AI Chat again to install it.',
+      setupOfTheRemoved: `The Cursor skill was removed while setup ran: ${removed.targetPath}. Codebook changed no file. Run Codebook: Set Up AI Chat again to install it.`,
       filesOfTheRemoved: { skillFolder: [], temporaryNames: [], records: [] },
       setupRunAgain: 'restored',
     },
@@ -3710,8 +3682,7 @@ test('a Cursor skill that is edited right after an update published it is kept: 
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        "The published Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
+      setup: `The published Cursor skill changed during setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.`,
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -3762,8 +3733,7 @@ test('a Cursor skill that is edited while setup keeps a copy of the installed sk
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The Cursor skill was edited during setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       skill: EDITED_SKILL,
     },
@@ -3890,8 +3860,7 @@ test('a file that takes the Cursor skill’s path right before a setup puts the 
       ),
     },
     {
-      setup:
-        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      setup: `The managed Cursor skill was replaced after setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`,
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       fileAtTheSkillPath: 'A file of the learner.\n',
       retainedPreviousSkill: INITIAL_SKILL,
@@ -3993,8 +3962,7 @@ test('a Cursor skill that is edited right before a setup or a removal moves it, 
     {
       firstSetup: refusalOfTheSetup,
       secondSetup: refusalOfTheSetup,
-      setupAfterTheMoveBack:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setupAfterTheMoveBack: `The managed Cursor skill was edited after setup: ${forSetup.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       filesOfTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -4003,8 +3971,7 @@ test('a Cursor skill that is edited right before a setup or a removal moves it, 
       skillOfTheSetup: EDITED_SKILL,
       firstRemoval: refusalOfTheRemoval,
       secondRemoval: refusalOfTheRemoval,
-      removalAfterTheMoveBack:
-        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      removalAfterTheMoveBack: `The Cursor skill was edited after setup: ${forRemoval.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
       filesOfTheRemoval: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -4050,8 +4017,7 @@ test('a setup removes the staged files of earlier setups that no record names wh
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      setup:
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      setup: `The managed Cursor skill was edited after setup: ${paths.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       files: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [
@@ -4168,9 +4134,9 @@ test('a setup that keeps its record because another file took the skill’s path
       ),
     },
     {
-      setup: `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedOfTheSetup}. To start over, delete ${join(duringSetup.storageRoot, 'cursor-skill', 'pending.json')}, then run Codebook: Set Up AI Chat again.`,
+      setup: `Cursor skill changed during an interrupted setup: ${duringSetup.targetPath}. Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedOfTheSetup}. To start over, delete ${join(duringSetup.storageRoot, 'cursor-skill', 'pending.json')}, then run Codebook: Set Up AI Chat again.`,
       stagedFilesOfTheSetup: [],
-      recovery: `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${record.displacedPath}. To start over, delete ${record.pendingPath}, then run Codebook: Set Up AI Chat again.`,
+      recovery: `Cursor skill changed during an interrupted setup: ${duringRecovery.targetPath}. Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${record.displacedPath}. To start over, delete ${record.pendingPath}, then run Codebook: Set Up AI Chat again.`,
       stagedFilesOfTheRecovery: [],
       editedSkillOfTheRecovery: EDITED_SKILL,
     },
@@ -4229,8 +4195,7 @@ test('setup says what to do about a skill file that is back after a removal, and
       setupAfterTheCopyWasDeleted,
     },
     {
-      setupOfTheMovedBack:
-        "A codebook skill appeared after managed removal; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      setupOfTheMovedBack: `A codebook skill appeared after managed removal: ${movedBack.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.`,
       setupAfterTheFileWasDeleted: 'restored',
       setupOfTheDamagedCopy: `The copy of the installed Cursor skill that Codebook keeps as ${copyPath} differs from its receipt; no skill file was changed. Delete that copy, then run Codebook: Set Up AI Chat again.`,
       skillAfterTheRefusal: INITIAL_SKILL,
@@ -5437,12 +5402,9 @@ test('an edited Cursor skill is left alone by setup, which says how to go on and
     },
     {
       refusals: {
-        undoes:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
-        deletes:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
-        renames:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        undoes: `The managed Cursor skill was edited after setup: ${homeThatUndoes.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
+        deletes: `The managed Cursor skill was edited after setup: ${homeThatDeletes.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
+        renames: `The managed Cursor skill was edited after setup: ${homeThatRenames.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       },
       setupsAgain: {
         undoes: 'updated',
@@ -5580,8 +5542,7 @@ test('a skill file that a program holds for itself in the instant setup puts it 
         },
       },
       setupsAgain: {
-        movedAway:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        movedAway: `The managed Cursor skill was edited after setup: ${movedAway.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
         publishedAndEdited: `A codebook skill directory already exists in Cursor: ${join(publishedAndEdited.homeRoot, '.cursor', 'skills', 'codebook')}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
       },
       filesAfterwards: {
@@ -5691,10 +5652,8 @@ test('a skill file that a program holds for itself in the instant a removal puts
         },
       },
       afterwards: {
-        removal:
-          'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
-        setup:
-          'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+        removal: `The Cursor skill was edited after setup: ${removed.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.`,
+        setup: `The managed Cursor skill was edited after setup: ${recoveredBySetup.targetPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.`,
       },
       filesAfterwards: {
         removed: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
@@ -5761,6 +5720,62 @@ test('a staged name no record names, of a skill file that a program holds for it
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
+      },
+    },
+  )
+})
+
+// Value: protects=a learner whose installed extension lacks its bundled skill or its Wiki publisher, or holds a bundled skill without a version; fails_when=setup ends with "This Codebook installation is missing its bundled skill. Reinstall the VSIX.", which names neither the file nor the command to run afterwards, while the refusals of a link or a folder at the same paths name both; why_new=Cycle 0046, the pass over every sentence of the Cursor setup after rows 277 to 309; seam=none, the real files, and an installation put in place anew as a reinstall does
+test('an installation whose bundled skill or Wiki publisher is missing, or whose bundled skill has no version, is refused by setup with the file’s path and the step to install the VSIX again and run the setup: after the installation is put in place anew, setup installs the skill', async (context) => {
+  // Arrange: three homes, each with its own installed extension that lacks one thing.
+  const withoutSkill = await fixture(context),
+    withInvalidSkill = await fixture(context),
+    withoutPublisher = await fixture(context)
+  await rm(withoutSkill.sourcePath)
+  await writeFile(withInvalidSkill.sourcePath, 'A skill without a version.\n')
+  await writeFile(withoutPublisher.sourcePath, PUBLISHER_SKILL)
+  const setUp = (paths: typeof withoutSkill): Promise<string> =>
+    statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
+
+  // Act
+  const refusals = {
+    withoutSkill: await setUp(withoutSkill),
+    withInvalidSkill: await setUp(withInvalidSkill),
+    withoutPublisher: await setUp(withoutPublisher),
+  }
+  // The sentences are followed to the letter: installing the VSIX again replaces the extension's folder with the packaged files.
+  for (const paths of [withoutSkill, withInvalidSkill, withoutPublisher]) {
+    await rm(paths.extensionPath, { recursive: true })
+    await mkdir(join(paths.extensionPath, 'skills', 'codebook'), {
+      recursive: true,
+    })
+    await writeFile(paths.sourcePath, PUBLISHER_SKILL)
+    await writeFile(
+      join(paths.extensionPath, 'skills', 'codebook', 'publish-wiki.mjs'),
+      '// publisher\n',
+    )
+  }
+  const setupsAfterTheReinstall = {
+    withoutSkill: await setUp(withoutSkill),
+    withInvalidSkill: await setUp(withInvalidSkill),
+    withoutPublisher: await setUp(withoutPublisher),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, setupsAfterTheReinstall },
+    {
+      refusals: {
+        withoutSkill: `This Codebook installation is missing its bundled skill: ${withoutSkill.sourcePath}. That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.`,
+        withInvalidSkill: `This Codebook installation has an invalid bundled skill: ${withInvalidSkill.sourcePath}. That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.`,
+        withoutPublisher: `This Codebook installation is missing its Wiki publisher: ${join(withoutPublisher.extensionPath, 'skills', 'codebook', 'publish-wiki.mjs')}. That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.`,
+      },
+      setupsAfterTheReinstall: {
+        withoutSkill: 'installed',
+        withInvalidSkill: 'installed',
+        withoutPublisher: 'installed',
       },
     },
   )

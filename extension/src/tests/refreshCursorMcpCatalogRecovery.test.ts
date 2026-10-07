@@ -415,7 +415,7 @@ test('a changed Cursor MCP config that a removal moved away, with another config
   assert.deepEqual(
     { refresh, filesWhileTheRecordIsKept, refreshAfterTheRecordWasDeleted },
     {
-      refresh: `refused: Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+      refresh: `refused: Cursor MCP catalog changed during interrupted cleanup: ${folders.configPath}. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
       filesWhileTheRecordIsKept: {
         config: newerConfig,
         movedAway: EDITED_CONFIG,
@@ -615,8 +615,8 @@ test('a damaged record and a record that is kept are refused with the command th
   assert.deepEqual(refusals, {
     damagedUnderARemoval: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${receiptPath}, then run Codebook: Remove Managed Cursor Skill again.`,
     damagedUnderARefresh: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${receiptPath}, then run Codebook: Set Up AI Chat again.`,
-    keptUnderARemoval: `refused: Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Remove Managed Cursor Skill again.`,
-    keptUnderARefresh: `refused: Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+    keptUnderARemoval: `refused: Cursor MCP catalog changed during interrupted cleanup: ${kept.configPath}. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+    keptUnderARefresh: `refused: Cursor MCP catalog changed during interrupted cleanup: ${kept.configPath}. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
   })
 })
 

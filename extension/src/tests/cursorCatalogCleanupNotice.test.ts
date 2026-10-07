@@ -7,7 +7,7 @@ import { cursorCatalogCleanupNotice } from '../utils/cursorCatalogCleanupNotice'
 test('the warning after a removal whose Cursor MCP config cleanup was refused leads with the refusal’s own sentence and then says only what is true: the skill is removed, the config stays, nothing unverified was deleted, and the same command goes on with the config', () => {
   // Arrange: the refusal of a record that is kept, as the catalog words it.
   const refusal = new Error(
-    'Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as /storage/cursor-mcp-catalog/retired-1.mcp.json. To start over, delete /storage/cursor-mcp-catalog/pending-removal.json, then run Codebook: Set Up AI Chat again.',
+    'Cursor MCP catalog changed during interrupted cleanup: /home/user/.cursor/mcp.json. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as /storage/cursor-mcp-catalog/retired-1.mcp.json. To start over, delete /storage/cursor-mcp-catalog/pending-removal.json, then run Codebook: Set Up AI Chat again.',
   )
 
   // Act
@@ -16,7 +16,7 @@ test('the warning after a removal whose Cursor MCP config cleanup was refused le
   // Assert
   assert.equal(
     notice,
-    'Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as /storage/cursor-mcp-catalog/retired-1.mcp.json. To start over, delete /storage/cursor-mcp-catalog/pending-removal.json, then run Codebook: Set Up AI Chat again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
+    'Cursor MCP catalog changed during interrupted cleanup: /home/user/.cursor/mcp.json. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as /storage/cursor-mcp-catalog/retired-1.mcp.json. To start over, delete /storage/cursor-mcp-catalog/pending-removal.json, then run Codebook: Set Up AI Chat again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
   )
 })
 

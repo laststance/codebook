@@ -17,8 +17,8 @@ import { thrownMessage } from './thrownMessage'
  * ```ts
  * noticeWithSetupStep('Codebook AI chat did not reconnect', new Error('The selected workspace changed after setup'), 'Run Codebook: Set Up AI Chat.')
  * // => 'Codebook AI chat did not reconnect: The selected workspace changed after setup. Run Codebook: Set Up AI Chat.'
- * noticeWithSetupStep('Codebook agent server started, but Cursor MCP registration failed', new Error('Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'), 'Run Codebook: Set Up AI Chat to repair the connection.')
- * // => 'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
+ * noticeWithSetupStep('Codebook agent server started, but Cursor MCP registration failed', new Error('Cursor skill is missing or was changed: /home/user/.cursor/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'), 'Run Codebook: Set Up AI Chat to repair the connection.')
+ * // => 'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed: /home/user/.cursor/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
  * noticeWithSetupStep('Codebook AI chat did not reconnect', new Error('Codebook will not read through a link: /home/user/.cursor/skills/codebook/SKILL.md. Remove the link, then run Codebook: Set Up AI Chat again.'), 'Run Codebook: Set Up AI Chat.')
  * // => 'Codebook AI chat did not reconnect: Codebook will not read through a link: /home/user/.cursor/skills/codebook/SKILL.md. Remove the link, then run Codebook: Set Up AI Chat again.'
  * ```

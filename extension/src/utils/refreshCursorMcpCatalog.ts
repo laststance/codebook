@@ -812,7 +812,7 @@ async function leaveChangedConfigInPlace(
   refuseUnopenedConfig(undoing, targetPath, retiredPath, commandToRunAgain)
   if (undoing === 'kept')
     throw new Error(
-      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath, commandToRunAgain)}`,
+      `Cursor MCP catalog changed during interrupted cleanup: ${targetPath}. Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath, commandToRunAgain)}`,
     )
 }
 

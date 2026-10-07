@@ -582,7 +582,10 @@ export function activate(
       await registerCursorConnection(cursorNodeExecutable)
       assertCursorSetupAvailable()
     }
-    if (!running) throw new Error('Codebook server did not start.')
+    if (!running)
+      throw new Error(
+        'Codebook server is not running. Run Codebook: Set Up AI Chat again.',
+      )
     const setupCursorServer = isCursorHost ? registeredCursorServer : undefined
     await context.workspaceState.update('codebook.aiChatSetup', {
       workspace: running.endpoint.descriptor.workspace,
