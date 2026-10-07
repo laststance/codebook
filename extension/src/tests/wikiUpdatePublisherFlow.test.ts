@@ -208,7 +208,7 @@ test('a candidate that exists before the click refuses the start as somebody els
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
-      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. The last usable site is kept\.$/,
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. Nothing had been replaced by then\.$/,
     )
   } finally {
     await wiki.close()

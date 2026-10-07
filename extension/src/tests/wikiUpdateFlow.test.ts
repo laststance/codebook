@@ -1303,7 +1303,8 @@ test('an update that fails with a thrown object that only carries a message show
   }
 })
 
-test('a VS Code watch that itself fails ends the update as failed with that reason and frees the button', async () => {
+// Value: protects=the learner and the Wiki when Codebook's own watch breaks off with an error while the VS Code chat works on the update; fails_when=the end shows the thrown text alone with "The last usable site is kept.", under which the chat publishes, or the run leaves no trace of the chat, so the next press sends a second request beside the first instead of naming the wait and Update anyway; why_new=Cycle 0046 row 341. It replaces "a VS Code watch that itself fails ends the update as failed with that reason and frees the button", which held the second request as the wanted outcome; seam=the watch's clock, which throws where the watch catches nothing (in the product only the close of a metadata file's handle can)
+test('a VS Code watch that itself breaks off ends the update with the sentence that Codebook stopped watching while the chat can still publish, and the next press is answered with the wait for that chat and Update anyway, not with a second request', async () => {
   // Arrange
   const wiki = await openWikiWindow({
     watchClock: {
@@ -1318,22 +1319,44 @@ test('a VS Code watch that itself fails ends the update as failed with that reas
     await wiki.clickUpdate()
     const ended = await waitForEnd(wiki.status)
     await wiki.clickUpdate()
-    await waitForEnd(wiki.status)
+    const pressedAgain = wiki.status()
 
-    // Assert
-    assert.equal(ended.state, 'failed')
-    assert.equal(
-      ended.state === 'failed' ? ended.reason : '',
-      'The clock stopped.',
+    // Assert: the end says what broke off and that the chat goes on, and claims no kept site.
+    assert.deepEqual(
+      ended.state === 'failed'
+        ? [
+            ended.reason,
+            ended.isCodebookSentence,
+            ended.mayBeReplacedLater,
+            ended.site,
+          ]
+        : [],
+      [
+        'Codebook stopped watching the update because of an error (The clock stopped.). The VS Code chat was not stopped and can still publish: let it finish (the Wiki page says when it has), or stop it in the chat.',
+        true,
+        true,
+        'kept',
+      ],
     )
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: The clock stopped\\. The last usable site is kept\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook stopped watching the update because of an error \\(The clock stopped\\.\\)\\. The VS Code chat was not stopped and can still publish: let it finish \\(the Wiki page says when it has\\), or stop it in the chat\\. Nothing had been replaced by then\\.$`,
       ),
     )
-    // The second press was not refused as "already updating": it sent its own request.
-    assert.equal(wiki.chatRequests.length, 2)
+    // The second press starts no second chat: it is answered as after a stopped watch.
+    assert.equal(pressedAgain.state, 'failed')
+    assert.match(
+      wiki.errors[1] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.equal(wiki.chatRequests.length, 1)
     assert.equal(wiki.errors.length, 2)
   } finally {
     await wiki.close()
@@ -1631,7 +1654,7 @@ test('a chat whose Cancel fails ends the update with the sentence that the reque
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry\\. Nothing had been replaced by then\\.$`,
       ),
     )
   } finally {
@@ -2474,6 +2497,47 @@ test('in Cursor a second Update LLM Wiki command while the agent works says that
   }
 })
 
+// Value: protects=the sentence of a start that was refused because the Wiki was published twice while Codebook checked it; fails_when=that refusal is marked like those that name somebody still updating, so it ends "Nothing had been replaced by then." although the Wiki was replaced during that very check, or the second publish during the checks is no longer met with a refusal; why_new=Cycle 0046 row 341 (the mark is set exactly where somebody is named as still updating; this refusal had no flow test); seam=the start check's listing of candidates, held open twice so that a publish lands in each of its two passes
+test('a start during whose checks the Wiki is published twice is refused with the sentence that the Wiki was published again, which keeps its end that the last usable site is kept, and sends no request', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    // Act: a publish lands inside the first pass of the checks and another inside the second.
+    const firstPass = wiki.hold('candidate-listing')
+    const press = wiki.clickUpdate()
+    await firstPass.started
+    await wiki.publish('b'.repeat(64))
+    firstPass.release()
+    const secondPass = wiki.hold('candidate-listing')
+    await secondPass.started
+    await wiki.publish('c'.repeat(64))
+    secondPass.release()
+    await press
+
+    // Assert
+    const refused = wiki.status()
+    assert.deepEqual(
+      refused.state === 'failed'
+        ? [refused.reason, refused.mayBeReplacedLater, refused.site]
+        : [],
+      [
+        'This Wiki was published again while Codebook checked it. Press Update LLM Wiki again.',
+        undefined,
+        'kept',
+      ],
+    )
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: This Wiki was published again while Codebook checked it\\. Press Update LLM Wiki again\\. The last usable site is kept\\.$`,
+      ),
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a second window’s Update is refused while the first window’s run has staged nothing yet', async () => {
   // Arrange
   const wiki = await openWikiWindow()
@@ -2495,6 +2559,13 @@ test('a second window’s Update is refused while the first window’s run has s
       /^Another editor window is updating this Wiki \(VS Code, started \d{1,2}:\d{2}[^)]*\)\. Wait for it to finish, then press Update LLM Wiki again\.$/,
     )
     assert.deepEqual(secondWindow.chatRequests, [])
+    // That window's run goes on and will publish: the notice does not call the site kept.
+    assert.match(
+      secondWindow.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: Another editor window is updating this Wiki \\(VS Code, started ${CLOCK_TIME}[^)]*\\)\\. Wait for it to finish, then press Update LLM Wiki again\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
   } finally {
     await secondWindow.close()
     await wiki.close()
@@ -2548,6 +2619,13 @@ test('an Update is refused with the sentence of a starting update while another 
     )
     assert.deepEqual(wiki.chatRequests, [])
     assert.equal(await readFile(markerPath, 'utf8'), '')
+    // That window's update begins: the notice does not call the site kept.
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: Another editor window is starting an update of this Wiki\\. Wait a moment and try again\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
   } finally {
     await wiki.close()
   }
@@ -2621,6 +2699,13 @@ test('an Update that meets a marker nobody owns while another window holds the c
       'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.',
     )
     assert.deepEqual(wiki.chatRequests, [])
+    // That window may be starting its update: the notice does not call the site kept.
+    assert.match(
+      wiki.errors.at(-1) ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: Another editor window is starting or ending an update of this Wiki\\. Wait a moment and try again\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
     assert.deepEqual(wiki.offeredActions.at(-1)?.actions, ['Open LLM Wiki'])
     assert.equal(await readFile(markerPath, 'utf8'), markerOfAKilledEditor)
     assert.deepEqual(await readdir(`${markerPath}.takeover`), [
@@ -2754,6 +2839,13 @@ test('a VS Code watch that passes its 15 minutes while the chat still works says
       /^The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at \d{1,2}:\d{2}[^.]* and waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
     )
     assert.deepEqual(offeredAtTheRefusal, ['Update anyway', 'Open LLM Wiki'])
+    // The refusal's own notice stays on screen too, and the chat publishes under it: it says what held then, not that the site is kept.
+    assert.match(
+      wiki.errors[1] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
     // "it can still publish": after the publish the press finds the Wiki current, and still only the first request was sent.
     assert.equal(pressedAfterThePublish.state, 'already-current')
     assert.equal(wiki.chatRequests.length, 1)
@@ -2843,7 +2935,7 @@ test('after a VS Code watch stopped at its 15 minutes, a press before the chat p
     assert.match(
       noticesAfterTheFirstPress[1] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. The last usable site is kept\\.$`,
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
       ),
     )
     assert.deepEqual(offeredAfterTheFirstPress, [
@@ -2975,7 +3067,7 @@ test('a second window’s Update is refused with the sentence of another window�
     assert.match(
       noticesAfterTheFirstPress[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: The VS Code chat another editor window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; that window stopped watching it at ${CLOCK_TIME}[^.]* and Codebook waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. The last usable site is kept\\.$`,
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat another editor window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; that window stopped watching it at ${CLOCK_TIME}[^.]* and Codebook waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
       ),
     )
     assert.equal(requestsAfterTheFirstPress, 0)

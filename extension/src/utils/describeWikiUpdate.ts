@@ -250,11 +250,21 @@ export function describeWikiUpdate(
     }
   }
   /**
+   * Words what a failed update with a kept site says of that site; called by {@link describeFailed} last.
+   * @param failed - The failed state.
+   * @returns " The last usable site is kept."; " Nothing had been replaced by then." where somebody can still publish after this end (`mayBeReplacedLater`), since the editor keeps the notice on screen and "is kept" would become untrue under it.
+   * @example keptSiteClause(failed) // => ' The last usable site is kept.'
+   */
+  const keptSiteClause = (failed: WikiUpdateStatusOf<'failed'>): string =>
+    failed.mayBeReplacedLater
+      ? ' Nothing had been replaced by then.'
+      : ' The last usable site is kept.'
+  /**
    * Words a failed update with its reason and what became of the site; called by {@link describeEnded} for the state `failed`.
    * @param failed - The failed state.
    * @param at - When the run ended, as the learner's local time.
    * @param replaced - Whether the run replaced the site on disk.
-   * @returns The description: "Update needs another run" for a replaced site, "Update failed" for a missing or a kept one.
+   * @returns The description: "Update needs another run" for a replaced site, "Update failed" for a missing or a kept one. A kept site is worded by {@link keptSiteClause}: called kept, unless somebody can still publish after this end.
    * @example describeFailed(failed, '21:10', false).rest // => ' at 21:10: Cursor Agent exited with code 1. The last usable site is kept.'
    */
   const describeFailed = (
@@ -276,7 +286,7 @@ export function describeWikiUpdate(
       return describe('Update failed', ' at ' + at + ': ' + sentence, detail)
     return describe(
       'Update failed',
-      ' at ' + at + ': ' + sentence + ' The last usable site is kept.',
+      ' at ' + at + ': ' + sentence + keptSiteClause(failed),
       detail,
     )
   }

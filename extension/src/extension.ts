@@ -74,6 +74,7 @@ import {
   REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
 } from './utils/cursorCatalogCleanupNotice'
 import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
+import { describeBrokenWikiWatch } from './utils/describeBrokenWikiWatch'
 import {
   describeSecondWikiUpdateStart,
   type WikiUpdateProgressPlace,
@@ -906,9 +907,12 @@ export function activate(
         | 'blockingPaths'
         | 'failure'
         | 'isFailureCodebookSentence'
+        | 'mayBeReplacedLater'
       >
     > & {
       publish?: { token: string; published: WikiUpdateEndFacts['published'] }
+      /** Set when the watch of a VS Code update threw while its chat worked: the chat was not stopped, so the run leaves the reservation a stopped watch leaves. */
+      didWatchBreak?: boolean
     },
   ): Promise<void> => {
     const tokenAtEnd = await readWikiPublishToken(run.outputDirectory)
@@ -932,14 +936,16 @@ export function activate(
       blockingPaths: observed.blockingPaths ?? [],
       failure: observed.failure,
       isFailureCodebookSentence: observed.isFailureCodebookSentence,
+      mayBeReplacedLater: observed.mayBeReplacedLater,
     })
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
-    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
+    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
     const mayAgentStillWork = mayWikiChatStillPublish(
       run.host,
       end.state,
       isExtensionStopping,
+      observed.didWatchBreak ?? false,
     )
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
@@ -1037,7 +1043,13 @@ export function activate(
           ...failureOfWikiChatReplyEnd(result.outcome, reply.end()),
         })
       } catch (error) {
-        await finishWikiUpdate(run, { failure: thrownMessage(error) })
+        // The watch broke off, not the chat: the end says so, and the next press is held back as after a stopped watch, so no second chat starts beside the first.
+        await finishWikiUpdate(run, {
+          failure: describeBrokenWikiWatch(thrownMessage(error)),
+          isFailureCodebookSentence: true,
+          mayBeReplacedLater: true,
+          didWatchBreak: true,
+        })
       }
     })
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
@@ -1127,14 +1139,18 @@ export function activate(
     acknowledgedLeftovers: readonly WikiLeftover[],
   ): Promise<WikiUpdateStart | undefined> => {
     const { outputDirectory } = wikiOutput
-    /** Records a refusal in a sentence Codebook wrote and tells the learner; `onUpdateAnyway` offers the override. */
-    const refuse = (reason: string, onUpdateAnyway?: () => void): undefined => {
+    /** Records a refusal in a sentence Codebook wrote and tells the learner. `workInProgress` is given when the refusal names somebody who is still updating this Wiki (another window's run, or an earlier chat the start waits for): the site may then be replaced after the refusal, which the recorded state says, and `onUpdateAnyway` in it offers the override. */
+    const refuse = (
+      reason: string,
+      workInProgress?: { onUpdateAnyway?: () => void },
+    ): undefined => {
       wikiUpdateRun.refuseStart(host, wikiOutput, {
         kind: 'failed',
         reason,
         isCodebookSentence: true,
+        ...(workInProgress ? { mayBeReplacedLater: true } : {}),
       })
-      showWikiUpdateNotice(onUpdateAnyway)
+      showWikiUpdateNotice(workInProgress?.onUpdateAnyway)
       return undefined
     }
     /** Starts the update again when the learner presses "Update anyway", with only the leftovers the refusal named ignored. */
@@ -1210,12 +1226,12 @@ export function activate(
       )
       // A marker another window is writing at this moment is the beginning of its run.
       if (markerLook.kind === 'being-written')
-        return refuse(describeOtherWindow(markerLook.heldBy))
+        return refuse(describeOtherWindow(markerLook.heldBy), {})
       const otherWindow =
         markerLook.kind === 'live' ? markerLook.heldBy : undefined
       // A run that is active in another window refuses the start, and nothing overrides it.
       if (otherWindow && otherWindow.watchEndedAtMs === undefined)
-        return refuse(describeOtherWindow(otherWindow))
+        return refuse(describeOtherWindow(otherWindow), {})
       const nowMs = Date.now()
       // Every leftover in the way now, each with the sentence that names it; "Update anyway" is bound to all of them.
       const leftovers: Array<{ leftover: WikiLeftover; reason: string }> = []
@@ -1269,9 +1285,10 @@ export function activate(
           !isAcknowledgedWikiLeftover(leftover, acknowledgedLeftovers),
       )
       if (unacknowledged)
-        return refuse(unacknowledged.reason, () =>
-          updateAnyway(leftovers.map(({ leftover }) => leftover)),
-        )
+        return refuse(unacknowledged.reason, {
+          onUpdateAnyway: () =>
+            updateAnyway(leftovers.map(({ leftover }) => leftover)),
+        })
       // A publish that landed while the checks ran made them about two generations: check the new one.
       if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart) {
         if (isLastAttempt)
@@ -1288,7 +1305,8 @@ export function activate(
         startedAtMs,
       })
       // Another window began its run between the look at the marker and this write.
-      if ('heldBy' in claim) return refuse(describeOtherWindow(claim.heldBy))
+      if ('heldBy' in claim)
+        return refuse(describeOtherWindow(claim.heldBy), {})
       // This window's own reservation, if it left one, is now this run's marker; its timer must not remove it.
       clearTimeout(wikiReservation?.timer)
       wikiReservation = undefined

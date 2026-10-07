@@ -6279,7 +6279,7 @@ async function check(page, options, collected) {
   // Act: the rail's content is measured against the rail's own box.
   const railStrip = await page.evaluate(() => {
     document.querySelector('[data-codebook-update-status]').innerHTML =
-      '<strong>Update failed</strong> at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.'
+      '<strong>Update failed</strong> at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. Nothing had been replaced by then.'
     const rail = document.querySelector('.right-rail')
     const railBox = rail.getBoundingClientRect()
     const groupBox = document

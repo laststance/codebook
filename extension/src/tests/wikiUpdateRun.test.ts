@@ -450,3 +450,52 @@ test('each ending the classifier can return is recorded with its own fields thro
     },
   ])
 })
+
+// Value: protects=the page and the notice of a start that was refused because somebody is still updating the Wiki, and of a run that ended while its chat may still publish; fails_when=the recorded state loses the mark, so both say "The last usable site is kept." under which that somebody publishes; why_new=Cycle 0046 row 341; seam=none
+test('a start refused because somebody is still updating the Wiki, and a run that ended while its chat may still publish, are recorded as failed with the mark that the site may be replaced after', () => {
+  // Arrange
+  const refusedWindow = new WikiUpdateRun(fixedClock)
+  const endedWindow = new WikiUpdateRun(fixedClock)
+  endedWindow.begin('vscode', output, 900_000, false)
+
+  // Act
+  refusedWindow.refuseStart('vscode', output, {
+    kind: 'failed',
+    reason:
+      'Another editor window is starting an update of this Wiki. Wait a moment and try again.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+  })
+  endedWindow.end({
+    state: 'failed',
+    reason: 'The request may still be in the chat.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+  })
+
+  // Assert
+  assert.deepEqual(refusedWindow.status(), {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    reason:
+      'Another editor window is starting an update of this Wiki. Wait a moment and try again.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  })
+  assert.deepEqual(endedWindow.status(), {
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+    state: 'failed',
+    reason: 'The request may still be in the chat.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+  })
+})

@@ -249,6 +249,8 @@ test('a failure reason longer than the page shows is not cut off in the notifica
       finishedAt: '2026-10-03T12:10:00.000Z',
       reason:
         'Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-192c3b82-a251-4581-ad25-3231da4a5fc5, written 21:09). Wait for it to finish, or delete that folder, then press Update LLM Wiki again.',
+      // Somebody is still updating, so the start check marks the refusal: the notice stays on screen and must not call the site kept for good.
+      mayBeReplacedLater: true,
       site: 'kept',
       ...OUTPUT,
     },
@@ -260,7 +262,7 @@ test('a failure reason longer than the page shows is not cut off in the notifica
     severity: 'error',
     actions: ['Open LLM Wiki'],
     message:
-      'Update failed at 21:10: Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-192c3b82-a251-4581-ad25-3231da4a5fc5, written 21:09). Wait for it to finish, or delete that folder, then press Update LLM Wiki again. The last usable site is kept.',
+      'Update failed at 21:10: Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-192c3b82-a251-4581-ad25-3231da4a5fc5, written 21:09). Wait for it to finish, or delete that folder, then press Update LLM Wiki again. Nothing had been replaced by then.',
   })
 })
 

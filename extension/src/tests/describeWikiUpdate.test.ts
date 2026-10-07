@@ -827,6 +827,8 @@ test('a refusal Codebook wrote itself is shown whole with its next step, however
     finishedAt,
     reason,
     isCodebookSentence: true,
+    // The start check marks a refusal that names somebody who is still updating.
+    mayBeReplacedLater: true,
     site: 'kept',
     ...place,
   }
@@ -840,7 +842,7 @@ test('a refusal Codebook wrote itself is shown whole with its next step, however
   // Assert
   assert.equal(
     sentenceOf(described),
-    `Update failed at 21:10: ${reason} The last usable site is kept.`,
+    `Update failed at 21:10: ${reason} Nothing had been replaced by then.`,
   )
   assert.deepEqual(described?.detail, [])
 })
@@ -889,4 +891,60 @@ test('the running line of a VS Code update whose output lies outside the project
     sentenceOf(described),
     'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
+})
+
+// Value: protects=a learner who reads a failed end or a refused start in a notice the editor keeps on screen while a chat or another window can still publish; fails_when=such an end says "The last usable site is kept.", which the later publish makes untrue, or an end after which nobody can publish loses that sentence, or the mark changes what is said of a replaced or a missing site; why_new=Cycle 0046 row 341 (met natively with row 335: the refusal said the site is kept two minutes before the chat replaced it); seam=none
+test('a failed end after which somebody can still publish says that nothing had been replaced by then, every other failed end with a kept site says that the last usable site is kept, and a replaced or a missing site is worded as before', () => {
+  // Arrange
+  const failed = {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt,
+    isCodebookSentence: true,
+    ...place,
+  } as const
+  const stillInTheChat =
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.'
+  const takenBack =
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.'
+
+  // Act
+  const sentences = [
+    describeWikiUpdate(
+      {
+        ...failed,
+        reason: stillInTheChat,
+        mayBeReplacedLater: true,
+        site: 'kept',
+      },
+      wording,
+    ),
+    describeWikiUpdate({ ...failed, reason: takenBack, site: 'kept' }, wording),
+    describeWikiUpdate(
+      {
+        ...failed,
+        reason: stillInTheChat,
+        mayBeReplacedLater: true,
+        site: 'replaced',
+      },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        ...failed,
+        reason: stillInTheChat,
+        mayBeReplacedLater: true,
+        site: 'missing',
+      },
+      wording,
+    ),
+  ].map(sentenceOf)
+
+  // Assert
+  assert.deepEqual(sentences, [
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry. Nothing had been replaced by then.',
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry. The last usable site is kept.',
+    'Update needs another run (21:10): Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry. This run replaced the site on disk.',
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+  ])
 })
