@@ -1582,6 +1582,90 @@ test("the fake editor of a closed harness runs none of the tab closes it still o
   )
 })
 
+// Value: protects=a finished reader test leaving nothing behind in its fake editor when it ended while the editor still named another group for the end of a maximization: the group that had the keyboard is not named again after the harness's close; fails_when=the timer that restores the named group is not among the fake editor's pending timers, so it outlives the harness, renames the active group and calls the listeners of a test that has ended; why_new=Cycle 0046 row 89 (local CodeRabbit review, finding 7: the restoration of nameAnotherGroupWhenMaximizationEnds was the one later change of the fake editor outside pendingEditorTimers); seam=the fake editor's pending timers and its group events
+test("the fake editor of a closed harness does not name the focused group again after a maximization ended: no group event arrives after the harness's close", async () => {
+  // Arrange: the editor names the Application pane's group for 250 ms when a maximization ends; the learner read the explanation enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.nameAnotherGroupWhenMaximizationEnds(1, 250)
+  let eventsAfterClose = 0,
+    closed = false
+  await harness.reader.open()
+  await harness.reader.action('read-context')
+  harness.editor.window.tabGroups.onDidChangeTabGroups(() => {
+    if (closed) eventsAfterClose++
+  })
+
+  // Act: the maximization ends, and the harness closes while the editor still owes the name of the focused group; longer than that moment then passes.
+  await harness.editor.commands.executeCommand(
+    'workbench.action.minimizeOtherEditors',
+  )
+  const owedAfterCommand = harness.pendingEditorTimerCount()
+  await harness.close()
+  closed = true
+  const owedAfterClose = harness.pendingEditorTimerCount()
+  await new Promise((resolve) => setTimeout(resolve, 350))
+
+  // Assert
+  assert.equal(eventsAfterClose, 0)
+  assert.equal(owedAfterCommand, 1)
+  assert.equal(owedAfterClose, 0)
+})
+
+// Value: protects=a finished reader test leaving nothing behind in its fake editor when it ended while the editor still owed its report of the active text editor after a leftover tab closed: no report arrives after the harness's close; fails_when=that 60 ms timer is not among the fake editor's pending timers, so it outlives the harness and calls the active-editor listeners of a test that has ended; why_new=Cycle 0046 row 89, found beside it: the same later change of the fake editor outside pendingEditorTimers; seam=the fake editor's pending timers, restoreLeftoverCapturedSource with lateTextEditor, its active-editor event
+test("the fake editor of a closed harness does not report its active text editor late after a leftover tab closed: no active-editor event arrives after the harness's close", async () => {
+  // Arrange: a leftover captured source has the focus; for 60 ms after its close the editor reports no active text editor yet.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const leftover = harness.restoreLeftoverCapturedSource({
+    lateTextEditor: true,
+  })
+  let reportsAfterClose = 0,
+    closed = false
+  harness.editor.window.onDidChangeActiveTextEditor(() => {
+    if (closed) reportsAfterClose++
+  })
+
+  // Act: the leftover closes, and the harness closes while the editor still owes that report; three times its delay then passes.
+  await harness.editor.window.tabGroups.close([leftover], true)
+  const owedAfterTabClose = harness.pendingEditorTimerCount()
+  await harness.close()
+  closed = true
+  const owedAfterClose = harness.pendingEditorTimerCount()
+  await new Promise((resolve) => setTimeout(resolve, 180))
+
+  // Assert
+  assert.equal(reportsAfterClose, 0)
+  assert.equal(owedAfterTabClose, 1)
+  assert.equal(owedAfterClose, 0)
+})
+
+for (const [hiding, owed] of [
+  [
+    'missed-the-stop',
+    'the refresh that loads the stop it missed, 400 ms later',
+  ],
+  ['never-opened', 'the first rows of its tree, 60 ms later'],
+] as const)
+  // Value: protects=a finished reader test leaving nothing behind in its fake editor when it ended while the Variables view still owed a later step: that step does not run after the harness's close; fails_when=the view's timer is not among the fake editor's pending timers, so after a test ended it changes the view, lists the values and tells that test's historical debuggers; why_new=Cycle 0046 row 89, found beside it: the Variables view's two timers were the last later changes of the fake editor outside pendingEditorTimers; seam=the fake editor's pending timers, hideNativeVariables and the editor's command that shows the Variables view
+  test(`the fake editor of a closed harness does not finish showing its Variables view late: ${owed}, is dropped with the harness's close`, async () => {
+    // Arrange: the Variables view was hidden in the way the case names; shown again, it owes one later step.
+    const harness = await workspaceHarness(false)
+    harness.hideNativeVariables(hiding)
+
+    // Act: the view is shown, and the harness closes while that step is still owed.
+    await harness.editor.commands.executeCommand(
+      'workbench.debug.action.focusVariablesView',
+    )
+    const owedAfterCommand = harness.pendingEditorTimerCount()
+    await harness.close()
+    const owedAfterClose = harness.pendingEditorTimerCount()
+
+    // Assert
+    assert.equal(owedAfterCommand, 1)
+    assert.equal(owedAfterClose, 0)
+  })
+
 // Value: protects=reader tests meeting Cursor as it answers the command that focuses the first editor group while the chat input has the keyboard and the editor names a group of the main editor: a pane in the first group is not reported as focused and the named group stays the named one; fails_when=the fake reports the pane's focus in that state, which Cursor does not, so a measurement that waits for that report passes in the tests and ends after five seconds in the editor; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: a recording opened from the chat input while the editor named the captured source's group was never read; the wait for the first group's focus ran out); seam=the fake editor with a separate editor part, leavePaneFocusUnreportedBesideChat and its panes
 test("the fake Cursor reports no focus of a pane in the first group while the chat input has the keyboard and the editor names the captured source's group", async () => {
   // Arrange: the three Study panes are open, the Application pane is the tab the first group shows; the learner clicked into the captured source and then into the chat input.

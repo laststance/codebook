@@ -121,6 +121,7 @@ import {
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
@@ -175,6 +176,7 @@ import {
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
 import { libraryHasRoom } from './utils/libraryHasRoom'
+import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
@@ -401,6 +403,25 @@ interface LeftoverTabClose {
   deadPaneKept: boolean
 }
 
+/**
+ * A pause of the editor's debugger as the chat's record of {@link StudyWorkspace} notes it, from the stack frame that reported it until the next frame or the pause's end.
+ * `openedByDebugger`: the document the debugger had opened with the keyboard when the frame was reported, `undefined` when no text editor was active then.
+ * `state`: `'unsettled'` until the reader's first reveal at that pause, `'settling'` while its one return of the keyboard to the chat runs, `'settled'` after it: from then an editor that becomes active is the learner's choice or the next stop's paused file.
+ */
+interface KeyboardPauseOfRecord {
+  openedByDebugger: string | undefined
+  state: 'unsettled' | 'settling' | 'settled'
+}
+
+/**
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}.
+ * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
+ * @example
+ * if (keyboardNoticesTold.has('close')) return
+ * keyboardNoticesTold.add('close')
+ */
+const keyboardNoticesTold = new Set<'close' | 'pause'>()
+
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
@@ -536,16 +557,13 @@ export class StudyWorkspace {
   private readonly summaryPlacementOffersMade =
     new Set<SummaryPlacementOccasion>()
   private liveEntryRunId?: string
-  /** Whether {@link tellPaneTookPausedFocus} showed its sentence in this editor session; it is shown once, for the captured source and the Application pane together. */
-  private pausedFocusNoticeShown = false
-  /** Whether {@link close} told {@link STUDY_CLOSE_KEYBOARD_MESSAGE} in this editor session; it is told once. */
-  private closeKeyboardNoticeShown = false
   /**
-   * The tab outside the text editors and the Study panes that had the keyboard when the editor last showed one (Cursor's Agent chat as a tab of another editor part), kept by {@link sampleKeyboardOutsideEditors} for {@link settleKeyboardAtPause}: `giveBack` is what {@link retainForeignTabFocus} answered then, and `leftAtMs` the moment a text editor or a Study pane became active afterwards. `undefined` while a text editor or a Study pane is known to have the keyboard, which is also what a side-view chat reads as.
+   * The tab outside the text editors and the Study panes that had the keyboard when the editor last showed one (Cursor's Agent chat as a tab of another editor part), kept by {@link sampleKeyboardOutsideEditors} for {@link returnsKeyboardToChatAtPause}: `giveBack` is what {@link retainForeignTabFocus} answered then, and `leftAtMs` the moment a text editor or a Study pane became active afterwards. `pause` is set from a stack frame of the editor's debugger until the next frame or the end of the pause ({@link judgeKeyboardAtPauseBegin}, {@link judgeKeyboardAtPauseEnd}): `openedByDebugger` names the document the debugger had opened with the keyboard when the frame was reported, `undefined` when no text editor was active then, and `state` says whether the reader's one return of that pause is still owed (`'unsettled'`), running (`'settling'`, {@link owedPauseOf}) or done (`'settled'`). The whole record is `undefined` while a text editor or a Study pane is known to have the keyboard, which is also what a side-view chat reads as.
    */
   private keyboardOutsideEditors?: {
     giveBack: NonNullable<ReturnType<StudyWorkspace['retainForeignTabFocus']>>
     leftAtMs?: number
+    pause?: KeyboardPauseOfRecord
   }
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
@@ -2413,7 +2431,7 @@ export class StudyWorkspace {
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
    * @returns
    * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's, or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
-   * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Called with `true` by {@link returnsKeyboardToChatAtPause}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that the reader's pane just took it, or that the editor's debugger gave it to the paused file), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
+   * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Called with `true` by {@link returnsKeyboardToChatAtPause} and {@link judgeKeyboardAtPauseEnd}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that a text editor has it: the paused file the editor's debugger opened, or the captured source shown in its place), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
    * @example
    * ```ts
    * const returnForeignFocus = this.retainForeignTabFocus(undefined)
@@ -2495,13 +2513,13 @@ export class StudyWorkspace {
 
   /**
    * Chooses the command that gives a remembered tab's group the keyboard back; asked by the function {@link retainForeignTabFocus} answers, once it knows that the focus may be given back.
-   * The editor's numbered focus commands count the groups of the main editor only: for the column of another editor part's group (Cursor's chat) the command opens a new empty group in the main editor. Only a group that is known to be one of the main editor's is focused by its number; the chat gets the keyboard back through the host's own command, and without one the focus stays where it is. At a pause only the chat gets the keyboard back: another tab of the main editor (a settings page, an image) is treated like a learner's file, which gets nothing back there, because the editor reads the same for such a tab whether the keyboard was in it or in the terminal, a view or a side-view chat.
+   * The editor's numbered focus commands count the groups of the main editor only: for the column of another editor part's group (Cursor's chat) the command opens a new empty group in the main editor. Only a group that is known to be one of the main editor's is focused by its number, and only a tab that is known to lie outside the main editor gets the host's own command for its chat; while the main editor's group count is not known nothing is run for a group, and the focus stays where it is. Without the host's command it stays too. At a pause only the chat gets the keyboard back: another tab of the main editor (a settings page, an image) is treated like a learner's file, which gets nothing back there, because the editor reads the same for such a tab whether the keyboard was in it or in the terminal, a view or a side-view chat.
    * @param target - The group that still shows the remembered tab, `undefined` for a tab another editor part held the keyboard over.
    * @param leftByPause - Whether the keyboard is given back at a pause of a live run ({@link settleKeyboardAtPause}) and not after an arrangement.
    * @returns
    * - The numbered focus command of a group of the main editor, after an arrangement only.
    * - {@link CURSOR_FOCUS_AGENT_COMMAND} for a tab of another editor part or one held by another part, where the host registers it.
-   * - `undefined` for a group of the main editor at a pause, and in a host without the chat's command.
+   * - `undefined` for a group of the main editor at a pause, for a group that is not known to be the main editor's or another part's ({@link placeOfRememberedGroup}), and in a host without the chat's command.
    * @example
    * ```ts
    * await this.focusReturnCommand(chatGroup, true) // => 'composer.focusComposer' in Cursor
@@ -2512,9 +2530,18 @@ export class StudyWorkspace {
     target: vscode.TabGroup | undefined,
     leftByPause: boolean,
   ): Promise<string | undefined> {
-    const mainColumn = await this.mainEditorColumnOf(target)
-    if (mainColumn !== undefined)
-      return leftByPause ? undefined : focusEditorGroupCommand(mainColumn)
+    const place = await this.placeOfRememberedGroup(target)
+    if (place === 'other') return this.chatFocusCommand()
+    if (place === 'unknown' || leftByPause) return undefined
+    return focusEditorGroupCommand(place)
+  }
+
+  /**
+   * Names the host's command that focuses its chat, where the host registers one; asked by {@link focusReturnCommand} for a remembered tab that is known to lie outside the main editor.
+   * @returns {@link CURSOR_FOCUS_AGENT_COMMAND} in Cursor, `undefined` in a host without it.
+   * @example await this.chatFocusCommand() // => 'composer.focusComposer' in Cursor, undefined in VS Code
+   */
+  private async chatFocusCommand(): Promise<string | undefined> {
     return (await vscode.commands.getCommands(true)).includes(
       CURSOR_FOCUS_AGENT_COMMAND,
     )
@@ -2523,18 +2550,59 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the column of a group that is known to be one of the main editor's; asked by {@link focusReturnCommand} before it chooses a numbered focus command.
-   * @param group - The group that shows the remembered tab, if any.
-   * @returns The group's column when {@link mainEditorGroupCount} is known and holds it; `undefined` for no group, a group of another editor part, and while the main editor is not known to have the focus.
-   * @example await this.mainEditorColumnOf(group) // => 3 for the third group of the main editor, undefined for the chat's group at column 4
+   * Says where the group of a remembered tab lies: in the main editor, in another editor part, or in a place the editor does not tell; asked by {@link focusReturnCommand} before it chooses a command.
+   * The editor answers a layout read for the editor part that has the focus, so the count it gives is the main editor's only when the main editor is known to have the focus ({@link hasMainEditorFocus}). Without that proof the count still says two things ({@link placeByUnprovenCount}); for every other group nothing is guessed.
+   * @param group - The group that still shows the remembered tab, `undefined` for a text tab another editor part held the keyboard over.
+   * @returns
+   * - The group's view column for a group of the main editor.
+   * - `'other'` for no group (the keyboard was in another editor part by what the editor reported) and for a group that lies behind the main editor's groups.
+   * - `'unknown'` for a group that may be either, and when the layout could not be read.
+   * @example await this.placeOfRememberedGroup(group) // => 3 for the third group of the main editor, 'other' for the chat's group at column 4
    */
-  private async mainEditorColumnOf(
+  private async placeOfRememberedGroup(
     group: vscode.TabGroup | undefined,
-  ): Promise<vscode.ViewColumn | undefined> {
-    const mainCount = await this.mainEditorGroupCount()
-    return group && mainCount !== undefined && group.viewColumn <= mainCount
-      ? group.viewColumn
-      : undefined
+  ): Promise<vscode.ViewColumn | 'other' | 'unknown'> {
+    const count = editorLayoutGroupCount(
+      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+    )
+    if (!group) return 'other'
+    if (count === undefined) return 'unknown'
+    return this.hasMainEditorFocus(count)
+      ? this.placeByMainCount(group, count)
+      : this.placeByUnprovenCount(group, count)
+  }
+
+  /**
+   * Says where a group lies by the main editor's group count; the step of {@link placeOfRememberedGroup} for a layout read the main editor is known to have answered.
+   * @param group - The group that still shows the remembered tab.
+   * @param mainCount - How many groups the main editor has.
+   * @returns The group's view column when the main editor holds it, `'other'` for a group behind its groups.
+   * @example this.placeByMainCount(chatGroup, 3) // => 'other' for the chat's group at column 4
+   */
+  private placeByMainCount(
+    group: vscode.TabGroup,
+    mainCount: number,
+  ): vscode.ViewColumn | 'other' {
+    return group.viewColumn <= mainCount ? group.viewColumn : 'other'
+  }
+
+  /**
+   * Says what a group count tells about a group when the count may be another editor part's; the step of {@link placeOfRememberedGroup} for a layout read that came without proof of the main editor's focus.
+   * - The count equals the number of tab groups the editor names: there is one editor part, and every group is the main editor's.
+   * - The count is smaller and the group is the last one the editor names: groups of another editor part come behind the main editor's, so the last group is another part's whichever part answered (Cursor's chat beside the main editor).
+   * - Any other group may be the main editor's (when the other part answered) or another part's, and stays unknown.
+   * @param group - The group that still shows the remembered tab.
+   * @param count - The group count of the layout read.
+   * @returns The group's view column, `'other'` or `'unknown'` as above.
+   * @example this.placeByUnprovenCount(chatGroup, 1) // => 'other' beside two groups of the main editor
+   */
+  private placeByUnprovenCount(
+    group: vscode.TabGroup,
+    count: number,
+  ): vscode.ViewColumn | 'other' | 'unknown' {
+    const named = vscode.window.tabGroups.all.length
+    if (count === named) return group.viewColumn
+    return group.viewColumn === named ? 'other' : 'unknown'
   }
 
   /**
@@ -2556,34 +2624,66 @@ export class StudyWorkspace {
   }
 
   /**
-   * Reads from the editor whether a tab outside the text editors and the Study panes has the keyboard, on every tab, group and active-editor change while no debug session is paused; called by the listeners of {@link watchKeyboardOutsideEditors}.
-   * A foreign tab that has it ({@link retainForeignTabFocus}) is remembered. A text editor or a Study pane that becomes active afterwards only marks the moment ({@link markKeyboardLeftForEditors}). While a session is paused nothing is read: the debugger and the reader's own reveals move the focus then.
+   * Reads from the editor whether a tab outside the text editors and the Study panes has the keyboard, on every tab, group and active-editor change and on every change of a pane's view state; called by the listeners of {@link watchKeyboardOutsideEditors}, by the view-state listeners of {@link bindApplicationPanel} and {@link bindContextPanel} (a pane's `active` flag is one of the readings, and the editor reports it on its own channel, possibly after the tab events of the same click), and by {@link judgeKeyboardAtPauseEnd} when a pause is over.
+   * A foreign tab that has it ({@link retainForeignTabFocus}) is remembered: the record is new, also during a pause, when the learner went to the chat, and keeps only the pause the old one noted. A text editor or a Study pane that becomes active afterwards only marks the moment ({@link markKeyboardLeftForEditors}); a pane's tab the editor merely names says nothing. The record is read all the time, between pauses and during them: the editor reports a pause as a stack frame and the running session as its thread, and no state of that item stops the reading.
    * @example this.sampleKeyboardOutsideEditors()
    */
   private sampleKeyboardOutsideEditors(): void {
-    if (vscode.debug.activeStackItem !== undefined) return
     const giveBack = this.retainForeignTabFocus(undefined)
-    if (giveBack) this.keyboardOutsideEditors = { giveBack }
-    else this.markKeyboardLeftForEditors()
+    // A new reading of the chat keeps the pause the record noted: the chat that got the keyboard back at a pause is read again right after, and the pause is still that one.
+    if (giveBack)
+      this.keyboardOutsideEditors = {
+        giveBack,
+        pause: this.keyboardOutsideEditors?.pause,
+      }
+    else if (this.hasKeyboardInEditors()) this.markKeyboardLeftForEditors()
   }
 
   /**
-   * Marks the moment a text editor or a Study pane became active after a foreign tab had the keyboard; called by {@link sampleKeyboardOutsideEditors} when the editor names no such tab any more.
-   * The record is not ended there: the editor's debugger opens the paused file that way a moment before it selects the stack item, and {@link judgeKeyboardAtStackItemChange} tells that from a learner who went to a file. Only an active text editor or Study pane says that the keyboard left; a pane's tab the editor merely names says nothing, and the first such moment is kept.
+   * Marks the moment a text editor or a Study pane became active after a foreign tab had the keyboard; called by {@link sampleKeyboardOutsideEditors} when the editor names no such tab any more and a text editor or Study pane is the active one.
+   * The record is not ended there: the editor's debugger opens the paused file that way a moment before it reports the stack frame, also for a stop that follows the reader's return of the stop before, and {@link judgeKeyboardAtPauseBegin} tells that from a learner who went to a file. The first such moment is kept. An editor that has the keyboard because of the pause itself is no such moment ({@link holdsKeyboardByPause}).
    * @example this.markKeyboardLeftForEditors()
    */
   private markKeyboardLeftForEditors(): void {
     const remembered = this.keyboardOutsideEditors
-    if (
-      remembered &&
-      remembered.leftAtMs === undefined &&
-      this.hasKeyboardInEditors()
-    )
-      remembered.leftAtMs = performance.now()
+    if (!remembered || this.holdsKeyboardByPause(remembered.pause)) return
+    remembered.leftAtMs ??= performance.now()
   }
 
   /**
-   * Says whether the editor names a text editor or a Study pane as the active one; asked by {@link markKeyboardLeftForEditors}, {@link judgeKeyboardAtStackItemChange} and {@link close}.
+   * Says whether the active editor has the keyboard because of the pause the chat's record notes, and not by the learner's choice; asked by {@link markKeyboardLeftForEditors}.
+   * @param pause - The pause the record notes, if any.
+   * @returns `true` while the reader's return of that pause runs (the editor is the captured source it just showed), and while that return is still owed and the active text editor is the file the debugger opened for the pause ({@link holdsDebuggersFileOfPause}); `false` without a pause, for any other editor, and for every editor once the return is done.
+   * @example if (!remembered || this.holdsKeyboardByPause(remembered.pause)) return
+   */
+  private holdsKeyboardByPause(
+    pause: KeyboardPauseOfRecord | undefined,
+  ): boolean {
+    return (
+      pause !== undefined &&
+      (pause.state === 'settling' ||
+        (pause.state === 'unsettled' &&
+          this.holdsDebuggersFileOfPause(pause.openedByDebugger)))
+    )
+  }
+
+  /**
+   * Says whether the file the editor's debugger opened at a pause is the active text editor still; asked by {@link holdsKeyboardByPause} and {@link holdsKeyboardSinceBreak}.
+   * @param openedByDebugger - The document that was the active text editor when the pause's frame was reported, `undefined` when no text editor was active then.
+   * @returns `true` when that document is the active text editor now; `false` for another document and for none.
+   * @example this.holdsDebuggersFileOfPause(pause.openedByDebugger)
+   */
+  private holdsDebuggersFileOfPause(
+    openedByDebugger: string | undefined,
+  ): boolean {
+    return (
+      openedByDebugger !== undefined &&
+      openedByDebugger === this.activeTextDocumentUri()
+    )
+  }
+
+  /**
+   * Says whether the editor names a text editor or a Study pane as the active one; asked by {@link sampleKeyboardOutsideEditors}, {@link leavesRecordAfterPause} and {@link close}.
    * In Cursor's tab layout of the Agent chat that means the keyboard is there and not in the chat. In VS Code, and in Cursor while the chat is a pane of the secondary side bar, it is also what the editor reads while the chat, the terminal or a view has the keyboard.
    * @returns `true` when a text editor or one of the reader's two panes is active.
    * @example this.hasKeyboardInEditors() // => false while Cursor's chat tab has the keyboard
@@ -2593,24 +2693,119 @@ export class StudyWorkspace {
   }
 
   /**
-   * Judges the record of {@link sampleKeyboardOutsideEditors} when Run and Debug selects or clears its stack item; called by the listener of {@link watchKeyboardOutsideEditors}.
-   * - A pause begins: {@link leftChatBeforePause} tells the paused file the debugger opened from a file the learner chose earlier. The debugger's own opening leaves the record as it is; the learner's choice ends it.
-   * - A pause ends: a text editor or Study pane that is active now was chosen during the pause (the reader gave the keyboard back at that pause), and the record ends.
+   * Follows the pauses of the editor's debugger for the chat's record, on every change of Run and Debug's active stack item; called by the listener of {@link watchKeyboardOutsideEditors}.
+   * A stack frame is a pause ({@link judgeKeyboardAtPauseBegin}); a thread without a frame, which the editor reports once the session runs again, and no item are the time between pauses ({@link judgeKeyboardAtPauseEnd}).
    * @example this.judgeKeyboardAtStackItemChange()
    */
   private judgeKeyboardAtStackItemChange(): void {
-    const remembered = this.keyboardOutsideEditors
-    if (!remembered) return
-    const leftForGood =
-      vscode.debug.activeStackItem === undefined
-        ? this.hasKeyboardInEditors()
-        : this.leftChatBeforePause(remembered.leftAtMs)
-    if (leftForGood) this.keyboardOutsideEditors = undefined
-    else remembered.leftAtMs = undefined
+    if (isStackFrameItem(vscode.debug.activeStackItem))
+      this.judgeKeyboardAtPauseBegin()
+    else this.judgeKeyboardAtPauseEnd()
   }
 
   /**
-   * Says whether a text editor or Study pane that became active before a pause was the learner's own choice; asked by {@link judgeKeyboardAtStackItemChange} when Run and Debug selects a stack item.
+   * Judges the chat's record when the editor reports a stack frame; the first half of {@link judgeKeyboardAtStackItemChange}.
+   * Every frame is taken as a stop of its own: a thread that goes on and stops again within the 200 ms the editor waits before it reports a running session is reported as a frame after a frame, with no item between them (two breakpoints of one request). {@link leftChatBeforePause} tells the paused file the debugger opened from a file the learner chose earlier: the learner's choice ends the record. The debugger's own opening leaves it, and the pause is noted on the record with the document the debugger opened, for the reader's one return of that pause. The same holds for a stop that follows a settled one: an editor that became active after the reader's return is the next paused file when its frame follows within that time, and the learner's choice otherwise. A frame the learner selects in the Call Stack view reads the same as a new stop and is taken as one.
+   * @example this.judgeKeyboardAtPauseBegin()
+   */
+  private judgeKeyboardAtPauseBegin(): void {
+    const remembered = this.keyboardOutsideEditors
+    if (!remembered) return
+    if (this.leftChatBeforePause(remembered.leftAtMs)) {
+      this.keyboardOutsideEditors = undefined
+      return
+    }
+    remembered.leftAtMs = undefined
+    remembered.pause = {
+      openedByDebugger: this.activeTextDocumentUri(),
+      state: 'unsettled',
+    }
+  }
+
+  /**
+   * Ends the pause the chat's record noted, when the editor reports a thread or no item, and reads the record again; the second half of {@link judgeKeyboardAtStackItemChange}.
+   * A return that {@link endsPauseOfRecord} started is not followed by a reading: the debugger's file is still the active editor until the chat's command is answered.
+   * @example this.judgeKeyboardAtPauseEnd()
+   */
+  private judgeKeyboardAtPauseEnd(): void {
+    if (!this.endsPauseOfRecord()) this.sampleKeyboardOutsideEditors()
+  }
+
+  /**
+   * Removes a pause that is over from the chat's record and settles what it leaves ({@link leavesRecordAfterPause}); the first step of {@link judgeKeyboardAtPauseEnd}.
+   * @returns `true` when the chat's focus command was started for a pause the reader had not settled; `false` otherwise, and without a record or a noted pause.
+   * @example if (!this.endsPauseOfRecord()) this.sampleKeyboardOutsideEditors()
+   */
+  private endsPauseOfRecord(): boolean {
+    const remembered = this.keyboardOutsideEditors
+    if (!remembered?.pause) return false
+    const pause = remembered.pause
+    remembered.pause = undefined
+    if (this.leavesRecordAfterPause(pause)) return false
+    // A return the editor refuses leaves the keyboard where it is.
+    void remembered.giveBack(true).catch(() => false)
+    return true
+  }
+
+  /**
+   * Decides what a pause that is over leaves of the chat's record, and ends the record where the learner chose an editor; asked by {@link endsPauseOfRecord}.
+   * - Neither a text editor nor a Study pane is active: the chat has the keyboard, and the record stays. So it does while the reader's return of that pause still runs.
+   * - The reader settled the pause and a text editor or Study pane is active: the learner chose it after the return, and the record ends.
+   * - The pause ended before the reader settled it and another text editor than the debugger's, or a Study pane, is active: it was chosen during the pause, and the record ends.
+   * - The pause ended before the reader settled it, and the file the debugger opened for it is still the active text editor beside a live run ({@link holdsKeyboardSinceBreak}): nobody chose that file and nothing of the reader took its place, as when the run resumes a stop by itself. The record stays, and the chat is owed the keyboard now.
+   * @param pause - The pause the record noted.
+   * @returns `false` only in the last case; `true` when nothing more is to be done.
+   * @example if (this.leavesRecordAfterPause(pause)) return false
+   */
+  private leavesRecordAfterPause(pause: KeyboardPauseOfRecord): boolean {
+    if (pause.state === 'settling' || !this.hasKeyboardInEditors()) return true
+    if (this.choseEditorAtPause(pause)) {
+      this.keyboardOutsideEditors = undefined
+      return true
+    }
+    return false
+  }
+
+  /**
+   * Says whether the editor that is active when a pause is over was the learner's choice; asked by {@link leavesRecordAfterPause} once a text editor or Study pane is known to be active.
+   * @param pause - The pause the record noted.
+   * @returns `true` for a pause the reader settled (the chat had the keyboard after it), and for an unsettled one unless the debugger's own file is still the active text editor beside a live run ({@link holdsKeyboardSinceBreak}).
+   * @example if (this.choseEditorAtPause(pause)) this.keyboardOutsideEditors = undefined
+   */
+  private choseEditorAtPause(pause: KeyboardPauseOfRecord): boolean {
+    return (
+      pause.state === 'settled' ||
+      !this.holdsKeyboardSinceBreak(pause.openedByDebugger)
+    )
+  }
+
+  /**
+   * Says whether the file the editor's debugger opened at a break still has the keyboard beside a live run; asked by {@link choseEditorAtPause}.
+   * Only beside a live run of Codebook (its Application pane's lease exists): in a debug session of the learner's own the reader moves no keyboard.
+   * @param openedByDebugger - The document that was the active text editor when the pause's frame was reported, if any.
+   * @returns `true` when a live run's viewport exists and that document is the active text editor now; `false` for another document, for none, and without a live run.
+   * @example this.holdsKeyboardSinceBreak(pause.openedByDebugger)
+   */
+  private holdsKeyboardSinceBreak(
+    openedByDebugger: string | undefined,
+  ): boolean {
+    return (
+      this.viewport !== undefined &&
+      this.holdsDebuggersFileOfPause(openedByDebugger)
+    )
+  }
+
+  /**
+   * Names the document of the active text editor; read by {@link judgeKeyboardAtPauseBegin} and {@link holdsDebuggersFileOfPause}, which compare it across a pause.
+   * @returns The document's URI as a string, `undefined` while no text editor is active.
+   * @example this.activeTextDocumentUri() // => 'file:///work/app/lib/actions.ts'
+   */
+  private activeTextDocumentUri(): string | undefined {
+    return vscode.window.activeTextEditor?.document.uri.toString()
+  }
+
+  /**
+   * Says whether a text editor or Study pane that became active before a pause was the learner's own choice; asked by {@link judgeKeyboardAtPauseBegin} when Run and Debug selects a stack item.
    * The editor's debugger awaits the opening of the paused file, with the keyboard, and selects the stack item after it (Cursor 3.23.12, `focusStackFrame` of its workbench), so the extension host sees that file become the active text editor a moment before it sees the pause. An editor that became active within {@link PAUSE_FOCUS_LOOKBACK_MS} before the stack item is taken as that opening. The price: a learner who goes from the chat to a file within that time before a pause is treated as still being in the chat.
    * @param leftAtMs - The moment {@link markKeyboardLeftForEditors} marked, `undefined` when no editor became active since the foreign tab had the keyboard.
    * @returns `true` when an editor became active more than {@link PAUSE_FOCUS_LOOKBACK_MS} ago; `false` within that time and without a marked moment.
@@ -2624,44 +2819,71 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a debug session is paused beside a live run; asked by {@link settleKeyboardAtPause} and {@link replacesEditorFocusedByPause}, which act on the keyboard the editor's debugger gave the paused file.
-   * While a recording is open the selected stack item is the historical debugger's, which opens no file with the keyboard for a new pause.
-   * @returns `true` while Run and Debug has a selected stack item and no recording is open.
-   * @example this.isPausedBesideLiveRun() // => false while a recording is replayed
+   * Says whether a debug session is paused beside a live run; asked by {@link owedPauseOf} and {@link replacesEditorFocusedByPause}, which act on the keyboard the editor's debugger gave the paused file.
+   * A pause is told by a stack frame ({@link isStackFrameItem}): once the session runs again the editor reports its thread, which is no pause. While a recording is open the frame is the historical debugger's, which opens no file with the keyboard for a new pause.
+   * @returns `true` while Run and Debug's active stack item is a frame and no recording is open.
+   * @example this.isPausedBesideLiveRun() // => false while the debugged program runs, and while a recording is replayed
    */
   private isPausedBesideLiveRun(): boolean {
-    return !this.recordingActive && vscode.debug.activeStackItem !== undefined
+    return (
+      !this.recordingActive && isStackFrameItem(vscode.debug.activeStackItem)
+    )
   }
 
   /**
-   * Settles the keyboard at a pause of a live run, right after the reader showed the captured source there or its Application pane took the keyboard; called by {@link renderSelection} and, through the viewport's lease, by {@link BrowserViewport} ({@link presentation}).
-   * At a pause the editor's debugger opens the paused file with the keyboard, and the reader's pane that takes that file's place takes the keyboard with it. Where the chat had the keyboard just before the pause (Cursor's Agent chat as a tab of another editor part), it gets the keyboard back and nothing is told ({@link returnsKeyboardToChatAtPause}). Where the reader knows of no such chat (a learner in a file or on another tab of the main editor, and every side-view chat: VS Code's, and Cursor's Agent pane in the secondary side bar), the keyboard stays and the learner is told once ({@link tellPaneTookPausedFocus}) when a pane took it.
-   * @param tookKeyboard - Whether the reader's pane took the keyboard from the paused file.
+   * Settles the keyboard at a pause of a live run, right after the reader showed the captured source there without being asked for the keyboard; called by {@link renderSelection}.
+   * At a pause the editor's debugger opens the paused file with the keyboard, and the captured source that takes that file's place takes the keyboard with it. Where the chat had the keyboard just before the pause (Cursor's Agent chat as a tab of another editor part), it gets the keyboard back and nothing is told ({@link returnsKeyboardToChatAtPause}). Where the reader knows of no such chat (a learner in a file or on another tab of the main editor, and every side-view chat: VS Code's, and Cursor's Agent pane in the secondary side bar), the keyboard stays and the learner is told once ({@link tellPaneTookPausedFocus}) when the source took it. The Application pane settles the same question through its viewport's lease, before its reveal ({@link presentation}).
+   * A return the editor refuses (its layout read, its command list or the chat's focus command rejects) leaves the keyboard where it is and is treated as no return: a keyboard courtesy never fails the render that called it.
+   * @param tookKeyboard - Whether the captured source took the keyboard from the paused file.
    * @returns Once the keyboard is given back, found where it was, or left with the sentence told.
    * @example await this.settleKeyboardAtPause(takesPausedFocus)
    */
   private async settleKeyboardAtPause(tookKeyboard: boolean): Promise<void> {
-    if (!this.isPausedBesideLiveRun()) return
-    const gaveBack = await this.returnsKeyboardToChatAtPause(tookKeyboard)
+    const gaveBack = await this.returnsKeyboardToChatAtPause().catch(
+      () => false,
+    )
     if (tookKeyboard && !gaveBack) this.tellPaneTookPausedFocus()
   }
 
   /**
-   * Gives the keyboard back to the chat that had it just before a pause; the first step of {@link settleKeyboardAtPause}.
-   * The keyboard is taken from the reader's pane that just took it, which the reader knows without the editor's report (Cursor does not report every focus a pane takes beside its chat), or from the paused file the editor's debugger opened, which the editor names as the active text editor. In any other state the keyboard is not known to have left the chat, and nothing is run.
-   * @param tookKeyboard - Whether the reader's pane took the keyboard from the paused file just now.
+   * Gives the keyboard back to the chat that had it just before a pause, once for each pause; the first step of {@link settleKeyboardAtPause}, and the answer the Application pane's viewport gets before it reveals the pane over the paused file ({@link presentation}).
+   * A pause is settled at the reader's first reveal after its frame was reported ({@link owedPauseOf}): a later render of the same pause runs nothing, so a file, the captured source or a pane the learner chose meanwhile keeps the keyboard, and such a choice ends the record when the pause ends ({@link endsPauseOfRecord}) or, for a stop that follows without an end, by the time it was made ({@link judgeKeyboardAtPauseBegin}). The keyboard is taken from a text editor only: the paused file the editor's debugger opened, or the captured source shown in its place. While no text editor is active it is not known to have left the chat, and nothing is run.
    * @returns
    * - `true` when the function {@link retainForeignTabFocus} answered ran the chat's focus command now.
-   * - `false` without a record of {@link sampleKeyboardOutsideEditors}, when no pane took the keyboard and no text editor is active (an earlier step of this pause gave the keyboard back already, or the learner chose the chat or a pane), and when that function gave nothing back (the remembered tab is one of the main editor's, its group is gone or a Study pane's, the window lost the focus, or the host has no command for its chat).
-   * @example const gaveBack = await this.returnsKeyboardToChatAtPause(true)
+   * - `false` without a record that notes an unsettled pause beside a live run, while no text editor is active, and when that function gave nothing back (the remembered tab is one of the main editor's or not known to be the chat's, its group is gone or a Study pane's, the window lost the focus, or the host has no command for its chat).
+   * @throws What the editor's layout read, its command list or the chat's focus command rejected with.
+   * @example const gaveBack = await this.returnsKeyboardToChatAtPause()
    */
-  private async returnsKeyboardToChatAtPause(
-    tookKeyboard: boolean,
-  ): Promise<boolean> {
+  private async returnsKeyboardToChatAtPause(): Promise<boolean> {
     const remembered = this.keyboardOutsideEditors
-    if (!remembered || !(tookKeyboard || vscode.window.activeTextEditor))
-      return false
-    return remembered.giveBack(true)
+    if (!remembered) return false
+    const pause = this.owedPauseOf(remembered)
+    if (!pause) return false
+    pause.state = 'settling'
+    try {
+      return (
+        vscode.window.activeTextEditor !== undefined &&
+        (await remembered.giveBack(true))
+      )
+    } finally {
+      // From here an editor that becomes active is the learner's choice or the next stop's paused file; one that became active while the return ran was the captured source.
+      pause.state = 'settled'
+      remembered.leftAtMs = undefined
+    }
+  }
+
+  /**
+   * Finds the pause of the chat's record whose one return is still owed; asked by {@link returnsKeyboardToChatAtPause}, which marks that return as running and then as done.
+   * @param remembered - The record.
+   * @returns The pause, when the record notes one beside a live run that no reveal of the reader settled yet; `undefined` between pauses, while a recording is open, and for a pause whose return runs or is done.
+   * @example const pause = this.owedPauseOf(remembered)
+   */
+  private owedPauseOf(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+  ): KeyboardPauseOfRecord | undefined {
+    const pause = remembered.pause
+    if (!pause || pause.state !== 'unsettled') return undefined
+    return this.isPausedBesideLiveRun() ? pause : undefined
   }
 
   /**
@@ -2773,23 +2995,6 @@ export class StudyWorkspace {
   }
 
   /**
-   * Counts the groups of the main editor, for the focus return of {@link retainForeignTabFocus}: only those groups can be focused by the editor's numbered commands.
-   * @returns The main editor's group count, or `undefined` when the main editor is not known to have the focus now: a layout read is answered for the editor part that has it, so the answer could be another part's.
-   * @example
-   * ```ts
-   * const mainCount = await this.mainEditorGroupCount() // => 3 beside a chat group at column 4
-   * ```
-   */
-  private async mainEditorGroupCount(): Promise<number | undefined> {
-    const count = editorLayoutGroupCount(
-      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
-    )
-    return count !== undefined && this.hasMainEditorFocus(count)
-      ? count
-      : undefined
-  }
-
-  /**
    * Measures which side bars are open before {@link maximizeForRead} maximizes a pane, and hides the primary one for that measurement.
    * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link rememberAuxiliaryBarAtRead} reads it once more when the maximization has hidden the secondary bar too.
    * @returns Once {@link sideBarsBeforeRead} holds the measurement; or `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement), and no bar is hidden for a measurement that cannot be made; or, when the read after hiding the primary side bar gave no width, a record without that width that shows the primary side bar again when the reading ends, because the measurement hid it and cannot tell whether it was open.
@@ -2820,7 +3025,7 @@ export class StudyWorkspace {
 
   /**
    * Measures whether the secondary side bar was open before a Read, right after the Read's maximize command hid it; called by {@link beginReadingMaximized} once for each reading that hid both bars.
-   * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar.
+   * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar. That read goes through the maximized layout, in which the editor answers every hidden group with the width it had while visible: only the widest column, which is the maximized group's and has the whole area, is read ({@link readMaximizedEditorAreaWidthPx}).
    * @returns Once {@link sideBarsBeforeRead} says whether the secondary bar was open; left without that answer when the area gave no width, and {@link sideBarShowCommands} measures it when the reading ends.
    * @example
    * ```ts
@@ -2831,11 +3036,27 @@ export class StudyWorkspace {
     const before = this.sideBarsBeforeRead
     // Only a reading whose maximization hid both bars has a secondary bar to measure.
     if (before?.widthWithoutPrimaryPx === undefined) return
-    const maximizedWidthPx = await this.readEditorAreaWidthPx()
+    const maximizedWidthPx = await this.readMaximizedEditorAreaWidthPx()
     if (maximizedWidthPx === undefined) return
     before.auxiliaryVisible = this.hasSideBarGain(
       maximizedWidthPx,
       before.widthWithoutPrimaryPx,
+    )
+  }
+
+  /**
+   * Reads the width of the editor area while the Read's maximization is on, for {@link rememberAuxiliaryBarAtRead}.
+   * @returns The width {@link maximizedEditorAreaWidthPx} finds in the widest column of the layout, or `undefined` when the layout has no columns at its top level or the read failed.
+   * @example
+   * ```ts
+   * const maximizedWidthPx = await this.readMaximizedEditorAreaWidthPx() // => 1335 for a maximized Application group in a window of that width with both side bars hidden
+   * ```
+   */
+  private async readMaximizedEditorAreaWidthPx(): Promise<number | undefined> {
+    return maximizedEditorAreaWidthPx(
+      await vscode.commands
+        .executeCommand<unknown>('vscode.getEditorLayout')
+        .then(undefined, () => undefined),
     )
   }
 
@@ -5052,12 +5273,9 @@ export class StudyWorkspace {
         scenario,
         {
           panel,
-          tookKeyboardAtPause: () => {
-            // The keyboard goes back to the chat that had it before the pause, or the learner is told once where it is.
-            void this.settleKeyboardAtPause(true).catch((error: unknown) =>
-              this.report('reader', error),
-            )
-          },
+          // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back; a pane that had to take it tells the learner once where it is.
+          returnsKeyboardAtPause: () => this.returnsKeyboardToChatAtPause(),
+          tookKeyboardAtPause: () => this.tellPaneTookPausedFocus(),
           released: () => {
             // A retired runtime cannot close or replace the panel attached to a newer lease.
             if (this.leaseId !== leaseId) return
@@ -6149,7 +6367,7 @@ export class StudyWorkspace {
 
   /**
    * Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels; called by the command "Codebook: Close Study Workspace".
-   * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active (Cursor's chat as a tab of another editor part has the keyboard, or a tab that is no text editor) nothing is focused, and a window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends, and shows nothing.
+   * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: that close moves no keyboard and tells nothing.
    * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
    * @throws When the editor refused to close a captured source's tab.
    * @example await workspace.close()
@@ -6184,6 +6402,9 @@ export class StudyWorkspace {
     this.clearLearningSummary()
     const pending = (this.closingPromise = (async () => {
       let restoredSideBars = false
+      // Read before anything is closed: with one editor part, a tab that is neither a text editor nor a pane is settled like a learner's file.
+      const settlesKeyboard =
+        hadKeyboardInEditors || (await this.namesOnlyMainEditorGroups())
       // One bound for every storage wait of this close, counted from the first of them: a writer that never returns is waited for once, not once per wait.
       let storageDeadlineMs: number | undefined
       const storageTimeLeftMs = (): number =>
@@ -6246,7 +6467,7 @@ export class StudyWorkspace {
       if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
         throw new Error('Some captured source readers could not close.')
       const leavesKeyboardNowhere =
-        hadKeyboardInEditors && this.closesPaneOrSource(tabs.length)
+        settlesKeyboard && this.closesPaneOrSource(tabs.length)
       this.opened = false
       // A closed reader has no live or replay arrangement: the next selection opens it instead of arranging panes that no longer exist.
       this.liveComposition = false
@@ -6289,6 +6510,23 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether every tab group the editor names is a group of the main editor, in a window that has the focus; asked by {@link close}, before it closes anything, when the editor names neither a text editor nor a Study pane as active.
+   * With one editor part the keyboard is then in the tab in front of the active group (the editor's Settings, an image, another extension's page), in the terminal or in a view, as it is beside a learner's own file, and Close settles it the same way. With another editor part (Cursor's Agent chat as a tab) that state reads the same as the chat holding the keyboard while the editor goes on naming a main group, and Close leaves it alone.
+   * @returns `true` when the window is focused and the editor's layout counts exactly the groups its tab model names; `false` when the tab model names more (a group of another editor part), when the layout cannot be read, in a window without the focus, where nothing is settled anyway, and for a reader that closes with its extension host ({@link dispose}), which asks the editor nothing more.
+   * @example
+   * ```ts
+   * await this.namesOnlyMainEditorGroups() // => true in VS Code with a Settings page in front, false beside Cursor's chat tab
+   * ```
+   */
+  private async namesOnlyMainEditorGroups(): Promise<boolean> {
+    if (this.disposed || !vscode.window.state.focused) return false
+    const layout = await vscode.commands
+      .executeCommand<unknown>('vscode.getEditorLayout')
+      .then(undefined, () => undefined)
+    return editorLayoutGroupCount(layout) === vscode.window.tabGroups.all.length
+  }
+
+  /**
    * Says whether {@link close} closes anything of the reader's in the editor area; asked by {@link close} before it disposes the panes, to know whether the editor will rebuild its grid.
    * @param closedSourceTabs - How many captured source tabs this close closed.
    * @returns `true` when a captured source tab was closed or a pane is still open to be closed; `false` for a reader that had nothing open.
@@ -6302,12 +6540,14 @@ export class StudyWorkspace {
    * Gives the active editor group the keyboard once {@link close} has closed the panes and the captured source, and tells the learner where it is; called by {@link close} in a focused window.
    * The focus command waits until the editor has closed the disposed panes' tabs and removed the groups they left empty: a group focused before that is the one that still shows a closing pane, and the keyboard goes with that tab a moment later; and the removal of a group rebuilds the editor grid, which takes the keyboard from the editor that had it.
    * @param tellsLearner - Whether a pane, the captured source or the learner's own file was the active editor, so that the keyboard may have come from the terminal, a view or a chat; `false` when only the side bars a Read hid were shown again.
-   * @returns Once the focus command was answered.
+   * @returns Once the focus command was answered; at once for a reader that is being disposed, which moves no keyboard.
    * @example await this.giveActiveGroupKeyboardAfterClose(leavesKeyboardNowhere)
    */
   private async giveActiveGroupKeyboardAfterClose(
     tellsLearner: boolean,
   ): Promise<void> {
+    // A reader that closes with its disposal (the extension host ends, or the workspace folders changed) moves no keyboard and tells nothing: no learner asked for that close.
+    if (this.disposed) return
     await waitUntil(
       () =>
         !this.hasUnownedPaneTab(
@@ -6346,12 +6586,12 @@ export class StudyWorkspace {
 
   /**
    * Tells the learner, once in an editor session, that {@link close} gave the active editor group the keyboard; called by {@link giveActiveGroupKeyboardAfterClose}.
-   * The keyboard may have been in the terminal, a view or a side-view chat before the Command Palette; the editor does not say, so the learner is told where it is now. A reader closed with its extension host ({@link dispose}) has no learner to tell.
+   * The keyboard may have been in the terminal, a view or a side-view chat before the Command Palette; the editor does not say, so the learner is told where it is now. The mark is the editor session's ({@link keyboardNoticesTold}), not this reader's.
    * @example if (tellsLearner) this.tellKeyboardAfterClose()
    */
   private tellKeyboardAfterClose(): void {
-    if (this.disposed || this.closeKeyboardNoticeShown) return
-    this.closeKeyboardNoticeShown = true
+    if (keyboardNoticesTold.has('close')) return
+    keyboardNoticesTold.add('close')
     void showPlainNotice(
       vscode.window,
       'information',
@@ -8411,8 +8651,9 @@ export class StudyWorkspace {
           selection: new vscode.Range(position, position),
         })
         if (this.closing || lifetime !== this.lifetime) return
-        // The chat that had the keyboard before this pause gets it back; without one the learner is told once where the keyboard is.
-        await this.settleKeyboardAtPause(takesPausedFocus)
+        // The chat that had the keyboard before this pause gets it back; without one the learner is told once where the keyboard is. A render that was asked for with the keyboard is the learner's choice of the source: no return follows it, and the chat's record ends.
+        if (preserveFocus) await this.settleKeyboardAtPause(takesPausedFocus)
+        else this.keyboardOutsideEditors = undefined
         if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
@@ -8720,14 +8961,14 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells the learner, once in an editor session, that one of the reader's panes took the keyboard from the file the debugger opened at a pause; called by {@link settleKeyboardAtPause} when the captured source or the Application pane took it and the reader knew of no chat to give it back to.
+   * Tells the learner, once in an editor session, that one of the reader's panes took the keyboard from the file the debugger opened at a pause; called by {@link settleKeyboardAtPause} when the captured source took it, and through the viewport's lease ({@link presentation}) when the Application pane did, each time because the reader knew of no chat to give it back to.
    * Where the chat is a side view (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar) the extension API reads the same whether the keyboard was in the paused file or in the chat input, so the keyboard cannot be given back to the chat without taking it from a learner who works in a file; the sentence says where it is and what to do.
    * @returns Once the notification is shown, or at once after the first time.
-   * @example if (tookKeyboard) this.tellPaneTookPausedFocus()
+   * @example if (tookKeyboard && !gaveBack) this.tellPaneTookPausedFocus()
    */
   private tellPaneTookPausedFocus(): void {
-    if (this.pausedFocusNoticeShown) return
-    this.pausedFocusNoticeShown = true
+    if (keyboardNoticesTold.has('pause')) return
+    keyboardNoticesTold.add('pause')
     void showPlainNotice(
       vscode.window,
       'information',
@@ -9135,6 +9376,8 @@ export class StudyWorkspace {
     let visible = panel.visible
     panel.onDidChangeViewState(() => {
       if (this.app !== panel) return
+      // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
+      this.sampleKeyboardOutsideEditors()
       this.confirmInitialAppRegistration()
       if (panel.active) this.lastActiveRegion = 'app'
       if (visible === panel.visible) return
@@ -9269,12 +9512,14 @@ export class StudyWorkspace {
       this.contextPanel = undefined
     })
     panel.onDidChangeViewState(() => {
-      if (this.contextPanel === panel && panel.active) {
-        this.lastActiveRegion = 'context'
-        void this.refreshProgress().then(() => {
-          if (this.contextPanel === panel) this.publish()
-        })
-      }
+      if (this.contextPanel !== panel) return
+      // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
+      this.sampleKeyboardOutsideEditors()
+      if (!panel.active) return
+      this.lastActiveRegion = 'context'
+      void this.refreshProgress().then(() => {
+        if (this.contextPanel === panel) this.publish()
+      })
     })
     panel.webview.onDidReceiveMessage((message) => {
       void this.receivePaneMessage(message, 'context', panel).catch((error) => {
