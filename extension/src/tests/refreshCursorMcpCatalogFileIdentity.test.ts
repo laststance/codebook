@@ -1018,12 +1018,11 @@ test('a folder at the path of the Cursor MCP catalog’s ownership receipt is an
     ),
   }
 
-  // Assert
+  // Assert: the sentence names the record and how to start over (row 212).
+  const refusal = `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${join(folders.recordDirectory, 'receipt.json')}, then run Codebook: Set Up AI Chat again.`
   assert.deepEqual(removals, {
-    withTheFlagsOfThisSystem:
-      'refused: Cursor MCP catalog ownership record is invalid.',
-    whereTheOpenCannotRefuseALink:
-      'refused: Cursor MCP catalog ownership record is invalid.',
+    withTheFlagsOfThisSystem: refusal,
+    whereTheOpenCannotRefuseALink: refusal,
   })
 })
 

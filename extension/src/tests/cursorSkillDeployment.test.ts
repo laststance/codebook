@@ -2630,3 +2630,234 @@ test('a removal whose skill folder the learner deleted finishes: the receipt rec
     },
   )
 })
+
+/**
+ * The sentence of a record of the skill setup that cannot be trusted, as the learner reads it.
+ * @param subject - What is invalid, as the sentence begins.
+ * @param recordPath - The record file the sentence names.
+ * @param paths - The test's setup, for the skill folder the sentence names.
+ * @returns The whole sentence.
+ */
+function sentenceOfAnInvalidRecord(
+  subject: string,
+  recordPath: string,
+  paths: { homeRoot: string },
+): string {
+  return `${subject} is invalid; no skill file was changed. To start over, delete ${recordPath} and the folder ${join(paths.homeRoot, '.cursor', 'skills', 'codebook')} (first copy anything of yours out of that folder), then run Codebook: Set Up AI Chat again.`
+}
+
+// Value: protects=a learner whose receipt of the Cursor skill was edited by hand or damaged; fails_when=setup, reconnect and removal are refused for good with a sentence that names no file and no way out, or the way out it names does not end in a finished setup (deleting the receipt alone leads to "A codebook skill directory already exists in Cursor. …"); why_new=Cycle 0046 row 212 (the receipt); seam=none, the real files
+test('a Cursor skill receipt that was edited by hand is refused by setup, reconnect and removal with a sentence that names the receipt and the skill folder, and after the learner deletes both, setup installs the skill', async (context) => {
+  // Arrange: the installed skill, and a receipt whose inode someone wrote as a word.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const receiptPath = join(paths.storageRoot, 'cursor-skill', 'receipt.json')
+  const receipt: object = JSON.parse(await readFile(receiptPath, 'utf8'))
+  await writeFile(receiptPath, JSON.stringify({ ...receipt, inode: 'mine' }))
+
+  // Act: the refusal is followed to the letter.
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+  }
+  const skillAfterTheRefusals = await readFile(paths.targetPath, 'utf8')
+  await rm(receiptPath)
+  // The receipt alone is not enough, which is why the sentence names the folder too.
+  const setupAfterTheReceiptAloneWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+  await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
+    recursive: true,
+  })
+  const setupAfterBothWereDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  const refusal = sentenceOfAnInvalidRecord(
+    'Cursor skill ownership receipt',
+    receiptPath,
+    paths,
+  )
+  assert.deepEqual(
+    {
+      refusals,
+      skillAfterTheRefusals,
+      setupAfterTheReceiptAloneWasDeleted,
+      setupAfterBothWereDeleted,
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      refusals: { setup: refusal, reconnect: refusal, removal: refusal },
+      skillAfterTheRefusals: INITIAL_SKILL,
+      setupAfterTheReceiptAloneWasDeleted:
+        'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
+      setupAfterBothWereDeleted: 'installed',
+      skill: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=a learner whose record of an interrupted setup or removal of the Cursor skill was edited by hand or damaged; fails_when=every setup is refused for good with a sentence that names no file and no way out, or the way out it names does not end in a finished setup; why_new=Cycle 0046 row 212 (the setup's record and the removal's record); seam=none, the real files
+test('a setup record and a removal record of the Cursor skill that were edited by hand are each refused with a sentence that names the record and the skill folder, and after the learner deletes both, setup restores the skill', async (context) => {
+  // Arrange: two installed skills; beside one a setup's record, beside the other a removal's record, each with a schema version this build does not know.
+  const withSetupRecord = await fixture(context),
+    withRemovalRecord = await fixture(context)
+  for (const paths of [withSetupRecord, withRemovalRecord])
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+  const setupRecord = await writeUpdateRecord(withSetupRecord)
+  const removalRecord = await writeRemovalRecord(withRemovalRecord)
+  for (const recordPath of [
+    setupRecord.pendingPath,
+    removalRecord.removalPath,
+  ]) {
+    const record: object = JSON.parse(await readFile(recordPath, 'utf8'))
+    await writeFile(recordPath, JSON.stringify({ ...record, schemaVersion: 2 }))
+  }
+
+  // Act: each refusal is followed to the letter.
+  const outcomes: Record<string, string[]> = {}
+  for (const [name, paths, recordPath] of [
+    ['setupRecord', withSetupRecord, setupRecord.pendingPath],
+    ['removalRecord', withRemovalRecord, removalRecord.removalPath],
+  ] as const) {
+    const refusal = await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
+    await rm(recordPath)
+    await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
+      recursive: true,
+    })
+    outcomes[name] = [
+      refusal,
+      await statusOrRefusalOf(
+        deployCursorSkill(
+          paths.extensionPath,
+          paths.storageRoot,
+          paths.homeRoot,
+        ),
+      ),
+      await readFile(paths.targetPath, 'utf8'),
+    ]
+  }
+
+  // Assert
+  assert.deepEqual(outcomes, {
+    setupRecord: [
+      sentenceOfAnInvalidRecord(
+        'Cursor skill pending ownership record',
+        setupRecord.pendingPath,
+        withSetupRecord,
+      ),
+      'restored',
+      INITIAL_SKILL,
+    ],
+    removalRecord: [
+      sentenceOfAnInvalidRecord(
+        'Cursor skill pending removal record',
+        removalRecord.removalPath,
+        withRemovalRecord,
+      ),
+      'restored',
+      INITIAL_SKILL,
+    ],
+  })
+})
+
+// Value: protects=the learner who has to find the one file that is wrong among Codebook's records of the Cursor skill; fails_when=a refusal names another file than the one that holds the invalid part (a setup's record with an invalid previous owner blamed on the receipt), or a record that is no JSON, or one with an invalid path, ends with a bare parser error or a sentence without a way out; why_new=Cycle 0046 row 212: every check of a record refuses through one function; seam=none, the real files
+test('each invalid part of a Cursor skill record is refused with the sentence of an invalid record that names the file it stands in: a receipt that is no JSON, and a setup record with an invalid displaced name, retained name or previous owner', async (context) => {
+  // Arrange: four installed skills, each with one record damaged in one way.
+  const damages = {
+    receiptIsNoJson: await fixture(context),
+    displacedName: await fixture(context),
+    retainedName: await fixture(context),
+    previousOwner: await fixture(context),
+  }
+  const recordPaths: Record<string, string> = {}
+  for (const [damage, paths] of Object.entries(damages)) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    if (damage === 'receiptIsNoJson') {
+      recordPaths[damage] = join(
+        paths.storageRoot,
+        'cursor-skill',
+        'receipt.json',
+      )
+      await writeFile(recordPaths[damage], '{"schemaVersion":1,')
+      continue
+    }
+    const { pendingPath } = await writeUpdateRecord(paths)
+    const record: { previous: object } = JSON.parse(
+      await readFile(pendingPath, 'utf8'),
+    )
+    await writeFile(
+      pendingPath,
+      JSON.stringify({
+        ...record,
+        ...(damage === 'displacedName'
+          ? { displacedPath: join(paths.homeRoot, 'elsewhere.tmp') }
+          : {}),
+        ...(damage === 'retainedName'
+          ? { retiredPath: join(paths.homeRoot, 'elsewhere.md') }
+          : {}),
+        ...(damage === 'previousOwner'
+          ? { previous: { ...record.previous, skillSha256: 'no digest' } }
+          : {}),
+      }),
+    )
+    recordPaths[damage] = pendingPath
+  }
+
+  // Act
+  const refusals: Record<string, string> = {}
+  for (const [damage, paths] of Object.entries(damages))
+    refusals[damage] = await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
+
+  // Assert
+  assert.deepEqual(refusals, {
+    receiptIsNoJson: sentenceOfAnInvalidRecord(
+      'Cursor skill ownership receipt',
+      recordPaths.receiptIsNoJson!,
+      damages.receiptIsNoJson,
+    ),
+    displacedName: sentenceOfAnInvalidRecord(
+      'Cursor skill pending displacement path',
+      recordPaths.displacedName!,
+      damages.displacedName,
+    ),
+    retainedName: sentenceOfAnInvalidRecord(
+      'Cursor skill pending private retention path',
+      recordPaths.retainedName!,
+      damages.retainedName,
+    ),
+    previousOwner: sentenceOfAnInvalidRecord(
+      'Cursor skill ownership receipt',
+      recordPaths.previousOwner!,
+      damages.previousOwner,
+    ),
+  })
+})

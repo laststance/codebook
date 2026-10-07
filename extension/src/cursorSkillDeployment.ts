@@ -267,8 +267,54 @@ async function assertSkillParents(homeRoot: string): Promise<void> {
   }
 }
 
-/** Validates a private owner receipt before {@link deployCursorSkill} trusts prior installation. @param value - Parsed journal data. @param targetPath - Expected managed skill path. @returns A validated receipt. @example parseReceipt(record, '/home/user/.cursor/skills/codebook/SKILL.md') // => SkillReceipt */
-function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
+/**
+ * Builds the refusal for a record of the skill setup that cannot be trusted (edited by hand, damaged, or written in a form this version does not read); every check of a receipt, a setup record or a removal record refuses through it, so each names the record and the same way out.
+ * Codebook deletes nothing on such a record: it proves no ownership. The way out names everything that has to go for a setup to finish from any state: the record, and the skill folder (without its record Codebook no longer knows the skill as its own and would refuse the folder as another skill's).
+ * @param subject - What is invalid, as the sentence begins: "Cursor skill ownership receipt", for example.
+ * @param recordPath - The file that holds the invalid record.
+ * @param targetPath - The managed skill path, whose folder the sentence names.
+ * @returns The error, not thrown yet.
+ * @example throw invalidSkillRecord('Cursor skill ownership receipt', '/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md')
+ */
+function invalidSkillRecord(
+  subject: string,
+  recordPath: string,
+  targetPath: string,
+): Error {
+  return new Error(
+    `${subject} is invalid; no skill file was changed. To start over, delete ${recordPath} and the folder ${dirname(targetPath)} (first copy anything of yours out of that folder), then run Codebook: Set Up AI Chat again.`,
+  )
+}
+
+/**
+ * Parses the text of a record of the skill setup, for {@link readReceipt}, {@link readPending} and {@link readPendingRemoval}; text that is no JSON is an invalid record like one with a wrong field.
+ * @param bytes - The record file's bytes.
+ * @param subject - What the record is, for the refusal ({@link invalidSkillRecord}).
+ * @param recordPath - The record file.
+ * @param targetPath - The managed skill path.
+ * @returns The parsed value, not validated yet.
+ * @throws With the sentence of an invalid record when the text is no JSON.
+ * @example parseRecordText(bytes, 'Cursor skill ownership receipt', receiptPath, targetPath)
+ */
+function parseRecordText(
+  bytes: Buffer,
+  subject: string,
+  recordPath: string,
+  targetPath: string,
+): unknown {
+  try {
+    return JSON.parse(bytes.toString('utf8'))
+  } catch {
+    throw invalidSkillRecord(subject, recordPath, targetPath)
+  }
+}
+
+/** Validates a private owner receipt before {@link deployCursorSkill} trusts prior installation. @param value - Parsed journal data. @param targetPath - Expected managed skill path. @param recordPath - The file the value was read from (the receipt, or the setup or removal record that holds it as its previous owner), which the refusal names. @returns A validated receipt. @throws With the sentence of an invalid record ({@link invalidSkillRecord}). @example parseReceipt(record, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/receipt.json') // => SkillReceipt */
+function parseReceipt(
+  value: unknown,
+  targetPath: string,
+  recordPath: string,
+): SkillReceipt {
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -290,8 +336,10 @@ function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
     !('inode' in value) ||
     !isRecordedFileId(value.inode)
   ) {
-    throw new Error(
-      'Cursor skill ownership receipt is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill ownership receipt',
+      recordPath,
+      targetPath,
     )
   }
   return {
@@ -328,7 +376,16 @@ async function readReceipt(
 ): Promise<SkillReceipt | undefined> {
   const bytes = await regularFile(path)
   return bytes
-    ? parseReceipt(JSON.parse(bytes.toString('utf8')), targetPath)
+    ? parseReceipt(
+        parseRecordText(
+          bytes,
+          'Cursor skill ownership receipt',
+          path,
+          targetPath,
+        ),
+        targetPath,
+        path,
+      )
     : undefined
 }
 
@@ -354,7 +411,12 @@ async function readPending(
 ): Promise<PendingSkill | undefined> {
   const bytes = await regularFile(path)
   if (!bytes) return undefined
-  const value: unknown = JSON.parse(bytes.toString('utf8'))
+  const value: unknown = parseRecordText(
+    bytes,
+    'Cursor skill pending ownership record',
+    path,
+    targetPath,
+  )
   const stagedDirectory = dirname(dirname(targetPath))
   if (
     typeof value !== 'object' ||
@@ -379,8 +441,10 @@ async function readPending(
     !('inode' in value) ||
     !isRecordedFileId(value.inode)
   ) {
-    throw new Error(
-      'Cursor skill pending ownership record is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending ownership record',
+      path,
+      targetPath,
     )
   }
   if (
@@ -391,20 +455,24 @@ async function readPending(
         basename(value.displacedPath),
       ))
   ) {
-    throw new Error(
-      'Cursor skill pending displacement path is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending displacement path',
+      path,
+      targetPath,
     )
   }
   if (
     'retiredPath' in value &&
     !isRetiredPath(value.retiredPath, path, targetPath)
   ) {
-    throw new Error(
-      'Cursor skill pending private retention path is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending private retention path',
+      path,
+      targetPath,
     )
   }
   if ('previous' in value && value.previous !== undefined)
-    parseReceipt(value.previous, targetPath)
+    parseReceipt(value.previous, targetPath, path)
   return value as PendingSkill
 }
 
@@ -415,7 +483,12 @@ async function readPendingRemoval(
 ): Promise<PendingRemoval | undefined> {
   const bytes = await regularFile(path)
   if (!bytes) return undefined
-  const value: unknown = JSON.parse(bytes.toString('utf8'))
+  const value: unknown = parseRecordText(
+    bytes,
+    'Cursor skill pending removal record',
+    path,
+    targetPath,
+  )
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -433,10 +506,12 @@ async function readPendingRemoval(
     !isRetiredPath(value.retiredPath, path, targetPath) ||
     !('owner' in value)
   )
-    throw new Error(
-      'Cursor skill pending removal record is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending removal record',
+      path,
+      targetPath,
     )
-  parseReceipt(value.owner, targetPath)
+  parseReceipt(value.owner, targetPath, path)
   return value as PendingRemoval
 }
 
