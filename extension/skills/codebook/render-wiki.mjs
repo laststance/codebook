@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { contentIdsOf, escapeHtml, hasEndlessComment, renderWikiDiagrams, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
+import { contentIdsOf, escapeHtml, hasEndlessComment, renderWikiDiagrams, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -61,9 +61,9 @@ function validatePages(manifest) {
     // Catch accidental old-page reuse; authored article HTML is not an untrusted-HTML sanitization API.
     // The content is read as raw text on purpose, here and for authored SVG: a comment or an attribute value that only shows one of these tags is refused too (escaped text, `&lt;form&gt;`, is not). Read so, the check can only refuse too much; one that skipped comments would miss an element wherever it took a place for a comment that a browser does not.
     // A name is matched whole: a custom element whose name starts with one of them and a hyphen (`<link-card>`) is another element.
-    // With them are refused the elements whose content a browser reads as text (`textarea`, `xmp`, `noembed`, `noframes`, `plaintext`, and `noscript` on a page that runs a script, as the reader's does), keeps out of the document (`template`) or parses by rules of its own (`select`): an article needs none of them, the publisher would read tags and ids in their content that a browser does not, and one that is never closed takes the reader's own form, rail and script with it.
+    // With them are refused the elements whose content a browser reads as text (`textarea`, `xmp`, `noembed`, `noframes`, `plaintext`, and `noscript` on a page that runs a script, as the reader's does), keeps out of the document (`template`), parses by rules of its own (`select`) or drops (`frame`, `frameset`): an article needs none of them, the publisher would read tags and ids in their content that a browser does not, and one that is never closed takes the reader's own form, rail and script with it.
     // The refusal names the first such element it found, so the agent can search a long page for it, also inside a comment or an attribute value.
-    const unwanted = /<\/?(html|head|body|main|article|form|script|style|iframe|object|embed|base|meta|link|title|h1|textarea|xmp|noembed|noframes|plaintext|noscript|template|select)(?![\w-])/i.exec(page.contentHtml);
+    const unwanted = /<\/?(html|head|body|main|article|form|script|style|iframe|object|embed|base|meta|link|title|h1|textarea|xmp|noembed|noframes|plaintext|noscript|template|select|frame|frameset)(?![\w-])/i.exec(page.contentHtml);
     if (unwanted) throw new Error(`Wiki page ${page.path} must contain article sections, not a document, form or script: it holds <${unwanted[1].toLowerCase()}>.`);
     if (/<\/?svg(?![\w-])/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must use diagram records and figure slots instead of authored SVG.`);
     // A browser reads everything after a comment that never ends as comment: the rest of the article and, after it, the reader's question form, rail and script.
@@ -71,6 +71,9 @@ function validatePages(manifest) {
     // A page is published only when every `<` of its content begins something the publisher reads exactly as a browser does; otherwise the two would not agree on the page's tags and ids, and markup that never ends would take the reader's own controls with it.
     const unread = unreadMarkupOf(page.contentHtml);
     if (unread !== undefined) throw new Error(`Wiki page ${page.path} has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: ${unread}`);
+    // The content is one balanced piece of the page: what it opens it closes, so nothing of it reaches the reader's own form, rail and layout around it.
+    const unbalanced = unbalancedClauseOf(page.contentHtml);
+    if (unbalanced !== undefined) throw new Error(`Wiki page ${page.path} ${unbalanced}`);
     if (!Array.isArray(page.sources) || !page.sources.length || !Array.isArray(page.outline)) throw new Error(`Wiki page ${page.path} needs source references and an outline.`);
     // An outline entry names an anchor of its page: an id an element of the content really carries, not one a code example or a comment only shows.
     const anchors = new Set(), contentIds = contentIdsOf(page.contentHtml);
