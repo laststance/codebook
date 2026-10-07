@@ -3740,6 +3740,98 @@ async function check(page, options, collected) {
     passed: stopFocusWhileAway === 'body' && stopFocusOnReturn === 'live-tab',
   })
 
+  // Arrange: the presentation is changing, the keyboard stands on the Overview tab, and the learner has left the pane for the editor (row 329: the host captures the pane's reading pose, replaces the pane's document and restores the pose in the new one).
+  const changingPresentation = {
+      ...overview,
+      presentation: openPresentation({ state: 'applying' }),
+    },
+    poseIdentity = {
+      captureId: '22222222-2222-4222-8222-222222222222',
+      presentationId: changingPresentation.presentation.presentationId,
+      expectedRevision:
+        changingPresentation.presentation.presentationControlRevision,
+      revision: changingPresentation.revision,
+      itemId: changingPresentation.model.selection.itemId,
+      sourceHash: changingPresentation.model.source.hash,
+      studyId: changingPresentation.model.selection.studyId,
+      observationId: changingPresentation.model.observation?.id,
+      contentTab: 'overview',
+    }
+  /** Waits until the pane has answered a pose restore: the restore runs in an animation frame. */
+  const poseAnswer = () =>
+    page
+      .waitForFunction(() =>
+        window.sent.some(
+          (message) =>
+            message.type === 'presentation-pose-restored' ||
+            message.type === 'presentation-pose-invalidated',
+        ),
+      )
+      .then(() =>
+        page.evaluate(
+          () =>
+            window.sent.findLast((message) =>
+              message.type.startsWith('presentation-pose-'),
+            ).type,
+        ),
+      )
+  /** Replaces the pane's document as a change of the presentation does and publishes the Study message of that change; the new document does not have the focus when `isAway`, as while the learner works in the editor. */
+  const replacePaneDocument = async (isAway) => {
+    await openPane('context', { width: 600, height: 800 })
+    if (isAway)
+      await page.evaluate(() => {
+        document.hasFocus = () => false
+      })
+    await publish(changingPresentation)
+  }
+  await publish(changingPresentation)
+  await page.locator('#overview-tab').focus()
+  await leavePane()
+  // Act: the host captures the pose and replaces the document, restores the pose in the new document, which has no focus, and the learner returns.
+  await publish({ type: 'capture-presentation-pose', ...poseIdentity })
+  const capturedPose = await page.evaluate(
+    () =>
+      window.sent.findLast((message) => message.type === 'presentation-pose')
+        ?.pose,
+  )
+  await replacePaneDocument(true)
+  await publish({
+    type: 'restore-presentation-pose',
+    ...poseIdentity,
+    pose: capturedPose,
+  })
+  const answerInReplacedPane = await poseAnswer()
+  const focusInReplacedPaneWhileAway = await focusName()
+  await returnToPane()
+  const focusInReplacedPaneOnReturn = await focusName()
+  // The same pose restored in a new document that has the focus: the learner returned while the presentation was changing.
+  await replacePaneDocument(false)
+  await publish({
+    type: 'restore-presentation-pose',
+    ...poseIdentity,
+    pose: capturedPose,
+  })
+  await poseAnswer()
+  const focusInReplacedPaneWithFocus = await focusName()
+  // Assert
+  cases.push({
+    name: 'when a change of the presentation replaces the pane’s document while the learner, who left the pane with the keyboard on a control, is away, the pose names that control, the new document takes no focus, and on return the keyboard is on the same control; a new document that has the focus gives it to the control at once',
+    actual: {
+      capturedFocus: capturedPose?.focus,
+      answerInReplacedPane,
+      focusInReplacedPaneWhileAway,
+      focusInReplacedPaneOnReturn,
+      focusInReplacedPaneWithFocus,
+    },
+    passed:
+      JSON.stringify(capturedPose?.focus) ===
+        JSON.stringify({ kind: 'id', id: 'overview-tab' }) &&
+      answerInReplacedPane === 'presentation-pose-restored' &&
+      focusInReplacedPaneWhileAway === 'body' &&
+      focusInReplacedPaneOnReturn === 'overview-tab' &&
+      focusInReplacedPaneWithFocus === 'overview-tab',
+  })
+
   // Arrange: the bottom panel's pane, which has no content tabs: a focus that loses its control goes to Play while the transport is shown, else to the first control the pane shows.
   await openPane('moments', { width: 1200, height: 400 })
   await publish(options.message)
@@ -4589,6 +4681,42 @@ async function check(page, options, collected) {
     studyRemoval: await answering(movedShown),
   })
   const afterMovingOn = await removalControl()
+  // Arrange (row 329): the editor's confirming dialog takes the focus from the pane when Delete saved study… is pressed, so the pane is away while the host answers.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await leavePane()
+  // Act: the learner confirms, the study moves and the host answers before the pane has the focus back; then the focus returns to the pane.
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: await answering(confirming),
+  })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
+  const removalFocusWhileDialogOpen = await focusName()
+  await returnToPane()
+  const removalFocusAfterDialog = await focusName()
+  // The same with Cancel: the request ends without an outcome while the pane is away.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await leavePane()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: await answering(confirming),
+  })
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await returnToPane()
+  const cancelFocusAfterDialog = await focusName()
+  cases.push({
+    name: 'when the host answers a pane’s own delete request while the confirming dialog still has the focus, the pane takes none, and when the focus returns it is on the Saved studies list after a removal, not on the delete button of the next study, and on the delete button after Cancel',
+    actual: {
+      removalFocusWhileDialogOpen,
+      removalFocusAfterDialog,
+      cancelFocusAfterDialog,
+    },
+    passed:
+      removalFocusWhileDialogOpen === 'body' &&
+      removalFocusAfterDialog === 'studies' &&
+      cancelFocusAfterDialog === 'delete-study',
+  })
   cases.push({
     name: 'after its own delete request a pane moves focus once: to the list after a removal, to the button after Cancel or a refusal, and nowhere when the learner moved on or another pane asked',
     actual: {
