@@ -5713,6 +5713,58 @@ async function check(page, options, collected) {
       requests(listedAtLast) === requests(askedUnderNewRevision),
   })
 
+  // Arrange: Remove by hand opened for a study whose files the host cannot list (row 251).
+  const listingFailed =
+    "Codebook could not list this study's files. Press Retry storage / refresh to try again. EACCES: permission denied, lstat '/library/recordings.v2'"
+  // Another study is shown first, so the disclosure is offered closed for the study the learner then looks at.
+  await library(studiesWithOther, shownStudy.id, withoutTrash)
+  await library(studiesWithOther, otherStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  // Act: the host answers the request with the listing's failure; the learner presses Retry storage / refresh, and the host lists the file for the request that follows.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listingFailed,
+    }),
+  })
+  const listingFailure = await removalControl()
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    saving: true,
+  })
+  const askedAfterFailure = await removalControl()
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { [otherStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterFailure = await removalControl()
+  // Assert
+  cases.push({
+    name: 'when the host could not list a study’s files, Remove by hand shows the host’s reason as an error with Retry storage / refresh and no Copy paths, and a press on Retry asks again and lists the files',
+    actual: { listingFailure, askedAfterFailure, listedAfterFailure },
+    passed:
+      listingFailure.removeByHand.note === listingFailed &&
+      listingFailure.removeByHand.noteIsError &&
+      listingFailure.removeByHand.retryVisible &&
+      !listingFailure.removeByHand.copyVisible &&
+      listingFailure.removeByHand.files.length === 0 &&
+      askedAfterFailure.deletes.length === listingFailure.deletes.length + 1 &&
+      askedAfterFailure.removeByHand.note === "Listing this study's files…" &&
+      listedAfterFailure.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterFailure.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]),
+  })
+
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).
   const deletesBeforeReasons = (await removalControl()).deletes.length
   /** Reads the reason shown under the list and whether Remove by hand is offered beside it. */

@@ -5137,6 +5137,84 @@ test('in a window with a Trash a delete request marked as sent by the pane keeps
   }
 })
 
+// Value: protects=the learner of a window without a Trash who opens "Remove by hand" for a study whose files cannot be listed: the disclosure says so with its reason and offers Retry storage / refresh; fails_when=the listing's failure is thrown, becomes a control line, and no answer with the request's number is published, so the pane stays at "Listing this study's files…" with no button and asks nothing again; why_new=Cycle 0046 row 251; seam=the library's listing of a study's files, which rejects once, and the Study pane's webview
+test('in a window without a Trash a request for a study’s files whose listing fails is answered with a refusal that carries the request’s number and the reason, without an error line, and the next request lists the files', async (context) => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the listing of a study's files rejects once.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const studyFiles = LearningLibrary.prototype.studyFiles
+    let isListingRefused = true
+    context.mock.method(
+      LearningLibrary.prototype,
+      'studyFiles',
+      function (
+        this: LearningLibrary,
+        ...listed: Parameters<LearningLibrary['studyFiles']>
+      ) {
+        if (!isListingRefused) return studyFiles.apply(this, listed)
+        isListingRefused = false
+        return Promise.reject(
+          new Error(
+            "EACCES: permission denied, lstat '/library/recordings.v2'",
+          ),
+        )
+      },
+    )
+    /** Sends the pane's request and waits until the reader has answered it or told a line. */
+    const ask = async (removalRequest: number) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: study.id,
+        removalRequest,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answer: harness.reader.inspect().view!.studyRemoval,
+        errorLines: readerSeams(harness).errorLines(),
+      })
+    }
+    // Act: the request whose listing fails, and the next one.
+    const whileListingFails = await ask(1)
+    const afterwards = await ask(2)
+    // Assert
+    assert.deepEqual(whileListingFails, {
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: "Codebook could not list this study's files. Press Retry storage / refresh to try again. EACCES: permission denied, lstat '/library/recordings.v2'",
+        request: 1,
+      },
+      errorLines: [],
+    })
+    assert.deepEqual(afterwards, {
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+        files: [study.archive],
+        request: 2,
+      },
+      errorLines: [],
+    })
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=what the Study pane's DOM check takes for granted about the reader in a window without a Trash: an answer to a request for a study's files, a refusal as well, and the message that ends Retry storage / refresh while the Study workspace is closed all carry the revision the pane asked under; fails_when=the reader gives such a message a new revision, so the DOM cases of "Remove by hand", which publish them under the asking revision, no longer show what a learner gets (they passed on a fixture that gave every message a new revision, while the pane stayed at "Listing this study's files…" in the product); why_new=Cycle 0046 row 168 (delegated review, findings 4 and 5); seam=the bottom-panel view's requests with the Study workspace closed
 test('in a window without a Trash the reader answers a request for a study’s files, a refusal as well, and ends Retry storage / refresh with the Study workspace closed, all under the revision the request was sent with', async () => {
   // Arrange: a WSL remote window with a saved study an older Codebook left and a saved Node test history; the Study workspace is not open.

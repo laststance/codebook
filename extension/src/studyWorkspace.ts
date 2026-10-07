@@ -199,6 +199,7 @@ import { showPlainNotice } from './utils/showPlainNotice'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
+import { thrownMessage } from './utils/thrownMessage'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
 import { unconfirmedCompositionRefusal } from './utils/unconfirmedCompositionRefusal'
 import {
@@ -13097,8 +13098,8 @@ export class StudyWorkspace {
    */
   private async refuseRemovalWithoutTrash(studyId: string): Promise<boolean> {
     if (this.studyRemovalAvailability() !== 'no-trash') return false
-    const evidence = await this.studyEvidenceToMove(studyId)
-    const files = await this.library!.studyFiles(studyId, evidence.directory)
+    const files = await this.listStudyFilesOrRefuse(studyId)
+    if (!files) return true
     // Kept by study: the answer below is replaced by the next pane's request for another study.
     this.listedStudyFiles.set(studyId, files)
     this.settleStudyRemoval({
@@ -13108,6 +13109,29 @@ export class StudyWorkspace {
       files,
     })
     return true
+  }
+
+  /**
+   * Lists the files of one study for its removal by hand, and answers the request itself when the listing fails; called by {@link refuseRemovalWithoutTrash}.
+   * A listing can fail (a path that cannot be inspected, a study a newer Codebook saved since the list was read). The asking pane waits for an answer with its request's number, so the failure is settled as a refusal with its reason, which "Remove by hand" shows with Retry storage / refresh; thrown, it would be a control line, and the pane would stay at "Listing this study's files…".
+   * @param studyId - The entry the learner chose.
+   * @returns The study's files, or `undefined` when the listing failed and the refusal is published.
+   * @example const files = await this.listStudyFilesOrRefuse(studyId)
+   */
+  private async listStudyFilesOrRefuse(
+    studyId: string,
+  ): Promise<string[] | undefined> {
+    try {
+      const evidence = await this.studyEvidenceToMove(studyId)
+      return await this.library!.studyFiles(studyId, evidence.directory)
+    } catch (error) {
+      this.settleStudyRemoval({
+        status: 'refused',
+        studyId,
+        text: studyRemovalMessages().filesNotListed(thrownMessage(error)),
+      })
+      return undefined
+    }
   }
 
   /**
