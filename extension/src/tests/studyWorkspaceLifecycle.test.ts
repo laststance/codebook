@@ -19,6 +19,7 @@ import {
   openRetainedStudy,
   readerSeams,
   recordedReaderHarness,
+  articleRecordingLayoutHarness,
 } from './studyWorkspaceHarness'
 import {
   advanceClockUntil,
@@ -2075,6 +2076,730 @@ test("a reader that is disposed while its Study workspace is open beside the lea
     )
     assert.deepEqual(harness.informationMessages, [])
   } finally {
+    await harness.close()
+  }
+})
+
+for (const wrapperRefresh of [false, true])
+  test(`native disposal preserves the learner's actual auth keyboard and original file beside both owned panes with group wrapper refresh ${wrapperRefresh}`, async () => {
+    // Arrange: native controls 447–449 retain login behind App and auth in the other learner group.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.modelNativeTabCloseFocus()
+    if (wrapperRefresh) harness.replaceGroupObjectsOnTabChanges()
+    try {
+      const login = harness.focusMutableDraft('login-form.tsx', 1)
+      await harness.reader.open()
+      const auth = harness.focusMutableDraft('auth.ts', 2)
+      const commandsBefore = harness.commands.length
+      const requestsBefore = harness.tabCloseFocusRequests().length
+      assert.equal(harness.groups.length, 3)
+      assert.equal(harness.keyboardOnBody(), false)
+
+      // Act: a same-host folder change disposes the reader while auth owns native keyboard.
+      await harness.reader.dispose()
+      await waitUntil(() => harness.groups.length === 2, 'owned group removal')
+
+      // Assert: native restoration retains auth; false for the nonempty App group would select login instead.
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(
+        harness.editor.window.activeTextEditor?.document,
+        auth.document,
+      )
+      assert.equal(harness.editor.window.activeTextEditor?.viewColumn, 2)
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(login.tab)),
+        true,
+      )
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(auth.tab)),
+        true,
+      )
+      assert.deepEqual(harness.tabCloseFocusRequests().slice(requestsBefore), [
+        true,
+        true,
+        false,
+      ])
+      assert.equal(harness.counts().panels, 0)
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        [],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      await harness.close()
+    }
+  })
+
+for (const outsideInput of ['terminal', 'sidebar chat'])
+  test(`native disposal leaves the ${outsideInput} keyboard outside the editor while auth remains the reported active editor`, async () => {
+    // Arrange: both native controls 451–457 hold an input outside the editor-part DOM container.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.modelNativeTabCloseFocus()
+    try {
+      harness.focusMutableDraft('login-form.tsx', 1)
+      await harness.reader.open()
+      const auth = harness.focusMutableDraft('auth.ts', 2)
+      harness.focusView()
+      const commandsBefore = harness.commands.length
+
+      // Act
+      await harness.reader.dispose()
+      await waitUntil(() => harness.groups.length === 2, 'owned group removal')
+
+      // Assert: activeTextEditor alone does not grant editor ownership of keyboard.
+      assert.equal(harness.keyboardInView(), true)
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(
+        harness.editor.window.activeTextEditor?.document,
+        auth.document,
+      )
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        [],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      await harness.close()
+    }
+  })
+
+test('native disposal of a captured-source-only ending group preserves the actual learner editor keyboard', async () => {
+  // Arrange: no pane owns this last group; the captured source is still reader-owned.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.modelNativeTabCloseFocus()
+  try {
+    await harness.reader['initialize']()
+    harness.groups[1]!.tabs = []
+    const captured = harness.restoreLeftoverCapturedSource({
+      column: 2,
+      active: false,
+    })
+    const auth = harness.focusMutableDraft('auth.ts', 1)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.dispose()
+
+    // Assert: false for this ending group lets the host restore auth without an extension focus command.
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      auth.document,
+    )
+    assert.equal(harness.groups.length, 1)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(captured)),
+      false,
+    )
+    assert.deepEqual(harness.tabCloseFocusRequests(), [false])
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus/.test(command)),
+      [],
+    )
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+test('native tab disposal callbacks do not erase the once-only keyboard notice when the reader closes its active Study pane', async () => {
+  // Arrange: native tab close synchronously disposes the panel before close() resumes.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.modelNativeTabCloseFocus()
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    // Remove the captured source first: the later notice must depend on the panels whose native closes clear their fields.
+    await harness.editor.window.tabGroups.close(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) =>
+            tab.input instanceof harness.editor.TabInputText &&
+            tab.input.uri.scheme === 'codebook-source',
+        ),
+      true,
+    )
+    await harness.reader.action('focus-context')
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.dispose()
+
+    // Assert: eligibility captured before native callbacks survives cleared panel fields.
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus/.test(command)),
+      ['workbench.action.focusActiveEditorGroup'],
+    )
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('native disposal retains another reader source and inherited pane instead of treating their group as ending', async () => {
+  // Arrange: an inherited pane and a foreign captured source are learner-owned from this reader's perspective.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.modelNativeTabCloseFocus()
+  try {
+    const inherited = harness.leaveDeadCodebookPane('codebook.studyContext', 2)
+    const foreignSource = harness.restoreLeftoverCapturedSource({
+      authority: 'f'.repeat(64),
+      column: 2,
+      active: false,
+    })
+    const replacement = harness.createReader()
+    await replacement['initialize']()
+    const captured = harness.restoreLeftoverCapturedSource({
+      column: 2,
+      active: false,
+    })
+    const auth = harness.focusMutableDraft('auth.ts', 1)
+    const requestsBefore = harness.tabCloseRequests().length
+
+    // Act
+    await replacement.dispose()
+
+    // Assert: ownership, not webview type or URI scheme alone, governs native close and focus flags.
+    const closed = harness.tabCloseRequests().slice(requestsBefore).flat()
+    assert.equal(closed.includes(captured), true)
+    assert.equal(closed.includes(foreignSource), false)
+    assert.equal(closed.includes(inherited), false)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(foreignSource)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(inherited)),
+      true,
+    )
+    assert.deepEqual(harness.tabCloseFocusRequests().slice(requestsBefore), [
+      true,
+    ])
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      auth.document,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('native disposal preserves a rebuilt inherited pane while a current owned Study pane remains open after an earlier close', async () => {
+  // Arrange: runtime-first pane creation can coexist with an inherited pane before a cold Open clears leftovers.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.modelNativeTabCloseFocus()
+  const inherited = harness.leaveDeadCodebookPane('codebook.studyContext', 2)
+  const replacement = harness.createReader()
+  let closing: Promise<void> | undefined
+  const held = harness.holdNextTabCloseResponse()
+  try {
+    await replacement['initialize']()
+    replacement['ensureApp']()
+    replacement['ensureContext']()
+    const auth = harness.focusMutableDraft('auth.ts', 1)
+    closing = replacement.dispose()
+    await held.started
+    const refreshedInherited = { ...inherited }
+    harness.replaceEditorGroup('wrapper', 2, (tabs) => {
+      tabs[tabs.indexOf(inherited)] = refreshedInherited
+    })
+
+    // Act: the next close sees current tab objects while its own Study panel still exists.
+    held.release()
+    await closing
+
+    // Assert: wrapper replacement cannot give the earlier host's pane to this reader.
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(refreshedInherited)),
+      true,
+    )
+    assert.equal(
+      harness.tabCloseRequests().flat().includes(refreshedInherited),
+      false,
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      auth.document,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(harness.counts().panels, 0)
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    held.release()
+    await closing?.catch(() => undefined)
+    await replacement.close()
+    await harness.close()
+  }
+})
+
+test('native disposal refuses indistinguishable rebuilt same-kind panes in its current panel group and preserves both tabs', async () => {
+  // Arrange: an inherited Study and this reader's Study share the same group, then both wrappers are rebuilt.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  harness.modelNativeTabCloseFocus()
+  const inherited = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+  const replacement = harness.createReader()
+  const held = harness.holdNextTabCloseResponse()
+  let closing: Promise<unknown> | undefined
+  try {
+    await replacement['initialize']()
+    replacement['ensureApp']()
+    replacement['ensureContext']()
+    const auth = harness.focusMutableDraft('auth.ts', 1)
+    closing = replacement.dispose().then(
+      () => 'closed',
+      (error: unknown) => String(error),
+    )
+    await held.started
+    const refreshedInherited = { ...inherited }
+    harness.replaceEditorGroup('wrapper', 3, (tabs) => {
+      for (let index = 0; index < tabs.length; index++)
+        tabs[index] =
+          tabs[index] === inherited ? refreshedInherited : { ...tabs[index]! }
+    })
+    const before = [
+      ...harness.groups.find((group) => group.viewColumn === 3)!.tabs,
+    ]
+
+    // Act
+    held.release()
+    const result = await closing
+
+    // Assert: view type and column cannot distinguish these tabs, so none is deleted or forcibly disposed.
+    assert.equal(
+      result,
+      'Error: Codebook cannot distinguish its current pane tab from another pane of the same kind. The remaining panes were left open. Keep the pane you need, close the duplicate Codebook pane tab, then try Close Study Workspace again.',
+    )
+    assert.deepEqual(
+      harness.groups.find((group) => group.viewColumn === 3)!.tabs,
+      before,
+    )
+    assert.equal(harness.counts().panels, 1)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      auth.document,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.informationMessages, [])
+    // Follow the refusal's remedy through the native tab API, then retry the real Close before fixture teardown.
+    await harness.editor.window.tabGroups.close([refreshedInherited], true)
+    await replacement.close()
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(refreshedInherited)),
+      false,
+    )
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      auth.document,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(auth.tab)),
+      true,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    held.release()
+    await closing
+    await replacement.close()
+    await harness.close()
+  }
+})
+
+for (const originalGroups of [1, 2])
+  test(`recording reentry retires the reader-created Context group after wrapper refresh when ${originalGroups} learner groups existed before Open`, async () => {
+    // Arrange: Context occupies a group created by Open, unlike the learner's preexisting empty third group.
+    const harness = await articleRecordingLayoutHarness()
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: Array.from({ length: originalGroups }, () => ({})),
+    })
+    harness.replaceGroupObjectsOnTabChanges()
+    const draft = harness.focusMutableDraft('auth.ts', 1)
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        false,
+        undefined,
+        harness.origin,
+      )
+      assert.equal(harness.groups.length, 3)
+      harness.resyncEditorGroups()
+
+      // Act: recording reentry may retire only its own unchanged created group.
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+
+      // Assert: normal recording still uses two groups and keeps the learner's original source tab.
+      assert.equal(harness.groups.length, 2)
+      assert.deepEqual(harness.editorLayout(), {
+        orientation: 1,
+        groups: [{ size: 0.5 }, { size: 0.5 }],
+      })
+      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(
+        harness.groups
+          .flatMap((group) => group.tabs)
+          .some(
+            (tab) =>
+              tab.input instanceof harness.editor.TabInputText &&
+              tab.input.uri.toString() === draft.document.uri.toString(),
+          ),
+        true,
+      )
+      assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    } finally {
+      await harness.close()
+    }
+  })
+
+test('an empty learner third group added after the first Open note remains after retry and recording reentry', async () => {
+  // Arrange: first Open notes two groups; the learner adds a third before the fresh native reservation/creation.
+  const harness = await articleRecordingLayoutHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const draft = harness.focusMutableDraft('auth.ts', 1)
+  const originalNote = harness.reader['noteLayoutBeforeOpen']
+  const note = originalNote.bind(harness.reader)
+  let changed = false
+  harness.reader['noteLayoutBeforeOpen'] = (
+    ...arguments_: Parameters<typeof note>
+  ): void => {
+    note(...arguments_)
+    if (changed) return
+    changed = true
+    queueMicrotask(() => {
+      void harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      })
+    })
+  }
+  try {
+    await harness.reader
+      .openRepositoryEvidence(harness.binding, false, undefined, harness.origin)
+      .catch(() => undefined)
+    // The explicit retry preserves a partial Open's original-layout note, but must not treat that stale count as creation evidence.
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    await harness.reader.action('return-wiki')
+
+    // Explicit Study had arranged the added group; Return cannot restore its stale two-group origin over that third group.
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 0,
+      groups: [
+        { size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.45 },
+      ],
+    })
+
+    // Act
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+
+    // Assert: actual reservation measured three learner groups, so Context borrowed the third.
+    assert.equal(changed, true)
+    assert.equal(harness.groups.length, 3)
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 0,
+      groups: [
+        { size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.45 },
+      ],
+    })
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    harness.reader['noteLayoutBeforeOpen'] = originalNote
+    await harness.close()
+  }
+})
+
+test('a learner replacement of the pending created Context group cannot inherit its receipt after failed placement and retry', async () => {
+  // Arrange: direct Context creation has not yet sealed its group identity when the first placement read waits.
+  const harness = await articleRecordingLayoutHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.focusMutableDraft('auth.ts', 1)
+  let held: ReturnType<typeof harness.holdNextCommand> | undefined
+  harness.onNextPanel('codebook.studyContext', () => {
+    held = harness.holdNextCommand('vscode.getEditorLayout')
+  })
+  let opening: Promise<string> | undefined
+  try {
+    opening = harness.reader
+      .openRepositoryEvidence(harness.binding, false, undefined, harness.origin)
+      .then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+    await waitUntil(() => Boolean(held), 'pending Context placement read')
+    assert.ok(held)
+    await held.started
+    // The native group is replaced while the exact panel survives, as after a learner moves it and closes its old group.
+    harness.replaceEditorGroup('opened', 3)
+
+    // Act: retain the partial panes, retry, and then enter recording in that learner-owned replacement group.
+    held.release()
+    const firstResult = await opening
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+
+    // Assert: a same-numbered group is a new learner group, never the reservation's original group.
+    assert.match(
+      firstResult,
+      /Native pane, group or focus changed while presentation waited/,
+    )
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    held?.release()
+    await opening
+    await harness.close()
+  }
+})
+
+test('a learner replacement during the post-reservation layout read cannot be claimed as the created Context group', async () => {
+  // Arrange: the actual reservation created group3, but its ownership read has not returned yet.
+  const harness = await articleRecordingLayoutHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('auth.ts', 1)
+  const originalRemember = harness.reader['rememberLayout']
+  const remember = originalRemember.bind(harness.reader)
+  let held: ReturnType<typeof harness.holdNextCommand> | undefined
+  harness.reader['rememberLayout'] = (
+    ...arguments_: Parameters<typeof remember>
+  ) => {
+    if (!held && !harness.reader['contextPanel'])
+      held = harness.holdNextCommand('vscode.getEditorLayout')
+    return remember(...arguments_)
+  }
+  let opening: Promise<unknown> | undefined
+  try {
+    opening = harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    await waitUntil(() => Boolean(held), 'post-reservation ownership read')
+    assert.ok(held)
+    await held.started
+    harness.replaceEditorGroup('opened', 3)
+
+    // Act: the read's ownership refusal may retain native effects, but cannot re-query the replacement column as proof of creation.
+    held.release()
+    await opening
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    held?.release()
+    await opening?.catch(() => undefined)
+    harness.reader['rememberLayout'] = originalRemember
+    await harness.close()
+  }
+})
+
+for (const laterChange of [
+  'learner tab',
+  'reordered groups',
+  'new tab objects',
+  'window focus lost',
+])
+  test(`native disposal rereads the current tab groups after an earlier close answer waits for ${laterChange}`, async () => {
+    // Arrange: App closes first; its native response is held while later groups remain open.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.modelNativeTabCloseFocus()
+    harness.replaceGroupObjectsOnTabChanges()
+    let closing: Promise<void> | undefined
+    const held = harness.holdNextTabCloseResponse()
+    try {
+      harness.focusMutableDraft('login-form.tsx', 1)
+      await harness.reader.open()
+      const auth = harness.focusMutableDraft('auth.ts', 2)
+      const requestsBefore = harness.tabCloseFocusRequests().length
+      const commandsBefore = harness.commands.length
+      closing = harness.reader.dispose()
+      await held.started
+      const studyGroup = harness.groups.find((group) => group.viewColumn === 3)!
+      const studyTab = studyGroup.tabs[0]!
+      let laterLearnerTab: typeof auth.tab | undefined
+      if (laterChange === 'learner tab') {
+        laterLearnerTab = harness.focusMutableDraft('later-notes.ts', 3).tab
+        harness.focusExistingSource(auth.editor)
+      } else if (laterChange === 'reordered groups') {
+        harness.swapEditorGroups(
+          studyGroup,
+          harness.groups.find((group) => group.tabs.includes(auth.tab))!,
+        )
+        harness.groups.reverse()
+      } else if (laterChange === 'new tab objects') {
+        const refreshedTab = { ...studyTab }
+        studyGroup.tabs = studyGroup.tabs.map((tab) =>
+          tab === studyTab ? refreshedTab : tab,
+        )
+        if (studyGroup.activeTab === studyTab)
+          studyGroup.activeTab = refreshedTab
+      } else harness.changeWindowFocus(false)
+      harness.changed()
+
+      // Act: only now can Close read and close the remaining current owned sets.
+      held.release()
+      await closing
+
+      // Assert: later learner tabs survive, new wrappers are dispatched, and focus is resampled beside the next close.
+      assert.equal(
+        harness.editor.window.activeTextEditor?.document,
+        auth.document,
+      )
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        [],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+      assert.equal(harness.counts().panels, 0)
+      if (laterChange === 'learner tab') {
+        assert.equal(
+          harness.groups.some((group) => group.tabs.includes(laterLearnerTab!)),
+          true,
+        )
+        assert.deepEqual(
+          harness.tabCloseFocusRequests().slice(requestsBefore),
+          [true, true, true],
+        )
+        assert.equal(harness.keyboardOnBody(), false)
+      } else if (laterChange === 'window focus lost') {
+        assert.equal(harness.editor.window.state.focused, false)
+        assert.deepEqual(
+          harness.tabCloseFocusRequests().slice(requestsBefore),
+          [true, true, true],
+        )
+      } else {
+        assert.equal(harness.keyboardOnBody(), false)
+        assert.equal(harness.groups.length, 2)
+        assert.equal(
+          harness
+            .tabCloseRequests()
+            .slice(requestsBefore)
+            .flat()
+            .includes(studyTab),
+          laterChange !== 'new tab objects',
+        )
+      }
+    } finally {
+      held.release()
+      await closing?.catch(() => undefined)
+      await harness.close()
+    }
+  })
+
+test('native disposal leaves a refused owned pane and learner tabs intact without forcing panel disposal', async (context) => {
+  // Arrange: the editor refuses the first owned-tab close without disposing its panel.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.modelNativeTabCloseFocus()
+  try {
+    const login = harness.focusMutableDraft('login-form.tsx', 1)
+    await harness.reader.open()
+    const auth = harness.focusMutableDraft('auth.ts', 2)
+    const app = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    const originalClose = harness.editor.window.tabGroups.close
+    const refusal = context.mock.method(
+      harness.editor.window.tabGroups,
+      'close',
+      async () => false,
+    )
+
+    // Act
+    const result = await harness.reader.dispose().then(
+      () => 'closed',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: rejection stops cleanup before forced dispose and preserves the refused native editor.
+    assert.equal(result, 'Error: Some Study workspace readers could not close.')
+    assert.equal(harness.nativePanels().includes(app), true)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(app.nativeTab)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(login.tab)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(auth.tab)),
+      true,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.informationMessages, [])
+    refusal.mock.restore()
+    harness.editor.window.tabGroups.close = originalClose
+  } finally {
+    context.mock.restoreAll()
+    await harness.reader.close()
     await harness.close()
   }
 })

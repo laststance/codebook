@@ -665,6 +665,13 @@ export class StudyWorkspace {
   private maximizedByRead = false
   /** The main editor's layout as it stood before the first arrangement of the Open that opened this reader, with the learner's tabs of each of its groups ({@link noteLayoutBeforeOpen}); {@link giveLayoutOfBeforeOpenBack} applies it at the end of {@link close} when the groups are still those. `undefined` while the reader is closed, and when a close gave it back or found other groups. */
   private layoutBeforeOpen?: { layout: unknown; groups: string[][] }
+  /** Stable identity of the Context group an accepted native reservation actually created; only this group can retire at recording/live entry. */
+  private readerCreatedContextGroup?: symbol
+  /** A Context destination absent immediately before panel creation; {@link sealCreatedContextPanelGroup} seals its identity only after confirmed native placement. */
+  private pendingCreatedContextColumn?: vscode.ViewColumn
+  /** Identity and panel lifetime of the pending created group; native replacement invalidates these before a retry can seal another group at the same column. */
+  private pendingCreatedContextGroup?: symbol
+  private pendingCreatedContextPanel?: vscode.WebviewPanel
   /** The main editor's layout as {@link rememberSideBarsBeforeRead} read it when the reading began that is on now ({@link maximizedByRead}), before anything was hidden or maximized; `undefined` when that read failed or another editor part may have answered. Read only while a reading is on: a Read without a measurement and an Enlarge that begins during the reading keep it as the sizes of before their Expand ({@link expandKeepingGroupSizes}). */
   private layoutBeforeReading?: unknown
   /** The main editor's layout of before the first Expand the reader ran for a Read or an Enlarge since the groups last had their own sizes ({@link expandKeepingGroupSizes}): the editor's Expand leaves every other group at its minimum size, and {@link giveGroupSizesBackAfterExpand} applies this layout when a Close ends the enlargement, when a Restore ends it and arranges nothing, and when the Read or the Enlarge is refused after its Expand. A later Expand keeps it, so the sizes of before the first of several Reads and Enlarges come back. `undefined` while no Expand of the reader's is owed for: after the sizes were given back, after an arrangement or the Restore of an Enlarge applied its own layout, and when the layout of before could not be read or was not known to be the main editor's. */
@@ -6273,6 +6280,7 @@ export class StudyWorkspace {
           ? vscode.window.tabGroups.all.find(
               (group) =>
                 group.viewColumn === this.contextPanel?.viewColumn &&
+                this.isCreatedContextGroup(group) &&
                 group.tabs.every(
                   (tab) =>
                     tab.input instanceof vscode.TabInputWebview &&
@@ -6531,6 +6539,8 @@ export class StudyWorkspace {
       )
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
+      // A two-group entry can create Context directly without an earlier reservation; seal that separate creation receipt after placement.
+      if (this.layoutReceipt) this.sealCreatedContextPanelGroup()
       // The arrangement above leaves a layout it owns as it is; "Open Study Workspace" on an open reader still gives an Application group that sits at the height of its tab row its height back.
       if (!firstOpen && origin === 'study' && this.layoutReceipt) {
         await this.reapplyConfirmedLayout(this.layoutReceipt, true)
@@ -7186,8 +7196,9 @@ export class StudyWorkspace {
   /**
    * Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels; called by the command "Codebook: Close Study Workspace".
    * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: beside a learner's own file that close moves no keyboard and tells nothing; when it takes away the active editor (one of the reader's panes or its captured source) the active editor group gets the keyboard and the learner is told, as at a Close ({@link settlesKeyboardAtThisClose}). One exception holds for every close, a disposal's and one in a window without the focus too: a close that ends a Read shows the side bars the Read hid again ({@link endEnlargementAtClose}), and the editor shows a bar only with a command that gives that bar the keyboard. The chat that had the keyboard as a tab of another editor part then gets it back and nothing is told; in every other case the active editor group takes the keyboard once the panes are closed and the learner is told ({@link movesKeyboardAfterClose}).
+   * Native owned-tab closes use {@link closeOwnedEditorTabs} before final panel disposal: the host restores an actual editor input only when an owned close ends its group, while terminal/sidebar-chat input stays outside that native focus guard.
    * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
-   * @throws When the editor refused to close a captured source's tab.
+   * @throws When the editor refused an owned tab close or a rebuilt pane cannot be distinguished from another pane of the same kind.
    * @example await workspace.close()
    */
   async close(): Promise<void> {
@@ -7280,24 +7291,26 @@ export class StudyWorkspace {
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .filter((tab) => this.ownsCapturedSourceTab(tab))
-      if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
-        throw new Error('Some captured source readers could not close.')
+      // Native tab closes dispose panels before their answer; retain cleanup references and keyboard-notice eligibility first.
+      const contextPanel = this.contextPanel,
+        applicationPanel = this.app
       const leavesKeyboardNowhere =
         settlesKeyboard &&
         this.closesPaneOrSource(tabs.length) &&
         this.settlesKeyboardAtThisClose(closesActiveEditor)
+      await this.closeOwnedEditorTabs()
       this.opened = false
       // A closed reader has no live or replay arrangement: the next selection opens it instead of arranging panes that no longer exist.
       this.liveComposition = false
       this.summaryComposition = false
-      this.contextPanel?.dispose()
+      contextPanel?.dispose()
       this.contextPanel = undefined
-      this.app?.dispose()
+      applicationPanel?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
       // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
       await this.giveLayoutOfBeforeOpenBack()
-      // The tabs are closed without moving the focus, so the keyboard would fall to the page body: the group the editor shows as active takes it.
+      // Explicit Close and owned-editor disposal retain their existing keyboard return and notice, also after native panel fields cleared.
       if (
         this.movesKeyboardAfterClose(
           leavesKeyboardNowhere,
@@ -7316,6 +7329,10 @@ export class StudyWorkspace {
       this.sourceUri = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
+      this.readerCreatedContextGroup = undefined
+      this.pendingCreatedContextColumn = undefined
+      this.pendingCreatedContextGroup = undefined
+      this.pendingCreatedContextPanel = undefined
       this.lastSelectionKey = undefined
       this.documents.clear()
       this.listedStudyFiles.clear()
@@ -7329,6 +7346,91 @@ export class StudyWorkspace {
         this.closing = false
       }
     }
+  }
+
+  /**
+   * Closes current reader-owned tabs by native group before panel disposal; called by {@link close} to preserve actual learner input when the editor grid contracts.
+   * A nonempty learner group preserves focus; an ending owned group in a focused window uses the host's actual editor-part DOM guard to restore editor keyboard without taking terminal/sidebar-chat input.
+   * @returns Once no current owned tab remains, rereading groups and ownership after each native answer.
+   * @throws When the editor refuses a captured source or pane close, or rebuilt same-kind panes are indistinguishable; remaining panels stay intact.
+   * @example await this.closeOwnedEditorTabs()
+   */
+  private async closeOwnedEditorTabs(): Promise<void> {
+    // A prior close can remove/reorder groups or rebuild every tab object; dispatch only from the current native model.
+    while (true) {
+      const group = vscode.window.tabGroups.all.find((candidate) =>
+        candidate.tabs.some((tab) => this.ownsClosingTab(candidate, tab)),
+      )
+      if (!group) return
+      const tabs = group.tabs.filter((tab) => this.ownsClosingTab(group, tab))
+      this.assertUnambiguousClosingTabs(tabs)
+      // Resample window focus beside every dispatch: a learner tab or an inactive window suppresses native group-restoration focus.
+      const preserveFocus = this.preservesFocusAtGroupClose(group, tabs)
+      if (!(await vscode.window.tabGroups.close(tabs, preserveFocus)))
+        throw new Error('Some Study workspace readers could not close.')
+    }
+  }
+
+  /**
+   * Chooses the native focus flag synchronously beside {@link closeOwnedEditorTabs}'s dispatch, keeping its current group/window checks without an await boundary.
+   * @param group - The freshly selected native group.
+   * @param tabs - Its current owned set; any tab outside this set belongs to the learner.
+   * @returns Whether remaining learner tabs or an unfocused window suppress native restoration.
+   * @example this.preservesFocusAtGroupClose(group, tabs)
+   */
+  private preservesFocusAtGroupClose(
+    group: vscode.TabGroup,
+    tabs: readonly vscode.Tab[],
+  ): boolean {
+    return group.tabs.length !== tabs.length || !vscode.window.state.focused
+  }
+
+  /**
+   * Limits {@link closeOwnedEditorTabs} to captured source and a current panel's native group, so rebuilt inherited tabs cannot become owned by their view type alone.
+   * @param group - The current native group of the tab, reread after every awaited close.
+   * @param tab - A current native tab, never a saved wrapper.
+   * @returns Whether this reader owns the source or holds the pane in the tab's current column.
+   * @example this.ownsClosingTab(group, tab) // => false for an inherited Study tab beside this reader's Study in another group
+   */
+  private ownsClosingTab(group: vscode.TabGroup, tab: vscode.Tab): boolean {
+    return (
+      this.isOwnPaneOrSourceTab(tab) &&
+      (this.ownsCapturedSourceTab(tab) ||
+        this.closingPanelOf(tab)?.viewColumn === group.viewColumn)
+    )
+  }
+
+  /**
+   * Finds the panel receipt for an already ownership-filtered pane tab; {@link ownsClosingTab} compares its column with the current native group.
+   * @param tab - A pane input admitted by {@link isOwnPaneOrSourceTab}.
+   * @returns The current Application or Study panel, or undefined after native disposal.
+   * @example this.closingPanelOf(applicationTab) // => this.app
+   */
+  private closingPanelOf(tab: vscode.Tab): vscode.WebviewPanel | undefined {
+    return this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
+      ? this.app
+      : this.contextPanel
+  }
+
+  /**
+   * Refuses indistinguishable same-kind pane wrappers before {@link closeOwnedEditorTabs} can delete another host's pane.
+   * @param tabs - Only the current candidate owned set for one group; captured source tabs can occur more than once.
+   * @throws When multiple pane tabs fit the same live panel receipt; every candidate of that group stays open.
+   * @example this.assertUnambiguousClosingTabs(tabs)
+   */
+  private assertUnambiguousClosingTabs(tabs: readonly vscode.Tab[]): void {
+    // Native restored inputs can prefix the view type; compare the same normalized kinds ownership already accepts.
+    const kinds = tabs.flatMap((tab) =>
+      this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
+        ? ['application']
+        : this.isCodebookPaneInput(tab.input, 'codebook.studyContext')
+          ? ['context']
+          : [],
+    )
+    if (new Set(kinds).size !== kinds.length)
+      throw new Error(
+        'Codebook cannot distinguish its current pane tab from another pane of the same kind. The remaining panes were left open. Keep the pane you need, close the duplicate Codebook pane tab, then try Close Study Workspace again.',
+      )
   }
 
   /**
@@ -7350,7 +7452,7 @@ export class StudyWorkspace {
 
   /**
    * Says whether {@link close} closes anything of the reader's in the editor area; asked by {@link close} before it disposes the panes, to know whether the editor will rebuild its grid.
-   * @param closedSourceTabs - How many captured source tabs this close closed.
+   * @param closedSourceTabs - How many captured source tabs this close is about to close; pane fields may clear during their native close.
    * @returns `true` when a captured source tab was closed or a pane is still open to be closed; `false` for a reader that had nothing open.
    * @example this.closesPaneOrSource(tabs.length) // => false for a Close made while the Study workspace is not open
    */
@@ -7610,6 +7712,126 @@ export class StudyWorkspace {
       layout,
       groups: groups.map((group) => this.learnersTabKeysOf(group)),
     }
+  }
+
+  /**
+   * Records the Context group a native reservation or panel creation created; {@link sealCreatedContextPanelGroup} calls this only after its native placement receipt.
+   * @param column - A Context destination beyond that reservation's actual measured main groups, never a count retained from an earlier failed Open.
+   * @example this.rememberCreatedContextGroup(3)
+   */
+  private rememberCreatedContextGroup(column: vscode.ViewColumn): void {
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
+    if (group)
+      this.readerCreatedContextGroup = this.editorGroupIdentities.get(group)
+  }
+
+  /**
+   * Seals direct Context-panel group creation after native placement; {@link open} calls this when no initial reservation was needed.
+   * A destination already in the current tab model before creation is borrowed and never enters this receipt.
+   * @example this.sealCreatedContextPanelGroup()
+   */
+  private sealCreatedContextPanelGroup(): void {
+    const column = this.pendingCreatedContextColumn
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
+    if (group && this.hasCurrentContextCreation(group))
+      this.rememberCreatedContextGroup(group.viewColumn)
+    this.clearPendingContextCreation()
+  }
+
+  /**
+   * Binds pending creation once the exact Context panel has a unique native tab; {@link bindContextPanel} and native group notifications call this.
+   * The first pane insertion can rebuild the reserved empty group's wrapper; later wrappers must retain that bound identity.
+   * @example this.bindPendingContextCreation()
+   */
+  private bindPendingContextCreation(): void {
+    if (this.pendingCreatedContextPanel) return
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) =>
+        candidate.viewColumn === this.pendingCreatedContextColumn &&
+        candidate.viewColumn === this.contextPanel?.viewColumn,
+    )
+    if (group && this.hasSingleContextPane(group)) {
+      this.pendingCreatedContextGroup = this.editorGroupIdentities.get(group)
+      this.pendingCreatedContextPanel = this.contextPanel
+    }
+  }
+
+  /**
+   * Requires one native Context input before binding a creation receipt; {@link bindPendingContextCreation} refuses ambiguous or learner-occupied destinations.
+   * @param group - The pending destination's current native group.
+   * @returns Whether its sole tab is Context.
+   * @example this.hasSingleContextPane(group)
+   */
+  private hasSingleContextPane(group: vscode.TabGroup): boolean {
+    return (
+      group.tabs.length === 1 &&
+      this.isCodebookPaneInput(group.tabs[0]?.input, 'codebook.studyContext')
+    )
+  }
+
+  /**
+   * Checks the pending group's identity and exact panel lifetime before {@link sealCreatedContextPanelGroup} grants retirement.
+   * @param group - The native group at the pending column after placement.
+   * @returns Whether the panel and group are still the ones bound to this creation.
+   * @example this.hasCurrentContextCreation(group)
+   */
+  private hasCurrentContextCreation(group: vscode.TabGroup): boolean {
+    if (!this.pendingCreatedContextPanel) return false
+    if (this.pendingCreatedContextPanel !== this.contextPanel) return false
+    if (this.pendingCreatedContextPanel.viewColumn !== group.viewColumn)
+      return false
+    return this.isPendingContextGroup(group)
+  }
+
+  /**
+   * Compares a native group with pending creation identity; {@link ensureContext}, {@link hasCurrentContextCreation} and native close invalidation ask this.
+   * @param group - A current or just-closed native group.
+   * @returns Whether it carries the pending group's stable identity.
+   * @example this.isPendingContextGroup(group)
+   */
+  private isPendingContextGroup(group: vscode.TabGroup): boolean {
+    return (
+      this.pendingCreatedContextGroup !== undefined &&
+      this.editorGroupIdentities.get(group) === this.pendingCreatedContextGroup
+    )
+  }
+
+  /**
+   * Drops permission when native group closure/replacement ends the created group; the tab-group listener calls this before observing new wrappers.
+   * @param event - The native change, whose closed groups still retain their old identities.
+   * @example this.invalidateClosedContextCreation(event)
+   */
+  private invalidateClosedContextCreation(
+    event: vscode.TabGroupChangeEvent,
+  ): void {
+    if (event.closed.some((group) => this.isPendingContextGroup(group)))
+      this.clearPendingContextCreation()
+  }
+
+  /** Clears only pending creation permission, preserving accepted panels and the original layout; disposal and failed identity sealing call this. @example this.clearPendingContextCreation() */
+  private clearPendingContextCreation(): void {
+    this.pendingCreatedContextColumn = undefined
+    this.pendingCreatedContextGroup = undefined
+    this.pendingCreatedContextPanel = undefined
+  }
+
+  /**
+   * Grants retirement to an unchanged actual-created group, including bound pending placement, never a borrowed learner group; {@link open} asks before disposing Context for recording/live composition.
+   * @param group - The current Context-only native group.
+   * @returns Whether the accepted reader-created group identity still holds after wrapper refresh.
+   * @example this.isCreatedContextGroup(group) // => false for the learner's original empty third group
+   */
+  private isCreatedContextGroup(group: vscode.TabGroup): boolean {
+    // Group/panel creation is already proved while layout placement waits; early live entry may retire it without claiming layout confirmation.
+    if (this.hasCurrentContextCreation(group)) return true
+    return (
+      this.readerCreatedContextGroup !== undefined &&
+      this.editorGroupIdentities.get(group) === this.readerCreatedContextGroup
+    )
   }
 
   /**
@@ -10828,11 +11050,14 @@ export class StudyWorkspace {
       return
     }
     this.rememberInheritedPanes()
+    const contextColumn =
+      STUDY_PRESENTATIONS[this.presentationMode].contextColumn
+    this.noteCurrentContextCreation(contextColumn)
     const panel = vscode.window.createWebviewPanel(
       'codebook.studyContext',
       title,
       {
-        viewColumn: STUDY_PRESENTATIONS[this.presentationMode].contextColumn,
+        viewColumn: contextColumn,
         preserveFocus: true,
       },
       {
@@ -10844,9 +11069,26 @@ export class StudyWorkspace {
     this.bindContextPanel(panel)
   }
 
+  /**
+   * Probes the current destination synchronously beside {@link ensureContext}'s native creation, preserving actual reservation identity and rejecting newer learner groups.
+   * @param contextColumn - The Context destination this immediate creation will request.
+   * @example this.noteCurrentContextCreation(contextColumn)
+   */
+  private noteCurrentContextCreation(contextColumn: vscode.ViewColumn): void {
+    // Inspect the actual current model beside panel creation; a stale first-Open group count cannot authorize retiring a learner's newer group.
+    const destination = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === contextColumn,
+    )
+    if (!destination) this.pendingCreatedContextColumn = contextColumn
+    // An actual reservation can have created this still-empty main group before Context exists; keep only that same group identity's pending receipt.
+    else if (!this.isPendingContextGroup(destination))
+      this.clearPendingContextCreation()
+  }
+
   /** Binds a fresh explanation document for cold entry or handoff without accepting retired controls or receipts. @example this.bindContextPanel(replacement) */
   private bindContextPanel(panel: vscode.WebviewPanel): void {
     this.contextPanel = panel
+    this.bindPendingContextCreation()
     this.studyPaneReportsKeyboard = false
     this.lastPublished = undefined
     this.lastRendered = undefined
@@ -10856,9 +11098,11 @@ export class StudyWorkspace {
         new Error('The current explanation pane was closed.'),
       )
       this.contextPanel = undefined
+      this.clearPendingContextCreation()
     })
     panel.onDidChangeViewState(() => {
       if (this.contextPanel !== panel) return
+      this.bindPendingContextCreation()
       // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
       this.sampleKeyboardOutsideEditors()
       if (!panel.active) return
@@ -11184,7 +11428,9 @@ export class StudyWorkspace {
     this.watchKeyboardOutsideEditors()
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabGroups((event) => {
+        this.invalidateClosedContextCreation(event)
         this.observeEditorGroups(event)
+        this.bindPendingContextCreation()
         this.publishAfterTabChange()
       }),
     )
@@ -11199,6 +11445,8 @@ export class StudyWorkspace {
               (this.webviewCloseRevisions.get(kind) ?? 0) + 1,
             )
           }
+        // VS Code can deliver the new tab without replacing its group wrapper; no focus event is required to bind its creation.
+        this.bindPendingContextCreation()
         this.publishAfterTabChange()
       }),
     )
@@ -12773,6 +13021,14 @@ export class StudyWorkspace {
       assertCurrent()
       grid.assertUnchanged()
       const requestedLayout = this.studyLayout()
+      const contextColumn =
+        STUDY_PRESENTATIONS[this.presentationMode].contextColumn
+      // Creation ownership comes from this reservation's current grid, never the original-layout note of a partial Open.
+      const createsContextGroup =
+        mode === 'study' &&
+        !this.liveComposition &&
+        !this.summaryComposition &&
+        contextColumn > grid.groups.length
       // Keep an already balanced flat split stable; a collapsed app/source split needs native pixels to escape its minimum.
       const studyLayout =
         (this.liveComposition || this.summaryComposition) &&
@@ -12801,18 +13057,25 @@ export class StudyWorkspace {
             : []),
         ],
       })
+      // Capture actual created identity before the ownership read can wait; a later replacement clears this receipt instead of being claimed by its column.
+      if (createsContextGroup && grid.preservesOtherParts(groupCount)) {
+        this.pendingCreatedContextColumn = contextColumn
+        const created = vscode.window.tabGroups.all.find(
+          (group) => group.viewColumn === contextColumn,
+        )
+        this.pendingCreatedContextGroup =
+          created && this.editorGroupIdentities.get(created)
+      }
       // The arrangement's sizes are the groups' own from here on: nothing an Expand of the reader's took is owed any more.
       this.groupSizesBeforeExpand = undefined
       // Drain the accepted batch after navigation abort, then let only a newer intent change the layout again.
       const receipt = await this.rememberLayout(mode, lifetime, retainedGroups)
       assertCurrent()
+      const preservesOtherParts = grid.preservesOtherParts(
+        mode === 'study' ? groupCount : grid.groups.length,
+      )
       // runCommands reports child failures through host notifications, so only the actual layout can certify success.
-      if (
-        !receipt ||
-        !grid.preservesOtherParts(
-          mode === 'study' ? groupCount : grid.groups.length,
-        )
-      ) {
+      if (!receipt || !preservesOtherParts) {
         this.layoutReceipt = undefined
         // The receipt read's own failure (a changed group, a grid that never settled) is the cause; keep it readable instead of replacing it.
         const cause = this.layoutReceiptFailure

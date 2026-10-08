@@ -325,6 +325,9 @@ export async function workspaceHarness(
   const closeRefusingTabs = new Set<Tab>()
   let rejectNextTabClose = false
   const tabCloseRequests: Tab[][] = []
+  const tabCloseFocusRequests: boolean[] = []
+  let heldTabCloseResponse:
+    { entered: () => void; wait: Promise<void> } | undefined
   let lastSourceEditor: SourceEditor | undefined
   let sourceFocusOnArrange: SourceEditor | undefined
   let reportedSourceColumn: number | undefined
@@ -632,6 +635,8 @@ export async function workspaceHarness(
   const activeStackItemListeners = new Set<() => void>()
   /** Whether the fake editor lets the keyboard fall to the page body when it removes an emptied editor group while a text editor has the keyboard; see `loseKeyboardWhenGroupCloses`. */
   let losesKeyboardWhenGroupCloses = false
+  /** Models the host's actual editor-part focus guard and native webview disposal callbacks; enabled by `modelNativeTabCloseFocus`. */
+  let modelsNativeTabCloseFocus = false
   /** Whether the fake editor removes the group a disposed pane's tab left empty a moment after that tab closed instead of with it; see `removeEmptiedGroupsLater`. */
   let removesEmptiedGroupsLater = false
   /** The pane whose `active` flag the fake editor has not cleared yet although another group took the focus; see `holdPaneDeactivation`. */
@@ -1182,8 +1187,16 @@ export async function workspaceHarness(
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
   }
-  /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
-  function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
+  /**
+   * Removes an emptied native group for {@link closeTabs} and pane disposal, modelling the host's editor-part focus restoration.
+   * @param emptied - The current group whose last tab closed.
+   * @param preserveFocus - Whether the close suppresses native restoration after the grid contracts.
+   * @example removeEmptiedGroup(group, false) // an actual editor input keeps its keyboard; a terminal keeps its own
+   */
+  function removeEmptiedGroup(
+    emptied: (typeof groups)[number],
+    preserveFocus = true,
+  ): void {
     const main = groups
       .filter((candidate) => candidate !== separateEditorPart?.group)
       .toSorted((left, right) => left.viewColumn - right.viewColumn)
@@ -1193,6 +1206,8 @@ export async function workspaceHarness(
     if (
       losesKeyboardWhenGroupCloses &&
       !separateEditorPart?.focused &&
+      (!modelsNativeTabCloseFocus ||
+        (windowState.focused && !keyboardInView && !keyboardInSideBar)) &&
       (focusedSourceEditor() ||
         activeTabGroup.activeTab?.input instanceof TabInputUnknown)
     )
@@ -1210,17 +1225,28 @@ export async function workspaceHarness(
     if (activeTabGroup === emptied) activeTabGroup = groups[0]!
     if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([emptied])
     else changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
+    // Both installed hosts restore only an actual editor-part input or BODY; terminal/sidebar chat lie outside that container.
+    if (
+      modelsNativeTabCloseFocus &&
+      !preserveFocus &&
+      windowState.focused &&
+      !keyboardInView &&
+      !keyboardInSideBar &&
+      !separateEditorPart?.focused
+    )
+      keyboardOnBody = false
   }
   /**
    * Closes tabs as the editor does, group by group, for the reader's `tabGroups.close` requests and for the Close Editor command.
    * A group that loses the tab it shows brings a hidden editor area back, and a native group a dead pane leaves empty is removed by {@link removeEmptiedGroup}.
    * @param tabs - The tabs to close; a tab the editor will not release keeps every requested tab of its own group.
+   * @param preserveFocus - The host's focus flag; false activates a remaining neighbour or restores editor-part focus when the group ends.
    * @returns
    * - `true` when every requested tab closed
    * - `false` when a group kept its tabs because one of them refuses to close
    * @example closeTabs([leftover]) // => true, and the tab beside the leftover is the one its group shows
    */
-  function closeTabs(tabs: Tab[]): boolean {
+  function closeTabs(tabs: Tab[], preserveFocus = true): boolean {
     let accepted = true,
       closedActiveLeftover = false
     const emptiedByDeadPane: typeof groups = [],
@@ -1242,10 +1268,20 @@ export async function workspaceHarness(
       if (
         active &&
         tabs.includes(active) &&
-        (leftoverCapturedTabs.has(active) || deadPaneTabs.has(active))
+        (modelsNativeTabCloseFocus ||
+          leftoverCapturedTabs.has(active) ||
+          deadPaneTabs.has(active) ||
+          [...panels].some((current) => current.nativeTab === active))
       ) {
         group.activeTab = group.tabs.at(-1)
         closedActiveLeftover = true
+        // False on a nonempty group activates its replacement editor even when another file or a view held the keyboard.
+        if (modelsNativeTabCloseFocus && !preserveFocus && group.tabs.length) {
+          activeTabGroup = group
+          keyboardOnBody = false
+          keyboardInView = false
+          keyboardInSideBar = false
+        }
       }
       // With `closeEmptyGroups` on (the model of `closeDisposedPanelTabsLater`), the editor also removes a group whose last tab the reader closed.
       if ((heldDeadPane || closeDisposedPanelTabsLater) && !group.tabs.length)
@@ -1272,7 +1308,7 @@ export async function workspaceHarness(
         activeTabGroup = groups[index > 0 ? index - 1 : 1]!
         closedActiveLeftover = true
       }
-      removeEmptiedGroup(emptied)
+      removeEmptiedGroup(emptied, preserveFocus)
     }
     // Cursor answers closed tabs with new group objects; a removed group above already came with them.
     if (
@@ -1515,10 +1551,20 @@ export async function workspaceHarness(
       emit,
       viewColumn,
       title: _title ?? '',
-      /** Models a host model resync for registration tests while preserving the actual panel/tab relation. @example panel.refreshTabWrapper() */
-      refreshTabWrapper(): void {
+      /**
+       * Keeps the actual panel handle associated with its current tab wrapper for registration and full-model resync tests.
+       * @param replacement - A full-model replacement already present in the current native groups; omitted, only the tab object is rebuilt.
+       * @example panel.refreshTabWrapper(refreshedTab)
+       */
+      refreshTabWrapper(replacement?: Tab): void {
         const previous = nativeTab
-        nativeTab = { ...nativeTab }
+        nativeTab =
+          replacement?.input instanceof TabInputWebview
+            ? Object.assign(replacement, {
+                input: replacement.input,
+                isPreview: Boolean(replacement.isPreview),
+              })
+            : { ...nativeTab }
         // Only the API wrapper changes; the native tab, selected group and panel lifetime remain the same.
         for (const group of groups) {
           group.tabs = group.tabs.map((tab) =>
@@ -2991,6 +3037,7 @@ export async function workspaceHarness(
           },
           close: async (tabs: Tab[], preserveFocus?: boolean) => {
             tabCloseRequests.push([...tabs])
+            tabCloseFocusRequests.push(Boolean(preserveFocus))
             if (rejectNextTabClose) {
               rejectNextTabClose = false
               throw new Error('Canceled')
@@ -3001,8 +3048,26 @@ export async function workspaceHarness(
               !separateEditorPart?.focused &&
               activeTabGroup.activeTab !== undefined &&
               tabs.includes(activeTabGroup.activeTab)
-            const closed = closeTabs(tabs)
+            const closed = closeTabs(tabs, preserveFocus)
             if (closesFocusedTab && closed) keyboardOnBody = true
+            // A native webview-tab close disposes its panel before the extension's close continuation runs.
+            for (const current of [...panels])
+              if (
+                tabs.some((tab) => tab.input === current.nativeTab.input) &&
+                !groups.some((group) =>
+                  group.tabs.some(
+                    (tab) => tab.input === current.nativeTab.input,
+                  ),
+                )
+              )
+                current.dispose()
+            // Hold the response after real native effects so a later dispatch must use the learner's newer group/tab model.
+            const held = heldTabCloseResponse
+            heldTabCloseResponse = undefined
+            if (held) {
+              held.entered()
+              await held.wait
+            }
             return closed
           },
         },
@@ -3311,6 +3376,24 @@ export async function workspaceHarness(
     peakPanels: () => peakPanels,
     /** Lists the tabs of every close request the reader sent to the editor, accepted or refused, so a test can assert which tabs it asked to close. @example harness.tabCloseRequests().flat().includes(deadApplication) */
     tabCloseRequests: () => tabCloseRequests.map((tabs) => [...tabs]),
+    /** Records each native close's focus flag so inactive-window and nonempty-group guards are observable. @example harness.tabCloseFocusRequests() // => [true, false] */
+    tabCloseFocusRequests: () => [...tabCloseFocusRequests],
+    /**
+     * Holds a native tab-close answer after its effects, for lifecycle tests that change ownership or window focus before the next group closes.
+     * @returns The entered receipt and the release callback for that one response.
+     * @example const held = harness.holdNextTabCloseResponse(); await held.started; held.release()
+     */
+    holdNextTabCloseResponse() {
+      let entered!: () => void, release!: () => void
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          release = resolve
+        })
+      heldTabCloseResponse = { entered, wait }
+      return { started, release }
+    },
     onNextPanel(
       kind: string,
       run: (value: ReturnType<typeof panel>) => void,
@@ -4098,6 +4181,17 @@ export async function workspaceHarness(
       losesKeyboardWhenGroupCloses = true
     },
     /**
+     * Calibrates lifecycle regressions to native controls 436–449 and 451–457: true ending-group closes lose editor keyboard, false restores it through the host's actual-DOM guard, and native tab closes dispose their panels.
+     * Terminal/sidebar input is represented by {@link focusView}; it stays outside the editor part even while an active text editor is reported.
+     * Window-focused-false is a deterministic guard; controls 459–461 lack a separate predispatch inactive sample and supply only partial native evidence.
+     * @example harness.modelNativeTabCloseFocus(); harness.focusView() // closing an ending owned group leaves the view's keyboard alone
+     */
+    modelNativeTabCloseFocus(): void {
+      modelsNativeTabCloseFocus = true
+      closeDisposedPanelTabsLater = true
+      losesKeyboardWhenGroupCloses = true
+    },
+    /**
      * Keeps a pane's `active` flag set although another group takes the focus, until the test releases it: the editor reports a pane's view state on its own channel, so the flag can still read `true` when the tab and group events of a click elsewhere have arrived. The release clears the flag and tells the pane's view-state listeners, with no tab, group or active-editor event. Which of the two channels Cursor delivers last for a click from a pane into its chat is not recorded; the reader must not depend on it.
      * @param kind - The view type of the pane whose flag stays set.
      * @returns `release`, which clears the flag and reports the pane's view state.
@@ -4467,6 +4561,7 @@ export async function workspaceHarness(
             input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)),
           })
       const previous = [...groups]
+      const refreshedTabs = new Map<Tab, Tab>()
       /** Gives a tab the new input wrapper of its own kind that a full tab-model resync reports. @example resyncedInput(new TabInputText(uri)) // => another TabInputText of the same uri */
       const resyncedInput = (input: Tab['input']): Tab['input'] => {
         if (input instanceof TabInputText) return new TabInputText(input.uri)
@@ -4479,13 +4574,31 @@ export async function workspaceHarness(
         groups.length,
         ...groups.map((group) => ({
           ...group,
-          tabs: group.tabs.map((tab) => ({
-            ...tab,
-            label: 'Recorded application',
-            input: resyncedInput(tab.input),
-          })),
+          tabs: group.tabs.map((tab) => {
+            const refreshed = {
+              ...tab,
+              label: 'Recorded application',
+              input: resyncedInput(tab.input),
+            }
+            refreshedTabs.set(tab, refreshed)
+            return refreshed
+          }),
         })),
       )
+      // A full tab-model resync changes API objects, never the native webview handle that later reveal and dispose operate on.
+      for (const current of panels) {
+        const refreshed = refreshedTabs.get(current.nativeTab)
+        if (refreshed) current.refreshTabWrapper(refreshed)
+      }
+      // The native active tab/group stay the same while their API wrappers change.
+      for (const group of groups)
+        if (group.activeTab)
+          group.activeTab =
+            refreshedTabs.get(group.activeTab) ?? group.activeTab
+      activeTabGroup =
+        groups[previous.indexOf(activeTabGroup)] ?? activeTabGroup
+      for (const editor of visibleSourceEditors)
+        editor.group = groups[previous.indexOf(editor.group)] ?? editor.group
       // Full-model replacement keeps the same separate part behind its newly reported native wrapper.
       if (separateEditorPart)
         separateEditorPart.group =
@@ -4683,6 +4796,8 @@ export async function workspaceHarness(
     },
     async close(): Promise<void> {
       await reader.retire(harness.service)
+      // Teardown releases exact fixture panel handles after assertions; intentionally ambiguous/duplicate inputs must not be mistaken for a successful product Close.
+      for (const current of [...panels]) current.dispose()
       await reader.dispose()
       // The fake editor of a closed harness changes nothing any more: its pending tab closes and reveals are dropped with their timers.
       for (const timer of pendingEditorTimers) clearTimeout(timer)
@@ -4929,8 +5044,10 @@ export async function recordedReaderHarness(
 
 /** Connects real Git/book/history/reader code before configured-runtime workspace tests exercise live/replay entry; native paint remains mocked. @example const harness = await configuredWorkspaceHarness() */
 export async function configuredWorkspaceHarness(sourceText?: string) {
-  const harness = await workspaceHarness(false),
-    directory = await realpath(harness.directory),
+  const harness = await workspaceHarness(false)
+  // A one-group native workspace starts in column One; the geometry-free default's column Two would invent an empty third group during live entry.
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const directory = await realpath(harness.directory),
     library = await harness.reader.learningStorage(),
     study = createConfiguredStudy(sourceText)
   const git = promisify(execFile)
