@@ -2855,6 +2855,88 @@ test('a saved study chosen in the bottom panel while the Study workspace is clos
   }
 })
 
+// Value: protects=the first Saved study choice in an already visible bottom panel after Close; fails_when=Close advances the reader revision without publishing it, so the visible control sends the old revision and the first choice is refused; why_new=Cycle 0046 task 392, native Cursor revision 10 remained in the visible pane after the closed reader advanced to 11; seam=existing bottom-panel message boundary, no repeated view resolution
+test('the first Saved study choice after closing the workspace opens in the already visible bottom panel', async () => {
+  // Arrange: keep the existing view resolved through Close, as a learner does.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.resolveRestoredObservedMoments()
+    harness.playbackPanel.visible = true
+    await harness.reader.close()
+    const displayed = harness.playbackPanelMessages.at(-1)!
+
+    // Act: copy the authority actually displayed, without refreshing the view.
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: displayed.revision,
+      studyId: chosen.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the first choice after Close to finish',
+      1_000,
+    )
+
+    // Assert: the first request selects the study instead of a stale-view error.
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(panel.model.selection.studyId, chosen.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual([...panel.errors], [])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+    ])
+    const library = await harness.reader.learningStorage()
+    assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Saved study choice after the editor cancels Close; fails_when=the rejected close leaves the visible pane's old revision while the reader accepts only the new one; why_new=task 392's close lifetime changes before native tab closing can fail; seam=existing native tab-close cancellation
+test('the first Saved study choice after a canceled workspace close opens without refreshing the bottom panel', async () => {
+  // Arrange: the same visible view survives a native close cancellation.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.resolveRestoredObservedMoments()
+    harness.playbackPanel.visible = true
+    harness.rejectNextTabClose()
+    await assert.rejects(harness.reader.close(), { message: 'Canceled' })
+    const displayed = harness.playbackPanelMessages.at(-1)!
+
+    // Act: use that view's authority on its first choice after cancellation.
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: displayed.revision,
+      studyId: chosen.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the first choice after canceled Close to finish',
+      1_000,
+    )
+
+    // Assert: the canceled close does not require a failed choice to refresh.
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.equal(panel.model.selection.studyId, chosen.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual([...panel.errors], [])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a choice overtaken on a closed Study workspace does not end the loading state of the newer choice in the bottom panel; fails_when=the overtaken choice publishes itself as shown once its selection is saved, while the newer study is still being read; why_new=the closed-reader case makes a single choice; seam=none
 test('a choice overtaken in the bottom panel of a closed Study workspace leaves the newer choice loading until that study is shown', async (context) => {
   // Arrange: three saved studies; the oldest is shown, then the Study workspace is closed and the bottom panel is resolved again. The selection save of the first choice and the archive read of the second are held.

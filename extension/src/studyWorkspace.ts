@@ -7344,6 +7344,8 @@ export class StudyWorkspace {
       if (this.closingPromise === pending) {
         this.closingPromise = undefined
         this.closing = false
+        // A surviving Saved studies view needs this close's authority, including after native cancellation.
+        if (!this.disposed) this.publish()
       }
     }
   }
