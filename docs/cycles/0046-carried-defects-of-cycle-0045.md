@@ -840,6 +840,10 @@ Root viewed all8 mapped30fps motion/endpoint images, which show the native Appli
 
 Affected gap audit: AC-LIVE/AC-SAVE gain only the native shutdown/restart correction; AC-ENTRY/REPLAY/DESKTOP retain prior source-bound layout/focus proof because the only production delta is the owned launch environment. All other8 AC rows carry their unchanged source assessments, with no integrated/native/final promotion. All13 broader gaps and Windows-editor/final acceptance stay open. Counts377 tasks,330closed,47native-pending. Next: N342’s remaining exact conditions on candidate8, then every remaining mapped runtime/replay/Wiki check and full cycle delivery. Pause afterwards; no next cycle.
 
+### Task378 authoritative task link restored (2026-10-08)
+
+The coordinator’s shortened Active cycle summary in03cdcfba dropped the carried-defects table link. Existing statusDocs then correctly compared the stated count with no table and failed; that committed attempt is not a document-check pass. Task378 restores the authoritative link and exact378/331/47current counts, with no weakened assertion or product change. The existing16 document checks are required to pass before this correction is committed. Native candidate8/task376 proof stays source-bound and unchanged.
+
 ## Result and decision
 
 - Result: pending
@@ -859,7 +863,7 @@ Affected gap audit: AC-LIVE/AC-SAVE gain only the native shutdown/restart correc
 ## Next action
 
 - Exact next action: complete all47 mapped native tasks on candidate8, starting with N342’s remaining conditions, retaining task374’s exact background-receipt condition; automatic gates and final-source subpasses are recorded above. Finish every mapped native task with current image comparisons, videos and inspected frames. Deliver through `/ship` and PR #88, required CI and exact-HEAD merge gate; close Issue #87 with nothing carried, then pause. No next cycle starts.
-- Source / branch / processes: latest product repair task376/a8e2d6ec, packaged in clean candidate8/5c73d787 and normally installed/loaded in both dedicated hosts. Current compiler/full4080 tests4079pass1skip0fail/cancel, static gates,338 package/scripts and recorded source reviews pass; task377’s records are corrected. Task376’s two-host native Stop→Start closure and8 inspected frames are mapped in native-final/n376-c8-closure.json. Candidate7 N342 keyboard evidence and candidate6/7 layout evidence keep their source-bound limits; task374 and every other mapped obligation remain open. All377 tasks retained,330 closed,47 native-pending; origin/draft PR88 still59fdb96, no delivery/final acceptance proof.
+- Source / branch / processes: latest product repair task376/a8e2d6ec, packaged in clean candidate8/5c73d787 and normally installed/loaded in both dedicated hosts. Current compiler/full4080 tests4079pass1skip0fail/cancel, static gates,338 package/scripts and recorded source reviews pass; task377’s records are corrected. Task376’s two-host native Stop→Start closure and8 inspected frames are mapped in native-final/n376-c8-closure.json. Candidate7 N342 keyboard evidence and candidate6/7 layout evidence keep their source-bound limits; task374 and every other mapped obligation remain open. All378 tasks retained,331 closed,47 native-pending; origin/draft PR88 still59fdb96, no delivery/final acceptance proof.
 - State updated in PROJECT_STATE.md: yes (with this record's commit).
 - Owner rules stated in the required reads this cycle, four: a pull request's description carries no `@coderabbitai ignore`, and a cycle may be delivered in up to three pull requests (both in DEVELOPMENT.md); the product targets macOS, Windows and Ubuntu (PRODUCT_GOAL.md, goal version 10; IMPLEMENTATION.md and AGENTS.md name the operating system among the proof's fields); PROJECT_STATE.md is overwritten and kept short (DEVELOPMENT.md, held by a test).
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue): none; a bug-fix cycle carries nothing.
