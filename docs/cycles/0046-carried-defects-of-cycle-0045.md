@@ -899,6 +899,9 @@ The independent review of task381's minimal candidate identifies a remaining cre
 
 Frozen falsifier: hold first Open after the two-group note, add an empty learner third group before native reservation/Context creation, finish Open and recording reentry; the learner's three groups and expected orientation/layout must survive. Prove this failing regression or disprove the finding with recorded current-source evidence. If confirmed, creation ownership comes from the current native reservation/creation that actually added the group, retaining existing group-change guards and legitimate reader-created-group retirement. Regressions, valid controls, all Study partitions and current native preservation remain required. The task stays in this bug-fix cycle, with no Skip or extra feature. Counts382/331/47native-pending plus four open repair/review tasks379–382; deliver this cycle then pause.
 
+
+Task381/382 verification qualifications are frozen before final gates. The four existing381 recording-reentry layout regressions use a host model that keeps emptied groups (`workbench.editor.closeEmptyGroups=false`); they prove that Codebook must not retire a borrowed kept group, and earn no default-true native empty-group-retention credit. Root repeats that declared supported-setting input in both QA hosts with byte-identical settings restoration and observes the default-true host behavior separately. Task382's explicit initial Open can legitimately arrange the accepted three groups into the standard Study hierarchy. Its pre-recording hierarchy is therefore hard-coded before Act and must stay unchanged after reentry, with the original3-versus2 ownership assertion retained. The earlier flat-three-columns assertion is an invalid extra expectation, preserved without defect/closure credit. No product layout guard or owner outcome is weakened.
+
 ## Result and decision
 
 - Result: pending
