@@ -909,6 +909,9 @@ The independent control audit finds381-created-group-receipt exiting0 with valid
 
 Frozen observation: retain the reader-created empty third Context group by the supported closeEmptyGroups=false model or bounded native-removal hold. Recording entry retires that owned group. Disabling the actual creation receipt must leave/refuse the third group and fail the hard-coded group/layout outcome. Preserve381/382's borrowed/newly added learner-group protection, valid source restoration and every affected partition. Counts383/331/47native-pending plus five open repair/review/coverage tasks379–383. No feature or native claim is added; complete this cycle then pause.
 
+
+Task383's corrected positive fixture establishes a live reader-created three-group Study state and enters recording directly, with closeEmptyGroups=false. It now fails actual3 versus expected2. The required retirement is therefore not yet implemented correctly by the new creation receipt, and383 requires a narrow source correction at the actual group-creating reservation as well as valid coverage. The expected two-group outcome stays; no source, control or native closure is claimed from this failed attempt.
+
 ## Result and decision
 
 - Result: pending
