@@ -2597,3 +2597,176 @@ for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
       }
     })
 }
+
+// Value: protects=cold Study entry when VS Code retains an unchanged background text-editor receipt; fails_when=Application registration waits for that receipt to disappear although its native tab is active and visible; why_new=Cycle0046 native283 held auth.ts/column2 while Application was active in column1; seam=the confirmed independent native tab and text-editor receipts, retained until Open completes.
+for (const receiptLocation of [
+  'background group',
+  'covered source group',
+] as const)
+  test(`Open Study Workspace completes while VS Code retains the original text-editor receipt in the ${receiptLocation}`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 659 }, { size: 440 }],
+    })
+    harness.focusMutableDraft('auth.ts', 2)
+    const backgroundEditor = harness.editor.window.activeTextEditor
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const originalEditor =
+      receiptLocation === 'background group'
+        ? backgroundEditor
+        : harness.editor.window.activeTextEditor
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      harness.editor.window,
+      'activeTextEditor',
+    )!
+    const originalTabs = harness.groups.flatMap((group) => [...group.tabs])
+    Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+      configurable: true,
+      get: () => originalEditor,
+    })
+    try {
+      // Act: leave the original receipt populated through the entire Open.
+      const opening = harness.reader.open().then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+      enableFakeClock(context)
+      await advanceClockUntilSettled(context, opening, 6_000)
+      resetFakeClock(context)
+
+      // Assert
+      assert.equal(await opening, 'opened')
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+      assert.equal(harness.editor.window.activeTextEditor, originalEditor)
+      assert.equal(harness.groups.length, 3)
+      assert.equal(
+        originalTabs.every((tab) =>
+          harness.groups.some((group) => group.tabs.includes(tab)),
+        ),
+        true,
+      )
+      assert.equal(harness.runtimes.length, 0)
+    } finally {
+      resetFakeClock(context)
+      Object.defineProperty(
+        harness.editor.window,
+        'activeTextEditor',
+        originalDescriptor,
+      )
+      await harness.close()
+    }
+  })
+
+for (const changedIdentity of ['source URI', 'source column'] as const)
+  test(`Open Study Workspace refuses a text-editor receipt whose ${changedIdentity} changes during Application registration`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 659 }, { size: 440 }],
+    })
+    const background = harness.focusMutableDraft('auth.ts', 2)
+    const otherFile = harness.focusMutableDraft('different-source.ts', 2)
+    background.focus()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      harness.editor.window,
+      'activeTextEditor',
+    )!
+    let reportedEditor = background.editor
+    Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+      configurable: true,
+      get: () => reportedEditor,
+    })
+    harness.onNextPanel('codebook.scopedBrowser', () => {
+      // Only the independent text-editor receipt changes; no tab change masks this guard.
+      reportedEditor =
+        changedIdentity === 'source URI'
+          ? otherFile.editor
+          : { ...background.editor, viewColumn: 1 }
+    })
+    const originalTabs = harness.groups.flatMap((group) => [...group.tabs])
+    try {
+      // Act
+      const opening = harness.reader.open().then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+      enableFakeClock(context)
+      await advanceClockUntilSettled(context, opening, 6_000)
+      resetFakeClock(context)
+
+      // Assert
+      assert.equal(
+        await opening,
+        changedIdentity === 'source URI'
+          ? 'Error: Native panes or learner focus changed while the new application registered; the arrangement was preserved.'
+          : 'Error: Timed out waiting for new application native registration',
+      )
+      assert.equal(harness.reader.presentationState().state, 'closed')
+      assert.equal(harness.counts().panels, 0)
+      assert.equal(
+        originalTabs.every((tab) =>
+          harness.groups.some((group) => group.tabs.includes(tab)),
+        ),
+        true,
+      )
+      assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
+    } finally {
+      resetFakeClock(context)
+      Object.defineProperty(
+        harness.editor.window,
+        'activeTextEditor',
+        originalDescriptor,
+      )
+      await harness.close()
+    }
+  })
+
+test('Open Study Workspace refuses an unchanged text-editor receipt without an original column identity', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 659 }, { size: 440 }],
+  })
+  const background = harness.focusMutableDraft('auth.ts', 2)
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const originalDescriptor = Object.getOwnPropertyDescriptor(
+    harness.editor.window,
+    'activeTextEditor',
+  )!
+  Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+    configurable: true,
+    get: () => ({ ...background.editor, viewColumn: undefined }),
+  })
+  try {
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, opening, 6_000)
+    resetFakeClock(context)
+
+    // Assert
+    assert.equal(
+      await opening,
+      'Error: Timed out waiting for new application native registration',
+    )
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
+  } finally {
+    resetFakeClock(context)
+    Object.defineProperty(
+      harness.editor.window,
+      'activeTextEditor',
+      originalDescriptor,
+    )
+    await harness.close()
+  }
+})

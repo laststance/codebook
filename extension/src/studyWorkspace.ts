@@ -10664,7 +10664,13 @@ export class StudyWorkspace {
             owned(appGroup.activeTab) &&
             panel.viewColumn === appGroup.viewColumn &&
             panel.visible &&
-            (active !== appGroup || !vscode.window.activeTextEditor),
+            // Native Application focus may retain the host's unchanged last text editor in this or another group.
+            (active !== appGroup ||
+              !vscode.window.activeTextEditor ||
+              this.retainsApplicationSourceReceipt(
+                focusedSource,
+                focusedSourceColumn,
+              )),
           )
         },
       },
@@ -10750,6 +10756,25 @@ export class StudyWorkspace {
     return Boolean(
       activeTab &&
       !this.isCodebookPaneInput(activeTab.input, 'codebook.scopedBrowser'),
+    )
+  }
+
+  /**
+   * Recognizes the host's unchanged text-editor receipt beside a registered Application; {@link ensureApp} asks before waiting for a source-clear event that VS Code may never send.
+   * @param sourceUri - The text-editor URI captured before creating the Application, independently of the active tab.
+   * @param sourceColumn - That receipt's original group, including a background editor group.
+   * @returns Whether the current reported text editor still has both original identities.
+   * @example this.retainsApplicationSourceReceipt('file:///repo/auth.ts', 2) // => true while that receipt is retained
+   */
+  private retainsApplicationSourceReceipt(
+    sourceUri: string | undefined,
+    sourceColumn: number | undefined,
+  ): boolean {
+    const editor = vscode.window.activeTextEditor
+    return (
+      sourceColumn !== undefined &&
+      editor?.viewColumn === sourceColumn &&
+      editor.document.uri.toString() === sourceUri
     )
   }
 
