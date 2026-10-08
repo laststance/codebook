@@ -2,7 +2,7 @@
 
 ## [0.2.30.0] - 2026-10-07 (development candidate)
 
-Cycle 0046 is a bug-fix cycle with no increment. It holds the 46 defects Cycle 0045 left and the 338 that were found while it ran, 384 rows in all, and it carries none of them on. It is the third cycle under the rule that every defect a cycle leaves is fixed in the next one. One row is a security defect of 0.2.29.0 that deletes files outside the Wiki folder (the first bullet under "What a cloned repository can put beside the Wiki"): update every editor window, because a window of 0.2.29.0 still does it.
+Cycle 0046 is a bug-fix cycle with no increment. It holds the 46 defects Cycle 0045 left and the 339 that were found while it ran, 385 rows in all, and it carries none of them on. It is the third cycle under the rule that every defect a cycle leaves is fixed in the next one. One row is a security defect of 0.2.29.0 that deletes files outside the Wiki folder (the first bullet under "What a cloned repository can put beside the Wiki"): update every editor window, because a window of 0.2.29.0 still does it.
 
 **Storage locks, claims and the Wiki update marker.** Three kinds of file keep editor windows from writing at the same time: the storage lock `writer.lock`, the claim a window holds while it takes a lock or a marker over, and the marker of a running Wiki update.
 
