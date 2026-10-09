@@ -4476,12 +4476,12 @@ for (const chatState of [
         chat.focus()
       }
       // The pause: the debugger opens the paused file in front of the source group with the keyboard, then selects the stack item.
+      const held = harness.holdNextCommand('composer.focusComposer')
+      release = held.release
       harness.focusMutableDraft('actions.ts', 2)
       harness.pauseDebugger()
       const chatFocusedAtPause = chat.focused()
       const showsBefore = harness.textDocumentShows().length
-      const held = harness.holdNextCommand('composer.focusComposer')
-      release = held.release
 
       // Act: the run reaches its stop and the reader shows the stop's captured source; then the run continues, pauses again, and the Application pane takes the keyboard from the next paused file.
       harness.service.action({
@@ -4497,6 +4497,7 @@ for (const chatState of [
       await shown
       const afterFirstPause = {
         chatFocused: chat.focused(),
+        sourceShows: harness.textDocumentShows().slice(showsBefore),
         returns: harness.commands.filter(
           (command) => command === 'composer.focusComposer',
         ).length,
@@ -4510,17 +4511,21 @@ for (const chatState of [
         .panelReveals()
         .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser')
 
-      // Assert: the keyboard was given back after the source's reveal and before the Application pane's, once for each pause, and no sentence was told.
+      // Assert: the keyboard returns before delayed capture; later source and Application reveals preserve it.
       assert.deepEqual(lastRevealOfApplicationPane, {
         kind: 'codebook.scopedBrowser',
         column: undefined,
         preserveFocus: true,
       })
       assert.equal(chatFocusedAtPause, false)
-      assert.deepEqual(showsBeforeReturn, [
-        { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false },
-      ])
-      assert.deepEqual(afterFirstPause, { chatFocused: true, returns: 1 })
+      assert.deepEqual(showsBeforeReturn, [])
+      assert.deepEqual(afterFirstPause, {
+        chatFocused: true,
+        sourceShows: [
+          { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: true },
+        ],
+        returns: 1,
+      })
       assert.equal(chatFocusedAtSecondPause, false)
       assert.equal(chat.focused(), true)
       assert.equal(

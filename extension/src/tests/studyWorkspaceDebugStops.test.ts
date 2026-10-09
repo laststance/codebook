@@ -2,7 +2,272 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
+
+// Cycle 0046 task5: historical capture can occupy its full bound before any captured-source render reaches the reader.
+test('Cursor chat is usable at a debugger pause before historical capture publishes its observation', async () => {
+  // Arrange: retain the chat while a prepared live run has not published a pause.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+
+    // Act: the native debugger opens the stopped file while capture remains unpublished.
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    await waitUntil(
+      () => chat.focused(),
+      'chat keyboard before the historical capture is published',
+      300,
+    )
+
+    // Assert: rendering the eventual capture does not perform a second return.
+    assert.equal(chat.focused(), true)
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    assert.equal(chat.focused(), true)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer'],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+test('a file chosen while the early chat return waits keeps native keyboard ownership through the next pause', async (t) => {
+  // Arrange: the stopped file is known, but command discovery has not answered.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    await held.started
+    // This second observer joins the existing pending return; it creates no new return.
+    const returning = harness.reader['returnsKeyboardToChatAtPause']()
+
+    // Act: a later learner choice wins before native command discovery settles.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    const chosen = harness.focusMutableDraft('learner-notes.ts', 2)
+    held.release()
+    await returning
+
+    // Assert
+    assert.equal(chat.focused(), false)
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      chosen.document.uri.toString(),
+    )
+    // A second frame can arrive without an intermediate running-thread event.
+    clockMs += 3_000
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.pauseDebugger()
+    clock.mock.restore()
+    await harness.revealApplicationPaneOverPausedFile()
+    assert.equal(chat.focused(), false)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      [],
+    )
+  } finally {
+    release()
+    live?.close()
+    await harness.close()
+  }
+})
+
+test('Read Source revokes a pending chat return when the captured source is already ready', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.pauseDebugger()
+    await held.started
+    const returning = harness.reader['returnsKeyboardToChatAtPause']()
+    assert.equal(harness.reader['sourceReady'](), true)
+
+    // Act: this ready-source path does not render a new source document.
+    await harness.reader.action('read-source')
+    held.release()
+    await returning
+
+    // Assert
+    assert.equal(chat.focused(), false)
+    assert.equal(
+      harness.focusedSource()?.document.uri.scheme,
+      'codebook-source',
+    )
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      [],
+    )
+  } finally {
+    release()
+    live?.close()
+    await harness.close()
+  }
+})
+
+test('a newly displayed capture retains its pending chat return before its source identity is published', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    readerSeams(harness).stopOwnTimer()
+    const previousSource = harness.reader['sourceUri']?.toString()
+    assert.equal(typeof previousSource, 'string')
+    const nextSource = createConfiguredStudy().descriptor?.sources[1]
+    assert.ok(nextSource)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: {
+        ...harness.configuration,
+        book: { ...harness.configuration.book, anchorIndex: 1 },
+        source: {
+          path: nextSource.path,
+          hash: nextSource.hash,
+          line: 1,
+          column: 1,
+        },
+      },
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    const commandsBeforePause = harness.commands.length
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    harness.focusMutableDraft('mode.ts', 2)
+    harness.pauseDebugger()
+    await held.started
+
+    // Act: capture finishes while native command discovery is still pending.
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    const rendered = readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.focusedSource()?.document.uri.scheme === 'codebook-source' &&
+        harness.focusedSource()?.document.uri.toString() !== previousSource,
+      'new capture displayed before its pending return settles',
+      2_000,
+    )
+    assert.notEqual(
+      harness.reader['sourceUri']?.toString(),
+      harness.focusedSource()?.document.uri.toString(),
+    )
+    held.release()
+    await rendered
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    // The pause and the first live arrangement each return their own borrowed focus.
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBeforePause)
+        .filter((command) => command === 'composer.focusComposer'),
+      ['composer.focusComposer', 'composer.focusComposer'],
+    )
+  } finally {
+    release()
+    live?.close()
+    await harness.close()
+  }
+})
 
 // Value: protects=the keyboard of a learner who works in a view while a run stops in the browser and then on the server: the server stop that the editor brings to the front later, by its pass of the focus and without the keyboard, takes no keyboard and tells nothing; fails_when=every frame of a session whose adapter reported a stop counts as brought to the front by that stop, with the keyboard in the paused file, so the captured source and the Application pane take the keyboard from the view the learner works in and the notice says the debugger gave the paused file the keyboard, which it did not; why_new=Cycle 0046 row 274 (delegated review, finding 7: both editors skip a stop while a frame of another session has the focus, keep that frame for 200 ms after its session went on, and pass the focus 800 ms after it went on, preserving the focus); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger (a stop that stays in the background), continueDebugSession, resumeDebugger, passFocusToStoppedSession, focusView, the clock of performance.now held for the editor events, the reader's refresh, revealApplicationPaneOverPausedFile
 test('a server stop that the editor shows 800 ms after the browser session went on leaves the keyboard where the learner has it: nothing is shown with the keyboard and no notice is told', async (t) => {

@@ -651,6 +651,12 @@ export class StudyWorkspace {
   private readonly disposables: vscode.Disposable[] = []
   private highlight?: vscode.TextEditorDecorationType
   private sourceUri?: vscode.Uri
+  /** Source currently being shown by {@link renderSelection}, before its committed {@link sourceUri} is published. */
+  private pendingSourceDisplay?: {
+    uri: vscode.Uri
+    revision: number
+    lifetime: number
+  }
   private sourceGroup?: vscode.TabGroup
   private opened = false
   private sourceEntryPending = false
@@ -2545,7 +2551,12 @@ export class StudyWorkspace {
    */
   private retainForeignTabFocus(
     activatedByClose: vscode.Tab | undefined,
-  ): ((takenByEditor?: boolean) => Promise<boolean>) | undefined {
+  ):
+    | ((
+        takenByEditor?: boolean,
+        stillCurrent?: () => boolean,
+      ) => Promise<boolean>)
+    | undefined {
     if (this.hasActiveStudyPane() || vscode.window.activeTextEditor)
       return undefined
     const group = vscode.window.tabGroups.activeTabGroup,
@@ -2570,7 +2581,7 @@ export class StudyWorkspace {
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
     const borrowsBefore = this.mainEditorFocusBorrows
-    return async (takenByEditor = false): Promise<boolean> => {
+    return async (takenByEditor = false, stillCurrent): Promise<boolean> => {
       // Groups the arrangement opened or closed in the main editor shift the column of a group behind them.
       const shownColumn =
         column + vscode.window.tabGroups.all.length - groupCount
@@ -2610,6 +2621,8 @@ export class StudyWorkspace {
       )
         return false
       const command = await this.focusReturnCommand(target, takenByEditor)
+      // A newer pause, replay or learner choice can revoke a return while native command discovery waits.
+      if (stillCurrent && !stillCurrent()) return false
       if (command) await vscode.commands.executeCommand(command)
       return command !== undefined
     }
@@ -2949,17 +2962,45 @@ export class StudyWorkspace {
   /**
    * Says whether the active editor has the keyboard because of the pause the chat's record notes, and not by the learner's choice; asked by {@link markKeyboardLeftForEditors}.
    * @param pause - The pause the record notes, if any.
-   * @returns `true` while the reader's return of that pause runs (the editor is the captured source it just showed), and while that return is still owed and the active text editor is the file the debugger opened for the pause ({@link holdsDebuggersFileOfPause}); `false` without a pause, for any other editor, and for every editor once the return is done.
+   * @returns `true` while the return is pending and the debugger's file is still active, or while the running return shows the captured source; `false` for another file, without a pause, and once the return is done.
    * @example if (!remembered || this.holdsKeyboardByPause(remembered.pause)) return
    */
   private holdsKeyboardByPause(
     pause: KeyboardPauseOfRecord | undefined,
   ): boolean {
+    if (!pause || pause.state === 'settled') return false
     return (
-      pause !== undefined &&
-      (pause.state === 'settling' ||
-        (pause.state === 'unsettled' &&
-          this.holdsDebuggersFileOfPause(pause.openedByDebugger)))
+      this.holdsDebuggersFileOfPause(pause.openedByDebugger) ||
+      this.showsSourceDuringPauseReturn(pause)
+    )
+  }
+
+  /**
+   * Recognizes the captured source opened by an ongoing return for {@link holdsKeyboardByPause}.
+   * @param pause - The pause whose return may currently be rendering its source.
+   * @returns Whether the active document is that captured source while the return is settling.
+   * @example const renderingSource = this.showsSourceDuringPauseReturn(pause)
+   */
+  private showsSourceDuringPauseReturn(pause: KeyboardPauseOfRecord): boolean {
+    return (
+      pause.state === 'settling' &&
+      (this.holdsDebuggersFileOfPause(this.sourceUri?.toString()) ||
+        this.isPendingSourceDisplayActive())
+    )
+  }
+
+  /**
+   * Recognizes the current in-flight source display for {@link showsSourceDuringPauseReturn}.
+   * @returns Whether the active document belongs to the current, non-superseded rendering.
+   * @example const pendingSource = this.isPendingSourceDisplayActive()
+   */
+  private isPendingSourceDisplayActive(): boolean {
+    const display = this.pendingSourceDisplay
+    return (
+      display !== undefined &&
+      display.lifetime === this.lifetime &&
+      !this.isRenderSuperseded(display.revision) &&
+      this.activeTextDocumentUri() === display.uri.toString()
     )
   }
 
@@ -3167,7 +3208,8 @@ export class StudyWorkspace {
    */
   private leavePauseToLearner(): void {
     const pause = this.keyboardOutsideEditors?.pause
-    if (pause?.state === 'unsettled') pause.state = 'settled'
+    // A selected frame also cancels a return still waiting for native command discovery.
+    if (pause) pause.state = 'settled'
   }
 
   /**
@@ -3187,6 +3229,22 @@ export class StudyWorkspace {
       openedByDebugger: this.activeTextDocumentUri(),
       state: 'unsettled',
     }
+    // Restore known chat ownership before historical capture can delay the first reveal.
+    if (this.canReturnKeyboardAtFrame(remembered.pause))
+      void this.returnsKeyboardToChatAtPause().catch(() => false)
+  }
+
+  /**
+   * Checks the debugger-owned file before {@link judgeKeyboardAtPauseBegin} returns chat focus early.
+   * @param pause - The newly observed pause, before historical capture completes.
+   * @returns Whether a live debugger gave its actual stopped file the keyboard.
+   * @example if (this.canReturnKeyboardAtFrame(pause)) void this.returnsKeyboardToChatAtPause()
+   */
+  private canReturnKeyboardAtFrame(pause: KeyboardPauseOfRecord): boolean {
+    return (
+      this.holdsKeyboardSinceBreak(pause.openedByDebugger) &&
+      this.debuggerGaveEditorKeyboard()
+    )
   }
 
   /**
@@ -3323,7 +3381,7 @@ export class StudyWorkspace {
 
   /**
    * Gives the keyboard back to the chat that had it just before a pause, once for each pause; the first step of {@link settleKeyboardAtPause}, and the second half of {@link keepsKeyboardFromPane}, which answers the Application pane's viewport before it reveals the pane over the paused file.
-   * A pause is settled at the reader's first reveal after its frame was reported ({@link owedPauseOf}): a later render of the same pause runs nothing, so a file, the captured source or a pane the learner chose meanwhile keeps the keyboard, and such a choice ends the record when the pause ends ({@link endsPauseOfRecord}) or, for a stop that follows without an end, by the time it was made ({@link judgeKeyboardAtPauseBegin}). The keyboard is taken from a text editor only: the paused file the editor's debugger opened, or the captured source shown in its place. While no text editor is active it is not known to have left the chat, and nothing is run.
+   * A pause is settled when its known debugger-owned frame arrives ({@link judgeKeyboardAtPauseBegin}), or at the reader's first reveal if that frame could not settle it ({@link owedPauseOf}). A later render of the same pause runs nothing, so a file, the captured source or a pane the learner chose meanwhile keeps the keyboard, and such a choice ends the record when the pause ends ({@link endsPauseOfRecord}) or, for a stop that follows without an end, by the time it was made ({@link judgeKeyboardAtPauseBegin}). The keyboard is taken from a text editor only: the paused file the editor's debugger opened, or the captured source shown in its place. While no text editor is active it is not known to have left the chat, and nothing is run.
    * @returns
    * - `true` when the function {@link retainForeignTabFocus} answered ran the chat's focus command, now or for an earlier asker of the same pause ({@link returnMadeAtPause}).
    * - `false` without a record that notes an unsettled pause beside a live run, while no text editor is active, and when that function gave nothing back (the remembered tab is one of the main editor's or not known to be the chat's, its group is gone or a Study pane's, the window lost the focus, or the host has no command for its chat).
@@ -3352,16 +3410,92 @@ export class StudyWorkspace {
     remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
     pause: KeyboardPauseOfRecord,
   ): Promise<boolean> {
+    let returned = false
+    const learnerSelection = this.learnerWorkedInEditorAtMs
+    const stillCurrent = (): boolean =>
+      this.keepsPauseReturnCurrent(remembered, pause, learnerSelection)
     try {
-      return (
+      returned =
         vscode.window.activeTextEditor !== undefined &&
-        (await remembered.giveBack(true))
-      )
+        (await remembered.giveBack(true, stillCurrent))
+      return returned
     } finally {
       // From here an editor that becomes active is the learner's choice or the next stop's paused file; one that became active while the return ran was the captured source.
       pause.state = 'settled'
-      remembered.leftAtMs = undefined
+      // A cancelled return must retain a newer learner departure, including a replacement pause.
+      if (returned && remembered.pause === pause)
+        remembered.leftAtMs = undefined
     }
+  }
+
+  /**
+   * Rechecks ownership after native command discovery for {@link returnKeyboardOfPause}.
+   * @param remembered - The chat record that began this return.
+   * @param pause - The specific pause whose keyboard is being returned.
+   * @param learnerSelection - The last explicit source selection when the return began.
+   * @returns Whether the same chat, pause and source intent still authorize the return.
+   * @example const current = this.keepsPauseReturnCurrent(remembered, pause, selection)
+   */
+  private keepsPauseReturnCurrent(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+    pause: KeyboardPauseOfRecord,
+    learnerSelection: number | undefined,
+  ): boolean {
+    return (
+      this.retainsPauseReturnOwner(remembered, pause, learnerSelection) &&
+      this.isSameOrResumedPause(remembered, pause) &&
+      this.holdsKeyboardByPause(pause)
+    )
+  }
+
+  /**
+   * Checks the original return owner and learner intent for {@link keepsPauseReturnCurrent}.
+   * @param remembered - The chat record that started the pending return.
+   * @param pause - The pause whose return has not yet settled.
+   * @param learnerSelection - The explicit selection marker captured before native discovery.
+   * @returns Whether no replacement owner or explicit selection has superseded this return.
+   * @example const owned = this.retainsPauseReturnOwner(remembered, pause, selection)
+   */
+  private retainsPauseReturnOwner(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+    pause: KeyboardPauseOfRecord,
+    learnerSelection: number | undefined,
+  ): boolean {
+    return (
+      vscode.window.state.focused &&
+      this.keyboardOutsideEditors === remembered &&
+      pause.state === 'settling' &&
+      this.learnerWorkedInEditorAtMs === learnerSelection
+    )
+  }
+
+  /**
+   * Keeps an already resumed pause eligible until its pending return finishes; used by {@link keepsPauseReturnCurrent}.
+   * @param remembered - The current chat record, which may now have another pause.
+   * @param pause - The pause that originally owed this return.
+   * @returns False for a replacement frame, replay or ended live run.
+   * @example const samePause = this.isSameOrResumedPause(remembered, pause)
+   */
+  private isSameOrResumedPause(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+    pause: KeyboardPauseOfRecord,
+  ): boolean {
+    if (remembered.pause === pause) return this.isStoppedBesideLiveRun()
+    // A resume can finish before command discovery; a newer frame still cancels it.
+    return remembered.pause === undefined && this.isLiveRunWithoutFrame()
+  }
+
+  /**
+   * Distinguishes a resumed live run from a newer frame or replay for {@link isSameOrResumedPause}.
+   * @returns Whether the live viewport remains and no current frame or replay supersedes its return.
+   * @example const resumed = this.isLiveRunWithoutFrame()
+   */
+  private isLiveRunWithoutFrame(): boolean {
+    return (
+      !isStackFrameItem(vscode.debug.activeStackItem) &&
+      this.hasLiveRun() &&
+      !this.recordingActive
+    )
   }
 
   /**
@@ -4734,6 +4868,9 @@ export class StudyWorkspace {
       if (!vscode.window.state.focused) throw focusLost
     }
     try {
+      assertReadFocus()
+      // Read Source is an explicit source choice even when its existing tab needs no render.
+      if (region === 'source') this.keyboardOutsideEditors = undefined
       // Keep the departure latch through Open, source acquisition, pane reveal and native maximization.
       if (!this.opened) await this.open(readSignal)
       assertReadFocus()
@@ -10193,6 +10330,8 @@ export class StudyWorkspace {
       this.pendingHistory !== undefined
     )
       return Promise.resolve()
+    // An explicit source request revokes pending chat returns before source I/O can yield.
+    if (!preserveFocus) this.keyboardOutsideEditors = undefined
     // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer.
     this.studyAwaitingEditorArea = undefined
     const lifetime = this.lifetime
@@ -10230,6 +10369,7 @@ export class StudyWorkspace {
     this.publish()
     if (!initial.model.selection.follow)
       this.presentApplication({ ...initial, loading: true })
+    let sourceDisplay: StudyWorkspace['pendingSourceDisplay']
     const pending = this.rendering
       .catch(() => undefined)
       .then(async () => {
@@ -10349,6 +10489,8 @@ export class StudyWorkspace {
         const takesPausedFocus =
           preserveFocus &&
           this.replacesEditorFocusedByPause(targetColumn, document.uri)
+        sourceDisplay = { uri, revision, lifetime }
+        this.pendingSourceDisplay = sourceDisplay
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
           preserveFocus: preserveFocus && !takesPausedFocus,
@@ -10358,7 +10500,6 @@ export class StudyWorkspace {
         if (this.closing || lifetime !== this.lifetime) return
         // The chat that had the keyboard before this pause gets it back; without one the learner is told once where the keyboard is. A render that was asked for with the keyboard is the learner's choice of the source: no return follows it, and the chat's record ends.
         if (preserveFocus) await this.settleKeyboardAtPause(takesPausedFocus)
-        else this.keyboardOutsideEditors = undefined
         if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
@@ -10464,6 +10605,11 @@ export class StudyWorkspace {
         this.failedSelectionKey = undefined
         this.errors.delete('reader')
         this.publish()
+      })
+      .finally(() => {
+        // Only this rendering may retire its pending display, including on failure or cancellation.
+        if (sourceDisplay && this.pendingSourceDisplay === sourceDisplay)
+          this.pendingSourceDisplay = undefined
       })
     this.rendering = pending.catch((error) => {
       if (this.isRenderSuperseded(revision)) return
