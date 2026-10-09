@@ -450,6 +450,176 @@ test('Read captured source keeps the learner cursor when the selected source is 
   }
 })
 
+// Task399: Cursor can report the focused captured editor while its named tab group still belongs to chat.
+test('Read Source enlarges the focused captured editor when Cursor still names its chat tab group', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  try {
+    await harness.reader.open()
+    await harness.reader.action('source')
+    harness.leavePaneFocusUnreportedBesideChat()
+    chat.focusTab()
+    await harness.reader.action('source')
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab?.label,
+      'New Agent',
+    )
+    assert.equal(harness.editor.window.activeTextEditor?.viewColumn, 2)
+
+    // Act
+    await harness.reader.action('read-source')
+
+    // Assert
+    assert.equal(chat.focused(), false)
+    assert.equal(
+      harness.focusedSource()?.document.uri.scheme,
+      'codebook-source',
+    )
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Focused source. The three-pane Study split is not confirmed. Use the pane controls or Restore layout.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('Read Source accepts an unchanged chat tab model refreshed while its captured editor is still reported', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let release = (): void => {}
+  let originalDescriptor: PropertyDescriptor | undefined
+  try {
+    await harness.reader.open()
+    await harness.reader.action('source')
+    const retainedSource = harness.editor.window.activeTextEditor
+    originalDescriptor = Object.getOwnPropertyDescriptor(
+      harness.editor.window,
+      'activeTextEditor',
+    )
+    chat.focusTab()
+    Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+      configurable: true,
+      get: () => retainedSource,
+    })
+    const held = harness.holdNextSource()
+    release = held.release
+    const reading = harness.reader.action('read-source')
+    const observed = reading.then(
+      () => 'read completed',
+      (error: unknown) => String(error),
+    )
+    await held.started
+
+    // Act: every wrapper changes, while the tab order, labels and focused editor stay.
+    harness.resyncEditorGroups(undefined, false, true)
+    held.release()
+
+    // Assert
+    assert.equal(await observed, 'read completed')
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    release()
+    if (originalDescriptor)
+      Object.defineProperty(
+        harness.editor.window,
+        'activeTextEditor',
+        originalDescriptor,
+      )
+    await harness.close()
+  }
+})
+
+test('Read Source preserves a newer chat choice while its focused captured editor has a stale named group', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    await harness.reader.action('source')
+    harness.leavePaneFocusUnreportedBesideChat()
+    chat.focusTab()
+    await harness.reader.action('source')
+    const held = harness.holdNextSource()
+    release = held.release
+    const reading = harness.reader.action('read-source')
+    const rejected = assert.rejects(reading, /learner changed native tab focus/)
+    await held.started
+
+    // Act
+    chat.focusTab()
+    held.release()
+    await rejected
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.editor.window.activeTextEditor, undefined)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+for (const change of ['move', 'replace'] as const)
+  test(`Read Source rejects a native group ${change} instead of preserving its old chat fallback`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    let release = (): void => {}
+    let originalDescriptor: PropertyDescriptor | undefined
+    try {
+      await harness.reader.open()
+      await harness.reader.action('source')
+      const retainedSource = harness.editor.window.activeTextEditor
+      originalDescriptor = Object.getOwnPropertyDescriptor(
+        harness.editor.window,
+        'activeTextEditor',
+      )
+      chat.focusTab()
+      Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+        configurable: true,
+        get: () => retainedSource,
+      })
+      const held = harness.holdNextSource()
+      release = held.release
+      const reading = harness.reader.action('read-source')
+      const rejected = assert.rejects(
+        reading,
+        /learner changed native tab focus|Native pane, group or focus changed while presentation waited/,
+      )
+      await held.started
+
+      // Act
+      harness.resyncEditorGroups(change, false, true)
+      held.release()
+      await rejected
+
+      // Assert
+      assert.equal(chat.focused(), true)
+    } finally {
+      release()
+      if (originalDescriptor)
+        Object.defineProperty(
+          harness.editor.window,
+          'activeTextEditor',
+          originalDescriptor,
+        )
+      await harness.close()
+    }
+  })
+
 test('Read captured source accepts an unchanged settings tab before focusing its owned source', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
@@ -474,6 +644,53 @@ test('Read captured source accepts an unchanged settings tab before focusing its
     )
     assert.equal(explanationGroup.tabs.includes(settings), true)
   } finally {
+    await harness.close()
+  }
+})
+
+test('Read App preserves a newer tab choice when the previous source editor is still reported', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  let originalDescriptor: PropertyDescriptor | undefined
+  try {
+    await harness.reader.open()
+    await harness.reader.action('source')
+    const retainedSource = harness.editor.window.activeTextEditor
+    originalDescriptor = Object.getOwnPropertyDescriptor(
+      harness.editor.window,
+      'activeTextEditor',
+    )
+    Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+      configurable: true,
+      get: () => retainedSource,
+    })
+    const held = harness.holdNextCommand(
+      'workbench.action.maximizeEditorHideSidebar',
+    )
+    release = held.release
+    const reading = harness.reader.action('read-app')
+    const rejected = assert.rejects(reading, /learner changed native tab focus/)
+    await held.started
+
+    // Act
+    const draft = harness.focusMutableDraft('later-reader-choice.txt', 1)
+    held.release()
+    await rejected
+
+    // Assert
+    assert.equal(harness.groups[0]?.activeTab, draft.tab)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(harness.editor.window.activeTextEditor, retainedSource)
+  } finally {
+    release()
+    if (originalDescriptor)
+      Object.defineProperty(
+        harness.editor.window,
+        'activeTextEditor',
+        originalDescriptor,
+      )
     await harness.close()
   }
 })
@@ -508,6 +725,93 @@ test('Read captured source preserves a newer draft choice while its existing doc
     )
   } finally {
     release()
+    await harness.close()
+  }
+})
+
+test('Read Source preserves a newer opaque tab when the old source editor is still reported', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  let originalDescriptor: PropertyDescriptor | undefined
+  try {
+    await harness.reader.open()
+    await harness.reader.action('source')
+    const retainedSource = harness.editor.window.activeTextEditor
+    originalDescriptor = Object.getOwnPropertyDescriptor(
+      harness.editor.window,
+      'activeTextEditor',
+    )
+    Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+      configurable: true,
+      get: () => retainedSource,
+    })
+    const otherTab = harness.addOpaqueTab('Other editor', 1)
+    const held = harness.holdNextCommand(
+      'workbench.action.maximizeEditorHideSidebar',
+    )
+    release = held.release
+    const reading = harness.reader.action('read-source')
+    const rejected = assert.rejects(reading, /learner changed native tab focus/)
+    await held.started
+
+    // Act
+    harness.focusOpaqueTab(otherTab)
+    held.release()
+    await rejected
+
+    // Assert
+    assert.equal(harness.groups[0]?.activeTab, otherTab)
+    assert.equal(harness.editor.window.activeTextEditor, retainedSource)
+  } finally {
+    release()
+    if (originalDescriptor)
+      Object.defineProperty(
+        harness.editor.window,
+        'activeTextEditor',
+        originalDescriptor,
+      )
+    await harness.close()
+  }
+})
+
+test('Read Source preserves a newer opaque choice during its own source focus handoff', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let originalDescriptor: PropertyDescriptor | undefined
+  try {
+    await harness.reader.open()
+    await harness.reader.action('source')
+    const retainedSource = harness.editor.window.activeTextEditor
+    originalDescriptor = Object.getOwnPropertyDescriptor(
+      harness.editor.window,
+      'activeTextEditor',
+    )
+    Object.defineProperty(harness.editor.window, 'activeTextEditor', {
+      configurable: true,
+      get: () => retainedSource,
+    })
+    const otherTab = harness.addOpaqueTab('Later handoff choice', 1)
+    harness.changeAfterNextSourceDisplay(() => harness.focusOpaqueTab(otherTab))
+
+    // Act
+    await assert.rejects(
+      harness.reader.action('read-source'),
+      /Focus an owned Study pane|learner changed native tab focus/,
+    )
+
+    // Assert
+    assert.equal(harness.groups[0]?.activeTab, otherTab)
+    assert.equal(harness.editor.window.activeTextEditor, retainedSource)
+  } finally {
+    if (originalDescriptor)
+      Object.defineProperty(
+        harness.editor.window,
+        'activeTextEditor',
+        originalDescriptor,
+      )
     await harness.close()
   }
 })

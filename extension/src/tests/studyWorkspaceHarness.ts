@@ -4547,6 +4547,13 @@ export async function workspaceHarness(
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
       return tab
     },
+    /**
+     * Rebuilds native group and tab wrappers for the workspace identity regressions.
+     * @param change - An optional real layout/lifecycle change accompanying the wrapper refresh.
+     * @param preserveEmpty - Keep originally empty groups empty during the refresh.
+     * @param preserveLabels - Keep native labels for a refresh that changes no logical tab.
+     * @example harness.resyncEditorGroups(undefined, false, true)
+     */
     resyncEditorGroups(
       change?:
         | 'move'
@@ -4557,6 +4564,7 @@ export async function workspaceHarness(
         | 'reorder'
         | 'empty',
       preserveEmpty = false,
+      preserveLabels = false,
     ): void {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
       for (const group of groups)
@@ -4581,7 +4589,7 @@ export async function workspaceHarness(
           tabs: group.tabs.map((tab) => {
             const refreshed = {
               ...tab,
-              label: 'Recorded application',
+              label: preserveLabels ? tab.label : 'Recorded application',
               input: resyncedInput(tab.input),
             }
             refreshedTabs.set(tab, refreshed)

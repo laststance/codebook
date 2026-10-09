@@ -4739,6 +4739,7 @@ export class StudyWorkspace {
       assertReadFocus()
       const selection = JSON.stringify(this.selection),
         bundle = this.recordingActive ? this.playback?.bundle() : undefined
+      const focusBeforeRead = this.readingFocusOrigin()
       const assertPlacement = this.retainPresentationPlacement(false)
       if (region === 'source') {
         const sourceColumn = this.studyPanePositions().sourceColumn
@@ -4812,7 +4813,7 @@ export class StudyWorkspace {
           'PRESENTATION_UNAVAILABLE',
           'The selected study changed while reading a pane. Inspect its current state.',
         )
-      const focusedPane = this.trackFocusedStudyPane(true)
+      const focusedPane = this.trackFocusedStudyPane(true, focusBeforeRead)
       try {
         // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
         assertReadFocus()
@@ -4848,8 +4849,83 @@ export class StudyWorkspace {
     }
   }
 
-  /** Watches Read and Restore from the focused tab so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane; Read and the three-pane Restore do. The live and replay Restore starts from whichever tab has focus (an agent restores while the learner's file or the debugger's stop is focused), so no pane has to be clicked first. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
-  private trackFocusedStudyPane(requireOwned = false): {
+  /**
+   * Names an opaque reading tab across wrapper refreshes for {@link readingFocusOrigin}.
+   * @param group - The native group containing the tab.
+   * @param tab - Its selected tab, when one exists.
+   * @returns Its position, label and state, or undefined without a selected tab.
+   * @example const key = this.readingTabKey(group, group.activeTab)
+   */
+  private readingTabKey(
+    group: vscode.TabGroup,
+    tab: vscode.Tab | undefined,
+  ): string | undefined {
+    if (!tab) return undefined
+    return JSON.stringify([
+      group.viewColumn,
+      group.tabs.indexOf(tab),
+      tab.label,
+      tab.isDirty,
+      tab.isPreview,
+      tab.isPinned,
+    ])
+  }
+
+  /**
+   * Captures the logical opaque tab before Read borrows focus; used by {@link readStudyPane} and {@link trackFocusedStudyPane}.
+   * @returns The existing group identity and opaque-tab key; known native inputs have no fallback key.
+   * @example const origin = this.readingFocusOrigin()
+   */
+  private readingFocusOrigin() {
+    const group = vscode.window.tabGroups.activeTabGroup
+    const tab = group.activeTab
+    const opaque =
+      tab !== undefined &&
+      ![vscode.TabInputText, vscode.TabInputWebview].some(
+        (inputType) => tab.input instanceof inputType,
+      )
+    return {
+      opaque,
+      groupIdentity: this.editorGroupIdentities.get(group),
+      tabKey: opaque ? this.readingTabKey(group, tab) : undefined,
+    }
+  }
+
+  /**
+   * Resolves Read/Restore's native group when Cursor reports a focused text editor before its chat tab model; called by {@link trackFocusedStudyPane}.
+   * @param allowTextEditorFallback - The same opaque tab observed at the start is still named; a new native tab choice always takes precedence.
+   * @returns The matching text-editor group behind an opaque chat tab, otherwise the group the editor names.
+   * @example const group = this.readingFocusGroup(sameOpaqueTab)
+   */
+  private readingFocusGroup(allowTextEditorFallback: boolean): vscode.TabGroup {
+    const namedGroup = vscode.window.tabGroups.activeTabGroup
+    // Never reinterpret a new native tab choice as the old source editor.
+    if (!allowTextEditorFallback) return namedGroup
+    const editor = vscode.window.activeTextEditor
+    // A chat without an active text editor still uses its native tab identity.
+    if (!editor) return namedGroup
+    return (
+      vscode.window.tabGroups.all.find(
+        (candidate) =>
+          candidate.viewColumn === editor.viewColumn &&
+          candidate.activeTab?.input instanceof vscode.TabInputText &&
+          candidate.activeTab.input.uri.toString() ===
+            editor.document.uri.toString(),
+      ) ?? namedGroup
+    )
+  }
+
+  /**
+   * Watches Read and Restore so later learner navigation wins over host commands.
+   * @param requireOwned - Require a Codebook pane after Read has focused its requested surface.
+   * @param fallbackOrigin - Logical opaque-tab identity captured before Read's focus handoff; a later choice cannot supply this origin.
+   * @returns A disposable focus watch that rejects later learner departures and tracks explicitly borrowed native focus.
+   * @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose()
+   */
+  private trackFocusedStudyPane(
+    requireOwned = false,
+    fallbackOrigin = this.readingFocusOrigin(),
+  ): {
     /** Throws when the learner changed the focus since the watch began; a focus the measurement borrowed and has not given back yet is no such change. */
     assertUndeparted(): void
     assertCurrent(): void
@@ -4857,7 +4933,17 @@ export class StudyWorkspace {
     endReadMaximization(end: () => Promise<void>): Promise<void>
     dispose(): void
   } {
-    const group = vscode.window.tabGroups.activeTabGroup,
+    // Wrapper-only updates preserve identity; a different logical group or selected tab revokes it.
+    const currentReadingGroup = (): vscode.TabGroup => {
+      const current = this.readingFocusOrigin()
+      return this.readingFocusGroup(
+        fallbackOrigin.opaque &&
+          fallbackOrigin.groupIdentity !== undefined &&
+          fallbackOrigin.groupIdentity === current.groupIdentity &&
+          fallbackOrigin.tabKey === current.tabKey,
+      )
+    }
+    const group = currentReadingGroup(),
       input = group.activeTab?.input
     const expectedColumn = group.viewColumn
     const panes = this.studyPanePositions(),
@@ -4884,7 +4970,7 @@ export class StudyWorkspace {
     const textUri =
       input instanceof vscode.TabInputText ? input.uri.toString() : undefined
     const retainsFocus = () => {
-      const active = vscode.window.tabGroups.activeTabGroup,
+      const active = currentReadingGroup(),
         current = active.activeTab?.input
       return (
         vscode.window.state.focused &&
