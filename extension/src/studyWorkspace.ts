@@ -127,6 +127,7 @@ import type { RuntimeParticipant, RuntimeView, StudyRuntime } from './runtime'
 import { BrowserViewport } from './runtimeSupport/browserViewport'
 import {
   CAPTURE_TIMEOUT_MS,
+  KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
@@ -204,6 +205,7 @@ import {
   type PaneOpenRequest,
   readOpenRequest,
 } from './utils/readOpenRequest'
+import { readWebviewFocus } from './utils/readWebviewFocus'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
@@ -7504,7 +7506,7 @@ export class StudyWorkspace {
   /**
    * Closes the Application pane a live run leaves behind when no Study workspace shows its history, and gives the keyboard an element again when that pane had it; called by the lease's `released` of {@link presentation} at the run's end, while the reader is closed or has no study to show.
    * A pane that is closed while it has the keyboard leaves the keyboard on the page body: a key the learner presses then goes nowhere until they click (Cursor 3.23.12 at the end of a run of five stops, measured natively on 2026-10-07: the extension host named a text editor as active, the workbench page had no focus). So when the pane was the editor's active editor in the focused window, the active editor group gets the keyboard once the pane's tab and the group it may have left empty are gone, by the rule of a Close ({@link giveActiveGroupKeyboardAfterClose}), and the learner is told once in an editor session with {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}.
-   * What the reader cannot know: beside Cursor's chat as a tab of another editor part the editor does not report a pane's focus, so the pane is not known to have the keyboard and nothing is focused; and while the pane is the active editor the keyboard may be in the terminal, a view or a side-view chat, which is the price the notice names. A window without the focus is left alone.
+   * Native active-tab flags do not prove keyboard ownership beside a terminal, view or side-view chat. The current owned document is inspected without focus effects through {@link readWebviewFocus}: an explicit false leaves outside typing alone, while an unavailable receipt keeps the guarded native fallback. A newer lease, reader opening or document is never retired after the inspection wait. A window without the focus is left alone.
    * @returns Once the pane is disposed and, where it had the keyboard, the focus command was answered.
    * @example else void this.closeApplicationPaneOfEndedRun()
    */
@@ -7512,9 +7514,93 @@ export class StudyWorkspace {
     const panel = this.app
     if (!panel) return
     // Read before the pane goes: afterwards the editor names whatever tab took its place.
-    const heldKeyboard = this.holdsKeyboardInFocusedWindow(panel)
+    const wasOpened = this.opened,
+      readerOpenNumber = this.readerOpenNumber,
+      documentHtml = panel.webview.html,
+      heldKeyboard = await this.keyboardAtEndedApplication(panel)
+    // Inspection can outlive a new live lease, reader opening or renderer replacement.
+    if (
+      !this.mayCloseEndedApplication(
+        panel,
+        wasOpened,
+        readerOpenNumber,
+        documentHtml,
+      )
+    )
+      return
     panel.dispose()
     if (heldKeyboard) await this.settleKeyboardAfterRunClosedPane()
+  }
+
+  /**
+   * Resolves ambiguous native-active keyboard ownership without revealing a pane; {@link closeApplicationPaneOfEndedRun} asks before retirement.
+   * @returns `false` for a noncandidate or an explicit unfocused document; native fallback when the observation is unavailable.
+   * @example await this.keyboardAtEndedApplication(panel) // => false while its side-view chat has the keyboard
+   */
+  private async keyboardAtEndedApplication(
+    panel: vscode.WebviewPanel,
+  ): Promise<boolean> {
+    if (!this.holdsKeyboardInFocusedWindow(panel)) return false
+    const documentFocused = await readWebviewFocus(
+      panel,
+      KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
+    )
+    // A pane disposed during the observation has no keyboard left to settle here.
+    return (
+      this.app === panel &&
+      this.holdsKeyboardInFocusedWindow(panel) &&
+      documentFocused !== false
+    )
+  }
+
+  /**
+   * Keeps an old run's asynchronous keyboard inspection from retiring a newer Application owner; {@link closeApplicationPaneOfEndedRun} checks it before disposal.
+   * @param panel - The original run's Application handle.
+   * @param wasOpened - Whether the reader was open before this inspection began.
+   * @param readerOpenNumber - The last Open request before inspection; cold entry claims it before awaiting progress.
+   * @param documentHtml - The exact document being inspected, before another renderer could replace it.
+   * @returns `true` while the same unleased pane and reader state still belong to this ending.
+   * @example this.mayCloseEndedApplication(panel, false, request, html) // => false after a new run leases that pane
+   */
+  private mayCloseEndedApplication(
+    panel: vscode.WebviewPanel,
+    wasOpened: boolean,
+    readerOpenNumber: number,
+    documentHtml: string,
+  ): boolean {
+    return (
+      this.isUnleasedReaderAtEnd(wasOpened) &&
+      this.isCurrentReaderEntryAtEnd(readerOpenNumber) &&
+      this.app === panel &&
+      panel.webview.html === documentHtml
+    )
+  }
+
+  /**
+   * Protects a presentation or cold Open before its opened flag changes; {@link mayCloseEndedApplication} checks this immediately before retirement.
+   * @param readerOpenNumber - The Open request counter captured before the old inspection yielded.
+   * @returns `true` when no presentation or cold-entry reservation owns the pane and no newer Open was claimed.
+   * @example this.isCurrentReaderEntryAtEnd(request) // => false while a newer select waits for initialization
+   */
+  private isCurrentReaderEntryAtEnd(readerOpenNumber: number): boolean {
+    return (
+      this.presentationTransition === undefined &&
+      !this.sourceEntryPending &&
+      this.readerOpenNumber === readerOpenNumber
+    )
+  }
+
+  /**
+   * Rejects a newer runtime or reader opening after an old ending yielded; {@link mayCloseEndedApplication} checks this ownership half.
+   * @returns `true` while no newer lease or reader opening took ownership.
+   * @example this.isUnleasedReaderAtEnd(false) // => false after a new live viewport is created
+   */
+  private isUnleasedReaderAtEnd(wasOpened: boolean): boolean {
+    return (
+      this.viewport === undefined &&
+      this.leaseId === undefined &&
+      this.opened === wasOpened
+    )
   }
 
   /**

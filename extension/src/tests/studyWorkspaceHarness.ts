@@ -1453,7 +1453,7 @@ export async function workspaceHarness(
             return true
           }
           if (message.type === 'codebook-focus') {
-            if (message.phase === 'prepare')
+            if (message.phase === 'prepare' || message.phase === 'inspect')
               emit({
                 type: 'codebook-focus-receipt',
                 phase: 'prepared',
@@ -1817,6 +1817,7 @@ export async function workspaceHarness(
         if (!panels.delete(value)) return
         // A disposed pane that had the keyboard leaves it to no editor.
         if (
+          !keyboardInView &&
           !separateEditorPart?.focused &&
           activeTabGroup.activeTab === nativeTab
         )
@@ -1824,6 +1825,7 @@ export async function workspaceHarness(
         const closeTab = (): void => {
           // The pane was focused again after its disposal (a group focus command reached its group before the editor closed its tab): the keyboard goes with the closing tab, and the editor focuses nothing in its place.
           if (
+            !keyboardInView &&
             !separateEditorPart?.focused &&
             activeTabGroup.activeTab === nativeTab
           )
@@ -4139,6 +4141,8 @@ export async function workspaceHarness(
     focusView(): void {
       keyboardInView = true
       keyboardOnBody = false
+      // The native active tab stays, but its inner document loses the actual keyboard.
+      innerFocusedPanel = undefined
       if (separateEditorPart) separateEditorPart.focused = false
     },
     /** Says whether a view that is no editor still has the keyboard; see `focusView`. @example harness.keyboardInView() // => false after the reader showed a document with the focus */

@@ -12,6 +12,7 @@ import type { PresentationPoseCapture } from '../presentationSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { settledWithin } from '../utils/settledWithin'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import {
@@ -3171,6 +3172,258 @@ for (const ending of [
     }
   })
 
+// Value: protects=side-view typing at automatic run-end while the native Application tab stays active; fails_when=active tab flags are mistaken for actual document keyboard ownership; why_new=row393 native off-setting flow loses Agent keyboard only at run-end; seam=existing focusView and controlled viewport lifecycle
+test('a live run ending preserves side-view typing even while its Application remains the native active tab', async () => {
+  // Arrange: the Application tab remains active while a view outside the editor owns the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    const live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.reader['app']!.reveal(undefined, false)
+    harness.focusView()
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
+    assert.equal(harness.keyboardInView(), true)
+    assert.equal(harness.innerFocusedPanel(), undefined)
+    const commandsBefore = harness.commands.length
+
+    // Act: automatic retirement completes without the learner choosing another input.
+    live.close()
+    await waitUntil(
+      () => harness.counts().panels === 0,
+      'the ended run to retire its Application pane',
+      2_000,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // Assert: retirement leaves view typing and quiet intact, without inventing a chat focus command.
+    assert.deepEqual(
+      {
+        keyboardInView: harness.keyboardInView(),
+        keyboardOnBody: harness.keyboardOnBody(),
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        notices: harness.informationMessages,
+      },
+      {
+        keyboardInView: true,
+        keyboardOnBody: false,
+        focusCommands: [],
+        notices: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a newer cold presentation Open while an older run inspects its Application; fails_when=opened alone misses an entry already reserved before its progress read; why_new=row394 delegated review; seam=the instance's real progress read and Application message delivery
+for (const preparation of ['initialization', 'progress read'])
+  test(`an ended run preserves a newer cold presentation while its ${preparation} is pending`, async () => {
+    // Arrange: retain the real Application and hold only inspection and the next ledger read.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    readerSeams(harness).stopOwnTimer()
+    const library = harness.reader['library']!
+    const originalReadProgress = library.readProgress.bind(library),
+      originalInitialize = readerSeams(harness).initialization
+    let markInspectionStarted = (): void => {},
+      releaseInspection = (): void => {},
+      markPreparationStarted = (): void => {},
+      releasePreparation = (): void => {},
+      changing:
+        ReturnType<typeof harness.reader.changePresentation> | undefined,
+      restorePostMessage = (): void => {}
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve
+    })
+    const inspectionHeld = new Promise<void>((resolve) => {
+      releaseInspection = resolve
+    })
+    const preparationStarted = new Promise<void>((resolve) => {
+      markPreparationStarted = resolve
+    })
+    const preparationHeld = new Promise<void>((resolve) => {
+      releasePreparation = resolve
+    })
+    try {
+      harness.focusMutableDraft('login-form.tsx', 1)
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await harness.service.record(receipt).preparation
+      const live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      const application = harness.reader['app']!
+      application.reveal(undefined, false)
+      const originalPost = application.webview.postMessage.bind(
+        application.webview,
+      )
+      restorePostMessage = (): void => {
+        application.webview.postMessage = originalPost
+      }
+      application.webview.postMessage = async (message) => {
+        if (message.type === 'codebook-focus' && message.phase === 'inspect') {
+          markInspectionStarted()
+          await inspectionHeld
+        }
+        return originalPost(message)
+      }
+      live.close()
+      await inspectionStarted
+      // The presentation reserves its transition before initialization; Open reserves its source before progress.
+      if (preparation === 'initialization')
+        readerSeams(harness).initialization = async (): Promise<void> => {
+          markPreparationStarted()
+          await preparationHeld
+          await originalInitialize()
+        }
+      else
+        library.readProgress = async () => {
+          markPreparationStarted()
+          await preparationHeld
+          return originalReadProgress()
+        }
+      const state = harness.reader.presentationState()
+      changing = harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      void changing.catch(() => undefined)
+      await preparationStarted
+      assert.equal(harness.reader.presentationState().state, 'applying')
+      assert.equal(harness.reader['opened'], false)
+      const commandsBefore = harness.commands.length
+
+      // Act: the old inspection finishes before the newer Open can finish reading progress.
+      releaseInspection()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      // Assert: the old ending keeps the same pane and does not interrupt the valid public selection.
+      assert.equal(harness.reader['app'], application)
+      assert.equal(harness.counts().panels, 1)
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        [],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+      releasePreparation()
+      const result = await changing
+      assert.equal(result.state, 'open')
+      assert.equal(result.layoutConfirmed, true)
+    } finally {
+      releaseInspection()
+      releasePreparation()
+      restorePostMessage()
+      library.readProgress = originalReadProgress
+      readerSeams(harness).initialization = originalInitialize
+      await changing?.catch(() => undefined)
+      await harness.close()
+    }
+  })
+
+for (const replacement of ['a newer live lease', 'a replacement document'])
+  test(`an ended run preserves its Application when ${replacement} arrives during keyboard inspection`, async () => {
+    // Arrange: hold only the old run's read-only document inspection.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let markInspectionStarted = (): void => {},
+      releaseInspection = (): void => {},
+      restorePostMessage = (): void => {}
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve
+    })
+    const inspectionHeld = new Promise<void>((resolve) => {
+      releaseInspection = resolve
+    })
+    try {
+      harness.focusMutableDraft('login-form.tsx', 1)
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await harness.service.record(receipt).preparation
+      const live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      const application = harness.reader['app']!
+      application.reveal(undefined, false)
+      const originalPost = application.webview.postMessage.bind(
+        application.webview,
+      )
+      restorePostMessage = (): void => {
+        application.webview.postMessage = originalPost
+      }
+      application.webview.postMessage = async (message) => {
+        if (message.type === 'codebook-focus' && message.phase === 'inspect') {
+          markInspectionStarted()
+          await inspectionHeld
+        }
+        return originalPost(message)
+      }
+      const commandsBefore = harness.commands.length
+
+      // Act: new ownership arrives before the original inspection answers.
+      live.close()
+      await inspectionStarted
+      if (replacement === 'a newer live lease')
+        harness.reader.presentation.createViewport(
+          randomUUID(),
+          () => {},
+          () => {},
+          'normal',
+        )
+      else application.webview.html = '<replacement-owned-application-document>'
+      const replacementHtml = application.webview.html
+      releaseInspection()
+      await new Promise((resolve) => setTimeout(resolve, 150))
+
+      // Assert: the old ending cannot remove or focus the replacement.
+      assert.equal(harness.counts().panels, 1)
+      assert.equal(application.webview.html, replacementHtml)
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        [],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      releaseInspection()
+      restorePostMessage()
+      await harness.close()
+    }
+  })
+
 // Value: protects=the keyboard of a learner at the end of a live run whose Application pane had the keyboard while the Study workspace is closed: the run's pane is closed, the active editor group has the keyboard, and the learner is told once in an editor session where it is, in words that are true for a pane the run closed; fails_when=the run's end disposes the pane that has the keyboard and focuses nothing, so the keyboard is on the page body and a key the learner presses goes nowhere until they click; why_new=Cycle 0046 row 342 (Cursor 3.23.12 on candidate 4: at the end of a run of five stops the tab "codebook · Application" closed, the extension host named login-form.tsx as the active text editor, and the workbench page had no focus with BODY as its active element, also a minute later); seam=the workspace harness with the controlled runtime, a live run's viewport and its close, the Application pane's reveal with the focus, keyboardOnBody, command log and information messages
 test('a live run that ends while its Application pane has the keyboard and the Study workspace is closed leaves the keyboard in the active editor group and says once in an editor session where it is', async () => {
   // Arrange: the learner's file is the tab of the first group; a live run shows its Application pane there with the Study workspace closed, and the pane has the keyboard.
@@ -3357,9 +3610,14 @@ test('a run that ends with its Application pane active sends no keyboard command
     'settleKeyboardAfterRunClosedPane'
   ].bind(harness.reader)
   let settling: Promise<void> | undefined
+  let markSettlingStarted = (): void => {}
+  const settlingStarted = new Promise<void>((resolve) => {
+    markSettlingStarted = resolve
+  })
   harness.reader['settleKeyboardAfterRunClosedPane'] = (): Promise<void> => {
     // Observe completion of the real continuation; the public lease release still triggers it.
     settling = settleKeyboard()
+    markSettlingStarted()
     return settling
   }
   try {
@@ -3382,6 +3640,11 @@ test('a run that ends with its Application pane active sends no keyboard command
 
     // Act: end the run, lose window focus while its tab remains, then deliver the native close.
     live.close()
+    assert.equal(
+      await settledWithin(settlingStarted, 2_000),
+      true,
+      'The original run-end keyboard continuation did not start',
+    )
     assert.ok(settling, 'The run did not start its keyboard continuation')
     assert.equal(harness.groups[0]!.tabs.length, 3)
     harness.changeWindowFocus(false)

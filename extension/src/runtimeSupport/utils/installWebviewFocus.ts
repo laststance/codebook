@@ -63,6 +63,11 @@ export function installWebviewFocus(api: {
       !('phase' in message)
     )
       return
+    // Inspection reports this document without replacing any prepared or committed focus authority.
+    if (message.phase === 'inspect') {
+      receipt('prepared', message.requestId)
+      return
+    }
     if (
       message.phase === 'cancel' &&
       'epoch' in message &&
