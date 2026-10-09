@@ -433,7 +433,7 @@ The earlier full cycle record is preserved byte-for-byte in [0046-evidence-check
 ## Handoff
 
 - Branch `codex/cycle-0046-carried-defects-of-cycle-0045`, from `main` `ae9c1f2`. Private work files of the delivery of Cycle 0045 under the project's gstack state (`c45-work/`: the review ledger `step9-findings.md`, the `/ship` record, the Issue drafts, the documentation audit candidates).
-- Both QA profiles normally hold/load candidate12, clean build `f7478e06` (0.2.30), code SHA4498fc02/sourceHashb16ff4ad matching the frozen VSIX. Existing studies, dashboard-wiki and original settings remain preserved. No model request or database start; no native quiet token remains. Task393 root-owned two-host chat-versus-genuine-App pairing is closed below. Both capacity settings are restored; every existing study remains. Its matching investigation source-freeze token is released; next is the required Cursor separate-chat5/165/166 family. Native input remains root-owned.
+- Both QA profiles normally hold/load candidate12, clean build `f7478e06` (0.2.30), code SHA4498fc02/sourceHashb16ff4ad matching its frozen VSIX. Task393's full two-host prepared chat/genuine-App contrast is closed above. Existing studies/settings/native work remain preserved; owned database is restored stopped and no native quiet flag/source freeze/probe remains. Next is every required Cursor separate-chat5/165/166 condition, then the remaining native families. Native input stays root-owned.
 - Owner-only prerequisite that stays open on this host: the Cursor Agent CLI with its sign-in (missing coverage; the Cursor legs of the Wiki update were observed with a labelled stand-in). The local CodeRabbit CLI is signed in.
 
 ## Result and next action
