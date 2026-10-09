@@ -58,7 +58,7 @@ export interface ViewportRecordingObserver {
 
 /**
  * Tells {@link BrowserViewport.coversActiveTextEditor} whether a tab group shows the text editor that is the editor's active one.
- * @param group - The editor's active tab group.
+ * @param group - The group that would be covered by the pane.
  * @returns `true` when the group's active tab is a text editor and the active text editor sits in the group's view column.
  * @example showsActiveTextEditor(vscode.window.tabGroups.activeTabGroup) // => false while the group's active tab is the Application pane
  */
@@ -541,13 +541,22 @@ export class BrowserViewport {
 
   /**
    * Says whether revealing the leased pane would hide the active text editor; called by {@link takesKeyboardAtReveal}.
-   * A text editor in front of the pane's group that is the active text editor, in a window that has the focus, may have the keyboard: the editor's debugger gives the paused file the keyboard at a breakpoint (`debug.focusEditorOnBreak`, on by default), in the active group, and a learner clicks and types in files. Revealing the pane while preserving the focus then hides the focused editor without focusing anything, and the keyboard falls to the document body until the learner clicks (native run of 2026-10-04, after every committed capture).
-   * @returns `true` while the window is focused and the pane's group is the active group showing a text editor that is the active text editor.
+   * Cursor can report the paused text editor while its active tab group still names the chat's separate editor part. Resolve the group from the active text editor itself: hiding that editor without asking the owner can leave the keyboard on the document body.
+   * @returns `true` while the window is focused and the pane's group shows the active text editor.
    * @example if (!this.coversActiveTextEditor()) return false
    */
   private coversActiveTextEditor(): boolean {
-    const group = vscode.window.tabGroups.activeTabGroup
-    return this.isFocusedPaneGroup(group) && showsActiveTextEditor(group)
+    const column = vscode.window.activeTextEditor?.viewColumn
+    // No text editor can lose its keyboard to this reveal while none is active.
+    if (column === undefined) return false
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
+    return (
+      group !== undefined &&
+      this.isFocusedPaneGroup(group) &&
+      showsActiveTextEditor(group)
+    )
   }
 
   /**
@@ -563,8 +572,8 @@ export class BrowserViewport {
   }
 
   /**
-   * Tells {@link coversActiveTextEditor} whether the active editor group is the leased pane's own, in a window that has the focus.
-   * @param group - The editor's active tab group.
+   * Tells {@link coversActiveTextEditor} whether the text editor's group is the leased pane's own, in a window that has the focus.
+   * @param group - The group containing the active text editor.
    * @returns `true` when the window is focused and the group sits in the pane's view column.
    * @example this.isFocusedPaneGroup(vscode.window.tabGroups.activeTabGroup) // => false while another window has the focus
    */

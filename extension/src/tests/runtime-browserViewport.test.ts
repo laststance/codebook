@@ -155,6 +155,8 @@ async function viewportHarness(
     focusEditorOnBreak: boolean
     learnerInChat?: 'named group' | 'keyboard only'
     sessionRunsAgain?: boolean
+    /** Cursor can report the paused text editor before updating the named active tab group. */
+    namedGroupStaysInChat?: boolean
   },
   /** What the lease's owner answers when the viewport asks it, before the pane covers the paused file, whether the pane is to come without the keyboard: `true` (it gave the keyboard to the chat), `false` (to nobody), `'fails'` (its answer rejects) or `'held'` (it does not answer until the test calls `answerOwner`, and never if the test does not). Left out, the lease has no such owner. */
   ownerReturnsKeyboard?: boolean | 'fails' | 'held',
@@ -163,6 +165,14 @@ async function viewportHarness(
   const nativeRequire = createRequire(filename)
   const exports: Partial<typeof ViewportModule> = {}
   const { panel } = renderer
+  const sourceGroup = {
+    viewColumn: 1,
+    activeTab: { input: new PausedFileTab() },
+  }
+  const chatGroup = {
+    viewColumn: 3,
+    activeTab: { input: undefined },
+  }
   let leaseReleases = 0,
     keyboardTakes = 0
   /** How many reveals the pane had seen each time the viewport asked the owner to give the keyboard back. */
@@ -182,13 +192,12 @@ async function viewportHarness(
                 createWebviewPanel: () => panel,
                 state: { focused: true },
                 tabGroups: {
+                  all: [sourceGroup, chatGroup],
                   activeTabGroup:
-                    pausedFile?.learnerInChat === 'named group'
-                      ? { viewColumn: 3, activeTab: { input: undefined } }
-                      : {
-                          viewColumn: 1,
-                          activeTab: { input: new PausedFileTab() },
-                        },
+                    pausedFile?.learnerInChat === 'named group' ||
+                    pausedFile?.namedGroupStaysInChat
+                      ? chatGroup
+                      : sourceGroup,
                 },
                 activeTextEditor: pausedFile?.learnerInChat
                   ? undefined
@@ -1902,6 +1911,51 @@ test('the Application pane takes the keyboard focus when it is revealed over the
 })
 
 // Value: protects=the owner of the Application pane hearing that the pane took the keyboard from the paused file, so that it can give the keyboard back to the chat that had it before the pause or tell the learner where it is; fails_when=the pane takes the keyboard at a pause and nobody is told: in Cursor's tab layout the chat never gets the keyboard back from a run whose paused file opens in the Application pane's group, and with a side-view chat no sentence is shown; why_new=Cycle 0046 row 5, Cursor half (runs r5a and r5b of 2026-10-05: at every pause the Application pane took the keyboard, and no sentence was shown); seam=fake editor with a paused debug session and a lease that counts the calls
+for (const { returnsToChat, expectedReveals, expectedTakes } of [
+  {
+    returnsToChat: true,
+    expectedReveals: [{ preserveFocus: true }],
+    expectedTakes: 0,
+  },
+  {
+    returnsToChat: false,
+    expectedReveals: [{ preserveFocus: false }],
+    expectedTakes: 1,
+  },
+])
+  // Cursor's first-pause trace names chat as the active group after its debugger has focused the source.
+  test(`a paused file covered by Application ${returnsToChat ? 'gives the chat its keyboard back before reveal' : 'gives Application the keyboard'} even while Cursor still names the chat tab group`, async () => {
+    // Arrange
+    const harness = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'live',
+      viewportPanel(),
+      { focusEditorOnBreak: true, namedGroupStaysInChat: true },
+      returnsToChat,
+    )
+    harness.hide()
+    try {
+      // Act
+      const revealed = harness.viewport.reveal(new AbortController().signal)
+      await waitUntil(
+        () => harness.reveals.length > 0,
+        'the reveal after deciding who keeps the keyboard',
+        2_000,
+      )
+      harness.ready('11111111-1111-1111-1111-111111111111')
+      await revealed
+
+      // Assert
+      assert.deepEqual(harness.revealsWhenOwnerAsked(), [0])
+      assert.deepEqual(harness.reveals, expectedReveals)
+      assert.equal(harness.keyboardTakes(), expectedTakes)
+    } finally {
+      harness.viewport.close()
+    }
+  })
+
 test('the Application pane tells its owner once when it took the keyboard from the file the debugger focused at a pause', async () => {
   // Arrange: the debugger opened the paused file in the Application pane's group and focused it.
   const harness = await viewportHarness(
