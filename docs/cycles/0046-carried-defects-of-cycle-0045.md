@@ -374,6 +374,14 @@ Both settings hashes, original native tabs/order/flags,659/440 layout, known log
 
 Counts408/374/34. No new source fix, test weakening or supported defect arose. Next required family:326/327 real Study-control leave/return focus memory in both hosts. Missing157/158/209 timing and task5 conditions remain required, as do all other native tasks, full delivery/CI/exact-HEAD merge/Issue87 closure and continued product work.
 
+### Current C15 Study focus-memory charter (2026-10-10)
+
+The preceding goal turn made progress: native7/8/76/77/314 closed, original state restored, records committed and Issue87 synchronized. Current clean a2555f70 differs from installed C15 only in four documentation paths; product source33d7af0a/sourceHasha55f05b6 is unchanged. Dashboard1936e419 remains clean, VS49058/335653 and Cursor49067 remain live, and no native quiet flag remains. PR88 freshly remains OPEN/DRAFT at59fdb960. The full mandatory reads/image inspection remain current in this uncompacted session; no controlling contract changes.
+
+Root reads the complete326/327 criteria, F02/F03 and V13(e)/V14/C16/C17 procedures and actual pane focus memory, owed-focus/list redraw and tab publication source. AC-ENTRY/DESKTOP and dependent REPLAY/SOURCE-LINKS retain the concrete native focus/publication gaps. All other mechanisms and broader gaps carry forward on unchanged source; counts408/374/34. Context7 confirms native webview focus/reveal ordering; LSP/Serena remain unavailable, with actual source/rg fallback.
+
+Selected proof is frozen in native-final/n326-n327-c15/charter.md: actual control leave/return via native commands and pointer, changed Stop and observed-moment parts while away, and actual captured-source/Application tab closure on Recording with timely reason publication, separately in both hosts. Six genuine stops provide the five further observed moments. No model request, synthetic product event, private product field/getter change or target disk edit is selected. Preserve original work, every failed attempt and native quiet ordering; every remaining task/full delivery and continued owner authority stay required.
+
 ## Historical evidence checkpoints
 
 - [2026-10-10 complete snapshot](0046-evidence-checkpoint-20261010.md), captured byte-for-byte from committed efa98376 before shortening the active record, SHA-256 `e01c3e493f36550b1a9c66bde788666d63889412294ecd0f5509a033ec88aec2`. It preserves every previous entry through native task314 closure, including failures, source identities and older owner instructions. Existing incoming entry headings above forward to this unchanged copy.
