@@ -621,7 +621,12 @@ function repositoryClient(
     if (!message.loading && presentedRevision !== message.revision) {
       presentedRevision = message.revision
       if (!changed) location = selection.location ?? location
-      if (location) requestAnimationFrame(() => restore(true))
+      if (location)
+        requestAnimationFrame(() => {
+          // A newer or loading model retires this earlier frame's reading and keyboard restoration.
+          if (current?.revision === message.revision && !current.loading)
+            restore(true)
+        })
     }
     api.postMessage({
       type: 'rendered',

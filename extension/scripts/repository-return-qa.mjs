@@ -475,6 +475,44 @@ async function check(page, options, collected) {
     )
   }
 
+  // Cycle 0046 row445: a pending old reading restore must not replace newer input during loading.
+  await openPane(undefined)
+  await page.evaluate(() => {
+    window.heldRestoreFrames = []
+    window.nativeAnimationFrame = window.requestAnimationFrame
+    window.requestAnimationFrame = (callback) => {
+      window.heldRestoreFrames.push(callback)
+      return window.heldRestoreFrames.length
+    }
+  })
+  const pendingRestore = {
+    ...options.message,
+    selection: {
+      ...options.message.selection,
+      location: { sectionIndex: 0, fraction: 0, focusId: 'article-title' },
+    },
+  }
+  await page.evaluate(
+    (data) => window.dispatchEvent(new MessageEvent('message', { data })),
+    pendingRestore,
+  )
+  await page.locator('#connect').focus()
+  await page.evaluate(
+    (data) => window.dispatchEvent(new MessageEvent('message', { data })),
+    { ...pendingRestore, loading: true },
+  )
+  const beforeOldRestore = await focusedId()
+  await page.evaluate(() => {
+    window.requestAnimationFrame = window.nativeAnimationFrame
+    for (const callback of window.heldRestoreFrames.splice(0))
+      callback(performance.now())
+  })
+  addCase(
+    'a pending previous reading restore preserves newer control input while the host loads',
+    { before: 'connect', after: 'connect' },
+    { before: beforeOldRestore, after: await focusedId() },
+  )
+
   // Cycle 0046 row 332. Arrange: the keyboard stands on View recording.
   await openPane(undefined)
   await publish(options.message)
