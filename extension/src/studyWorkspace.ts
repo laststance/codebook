@@ -7111,10 +7111,21 @@ export class StudyWorkspace {
         this.repositoryOrigin.studyId !== this.selection.studyId
       )
         throw new Error('No article return location exists for this study.')
-      await this.controls.returnToRepository(
-        this.repositoryOrigin.selection,
-        !fromPane,
+      const origin = this.repositoryOrigin,
+        lifetime = this.lifetime,
+        selectionRevision = this.readerSelectionRevision,
+        refusalsBefore = this.controlRefusals
+      await this.controls.returnToRepository(origin.selection, !fromPane)
+      // A successful current Return answers its earlier refusal without clearing another operation's newer error.
+      if (
+        this.opened &&
+        this.lifetime === lifetime &&
+        this.readerSelectionRevision === selectionRevision &&
+        this.repositoryOrigin === origin &&
+        this.controlRefusals === refusalsBefore &&
+        this.errors.delete('control')
       )
+        this.publish()
       return
     }
     if (action === 'open-article') {

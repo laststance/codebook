@@ -1188,7 +1188,44 @@ export class RepositoryReader {
     this.sourceDeferred = false
   }
 
-  /** Retains initial or acquired focus for {@link open}; later input irrevocably retires it. @param acquire - The requested citation whose native activation may be observed in stages. @param acceptGroupSelection - Admits once the own quiet Wiki reveal's tab selection, preserving the original editor identity. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
+  /** Confirms the native selected text tab before {@link retainSelectedTextEditor} can retain its identity. @param editor - The actual active editor whose same-group selected tab must match. @returns Whether both native receipts identify this editor. @example this.hasSelectedTextTab(editor) // => true for the currently selected source tab */
+  private hasSelectedTextTab(editor: vscode.TextEditor): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup,
+      input = group.activeTab?.input
+    return (
+      input instanceof vscode.TabInputText &&
+      input.uri.toString() === editor.document.uri.toString() &&
+      editor.viewColumn === group.viewColumn
+    )
+  }
+
+  /** Retains a selected text tab's identity behind Wiki for {@link retainNativeFocus}'s own quiet editor retirement. @returns A predicate requiring the unchanged editor and original text tab in its same native group. @example const retained = this.retainSelectedTextEditor(); retained() // => true while the original source remains behind Wiki */
+  private retainSelectedTextEditor(): () => boolean {
+    const editor = vscode.window.activeTextEditor,
+      group = vscode.window.tabGroups.activeTabGroup
+    if (!editor || !this.hasSelectedTextTab(editor)) return () => false
+    const identity = JSON.stringify([
+        editor.document.version,
+        editor.selections,
+      ]),
+      uri = editor.document.uri.toString(),
+      column = group.viewColumn
+    return () => {
+      const current = vscode.window.tabGroups.activeTabGroup
+      return (
+        current.viewColumn === column &&
+        current.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === uri,
+        ) &&
+        JSON.stringify([editor.document.version, editor.selections]) ===
+          identity
+      )
+    }
+  }
+
+  /** Retains initial or acquired focus for {@link open}; later input irrevocably retires it. @param acquire - The requested citation whose native activation may be observed in stages. @param acceptGroupSelection - Admits once the own quiet Wiki selection and disappearance of its unchanged same-group text editor. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
   private retainNativeFocus(
     acquire?: RepositoryFocusTarget,
     acceptGroupSelection?: () => boolean,
@@ -1211,6 +1248,7 @@ export class RepositoryReader {
       }
     }
     const pending = snapshot()
+    let selectedEditorRetained: (() => boolean) | undefined
     let initial = acquire ? undefined : pending,
       changed = false,
       groupSelectionAccepted = false,
@@ -1223,6 +1261,10 @@ export class RepositoryReader {
     const observe = (
       event?: 'active-editor' | vscode.TextEditorSelectionChangeEvent,
     ): void => {
+      // Freeze text-tab ownership on the first observation, before a quiet reveal can hide its editor.
+      selectedEditorRetained ??= acceptGroupSelection
+        ? this.retainSelectedTextEditor()
+        : () => false
       const current = snapshot(),
         activeEditor = vscode.window.activeTextEditor,
         selectionEvent = typeof event === 'object' ? event : undefined
@@ -1277,7 +1319,7 @@ export class RepositoryReader {
         if (editorMatches && groupMatches) initial = current
         return
       }
-      // A quiet reveal selects its tab without moving keyboard; it cannot forgive a changed editor or an earlier departure.
+      // A quiet reveal selects its tab before the native editor-loss event; earlier departures remain sticky.
       if (
         initial &&
         current.group !== initial.group &&
@@ -1287,6 +1329,14 @@ export class RepositoryReader {
         initial = { ...initial, group: current.group }
         groupSelectionAccepted = true
       }
+      // Only the unchanged selected text tab behind this same-group Wiki can explain its own editor disappearance.
+      if (
+        initial &&
+        groupSelectionAccepted &&
+        !activeEditor &&
+        selectedEditorRetained()
+      )
+        initial = { ...initial, editor: current.editor }
       changed ||=
         current.editor !== initial?.editor || current.group !== initial?.group
     }

@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { BookObservationBinding } from '../repositorySchemas'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bookObservationHash } from '../utils/bookObservationHash'
 
 import {
   workspaceHarness,
   recordedReaderHarness,
   readerSeams,
+  articleRecordingLayoutHarness,
 } from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
@@ -1204,6 +1206,120 @@ test('returning from recording to Wiki keeps background study refresh from cover
       100,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+test('a successful recording Summary Return removes its earlier navigation error from the published Summary', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    readerSeams(harness).stopOwnTimer()
+    let returns = 0
+    harness.controls.returnToRepository = async (): Promise<void> => {
+      returns++
+      if (returns === 1)
+        throw new Error(
+          'Native focus changed during repository navigation; the newer learner focus was preserved.',
+        )
+    }
+    harness.receive({
+      type: 'action',
+      action: 'return-wiki',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.errors.includes(
+            'Error: Native focus changed during repository navigation; the newer learner focus was preserved.',
+          ),
+      'the refused recording Return notice',
+    )
+
+    // Act
+    harness.receive({
+      type: 'action',
+      action: 'return-wiki',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(() => returns === 2, 'the accepted recording Return')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual([...harness.reader.inspect().view!.errors], [])
+    assert.deepEqual([...harness.postedMessages().at(-1)!.errors], [])
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      harness.studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a pending recording Return keeps a newer refused connection error when the Wiki handoff completes', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness()
+  let completeReturn!: () => void
+  const returnFinished = new Promise<void>((resolve) => {
+    completeReturn = resolve
+  })
+  let entered = false
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    readerSeams(harness).stopOwnTimer()
+    harness.controls.returnToRepository = async (): Promise<void> => {
+      entered = true
+      await returnFinished
+    }
+    harness.controls.connect = async (): Promise<void> => {
+      throw new Error('The newer agent connection was refused.')
+    }
+    harness.receive({
+      type: 'action',
+      action: 'return-wiki',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(() => entered, 'the pending recording Return')
+
+    // Act
+    harness.receive({
+      type: 'action',
+      action: 'connect',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.errors.includes(
+            'Error: The newer agent connection was refused.',
+          ),
+      'the newer connection refusal',
+    )
+    completeReturn()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(
+      [...harness.postedMessages().at(-1)!.errors],
+      ['Error: The newer agent connection was refused.'],
+    )
+  } finally {
+    completeReturn()
     await harness.close()
   }
 })
