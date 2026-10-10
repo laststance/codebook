@@ -387,10 +387,44 @@ async function check(page, options, collected) {
       : verifyPendingCitationWheel
     await verifyWheel(checkingMessage, verifiedMessage)
   }
-  /** Verifies citation reflow before and after Return plus recent wheel input; called by {@link check} against the same renderer. @example await verifyCitationStatusReturn() */
+  /** Leaves the reused title with an earlier article's actual keyboard memory; {@link verifyCitationStatusReturn} calls it before opening a different explicit Return. @example await leavePreviousArticle() */
+  async function leavePreviousArticle() {
+    const previousArticle = structuredClone(options.message)
+    previousArticle.selection.bookId = 'previous-checkout'
+    previousArticle.catalog[0].bookId = 'previous-checkout'
+    previousArticle.book.bookId = 'previous-checkout'
+    await publish(previousArticle)
+    await leavePane('article-title')
+  }
+  /** Prepares actual current, prior-article or absent keyboard memory before {@link verifyCitationStatusReturn} opens its Return target. @example await leaveCitationReading(statusMessage, returnLocation, false, true) */
+  async function leaveCitationReading(
+    statusMessage,
+    returnLocation,
+    hasRememberedControl,
+    hasPreviousArticle,
+  ) {
+    // Prior title memory belongs to a different article even though its DOM element is reused.
+    if (hasPreviousArticle) {
+      await leavePreviousArticle()
+      return
+    }
+    // Existing same-article Return retains its actual observation control.
+    if (hasRememberedControl) {
+      await publish({
+        ...statusMessage,
+        selection: { ...statusMessage.selection, location: returnLocation },
+      })
+      await leavePane('evidence-0-observation')
+      return
+    }
+    // A recreated Wiki can receive Return and citation verification before any control ever gets keyboard focus.
+    await leavePane()
+  }
+  /** Verifies citation reflow before and after Return plus recent wheel input; called by {@link check} against the same renderer. @param hasPreviousArticle - Whether the reused title belongs to an earlier article instead of the current Return. @example await verifyCitationStatusReturn(true, ' after leaving another article', true) */
   async function verifyCitationStatusReturn(
     hasRememberedControl,
     focusCaption,
+    hasPreviousArticle = false,
   ) {
     // Citation checks can settle before or after the frame that restores an explicit native Return.
     for (const statusTiming of ['before restoration', 'after restoration']) {
@@ -421,16 +455,12 @@ async function check(page, options, collected) {
       }
       await openPane(undefined)
       await page.setViewportSize({ width: 339, height: 654 })
-      if (hasRememberedControl) {
-        await publish({
-          ...statusMessage,
-          selection: { ...statusMessage.selection, location: returnLocation },
-        })
-        await leavePane('evidence-0-observation')
-      } else {
-        // A recreated Wiki can receive Return and citation verification before any control ever gets keyboard focus.
-        await leavePane()
-      }
+      await leaveCitationReading(
+        statusMessage,
+        returnLocation,
+        hasRememberedControl,
+        hasPreviousArticle,
+      )
 
       // Act: the usable article arrives before its asynchronous source verification.
       const checkingMessage = {
@@ -488,18 +518,25 @@ async function check(page, options, collected) {
           }))),
         },
       )
-      await verifyCitationWheelAfterReturn(
-        statusTiming,
-        hasRememberedControl,
-        checkingMessage,
-        verifiedMessage,
-      )
+      // The old-article variants own only the new memory boundary; existing cases already exercise wheel input after Return.
+      if (!hasPreviousArticle)
+        await verifyCitationWheelAfterReturn(
+          statusTiming,
+          hasRememberedControl,
+          checkingMessage,
+          verifiedMessage,
+        )
     }
   }
   await verifyCitationStatusReturn(true, '')
   await verifyCitationStatusReturn(
     false,
     ' before the document first gains focus',
+  )
+  await verifyCitationStatusReturn(
+    true,
+    ' after leaving another article title',
+    true,
   )
 
   // Cycle 0046 row 331. Arrange: the learner works in another part of the editor (the chat, a file), and the pane's document has no focus.

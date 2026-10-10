@@ -59,6 +59,7 @@ function repositoryClient(
   const visited = new Set(saved?.visited ?? [])
   let current: RepositoryViewMessage | undefined,
     contentKey = '',
+    focusedContentKey = '',
     presentedRevision = -1,
     location: RepositorySelection['location'],
     restoring = false,
@@ -124,9 +125,10 @@ function repositoryClient(
     }
     target.value = selected
   }
-  /** Selects the existing reading anchor for {@link capture} while a recreated document still owes Return focus. @returns The actual keyboard control, otherwise its pending Return element, or null when neither exists. @example readingAnchorControl()?.id // => 'evidence-1-recording' before its first focus */
+  /** Selects the current article's reading anchor for {@link capture} while Return focus is pending, including after navigation from another article. @returns The current article's actual keyboard control, otherwise its pending Return element, or null when neither exists. @example readingAnchorControl()?.id // => 'evidence-1-recording' before its first focus */
   const readingAnchorControl = (): HTMLElement | null =>
-    keyboardControl() ?? document.getElementById(location?.focusId ?? '')
+    (focusedContentKey === contentKey ? keyboardControl() : undefined) ??
+    document.getElementById(location ? location.focusId : '')
   /** Captures current reading geometry for {@link persist} and status reflow, including a Return target before its document first gains focus. @returns A section-relative pose and any visible control's current viewport anchor. @example const pose = capture() // => current reading position without taking focus */
   const capture = () => {
     if (!current?.selection) return undefined
@@ -139,7 +141,7 @@ function repositoryClient(
     })
     const section = sections[sectionIndex],
       top = section?.getBoundingClientRect().top ?? 0
-    // A recreated document may still owe Return focus and have no keyboard memory when citations settle.
+    // A pending Return may have no current keyboard memory, or retain the reused title's earlier article memory.
     const readingControl = readingAnchorControl(),
       bounds = readingControl?.getBoundingClientRect()
     // A visible article control is a stable return anchor even when adjacent recovery text changes the section height.
@@ -278,6 +280,8 @@ function repositoryClient(
     }
   })
   document.addEventListener('focusin', () => {
+    // Only actual focus on this article authorizes its keyboard memory over a pending Return anchor.
+    focusedContentKey = contentKey
     if (!restoring) {
       clearTimeout(timer)
       timer = setTimeout(persist, debounceMs)
