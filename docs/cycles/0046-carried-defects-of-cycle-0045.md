@@ -1,7 +1,7 @@
 # Cycle 0046 — Every defect Cycle 0045 left is fixed
 
 Type: bug-fix cycle\
-Status: validating\
+Status: implementing\
 Result: pending\
 Delivery: PR-open (draft pull request #88; nothing is delivered yet)\
 Goal version: 10 (9 until the owner's direction of 2026-10-05 on the target systems)\
@@ -53,7 +53,7 @@ Order (Issue #87, "Proposed Change"): this record first; then packages by area, 
 
 ## Current validation and delivery state
 
-Both normally installed hosts load C21 b79b388d/sourceHash4d0e873e, extension0.2.30/API1.7/common skill1.0.42. Task437 is now closed at two-host Ubuntu native development level: the exact Article Up failure reaches A/title with retained window focus and complete mapped-motion/cleanup evidence. Source4167/4166pass/one skip, package338 and two restored controls retain the same source hashes. Full331/332/423 remain open: their raw C21 outcomes are recorded, but the new-revision return's visible reading position needs investigation before family closure. Counts437/405 closed/32 native-pending, none implementing. No full-cycle delivery, current-source CI, merge or final acceptance is claimed.
+Both normally installed hosts load C21 b79b388d/sourceHash4d0e873e, extension0.2.30/API1.7/common skill1.0.42. Task437 is now closed at two-host Ubuntu native development level: the exact Article Up failure reaches A/title with retained window focus and complete mapped-motion/cleanup evidence. Source4167/4166pass/one skip, package338 and two restored controls retain the same source hashes. Full331/332/423 remain open: their raw C21 outcomes are recorded, but the new-revision return's visible reading position needs investigation before family closure. Counts438/405 closed/32 native-pending plus implementing438. No full-cycle delivery, current-source CI, merge or final acceptance is claimed. Finding438 records the source-supported new-article focus-intent overwrite; its DOM regression and repair are next.
 
 Prior normally installed candidate12: clean build `f7478e06b8ac68dec364b65317c93b29541c1073`, source repair `4b458158cc3e4f6e476eaf2615a090883f345d93`, extension0.2.30/API1.7/common skill1.0.42. Its29-entry VSIX has1,410,979bytes, SHA `7f8474b5c52a00ae724f7b9d259201e827b394bdbccf7897de033f41eb11baf6`, sourceHash `b16ff4ada7262422408b433c6123be3389a95073e3d8b6ace55d624006daf4b7`, installed code SHA `4498fc02c7e6bb5c2baf4e7d4f7bc59b16fc2d703361c90afbd576e4e7681511`; common skill SHA unchanged0a413f1c. Both ordinary dedicated-profile CLI installs exit0 and installed code matches package. One normal Reload per owned host (VS266/Cursor279) gives fresh public instances ce7f4ef5/137992d5 with the exact clean C12 revision/sourceHash and zero runs. Original settings hashes remain exact. Root releases only the load-preparation quiet token after terminal commands/status checks. No model request, database start, actual393 run, motion or final acceptance is claimed. Private native-final/candidate12-verification.json.
 
@@ -840,6 +840,14 @@ Preserve private preparation failures: VS post-cleanup inspection first reused a
 
 ENTRY/DESKTOP/WIKI/SOURCE-LINKS and dependent REPLAY gain437's bounded proof and retain331/332/423's visible-return question. LIVE/SAVE/GAPS/LEARNING/WIKI-UPDATE/SHORTCUTS/SKILL/REAL-PROJECTS carry unchanged source mechanisms and all broader proof gaps: this continuation edits records only. Every integrated/other-OS/final-stage obligation stays. Counts437/405 closed/32 native-pending, none implementing. One next action: investigate the C21 new-revision offscreen control before closing the original331/332/423 family; every other task and full delivery remains required.
 
+### Finding438: new-article focus intent overwritten by list memory (2026-10-10)
+
+The retained C21 visible-return question has a concrete source path. In {@link repositoryClient}, a changed book/revision/node without an explicit location scrolls to the article top and calls placeFocus for article-title. Later in the same render, observation-list replacement reads the remembered old keyboardControl and calls placeFocus for that old control ID, overwriting the newer article's focus intent. The two-host native proof focuses evidence-0-recording at scroll0, outside the visible article; the full endpoints corroborate it. The existing new-revision DOM case supplies an explicit location, and the list case keeps the same article key, so neither tests this sequence. Add438 directly to this bug-fix cycle; no criterion is relaxed.
+
+Selected increment: existing Repository Wiki DOM regression starts at a real recording control, leaves the pane, publishes a new article/revision without location, then returns. Expected: no focus while away and visible article-title on return; preserve explicit Return location and same-article list replacement. Obtain RED before changing source; correct precedence in the existing renderer only after that reproduces the path, then the semantic disabled-fix control, affected/full/static/package/review gates and normal two-host installed proof. The current native recipe's same-control expectation across a new article without location cannot substitute for the original same-article-list condition; that condition still needs its own native proof. Source/timing/visibility observations remain preserved.
+
+Task437 remains closed on C21. Original331/332/423 and every other native task remain open. Counts438 total/405 closed/32 native-pending plus implementing438; the cycle returns to implementing. Entry/source-impact assessment remains current: ENTRY/DESKTOP/WIKI/SOURCE-LINKS and dependent REPLAY need this correction; unchanged source mechanisms and all integrated/other-OS/final requirements carry forward. No product source or tests changed in this finding record.
+
 ## Historical evidence checkpoints
 
 - [2026-10-10 complete snapshot](0046-evidence-checkpoint-20261010.md), captured byte-for-byte from committed efa98376 before shortening the active record, SHA-256 `e01c3e493f36550b1a9c66bde788666d63889412294ecd0f5509a033ec88aec2`. It preserves every previous entry through native task314 closure, including failures, source identities and older owner instructions. Existing incoming entry headings above forward to this unchanged copy.
@@ -857,4 +865,4 @@ Only this active record, PROJECT_STATE and the complete task table govern curren
 
 Result remains pending; delivery remains draft PR-open. No defect is carried or dropped; closure requires every current task and every finding discovered before delivery to be closed. Native development, review, merge, packaging/publication, installed verification and owner acceptance remain distinct.
 
-One next action: investigate the C21 new-revision return that focuses the recording control outside the viewport, then complete the original331/332/423 family. Counts437/405 closed/32 native-pending, none implementing. Every other native task, full delivery and final acceptance remains required.
+One next action: obtain the existing-renderer regression RED for438, repair new-article/list focus precedence, then finish original331/332/423 native proof. Counts438/405 closed/32 native-pending plus implementing438. Every other native task, full delivery and final acceptance remains required.
