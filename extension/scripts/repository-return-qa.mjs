@@ -310,6 +310,128 @@ async function check(page, options, collected) {
     })
   }
 
+  /** Verifies citation reflow before and after Return plus recent wheel input; called by {@link check} against the same renderer. @example await verifyCitationStatusReturn() */
+  async function verifyCitationStatusReturn() {
+    // Citation checks can settle before or after the frame that restores an explicit native Return.
+    for (const statusTiming of ['before restoration', 'after restoration']) {
+      // Arrange: the real side-pane width wraps the verified status onto two lines.
+      const statusMessage = structuredClone(options.message)
+      const paths = ['app/ui/login-form.tsx', 'auth.ts', 'app/lib/actions.ts']
+      statusMessage.book.revision.document.nodes[0].anchors = paths.map(
+        (path) => ({
+          ...statusMessage.book.revision.document.nodes[0].anchors[0],
+          path,
+        }),
+      )
+      statusMessage.sources = paths.map((path) => ({
+        ...statusMessage.sources[0],
+        path,
+      }))
+      statusMessage.book.links.push({
+        ...statusMessage.book.links[0],
+        linkIndex: 1,
+        studyId: 'another-retained-study',
+        elapsedMs: 100000,
+      })
+      const returnLocation = {
+        sectionIndex: 4,
+        fraction: 0,
+        focusId: 'evidence-0-observation',
+        focusViewportFraction: 0.5,
+      }
+      await openPane(undefined)
+      await page.setViewportSize({ width: 339, height: 654 })
+      await publish({
+        ...statusMessage,
+        selection: { ...statusMessage.selection, location: returnLocation },
+      })
+      await leavePane('evidence-0-observation')
+
+      // Act: the usable article arrives before its asynchronous source verification.
+      const checkingMessage = {
+        ...statusMessage,
+        revision: 8,
+        selection: { ...statusMessage.selection, location: returnLocation },
+        sources: [],
+      }
+      const verifiedMessage = {
+        ...checkingMessage,
+        sources: statusMessage.sources,
+      }
+      if (statusTiming === 'after restoration') {
+        await publish(checkingMessage)
+        await publish(verifiedMessage)
+      } else {
+        await page.evaluate(
+          (messages) => {
+            for (const message of messages)
+              window.dispatchEvent(
+                new MessageEvent('message', { data: message }),
+              )
+          },
+          [checkingMessage, verifiedMessage],
+        )
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      }
+      const focusDuringVerification = await focusedId()
+      await returnToPane()
+
+      // Assert: two-line verification keeps the exact Return offset and takes no keyboard while away.
+      addCase(
+        `citation verification ${statusTiming} preserves the explicit Return reading position`,
+        {
+          whileAway: 'body',
+          focus: 'evidence-0-observation',
+          top: 326.5,
+          statusHeight: 48,
+        },
+        {
+          whileAway: focusDuringVerification,
+          ...(await page.evaluate(() => ({
+            focus: document.activeElement.id,
+            top: document
+              .getElementById('evidence-0-observation')
+              .getBoundingClientRect().top,
+            statusHeight: document
+              .getElementById('source-status')
+              .getBoundingClientRect().height,
+          }))),
+        },
+      )
+      if (statusTiming === 'after restoration') {
+        // Arrange: real wheel input moves reading before the debounced saved location catches up.
+        await page.mouse.move(180, 320)
+        await page.mouse.wheel(0, 48)
+        await page.waitForFunction(
+          () =>
+            document
+              .getElementById('evidence-0-observation')
+              .getBoundingClientRect().top < 300,
+        )
+        // Act: a status refresh must preserve the current viewport, not replay the older Return location.
+        await publish(checkingMessage)
+        await publish(verifiedMessage)
+        // Assert: neither keyboard nor the learner's new reading position is replaced.
+        addCase(
+          'citation status refresh preserves recent wheel scrolling and the focused observation',
+          { focus: 'evidence-0-observation', top: 278.5 },
+          await page.evaluate(() => ({
+            focus: document.activeElement.id,
+            top: document
+              .getElementById('evidence-0-observation')
+              .getBoundingClientRect().top,
+          })),
+        )
+      }
+    }
+  }
+  await verifyCitationStatusReturn()
+
   // Cycle 0046 row 331. Arrange: the learner works in another part of the editor (the chat, a file), and the pane's document has no focus.
   await openPane(undefined)
   await leavePane()

@@ -166,32 +166,33 @@ function repositoryClient(
     api.setState({ key: contentKey, location, visited: [...visited] })
     send({ type: 'location', selection: { ...current.selection, location } })
   }
-  const restore = (focus: boolean): void => {
-    if (!location) return
+  /** Restores reading geometry after navigation, resize or status reflow; status updates pass their current pose without replacing saved navigation intent. @param focus - Whether the caller also owes the target keyboard focus. @param target - A temporary current pose, or the saved navigation location by default. @example restore(false, capture()) */
+  const restore = (focus: boolean, target = location): void => {
+    if (!target) return
     restoring = true
     const section = document.querySelector<HTMLElement>(
-      `[data-section="${location.sectionIndex}"]`,
+      `[data-section="${target.sectionIndex}"]`,
     )
     if (section)
       window.scrollTo(
         0,
         window.scrollY +
           section.getBoundingClientRect().top +
-          section.offsetHeight * location.fraction,
+          section.offsetHeight * target.fraction,
       )
-    const focusId = location.focusId,
+    const focusId = target.focusId,
       focused = element(focusId),
       bounds = focused?.getBoundingClientRect()
     // Restore only an existing article anchor; old positions and hidden/missing targets keep the section-relative fallback.
     if (
-      location.focusViewportFraction !== undefined &&
+      target.focusViewportFraction !== undefined &&
       focused?.closest('[data-section]') &&
       bounds &&
       bounds.height > 0 &&
       bounds.width > 0
     ) {
       const offset = Math.min(
-        innerHeight * location.focusViewportFraction,
+        innerHeight * target.focusViewportFraction,
         Math.max(0, innerHeight - bounds.height),
       )
       window.scrollTo(0, window.scrollY + bounds.top - offset)
@@ -283,6 +284,13 @@ function repositoryClient(
   window.addEventListener('message', (event) => {
     const message: RepositoryViewMessage = event.data
     if (message?.type !== 'repository') return
+    // Status labels can reflow a settled article; capture the actual pose before changing them, including recent unsaved scrolling.
+    const statusLocation =
+      !message.loading &&
+      current?.revision === message.revision &&
+      !current.loading
+        ? capture()
+        : undefined
     current = message
     const { book, selection, understanding } = message,
       node = book?.revision.document.nodes.find(
@@ -617,6 +625,8 @@ function repositoryClient(
         )
         .join('\n') || 'No understanding decision yet.',
     )
+    // Preserve the current viewport through status reflow without changing its saved navigation intent or taking keyboard focus.
+    if (!changed && statusLocation) restore(false, statusLocation)
     // Restore explicit return/navigation even when the article DOM already exists; status-only updates leave focus alone.
     if (!message.loading && presentedRevision !== message.revision) {
       presentedRevision = message.revision
