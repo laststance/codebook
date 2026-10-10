@@ -68,6 +68,46 @@ function configuredProjectionInput(understood = false) {
   }
 }
 
+test('an exact historical observation shows its own facts while ordinary history keeps the newest capture', () => {
+  // Arrange
+  const input = configuredProjectionInput(),
+    original = input.study.observations[0]!
+  input.study.observations = [
+    {
+      ...original,
+      id: 'earlier-capture',
+      values: { ...original.values, 'value:linkedMarker': 'earlier' },
+    },
+    {
+      ...original,
+      id: 'middle-capture',
+      values: { ...original.values, 'value:linkedMarker': 'middle' },
+    },
+    {
+      ...original,
+      id: 'latest-capture',
+      values: { ...original.values, 'value:linkedMarker': 'latest' },
+    },
+  ]
+
+  // Act
+  const historical = projectStudy({
+      ...input,
+      observationId: 'middle-capture',
+    }),
+    ordinary = projectStudy(input),
+    missing = projectStudy({ ...input, observationId: 'missing-capture' })
+
+  // Assert
+  assert.equal(historical.observation?.id, 'middle-capture')
+  assert.equal(historical.observation?.values['value:linkedMarker'], 'middle')
+  assert.equal(ordinary.observation?.id, 'latest-capture')
+  assert.equal(ordinary.observation?.values['value:linkedMarker'], 'latest')
+  assert.equal(missing.observation, undefined)
+  assert.equal(missing.continueArguments, undefined)
+  assert.equal(missing.image, undefined)
+})
+
 test('a configured title containing quotes and markup stays literal in the captured application image description', () => {
   // Arrange
   const input = configuredProjectionInput()
@@ -473,7 +513,11 @@ test('a replay at a later stop the debugger moved names that stop’s own declar
   }
 
   // Act
-  const atSecondStop = projectPlaybackStudy(input, bundle),
+  // A prior Wiki reading point cannot filter the replay's independently selected historical moment.
+  const atSecondStop = projectPlaybackStudy(
+      { ...input, observationId: first.id },
+      bundle,
+    ),
     atFirstStop = projectPlaybackStudy(input, {
       ...bundle,
       projection: {
@@ -484,6 +528,7 @@ test('a replay at a later stop the debugger moved names that stop’s own declar
     })
 
   // Assert
+  assert.equal(atSecondStop.observation?.id, 'browser-session:2')
   assert.equal(atSecondStop.source.line, 4)
   assert.equal(atSecondStop.sourceDeclaredLine, 3)
   assert.equal(atFirstStop.source.line, 1)

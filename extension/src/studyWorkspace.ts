@@ -751,6 +751,11 @@ export class StudyWorkspace {
   /** Counts the saved studies and Node test histories the learner chose; a removal reads it to tell a choice made meanwhile from other actions that only take a {@link historyRequest} number. */
   private studyChoices = 0
   private repositoryNavigation?: number
+  /** Keeps {@link message} on the exact validated Wiki observation until a newer learner choice or reader lifetime retires it. */
+  private repositoryObservation?: Pick<
+    BookObservationBinding,
+    'studyId' | 'observationId'
+  > & { lifetime: number; selectionRevision: number }
   private repositoryRecordingOpen?: { studyId: string; revision: number }
   private pendingHistory?: number
   /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
@@ -6130,6 +6135,7 @@ export class StudyWorkspace {
       previousSourceUri = this.sourceUri,
       previousSourceReady = this.sourceReady()
     const previousOrigin = this.repositoryOrigin,
+      previousRepositoryObservation = this.repositoryObservation,
       previousReturn = this.progress.repositoryReturn,
       previousLayoutOrigin = this.repositoryLayoutOrigin,
       previousLayoutRestored = this.repositoryLayoutRestored
@@ -6154,6 +6160,15 @@ export class StudyWorkspace {
       this.pendingHistory = undefined
       this.selectedArchive = checkpoint.study
       this.selection = { ...selectStudy(checkpoint.study), tab: 'live' }
+      // Copy validated identity before projection; recording owns its own shared historical moment.
+      this.repositoryObservation = recording
+        ? undefined
+        : {
+            studyId: binding.studyId,
+            observationId: binding.observationId,
+            lifetime,
+            selectionRevision: this.readerSelectionRevision,
+          }
       if (recording) {
         const saved = await this.recordings!.readContext(binding.studyId)
         assertCurrent()
@@ -6250,6 +6265,7 @@ export class StudyWorkspace {
         this.selectedArchive = previousArchive
         this.lastSelectionKey = previousSelectionKey
         this.repositoryOrigin = previousOrigin
+        this.repositoryObservation = previousRepositoryObservation
         this.progress = { ...this.progress, repositoryReturn: previousReturn }
         // Only this failed visit may roll back its native origin; Close and newer visits retain their own lifetimes.
         if (
@@ -9771,14 +9787,42 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Resolves the exact Wiki observation for {@link message} while the same history choice and reader lifetime remain selected.
+   * @returns The admitted historical ID, or undefined for newer choices, closure or current-run following.
+   * @example this.selectedRepositoryObservationId() // 'snapshot:2' during the same Wiki history visit
+   */
+  private selectedRepositoryObservationId(): string | undefined {
+    const historical = this.repositoryObservation
+    if (!historical || !this.retainsRepositoryObservation(historical))
+      return undefined
+    return historical.observationId
+  }
+
+  /** Validates the admitted history receipt for {@link selectedRepositoryObservationId}; newer choices or current-run following revoke its exact point. @example this.retainsRepositoryObservation(historical) // true during the same visit */
+  private retainsRepositoryObservation(
+    historical: NonNullable<StudyWorkspace['repositoryObservation']>,
+  ): boolean {
+    return (
+      historical.lifetime === this.lifetime &&
+      historical.selectionRevision === this.readerSelectionRevision &&
+      historical.studyId === this.selection.studyId &&
+      !this.selection.follow
+    )
+  }
+
   /** Selects retained definition bytes for every reader surface without borrowing a different history during replay loading. @example this.selectedStudy()?.profile */
   private selectedStudy(forSource = false): RetainedStudy | undefined {
-    const archive =
+    let archive =
+      this.selectedArchive?.id === this.selection.studyId
+        ? this.selectedArchive
+        : undefined
+    // Exact Wiki evidence uses the validated saved bytes; ordinary current/history projection retains active-archive priority.
+    if (
+      !this.selectedRepositoryObservationId() &&
       this.selection.studyId === this.activeArchive?.id
-        ? this.activeArchive
-        : this.selectedArchive?.id === this.selection.studyId
-          ? this.selectedArchive
-          : undefined
+    )
+      archive = this.activeArchive
     if (!this.recordingActive) return archive
     const state = this.playback?.state()
     const bundle =
@@ -9965,6 +10009,7 @@ export class StudyWorkspace {
         : undefined
     const projectionInput = {
       selection: this.selection,
+      observationId: this.selectedRepositoryObservationId(),
       study,
       live,
       liveDescriptor,
@@ -14414,6 +14459,8 @@ export class StudyWorkspace {
         this.replayDebugger?.invalidate()
         this.selectedNodeHistoryRequest++
         this.selectedNodeHistory = history
+        // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
+        this.repositoryObservation = undefined
         this.selectedNodeHistoryLearningDecision = learningDecision
         this.selectedNodeHistoryLearningMaterial = learningMaterial
         this.selectedNodeHistoryPage = 0
