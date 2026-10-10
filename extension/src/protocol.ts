@@ -237,7 +237,7 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_open_book',
     {
       description:
-        'Open the exact retained book/revision/node and optional citation index in the separate repository reader. Reveals immutable cited source; never starts application input or changes understanding. Not needed before codebook_start and not a Study focus/layout recovery action: it opens native Wiki/source tabs that can change the Study receipt.',
+        "Open the exact retained book/revision/node and optional citation index in the separate repository reader. An already-open Wiki keeps the learner's native input; its immutable source is prepared and a focused primary file keeps its place until the learner selects the Wiki. A cold reader reveals the Wiki/source panes. Never starts application input or changes understanding. Not needed before codebook_start and not a Study focus/layout recovery action.",
       inputSchema: openBookSchema,
       annotations: { ...mutation, idempotentHint: true },
     },
@@ -509,6 +509,17 @@ export function createProtocol(service: StudyService): McpServer {
       'recording-context',
       'codebook://{instance}/studies/{study}/recording/context/{hash}',
       'Pinned captured source/value/interpretation context with availability times; obsolete hashes fail explicitly.',
+    ],
+    // Returned saved-learning references and every bounded content page must pass through the same hash-verified reader.
+    [
+      'recording-learning',
+      'codebook://{instance}/studies/{study}/recording/context/{hash}/learning',
+      'Hash-bound saved facts, explanations and processing summary; follow each returned nextUri for complete content.',
+    ],
+    [
+      'recording-learning-page',
+      'codebook://{instance}/studies/{study}/recording/context/{hash}/learning/pages/{contentHash}/{offset}',
+      'One bounded saved-learning content page; obsolete context or content hashes fail explicitly.',
     ],
   ] as const
   for (const [name, template, description] of templates)

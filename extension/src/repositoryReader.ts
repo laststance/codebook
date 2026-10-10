@@ -30,6 +30,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { repositoryHtml } from './ui/repositoryHtml'
 import { citationLearningState } from './utils/citationLearningState'
+import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { showPlainNotice } from './utils/showPlainNotice'
 
@@ -93,6 +94,9 @@ export class RepositoryReader {
   private statusGeneration = 0
   private refreshTimer?: ReturnType<typeof setTimeout>
   private sourceUri?: vscode.Uri
+  /** A primary file keeps its native input until the learner selects the Wiki; {@link revealDeferredSource} then pays this preview. */
+  private sourceDeferred = false
+  private sourcePreviewRequest = 0
   private rendered?: {
     revision: number
     selection?: RepositorySelection
@@ -185,11 +189,17 @@ export class RepositoryReader {
     }
   }
 
-  /** Opens the exact article revision; only actual Study Return asks {@link StudyWorkspace} to restore its captured native layout. @example await reader.open(selection) */
+  /**
+   * Opens an exact article; {@link openFromAgent} keeps existing native input while learner navigation activates the Wiki.
+   * @param restoreReadingLayout - Restore the actual Study Return's saved native arrangement.
+   * @param preserveNativeInput - An agent reading an already-open Wiki must not activate its panes or replace a focused primary file.
+   * @example await reader.open(selection)
+   */
   async open(
     input?: RepositorySelection,
     signal?: AbortSignal,
     restoreReadingLayout = false,
+    preserveNativeInput = false,
   ): Promise<void> {
     signal?.throwIfAborted()
     this.navigation.abort()
@@ -198,6 +208,10 @@ export class RepositoryReader {
       cancel = (): void => navigation.abort(signal?.reason)
     signal?.addEventListener('abort', cancel, { once: true })
     const generation = ++this.generation
+    const background = preserveNativeInput && Boolean(this.panel),
+      initiatingEditor = vscode.window.activeTextEditor
+    this.sourceDeferred = false
+    this.sourcePreviewRequest++
     this.loading = true
     this.error = undefined
     const initialFocus = this.retainNativeFocus()
@@ -245,22 +259,8 @@ export class RepositoryReader {
         selection && (await store.read(selection.bookId, selection.revision))
       this.assertCurrent(generation)
       initialFocus.assertRetained()
-      // Validate real content before any native effect; an invalid selection cannot become a temporary focus anchor.
-      if (selection && book) {
-        const node = book.revision.document.nodes.find(
-          (value) => value.id === selection.nodeId,
-        )
-        if (
-          !node ||
-          !node.anchors[selection.anchorIndex] ||
-          (selection.location &&
-            selection.location.sectionIndex >=
-              node.sections.length + REPOSITORY_FIXED_READING_SECTIONS)
-        )
-          throw new Error(
-            'The selected article, citation, or section is unavailable in this revision.',
-          )
-      }
+      // Invalid article/citation/section input must fail before any native effect or temporary focus anchor.
+      this.assertRequestedArticle(selection, book)
       const acquireSourceFocus =
         selection && book
           ? async () => {
@@ -308,41 +308,52 @@ export class RepositoryReader {
               return assertFocused
             }
           : undefined
-      await this.controls.arrange(
-        navigation.signal,
-        restoreReadingLayout ? input : undefined,
-        {
-          // Check after native initialization/queueing, before scope work can capture newer learner focus as its own.
-          begin: () => {
-            this.assertCurrent(generation)
-            initialFocus.assertRetained()
-            initialFocus.dispose()
+      // Quiet agent reads keep the owned Wiki's arrangement and the learner's existing native input.
+      if (background && selection && book) {
+        anchoredSource = await this.prepareBackgroundSource(
+          selection,
+          book,
+          generation,
+          initialFocus,
+          initiatingEditor,
+        )
+      } else {
+        await this.controls.arrange(
+          navigation.signal,
+          restoreReadingLayout ? input : undefined,
+          {
+            // Check after native initialization/queueing, before scope work can capture newer learner focus as its own.
+            begin: () => {
+              this.assertCurrent(generation)
+              initialFocus.assertRetained()
+              initialFocus.dispose()
+            },
+            acquireSourceFocus,
+            retainCurrentFocus: (acquire) => {
+              this.assertCurrent(generation)
+              coldFocus?.assertRetained()
+              coldFocus?.dispose()
+              const retained = this.retainNativeFocus(acquire),
+                receipt = {
+                  assertRetained: (): void => {
+                    this.assertCurrent(generation)
+                    retained.assertRetained()
+                  },
+                  dispose: (): void => {
+                    retained.dispose()
+                    if (coldFocus === receipt) coldFocus = undefined
+                  },
+                }
+              coldFocus = receipt
+              return receipt
+            },
           },
-          acquireSourceFocus,
-          retainCurrentFocus: (acquire) => {
-            this.assertCurrent(generation)
-            coldFocus?.assertRetained()
-            coldFocus?.dispose()
-            const retained = this.retainNativeFocus(acquire),
-              receipt = {
-                assertRetained: (): void => {
-                  this.assertCurrent(generation)
-                  retained.assertRetained()
-                },
-                dispose: (): void => {
-                  retained.dispose()
-                  if (coldFocus === receipt) coldFocus = undefined
-                },
-              }
-            coldFocus = receipt
-            return receipt
-          },
-        },
-      )
+        )
+      }
       this.assertCurrent(generation)
       coldFocus?.assertRetained()
       anchoredSource?.assertFocused()
-      initialFocus.dispose()
+      if (!background) initialFocus.dispose()
       // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff.
       if (coldFocus && acquireSourceFocus && !anchoredSource)
         await acquireSourceFocus()
@@ -355,6 +366,7 @@ export class RepositoryReader {
       this.publish()
       if (selection && book) {
         await this.load(selection, book, generation, anchoredSource)
+        await this.payReadyBackgroundPreview(background, initialFocus)
       } else {
         this.book = undefined
         this.selection = undefined
@@ -366,7 +378,11 @@ export class RepositoryReader {
       anchoredSource?.assertFocused()
       coldFocus?.dispose()
       sourceFocus?.dispose()
-      this.panel?.reveal(vscode.ViewColumn.Two, false)
+      if (!background)
+        this.panel?.reveal(
+          this.panel.viewColumn ?? vscode.ViewColumn.Two,
+          false,
+        )
     } catch (error) {
       if (generation === this.generation && !this.disposed) {
         this.error = String(error)
@@ -382,7 +398,7 @@ export class RepositoryReader {
     }
   }
 
-  /** Returns a captured native source receipt only after exact requested navigation succeeds. @example await reader.openFromAgent(input) */
+  /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection. @example await reader.openFromAgent(input) */
   async openFromAgent(input: OpenBookInput, signal?: AbortSignal) {
     await this.open(
       {
@@ -392,6 +408,8 @@ export class RepositoryReader {
         anchorIndex: input.anchorIndex ?? 0,
       },
       signal,
+      false,
+      true,
     )
     signal?.throwIfAborted()
     if (
@@ -534,6 +552,9 @@ export class RepositoryReader {
       throw new Error(binding?.reason ?? 'Selected observation is unavailable.')
     if (recording && binding.recording.status !== 'available')
       throw new Error(binding.recording.reason)
+    // Only admitted history navigation cancels a preview; refused evidence keeps even an already-started citation.
+    this.sourcePreviewRequest++
+    this.sourceDeferred = false
     await this.controls.evidence(
       binding,
       recording,
@@ -545,6 +566,8 @@ export class RepositoryReader {
 
   /** Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader. @example reader.close() */
   close(): void {
+    this.sourceDeferred = false
+    this.sourcePreviewRequest++
     this.navigation.abort()
     this.generation++
     this.statusGeneration++
@@ -678,18 +701,11 @@ export class RepositoryReader {
     preserveFocus: boolean,
     assertFocus?: () => void,
   ) {
-    this.assertCurrent(generation)
-    const anchor = book.revision.document.nodes.find(
-      (node) => node.id === selection.nodeId,
-    )!.anchors[selection.anchorIndex]!
-    const uri = vscode.Uri.from({
-      scheme: REPOSITORY_SOURCE_SCHEME,
-      authority: this.store!.library.workspaceKey,
-      path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`,
-      query: `hash=${anchor.hash}`,
-    })
-    const document = await vscode.workspace.openTextDocument(uri)
-    this.assertCurrent(generation)
+    const { uri, document, anchor } = await this.openSourceDocument(
+      selection,
+      book,
+      generation,
+    )
     assertFocus?.()
     const documentVersion = document.version,
       requestedSelection = document.validateRange(
@@ -746,6 +762,205 @@ export class RepositoryReader {
       focus?.dispose()
       throw error
     }
+  }
+
+  /** Prepares exact immutable bytes for {@link openSource} and quiet {@link openFromAgent} without selecting a native tab. @example const prepared = await this.openSourceDocument(selection, book, generation) */
+  private async openSourceDocument(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+    generation: number,
+  ) {
+    this.assertCurrent(generation)
+    const { anchor } = this.requestedArticle(selection, book)
+    const uri = vscode.Uri.from({
+      scheme: REPOSITORY_SOURCE_SCHEME,
+      authority: this.store!.library.workspaceKey,
+      path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`,
+      query: `hash=${anchor.hash}`,
+    })
+    const document = await vscode.workspace.openTextDocument(uri)
+    this.assertCurrent(generation)
+    return { uri, document, anchor }
+  }
+
+  /** Validates retained content for {@link open} before native source/layout effects; empty-library entry has no article to validate. @example this.assertRequestedArticle(selection, book) */
+  private assertRequestedArticle(
+    selection: RepositorySelection | undefined,
+    book: RepositoryReader['book'],
+  ): void {
+    if (!selection || !book) return
+    const { node } = this.requestedArticle(selection, book)
+    this.assertReadingSection(selection, node.sections.length)
+  }
+
+  /** Resolves the required retained node/citation for {@link assertRequestedArticle} and {@link openSourceDocument} before URI or native effects. @example const { anchor } = this.requestedArticle(selection, book) */
+  private requestedArticle(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+  ) {
+    const node = book.revision.document.nodes.find(
+      (value) => value.id === selection.nodeId,
+    )
+    if (!node)
+      throw new Error(
+        'The selected article, citation, or section is unavailable in this revision.',
+      )
+    const anchor = node.anchors[selection.anchorIndex]
+    if (!anchor)
+      throw new Error(
+        'The selected article, citation, or section is unavailable in this revision.',
+      )
+    return { node, anchor }
+  }
+
+  /** Checks the retained reading section for {@link assertRequestedArticle}; missing location uses the article's normal entry. @example this.assertReadingSection(selection, node.sections.length) */
+  private assertReadingSection(
+    selection: RepositorySelection,
+    sectionCount: number,
+  ): void {
+    if (
+      selection.location &&
+      selection.location.sectionIndex >=
+        sectionCount + REPOSITORY_FIXED_READING_SECTIONS
+    )
+      throw new Error(
+        'The selected article, citation, or section is unavailable in this revision.',
+      )
+  }
+
+  /**
+   * Prepares an existing Wiki's quiet agent source for {@link open}, retaining input or an explicit handoff to that Wiki.
+   * @param initialFocus - The original native input lease; unrelated newer input retires the request.
+   * @param initiatingEditor - The text editor that owned input before source/storage awaits.
+   * @returns Exact copied URI and the guard used throughout reading-state publication.
+   * @example const source = await this.prepareBackgroundSource(selection, book, generation, initialFocus, initiatingEditor)
+   */
+  private async prepareBackgroundSource(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+    generation: number,
+    initialFocus: ReturnType<RepositoryReader['retainNativeFocus']>,
+    initiatingEditor: vscode.TextEditor | undefined,
+  ) {
+    const assertBackgroundInput = (): void => {
+      // Selecting this Wiki explicitly hands the reading to it; unrelated newer input still retires the request.
+      if (!this.hasNativeWikiFocus()) initialFocus.assertRetained()
+    }
+    const prepared = await this.openSourceDocument(selection, book, generation)
+    assertBackgroundInput()
+    this.sourceDeferred = Boolean(
+      initiatingEditor?.viewColumn === vscode.ViewColumn.One &&
+      !this.hasNativeWikiFocus(),
+    )
+    if (!this.sourceDeferred)
+      await this.openSource(
+        selection,
+        book,
+        generation,
+        true,
+        assertBackgroundInput,
+      )
+    return { uri: prepared.uri, assertFocused: assertBackgroundInput }
+  }
+
+  /** Pays an explicit Wiki handoff received during loading after {@link open} publishes the same ready article; unrelated input keeps its original lease. @example await this.payReadyBackgroundPreview(background, initialFocus) */
+  private async payReadyBackgroundPreview(
+    background: boolean,
+    initialFocus: ReturnType<RepositoryReader['retainNativeFocus']>,
+  ): Promise<void> {
+    if (!background || !this.sourceDeferred || !this.hasNativeWikiFocus())
+      return
+    // A focus event during loading could not pay the preview; pay it only after the same article is ready.
+    initialFocus.dispose()
+    await this.revealDeferredSource()
+  }
+
+  /** Recognizes the actual Wiki main-group tab for {@link revealDeferredSource}; stale text-editor pointers cannot activate a preview. @example if (this.hasNativeWikiFocus()) await this.revealDeferredSource() */
+  private hasNativeWikiFocus(): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup
+    if (!this.panel) return false
+    return (
+      group.viewColumn === this.panel.viewColumn &&
+      this.isWikiTab(group.activeTab)
+    )
+  }
+
+  /** Certifies a native Wiki input for {@link hasNativeWikiFocus}; unrelated or absent tabs cannot authorize preview. @example this.isWikiTab(group.activeTab) */
+  private isWikiTab(tab: vscode.Tab | undefined): boolean {
+    const input = tab?.input
+    return (
+      input instanceof vscode.TabInputWebview &&
+      isCodebookPaneViewType(input.viewType, 'codebook.repositoryWiki')
+    )
+  }
+
+  /** Pays an agent's deferred primary-file preview only after genuine native Wiki selection; newer input or evidence navigation revokes it. @example await this.revealDeferredSource() */
+  private async revealDeferredSource(): Promise<void> {
+    if (!this.canRevealDeferredSource()) return
+    const generation = this.generation,
+      request = ++this.sourcePreviewRequest,
+      focus = this.retainNativeFocus()
+    let departed = false
+    try {
+      const opened = await this.openSource(
+        this.selection!,
+        this.book!,
+        generation,
+        true,
+        () => {
+          try {
+            focus.assertRetained()
+          } catch (error) {
+            departed = true
+            throw error
+          }
+          if (
+            request !== this.sourcePreviewRequest ||
+            !this.hasNativeWikiFocus()
+          )
+            throw new Error(
+              'The newer native input was preserved instead of opening an old citation.',
+            )
+        },
+      )
+      this.commitDeferredPreview(generation, request, opened.uri)
+    } catch (error) {
+      // A newer native choice cancels automatic preview without reporting a user action as a source failure.
+      if (this.previewRetired(generation, request, departed)) return
+      throw error
+    } finally {
+      focus.dispose()
+    }
+  }
+
+  /** Tests the current preview obligation for {@link revealDeferredSource}; loading or another native input cannot pay it. @example if (this.canRevealDeferredSource()) await this.revealDeferredSource() */
+  private canRevealDeferredSource(): boolean {
+    return this.sourceDeferred && !this.loading && this.hasNativeWikiFocus()
+  }
+
+  /** Keeps superseded/native-departure completion silent for {@link revealDeferredSource}, while real source failures remain observable. @example this.previewRetired(generation, request, departed) */
+  private previewRetired(
+    generation: number,
+    request: number,
+    departed: boolean,
+  ): boolean {
+    return (
+      departed ||
+      generation !== this.generation ||
+      request !== this.sourcePreviewRequest
+    )
+  }
+
+  /** Commits only the same preview after native display for {@link revealDeferredSource}; evidence/newer requests retain their source state. @example this.commitDeferredPreview(generation, request, opened.uri) */
+  private commitDeferredPreview(
+    generation: number,
+    request: number,
+    uri: vscode.Uri,
+  ): void {
+    this.assertCurrent(generation)
+    if (request !== this.sourcePreviewRequest) return
+    this.sourceUri = uri
+    this.sourceDeferred = false
   }
 
   /** Retains initial or explicitly acquired citation focus for {@link open}; later observed departures irrevocably retire it. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
@@ -972,6 +1187,16 @@ export class RepositoryReader {
       { enableScripts: true, localResourceRoots: [] },
     )
     this.panel = panel
+    panel.onDidChangeViewState(() => {
+      // Selecting the Wiki is the learner's explicit permission to replace the primary file with its cited source.
+      if (this.panel !== panel || !panel.active || !panel.visible) return
+      const generation = this.generation
+      void this.revealDeferredSource().catch((error) => {
+        if (this.panel !== panel || this.generation !== generation) return
+        this.error = `Citation preview unavailable: ${String(error)}`
+        this.publish()
+      })
+    })
     panel.webview.onDidReceiveMessage((value) => {
       if (this.panel !== panel) return
       const revision = this.revision,

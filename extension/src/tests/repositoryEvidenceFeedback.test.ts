@@ -99,6 +99,7 @@ async function feedbackHarness(context: TestContext) {
             let disposed = (): void => {}
             return {
               reveal(): void {},
+              onDidChangeViewState: disposable,
               dispose(): void {
                 disposed()
               },

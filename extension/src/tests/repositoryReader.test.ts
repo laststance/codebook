@@ -69,6 +69,10 @@ async function readerHarness(context: TestContext) {
   class TabInputText {
     constructor(readonly uri: Uri) {}
   }
+  // Native Wiki activation is a webview tab, independently of the last text-editor pointer.
+  class TabInputWebview {
+    constructor(readonly viewType: string) {}
+  }
   class Position {
     constructor(
       readonly line: number,
@@ -105,11 +109,12 @@ async function readerHarness(context: TestContext) {
     groupListeners = new Set<() => void>()
   const sourceGroup: {
     viewColumn: number
-    tabs: { input: TabInputText }[]
-    activeTab?: { input: TabInputText }
+    tabs: { input: TabInputText | TabInputWebview }[]
+    activeTab?: { input: TabInputText | TabInputWebview }
   } = { viewColumn: 1, tabs: [] }
   const otherGroup: typeof sourceGroup = { viewColumn: 2, tabs: [] }
   let activeGroup = sourceGroup
+  let activateWikiPanel = (): void => {}
   let requiresSourceFocus = false,
     coldLayout = false,
     arrangements = 0
@@ -126,12 +131,14 @@ async function readerHarness(context: TestContext) {
       }
     | undefined
   const panelColumns: number[] = [],
-    reveals: number[] = []
+    reveals: number[] = [],
+    revealFocus: boolean[] = []
   let provider = async (_uri: Uri) => '',
     workspace = source.directory,
     connections = 0
   let receive = (_message: unknown): void => {}
   const shown: { uri: Uri; text: string }[] = [],
+    openedSources: { uri: Uri; text: string }[] = [],
     panels = new Set<object>(),
     linked: { binding: BookObservationBinding; recording: boolean }[] = []
   const textDocuments: { isDirty: boolean; uri: Uri; getText(): string }[] = []
@@ -147,6 +154,7 @@ async function readerHarness(context: TestContext) {
         EventEmitter,
         Uri,
         TabInputText,
+        TabInputWebview,
         ViewColumn: { One: 1, Two: 2 },
         RelativePattern,
         Range,
@@ -192,6 +200,7 @@ async function readerHarness(context: TestContext) {
                 .replace(/^\uFEFF/, '')
                 .replace(/\r\n?/g, '\n'),
               lines = normalized.split('\n')
+            openedSources.push({ uri, text: normalized })
             return {
               uri,
               version: 1,
@@ -283,6 +292,8 @@ async function readerHarness(context: TestContext) {
               tab = { input: new TabInputText(document.uri) }
             sourceGroup.tabs.push(tab)
             sourceGroup.activeTab = tab
+            // A foreground native source display activates its main group before its text-editor receipt.
+            if (!options?.preserveFocus) activeGroup = sourceGroup
             if (!options?.preserveFocus && nativeCitationActivation) {
               const pauseAt = async (
                 stage: NonNullable<typeof citationActivationGate>['stage'],
@@ -336,10 +347,19 @@ async function readerHarness(context: TestContext) {
               for (const listener of focusListeners) listener()
             }
             let disposed = (): void => {}
+            let viewStateChanged = (): void => {}
             const panel = {
               title: '',
-              reveal(column: number): void {
+              viewColumn: column,
+              active: false,
+              visible: true,
+              onDidChangeViewState(callback: () => void) {
+                viewStateChanged = callback
+                return disposable()
+              },
+              reveal(column: number, preserveFocus = false): void {
                 reveals.push(column)
+                revealFocus.push(preserveFocus)
               },
               dispose(): void {
                 panels.delete(panel)
@@ -356,6 +376,21 @@ async function readerHarness(context: TestContext) {
                   return disposable()
                 },
               },
+            }
+            const wikiTab = {
+              input: new TabInputWebview(
+                'mainThreadWebview-codebook.repositoryWiki',
+              ),
+            }
+            otherGroup.tabs.push(wikiTab)
+            otherGroup.activeTab = wikiTab
+            activateWikiPanel = (): void => {
+              activeEditor = undefined
+              activeGroup = otherGroup
+              panel.active = true
+              for (const listener of focusListeners) listener()
+              for (const listener of groupListeners) listener()
+              viewStateChanged()
             }
             panels.add(panel)
             return panel
@@ -463,6 +498,7 @@ async function readerHarness(context: TestContext) {
     selection,
     document,
     shown,
+    openedSources,
     panels,
     linked,
     textDocuments,
@@ -471,6 +507,7 @@ async function readerHarness(context: TestContext) {
     wikiViewsRegistered: (): number => wikiViewsRegistered,
     panelColumns,
     reveals,
+    revealFocus,
     receive: (message: unknown): void => receive(message),
     requireSourceFocus(): void {
       requiresSourceFocus = true
@@ -577,7 +614,12 @@ async function readerHarness(context: TestContext) {
     },
     focusChat(): void {
       activeEditor = undefined
+      // Side-view chat leaves the last Wiki main group selected while its input owns keyboard.
+      activeGroup = otherGroup
       for (const listener of focusListeners) listener()
+    },
+    focusWiki(): void {
+      activateWikiPanel()
     },
     focusUnrelatedDraft(filename = 'unrelated-draft.txt'): void {
       const document = {
@@ -629,6 +671,204 @@ test('repository articles open retained source without connecting an agent or ma
   assert.equal(state.view.sources[0]?.status, 'current')
   assert.equal((await harness.library.readProgress()).decisions.length, 0)
   assert.equal('sources' in state.view.book!.revision, false)
+})
+
+// Regression: Cycle0046 native331 — opening an article through MCP must not take the learner's keyboard.
+// Found by /qa on 2026-10-10.
+// Report: private native-final/n331-n332-c15/vscode/agent-open1-host-focus.json.
+for (const input of ['chat', 'file'] as const)
+  test(`an agent opening another article in the existing Wiki preserves the learner's ${input} input`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    if (input === 'chat') harness.focusChat()
+    else harness.focusUnrelatedDraft()
+    harness.requireSourceFocus()
+    const originalInput = harness.focusedSource(),
+      shownBefore = harness.shown.length,
+      revealsBefore = harness.reveals.length
+
+    // Act
+    const receipt = await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+
+    // Assert
+    assert.equal(harness.focusedSource(), originalInput)
+    assert.equal(harness.shown.length, shownBefore + (input === 'chat' ? 1 : 0))
+    assert.equal(harness.reveals.length, revealsBefore)
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+    assert.equal(
+      harness.openedSources.at(-1)?.text,
+      'export const total = 48;\n',
+    )
+    assert.equal(
+      harness.openedSources.at(-1)?.uri.toString(),
+      receipt.sourceUri,
+    )
+    assert.equal((await harness.library.readProgress()).decisions.length, 0)
+  })
+
+test('selecting the Wiki after a quiet agent article displays its exact citation without another article request', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft()
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+  const shownBefore = harness.shown.length
+
+  // Act
+  harness.focusWiki()
+  await waitUntil(
+    () => harness.shown.length === shownBefore + 1,
+    'deferred exact source preview',
+  )
+
+  // Assert
+  assert.equal(harness.focusedSource(), undefined)
+  assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+  assert.equal((await harness.library.readProgress()).decisions.length, 0)
+})
+
+test('selecting the Wiki while its requested article is loading completes that article and displays its cited source', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft()
+  const pendingSource = harness.holdSourceDocument()
+  const opening = harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+  await pendingSource.started
+
+  // Act
+  harness.focusWiki()
+  pendingSource.release()
+  await opening
+
+  // Assert
+  assert.equal(harness.focusedSource(), undefined)
+  assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+  assert.equal(harness.reader.inspect().view.error, '')
+})
+
+for (const departure of ['another file', 'Close'] as const)
+  test(`a pending Wiki citation preview preserves ${departure === 'Close' ? 'a closed reader' : 'newer file input'} instead of revealing its old source`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.focusUnrelatedDraft()
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+    const shownBefore = harness.shown.length,
+      listenerCount = harness.focusListenerCount(),
+      pending = harness.holdSourceDocument()
+    harness.focusWiki()
+    await pending.started
+
+    // Act
+    if (departure === 'Close') harness.reader.close()
+    else harness.focusUnrelatedDraft('newer-draft.txt')
+    const newerInput = harness.focusedSource()
+    pending.release()
+    await waitUntil(
+      () => harness.focusListenerCount() === listenerCount,
+      'retired deferred-source ownership',
+    )
+
+    // Assert
+    assert.equal(harness.shown.length, shownBefore)
+    assert.equal(harness.focusedSource(), newerInput)
+    assert.equal((await harness.library.readProgress()).decisions.length, 0)
+    assert.equal(harness.reader.inspect().view.error, '')
+  })
+
+for (const refusal of ['another article', 'unavailable observation'] as const)
+  test(`a refused ${refusal} evidence request preserves the current Wiki's deferred citation preview`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.focusUnrelatedDraft()
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+    const shownBefore = harness.shown.length
+
+    // Act
+    await assert.rejects(
+      harness.reader.evidence(
+        {
+          ...harness.selection,
+          nodeId: refusal === 'another article' ? 'module' : 'order',
+        },
+        0,
+        true,
+      ),
+      refusal === 'another article'
+        ? /another article/
+        : /observation is unavailable/,
+    )
+    harness.focusWiki()
+    await waitUntil(
+      () => harness.shown.length === shownBefore + 1,
+      'current preview after refused evidence navigation',
+    )
+
+    // Assert
+    assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+    assert.equal((await harness.library.readProgress()).decisions.length, 0)
+  })
+
+test('a refused observation request lets an already-started Wiki citation preview finish without leaving and returning again', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft()
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+  const shownBefore = harness.shown.length,
+    listenerCount = harness.focusListenerCount(),
+    pending = harness.holdSourceDocument()
+  harness.focusWiki()
+  await pending.started
+
+  // Act
+  await assert.rejects(
+    harness.reader.evidence({ ...harness.selection, nodeId: 'order' }, 0, true),
+    /observation is unavailable/,
+  )
+  pending.release()
+  await waitUntil(
+    () => harness.focusListenerCount() === listenerCount,
+    'citation preview finished after refused observation',
+  )
+
+  // Assert
+  assert.equal(harness.shown.length, shownBefore + 1)
+  assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+  assert.equal(harness.focusedSource(), undefined)
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+  assert.equal(harness.reader.inspect().view.error, '')
+  assert.equal((await harness.library.readProgress()).decisions.length, 0)
 })
 
 for (const entry of ['cold ordinary text', 'ambiguous primary'] as const)
