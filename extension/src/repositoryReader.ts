@@ -96,6 +96,10 @@ export class RepositoryReader {
   private sourceUri?: vscode.Uri
   /** A primary file keeps its native input until the learner selects the Wiki; {@link revealDeferredSource} then pays this preview. */
   private sourceDeferred = false
+  /** A command outside Study defers its original layout until the learner selects Wiki; {@link revealDeferredSource} completes that Return. */
+  private deferredReturn?: RepositorySelection
+  /** Prevents a focus callback from superseding an {@link open} whose final source checks are still pending. */
+  private openingGeneration?: number
   private sourcePreviewRequest = 0
   private rendered?: {
     revision: number
@@ -192,7 +196,7 @@ export class RepositoryReader {
   /**
    * Opens an exact article; {@link openFromAgent} keeps existing native input while learner navigation activates the Wiki.
    * @param restoreReadingLayout - Restore the actual Study Return's saved native arrangement.
-   * @param preserveNativeInput - An agent reading an already-open Wiki must not activate its panes or replace a focused primary file.
+   * @param preserveNativeInput - Existing-Wiki agent reads and external Return commands keep native input; cold entry still activates its reader.
    * @example await reader.open(selection)
    */
   async open(
@@ -208,9 +212,11 @@ export class RepositoryReader {
       cancel = (): void => navigation.abort(signal?.reason)
     signal?.addEventListener('abort', cancel, { once: true })
     const generation = ++this.generation
+    this.openingGeneration = generation
     const background = preserveNativeInput && Boolean(this.panel),
       initiatingEditor = vscode.window.activeTextEditor
     this.sourceDeferred = false
+    this.deferredReturn = undefined
     this.sourcePreviewRequest++
     this.loading = true
     this.error = undefined
@@ -310,6 +316,8 @@ export class RepositoryReader {
           : undefined
       // Quiet agent reads keep the owned Wiki's arrangement and the learner's existing native input.
       if (background && selection && book) {
+        // An external Return cannot arrange source panes over the input it must preserve.
+        this.deferredReturn = restoreReadingLayout ? selection : undefined
         anchoredSource = await this.prepareBackgroundSource(
           selection,
           book,
@@ -383,6 +391,7 @@ export class RepositoryReader {
           this.panel.viewColumn ?? vscode.ViewColumn.Two,
           false,
         )
+      else await this.completeDeferredReturn(signal, initialFocus)
     } catch (error) {
       if (generation === this.generation && !this.disposed) {
         this.error = String(error)
@@ -391,6 +400,9 @@ export class RepositoryReader {
       }
       throw error
     } finally {
+      // A superseded caller cannot clear a newer opening's focus guard.
+      if (this.openingGeneration === generation)
+        this.openingGeneration = undefined
       initialFocus.dispose()
       coldFocus?.dispose()
       sourceFocus?.dispose()
@@ -555,6 +567,7 @@ export class RepositoryReader {
     // Only admitted history navigation cancels a preview; refused evidence keeps even an already-started citation.
     this.sourcePreviewRequest++
     this.sourceDeferred = false
+    this.deferredReturn = undefined
     await this.controls.evidence(
       binding,
       recording,
@@ -567,6 +580,7 @@ export class RepositoryReader {
   /** Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader. @example reader.close() */
   close(): void {
     this.sourceDeferred = false
+    this.deferredReturn = undefined
     this.sourcePreviewRequest++
     this.navigation.abort()
     this.generation++
@@ -848,10 +862,7 @@ export class RepositoryReader {
     }
     const prepared = await this.openSourceDocument(selection, book, generation)
     assertBackgroundInput()
-    this.sourceDeferred = Boolean(
-      initiatingEditor?.viewColumn === vscode.ViewColumn.One &&
-      !this.hasNativeWikiFocus(),
-    )
+    this.sourceDeferred = this.shouldDeferSourcePreview(initiatingEditor)
     if (!this.sourceDeferred)
       await this.openSource(
         selection,
@@ -863,12 +874,23 @@ export class RepositoryReader {
     return { uri: prepared.uri, assertFocused: assertBackgroundInput }
   }
 
+  /** Keeps a Return layout or focused primary file untouched during {@link prepareBackgroundSource}. @example this.shouldDeferSourcePreview(vscode.window.activeTextEditor) */
+  private shouldDeferSourcePreview(
+    initiatingEditor: vscode.TextEditor | undefined,
+  ): boolean {
+    return Boolean(
+      this.deferredReturn ||
+      (initiatingEditor?.viewColumn === vscode.ViewColumn.One &&
+        !this.hasNativeWikiFocus()),
+    )
+  }
+
   /** Pays an explicit Wiki handoff received during loading after {@link open} publishes the same ready article; unrelated input keeps its original lease. @example await this.payReadyBackgroundPreview(background, initialFocus) */
   private async payReadyBackgroundPreview(
     background: boolean,
     initialFocus: ReturnType<RepositoryReader['retainNativeFocus']>,
   ): Promise<void> {
-    if (!background || !this.sourceDeferred || !this.hasNativeWikiFocus())
+    if (!background || this.deferredReturn || !this.canRevealDeferredSource())
       return
     // A focus event during loading could not pay the preview; pay it only after the same article is ready.
     initialFocus.dispose()
@@ -897,6 +919,18 @@ export class RepositoryReader {
   /** Pays an agent's deferred primary-file preview only after genuine native Wiki selection; newer input or evidence navigation revokes it. @example await this.revealDeferredSource() */
   private async revealDeferredSource(): Promise<void> {
     if (!this.canRevealDeferredSource()) return
+    // Only actual Wiki selection resumes a command's saved layout and ordinary reader handoff.
+    if (this.deferredReturn) {
+      // The active opening pays a loading-time handoff after its final checks; a nested open would reject that caller.
+      if (this.openingGeneration === this.generation) return
+      await this.completeDeferredReturn()
+      return
+    }
+    await this.revealDeferredCitation()
+  }
+
+  /** Pays the ordinary source-only preview after {@link revealDeferredSource} rules out a pending Return layout. @example await this.revealDeferredCitation() */
+  private async revealDeferredCitation(): Promise<void> {
     const generation = this.generation,
       request = ++this.sourcePreviewRequest,
       focus = this.retainNativeFocus()
@@ -931,6 +965,22 @@ export class RepositoryReader {
     } finally {
       focus.dispose()
     }
+  }
+
+  /** Completes a command's original layout from {@link open} or {@link revealDeferredSource} after the learner selects Wiki. @param initialFocus - Releases the finishing background request before its normal Return begins. @example await this.completeDeferredReturn() */
+  private async completeDeferredReturn(
+    signal?: AbortSignal,
+    initialFocus?: ReturnType<RepositoryReader['retainNativeFocus']>,
+  ): Promise<void> {
+    const selection = this.deferredReturn
+    if (!selection || !this.hasActiveWikiFocus()) return
+    initialFocus?.dispose()
+    await this.open(selection, signal, true)
+  }
+
+  /** Requires both native tab identity and active-panel state before {@link completeDeferredReturn} can move the saved layout. @example this.hasActiveWikiFocus() // false while side chat owns input */
+  private hasActiveWikiFocus(): boolean {
+    return Boolean(this.panel?.active) && this.hasNativeWikiFocus()
   }
 
   /** Tests the current preview obligation for {@link revealDeferredSource}; loading or another native input cannot pay it. @example if (this.canRevealDeferredSource()) await this.revealDeferredSource() */

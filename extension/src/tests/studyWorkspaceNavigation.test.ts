@@ -1164,7 +1164,12 @@ test('returning from recording to Wiki keeps background study refresh from cover
       anchorIndex: 0,
       location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' },
     })
-    harness.controls.returnToRepository = async (): Promise<void> => {
+    let preservedNativeInput: boolean | undefined
+    harness.controls.returnToRepository = async (
+      _selection,
+      preserveNativeInput?: boolean,
+    ): Promise<void> => {
+      preservedNativeInput = preserveNativeInput
       harness.controller.hide()
       harness.groups[0]!.activeTab = undefined
     }
@@ -1175,11 +1180,22 @@ test('returning from recording to Wiki keeps background study refresh from cover
     await harness.reader['refresh']()
     await harness.reader.retire(harness.service)
     // Assert
+    assert.equal(preservedNativeInput, true)
     assert.deepEqual(harness.groups[0]!.tabs, tabs)
     assert.deepEqual(harness.commands, commands)
     assert.equal(harness.groups[0]!.activeTab, undefined)
     assert.equal(harness.controller.state().mode, 'paused')
     assert.equal(harness.runtimes[0]!.dispatches, 1)
+    // A validated in-pane Return remains an explicit handoff to the Wiki.
+    await readerSeams(harness).receive(
+      {
+        type: 'action',
+        action: 'return-wiki',
+        revision: harness.reader.inspect().view!.revision,
+      },
+      'context',
+    )
+    assert.equal(preservedNativeInput, false)
     harness.controller.reveal()
     await harness.controller.settle()
     assert.equal(harness.controller.state().readiness, 'ready')

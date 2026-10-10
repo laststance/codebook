@@ -836,7 +836,10 @@ export class StudyWorkspace {
     private readonly context: WorkspaceContext,
     private readonly controls: {
       connect(): Promise<void>
-      returnToRepository?(selection: RepositorySelection): Promise<void>
+      returnToRepository?(
+        selection: RepositorySelection,
+        preserveNativeInput: boolean,
+      ): Promise<void>
       openArticle?(selection: RepositorySelection): Promise<void>
       /** Tells whether the Wiki reader of this host owns its Repository Wiki panel; a Wiki tab seen while it does not is an earlier host's. */
       repositoryWikiOpen?(): boolean
@@ -7018,8 +7021,11 @@ export class StudyWorkspace {
       )
   }
 
-  /** Handles one explicit learner command, preserving revision identity through awaits. @example await workspace.action('continue') */
-  async action(action: z.infer<typeof actionSchema>): Promise<void> {
+  /** Handles explicit learner input, preserving revision identity through awaits. @param fromPane - A validated Study-pane action permits Return to hand focus to Wiki; a command preserves its native input. @example await workspace.action('continue') */
+  async action(
+    action: z.infer<typeof actionSchema>,
+    fromPane = false,
+  ): Promise<void> {
     if (action !== 'stop') this.assertPresentationIdle()
     const lifetime = this.lifetime
     this.assertLifetime(lifetime)
@@ -7105,7 +7111,10 @@ export class StudyWorkspace {
         this.repositoryOrigin.studyId !== this.selection.studyId
       )
         throw new Error('No article return location exists for this study.')
-      await this.controls.returnToRepository(this.repositoryOrigin.selection)
+      await this.controls.returnToRepository(
+        this.repositoryOrigin.selection,
+        !fromPane,
+      )
       return
     }
     if (action === 'open-article') {
@@ -14326,7 +14335,7 @@ export class StudyWorkspace {
         }
         return
       }
-      await this.action(message.action)
+      await this.action(message.action, true)
     }
     if (message.type === 'select') await this.select(message.itemId)
     if (message.type === 'tab') {

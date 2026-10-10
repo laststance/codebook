@@ -292,8 +292,8 @@ export function activate(
       context,
       {
         connect,
-        returnToRepository: (selection) =>
-          repository().open(selection, undefined, true),
+        returnToRepository: (selection, preserveNativeInput) =>
+          repository().open(selection, undefined, true, preserveNativeInput),
         openArticle: (selection) => repository().open(selection),
         repositoryWikiOpen: () => Boolean(repositoryReader?.panelOpen()),
       },

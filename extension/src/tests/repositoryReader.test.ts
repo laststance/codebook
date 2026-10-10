@@ -711,6 +711,126 @@ for (const input of ['chat', 'file'] as const)
     assert.equal((await harness.library.readProgress()).decisions.length, 0)
   })
 
+// Regression: Cycle0046 native423 — a Return command must preserve input until the learner selects the Wiki.
+// Found by /qa on 2026-10-10; private native-final/n331-n332-c17/vscode/return-reproduction.json.
+for (const input of ['chat', 'file'] as const)
+  test(`returning to Wiki from ${input} keeps its input and restores the article layout only when Wiki is selected`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    if (input === 'chat') harness.focusChat()
+    else harness.focusUnrelatedDraft()
+    harness.requireSourceFocus()
+    const originalInput = harness.focusedSource(),
+      arrangementsBefore = harness.arrangements(),
+      shownBefore = harness.shown.length,
+      revealsBefore = harness.reveals.length,
+      selection = {
+        ...harness.selection,
+        nodeId: 'order',
+        location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+      }
+
+    // Act
+    await harness.reader.open(selection, undefined, true, true)
+
+    // Assert
+    assert.equal(harness.focusedSource(), originalInput)
+    assert.equal(harness.arrangements(), arrangementsBefore)
+    assert.equal(harness.reveals.length, revealsBefore)
+    assert.equal(harness.shown.length, shownBefore)
+    assert.deepEqual(harness.reader.inspect().view.selection, selection)
+
+    // Act
+    harness.focusWiki()
+    await waitUntil(
+      () =>
+        harness.arrangements() === arrangementsBefore + 1 &&
+        !harness.reader.inspect().view.loading,
+      'original article layout restored after native Wiki selection',
+    )
+
+    // Assert
+    assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+    assert.deepEqual(harness.reader.inspect().view.selection, selection)
+    assert.equal(harness.reader.inspect().view.error, '')
+    assert.equal((await harness.library.readProgress()).decisions.length, 0)
+  })
+
+test('selecting Wiki during a Return freshness check completes that Return without superseding its caller', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusChat()
+  harness.requireSourceFocus()
+  const inspect = harness.store.sources.inspect.bind(harness.store.sources)
+  let entered!: () => void, release!: () => void
+  const started = new Promise<void>((resolve) => {
+      entered = resolve
+    }),
+    held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+  context.mock.method(
+    harness.store.sources,
+    'inspect',
+    async (...args: Parameters<typeof inspect>) => {
+      entered()
+      await held
+      return inspect(...args)
+    },
+  )
+  const opening = harness.reader.open(harness.selection, undefined, true, true)
+  try {
+    await started
+
+    // Act
+    harness.focusWiki()
+    release()
+    await opening
+
+    // Assert
+    assert.equal(harness.arrangements(), 2)
+    assert.equal(harness.reader.inspect().view.loading, false)
+    assert.equal(harness.reader.inspect().view.error, '')
+    assert.equal(harness.shown.at(-1)?.text, 'export const price = 24;\n')
+  } finally {
+    release()
+    await opening.catch(() => undefined)
+  }
+})
+
+test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft()
+  await harness.reader.open(harness.selection, undefined, true, true)
+
+  // Act
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+  const arrangements = harness.arrangements(),
+    shownBeforeFocus = harness.shown.length
+  assert.equal(harness.shown.at(-1)?.text, 'export const price = 24;\n')
+  harness.focusWiki()
+  await waitUntil(
+    () =>
+      harness.shown.length > shownBeforeFocus &&
+      !harness.reader.inspect().view.loading,
+    'new native source display after Wiki selection',
+  )
+
+  // Assert
+  assert.equal(harness.arrangements(), arrangements)
+  assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+  assert.equal(harness.reader.inspect().view.error, '')
+})
+
 test('selecting the Wiki after a quiet agent article displays its exact citation without another article request', async (context) => {
   // Arrange
   const harness = await readerHarness(context)
@@ -1153,26 +1273,32 @@ for (const retirement of ['abort', 'Close', 'new Open'] as const)
     }
   })
 
-test('Wiki opens its real retained citation before resolving an otherwise ambiguous primary pane', async (context) => {
-  // Arrange
-  const harness = await readerHarness(context)
-  harness.requireSourceFocus()
-  // Act
-  await harness.reader.open(harness.selection)
-  // Assert
-  assert.deepEqual(harness.panelColumns, [2])
-  assert.deepEqual(harness.reveals, [2])
-  assert.equal(harness.shown.length, 1)
-  assert.equal(harness.shown[0]!.text, 'export const price = 24;\n')
-  assert.equal(
-    harness.reader.inspect().sourceUri,
-    harness.shown[0]!.uri.toString(),
-  )
-  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module')
-  assert.equal(harness.reader.inspect().view.loading, false)
-  assert.equal(harness.connections(), 0)
-  assert.equal((await harness.library.readProgress()).decisions.length, 0)
-})
+for (const entry of ['ordinary open', 'Return without an open Wiki'] as const)
+  test(`Wiki ${entry} opens its real retained citation before resolving an otherwise ambiguous primary pane`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    // Act
+    await harness.reader.open(
+      harness.selection,
+      undefined,
+      entry !== 'ordinary open',
+      entry !== 'ordinary open',
+    )
+    // Assert
+    assert.deepEqual(harness.panelColumns, [2])
+    assert.deepEqual(harness.reveals, [2])
+    assert.equal(harness.shown.length, 1)
+    assert.equal(harness.shown[0]!.text, 'export const price = 24;\n')
+    assert.equal(
+      harness.reader.inspect().sourceUri,
+      harness.shown[0]!.uri.toString(),
+    )
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module')
+    assert.equal(harness.reader.inspect().view.loading, false)
+    assert.equal(harness.connections(), 0)
+    assert.equal((await harness.library.readProgress()).decisions.length, 0)
+  })
 
 test('an unavailable Wiki citation cannot acquire native layout or focus as a temporary anchor', async (context) => {
   // Arrange
