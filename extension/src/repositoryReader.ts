@@ -42,6 +42,8 @@ export interface RepositoryFocusTarget {
   matchesGroup(): boolean
   /** Lets citation display acquire its initial caret before the requested selection without changing layout targets. @example target.matchesEditorIdentity?.() */
   matchesEditorIdentity?: () => boolean
+  /** Confirms the requested citation tab before its group activates; used only by {@link RepositoryReader.openSource}'s native focus receipt. @example target.matchesPreparedTab?.() */
+  matchesPreparedTab?: () => boolean
 }
 
 /** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
@@ -850,11 +852,22 @@ export class RepositoryReader {
         editor.viewColumn === vscode.ViewColumn.One
       )
     }
+    /** Confirms the exact primary citation tab during {@link openSource}'s native activation, before its group owns focus. @returns Whether the prepared tab belongs to this citation. @example matchesPreparedTab() */
+    const matchesPreparedTab = (): boolean => {
+      const input = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === vscode.ViewColumn.One,
+      )?.activeTab?.input
+      return (
+        input instanceof vscode.TabInputText &&
+        input.uri.toString() === uri.toString()
+      )
+    }
     // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
     const focus = preserveFocus
       ? undefined
       : this.retainNativeFocus({
           matchesEditorIdentity,
+          matchesPreparedTab,
           matchesEditor: () => {
             const editor = vscode.window.activeTextEditor
             return (
@@ -1190,9 +1203,12 @@ export class RepositoryReader {
         ) {
           if (
             !activeEditor &&
-            groupMatches &&
+            (groupMatches ||
+              (current.group === pending.group &&
+                acquire.matchesPreparedTab?.())) &&
             intermediateEditor === undefined
           ) {
+            // The owned tab can be ready before the old group releases focus and reports the target group.
             missingEditorObserved = true
             intermediateMatches = true
           } else if (acquire.matchesEditorIdentity()) {

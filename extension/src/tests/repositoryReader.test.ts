@@ -129,6 +129,7 @@ async function readerHarness(context: TestContext) {
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined
   let layoutResponseGate: { entered(): void; wait: Promise<void> } | undefined
   let nativeCitationActivation = false
+  let nativeCitationOrder: 'group-first' | 'editor-first' = 'group-first'
   let rendererGate:
     { entered(): void; wait: Promise<void>; loadedOnly: boolean } | undefined
   let citationActivationGate:
@@ -314,7 +315,12 @@ async function readerHarness(context: TestContext) {
             sourceGroup.tabs.push(tab)
             sourceGroup.activeTab = tab
             // A foreground native source display activates its main group before its text-editor receipt.
-            if (!options?.preserveFocus) activeGroup = sourceGroup
+            if (
+              !options?.preserveFocus &&
+              (!nativeCitationActivation ||
+                nativeCitationOrder === 'group-first')
+            )
+              activeGroup = sourceGroup
             if (!options?.preserveFocus && nativeCitationActivation) {
               const pauseAt = async (
                 stage: NonNullable<typeof citationActivationGate>['stage'],
@@ -332,6 +338,11 @@ async function readerHarness(context: TestContext) {
               activeEditor = undefined
               for (const listener of focusListeners) listener()
               await pauseAt('text gap')
+              // VS Code can clear the old editor before selecting the already prepared source tab's group.
+              if (nativeCitationOrder === 'editor-first') {
+                activeGroup = sourceGroup
+                for (const listener of groupListeners) listener()
+              }
               activeEditor = {
                 ...editor,
                 selections: [
@@ -633,8 +644,11 @@ async function readerHarness(context: TestContext) {
     useColdLayout(): void {
       coldLayout = true
     },
-    useNativeCitationActivation(): void {
+    useNativeCitationActivation(
+      order: 'group-first' | 'editor-first' = 'group-first',
+    ): void {
       nativeCitationActivation = true
+      nativeCitationOrder = order
     },
     holdCitationActivation(
       stage: NonNullable<typeof citationActivationGate>['stage'],
@@ -1121,6 +1135,56 @@ test('a refused observation request lets an already-started Wiki citation previe
   assert.equal(harness.reader.inspect().view.error, '')
   assert.equal((await harness.library.readProgress()).decisions.length, 0)
 })
+
+// Regression: C20 native Article Up clears the old text editor before activating the prepared citation group.
+test('changing a Wiki article completes when its prepared citation clears the old editor before group activation', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  await harness.reader.open({ ...harness.selection, nodeId: 'order' })
+  harness.switchTabGroup()
+  harness.useNativeCitationActivation('editor-first')
+  const listeners = harness.focusListenerCount()
+
+  // Act
+  await harness.reader.open(harness.selection)
+
+  // Assert
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module')
+  assert.equal(harness.reader.inspect().view.loading, false)
+  assert.equal(harness.reader.inspect().view.error, '')
+  assert.equal(harness.shown.at(-1)?.text, 'export const price = 24;\n')
+  assert.deepEqual(harness.reveals, [2, 2])
+  assert.equal(harness.focusListenerCount(), listeners)
+  assert.equal((await harness.library.readProgress()).decisions.length, 0)
+})
+
+for (const departure of ['another source', 'citation tab roundtrip'] as const)
+  test(`changing a Wiki article preserves ${departure} during the prepared citation's early editor gap`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    await harness.reader.open({ ...harness.selection, nodeId: 'order' })
+    harness.switchTabGroup()
+    harness.useNativeCitationActivation('editor-first')
+    const held = harness.holdCitationActivation('text gap'),
+      opening = harness.reader.open(harness.selection),
+      rejected = assert.rejects(opening, /focus changed/)
+    try {
+      await held.started
+      // Act: explicit newer input must invalidate the otherwise permitted native transition.
+      if (departure === 'another source') harness.focusUnrelatedDraft()
+      else harness.roundtripCitationTab()
+      held.release()
+      await rejected
+      // Assert
+      assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+      assert.deepEqual(harness.reveals, [2])
+      assert.equal((await harness.library.readProgress()).decisions.length, 0)
+    } finally {
+      held.release()
+    }
+  })
 
 for (const entry of ['cold ordinary text', 'ambiguous primary'] as const)
   test(`${entry} Wiki opens after native citation activation reports a missing editor and initial caret`, async (context) => {
