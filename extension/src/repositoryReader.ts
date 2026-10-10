@@ -428,13 +428,26 @@ export class RepositoryReader {
     signal: AbortSignal,
   ): Promise<void> {
     this.assertCurrent(generation)
-    const panel = this.panel,
-      revision = this.revision,
-      focus = this.retainNativeFocus()
+    const panel = this.panel
+    if (!panel) throw new Error('Repository Wiki panel is unavailable.')
+    let quietRevealIssued = false,
+      quietSelectionAccepted = false,
+      quietRevealAcknowledged = false
+    const revision = this.revision,
+      focus = this.retainNativeFocus(undefined, () => {
+        const expected = quietRevealIssued && this.hasNativeWikiFocus()
+        quietSelectionAccepted ||= expected
+        return expected
+      })
     let windowDeparted = !vscode.window.state.focused
     const windowFocus = vscode.window.onDidChangeWindowState((state) => {
         // Leaving and returning to the window cannot revive an old pending input handoff.
         windowDeparted ||= !state.focused
+      }),
+      revealState = panel.onDidChangeViewState(() => {
+        // A quiet display can be visible without keyboard focus; confirm its own native view-state notification.
+        if (quietRevealIssued && panel.visible && this.hasNativeWikiFocus())
+          quietRevealAcknowledged = true
       }),
       assertInputRetained = (): void => {
         focus.assertRetained()
@@ -444,11 +457,12 @@ export class RepositoryReader {
           )
       }
     try {
-      if (!panel) throw new Error('Repository Wiki panel is unavailable.')
       assertInputRetained()
       // Visibility alone cannot focus a recreated iframe; reveal quietly before waiting for its own model receipt.
-      if (this.needsDocumentReveal(panel, revision))
+      if (this.needsDocumentReveal(panel, revision)) {
+        quietRevealIssued = true
         this.revealPanel(panel, true)
+      }
       await waitUntil(
         () => {
           this.assertCurrent(generation)
@@ -464,10 +478,16 @@ export class RepositoryReader {
       assertInputRetained()
       focus.dispose()
       windowFocus.dispose()
-      this.revealPanel(panel, false)
+      revealState.dispose()
+      this.activateReadyPanel(
+        panel,
+        quietSelectionAccepted,
+        quietRevealAcknowledged,
+      )
     } finally {
       focus.dispose()
       windowFocus.dispose()
+      revealState.dispose()
     }
   }
 
@@ -485,6 +505,23 @@ export class RepositoryReader {
     preserveFocus: boolean,
   ): void {
     panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Two, preserveFocus)
+  }
+
+  /** Commits {@link revealReadyPanel}'s handoff after the own visible-state and selected-tab confirmation. @param panel - The current ready pane. @param selectionAccepted - Whether a quiet reveal changed the native group selection. @param visibleAcknowledged - Whether that display received its native view-state notification. @example this.activateReadyPanel(panel, true, true) */
+  private activateReadyPanel(
+    panel: vscode.WebviewPanel,
+    selectionAccepted: boolean,
+    visibleAcknowledged: boolean,
+  ): void {
+    // Preserving focus does not promise an active panel; it must still be the acknowledged selected Wiki tab.
+    if (
+      selectionAccepted &&
+      (!visibleAcknowledged || !this.hasNativeWikiFocus())
+    )
+      throw new Error(
+        'Native focus changed during repository navigation; the newer learner focus was preserved.',
+      )
+    this.revealPanel(panel, false)
   }
 
   /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection. @example await reader.openFromAgent(input) */
@@ -1093,8 +1130,11 @@ export class RepositoryReader {
     this.sourceDeferred = false
   }
 
-  /** Retains initial or explicitly acquired citation focus for {@link open}; later observed departures irrevocably retire it. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
-  private retainNativeFocus(acquire?: RepositoryFocusTarget) {
+  /** Retains initial or acquired focus for {@link open}; later input irrevocably retires it. @param acquire - The requested citation whose native activation may be observed in stages. @param acceptGroupSelection - Admits once the own quiet Wiki reveal's tab selection, preserving the original editor identity. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
+  private retainNativeFocus(
+    acquire?: RepositoryFocusTarget,
+    acceptGroupSelection?: () => boolean,
+  ) {
     const snapshot = () => {
       const editor = vscode.window.activeTextEditor,
         group = vscode.window.tabGroups.activeTabGroup
@@ -1115,6 +1155,7 @@ export class RepositoryReader {
     const pending = snapshot()
     let initial = acquire ? undefined : pending,
       changed = false,
+      groupSelectionAccepted = false,
       editorAcquired = false,
       groupAcquired = false
     let intermediateEditor = acquire?.matchesEditorIdentity?.()
@@ -1174,6 +1215,16 @@ export class RepositoryReader {
         groupAcquired ||= groupMatches
         if (editorMatches && groupMatches) initial = current
         return
+      }
+      // A quiet reveal selects its tab without moving keyboard; it cannot forgive a changed editor or an earlier departure.
+      if (
+        initial &&
+        current.group !== initial.group &&
+        !groupSelectionAccepted &&
+        acceptGroupSelection?.()
+      ) {
+        initial = { ...initial, group: current.group }
+        groupSelectionAccepted = true
       }
       changed ||=
         current.editor !== initial?.editor || current.group !== initial?.group

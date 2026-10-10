@@ -118,7 +118,9 @@ async function readerHarness(context: TestContext) {
   let activeGroup = sourceGroup
   let windowFocused = true
   let activateWikiPanel = (): void => {}
+  let focusStudyPanel = (): void => {}
   let hideWikiPanel = (): void => {}
+  let nativeWikiSelection = false
   let requiresSourceFocus = false,
     coldLayout = false,
     arrangements = 0
@@ -366,7 +368,10 @@ async function readerHarness(context: TestContext) {
               for (const listener of focusListeners) listener()
             }
             let disposed = (): void => {}
-            let viewStateChanged = (): void => {}
+            const viewStateListeners = new Set<() => void>()
+            const viewStateChanged = (): void => {
+              for (const listener of viewStateListeners) listener()
+            }
             let receivePanelMessage = (_message: unknown): void => {}
             let documentReady = false
             // Native webview content is recreated after hiding; readiness precedes its first model receipt.
@@ -386,13 +391,29 @@ async function readerHarness(context: TestContext) {
               active: false,
               visible: true,
               onDidChangeViewState(callback: () => void) {
-                viewStateChanged = callback
-                return disposable()
+                viewStateListeners.add(callback)
+                return {
+                  dispose(): void {
+                    viewStateListeners.delete(callback)
+                  },
+                }
               },
               reveal(column: number, preserveFocus = false): void {
                 reveals.push(column)
                 revealFocus.push(preserveFocus)
                 panel.visible = true
+                // Cursor selects the revealed native tab even when its old document keeps keyboard focus.
+                if (nativeWikiSelection) {
+                  activeGroup = otherGroup
+                  otherGroup.activeTab = wikiTab
+                  for (const listener of tabListeners) listener()
+                  for (const listener of groupListeners) listener()
+                  // Native tab/group callbacks can precede the pane's own view-state callback.
+                  queueMicrotask(() => {
+                    panel.active = !preserveFocus
+                    viewStateChanged()
+                  })
+                }
                 void beginDocument()
               },
               dispose(): void {
@@ -440,6 +461,19 @@ async function readerHarness(context: TestContext) {
             }
             otherGroup.tabs.push(wikiTab)
             otherGroup.activeTab = wikiTab
+            focusStudyPanel = (): void => {
+              const studyTab = {
+                input: new TabInputWebview(
+                  'mainThreadWebview-codebook.studyContext',
+                ),
+              }
+              otherGroup.tabs.push(studyTab)
+              otherGroup.activeTab = studyTab
+              activeGroup = otherGroup
+              activeEditor = undefined
+              for (const listener of tabListeners) listener()
+              for (const listener of groupListeners) listener()
+            }
             activateWikiPanel = (): void => {
               activeEditor = undefined
               activeGroup = otherGroup
@@ -708,6 +742,12 @@ async function readerHarness(context: TestContext) {
     },
     focusWiki(): void {
       activateWikiPanel()
+    },
+    focusStudy(): void {
+      focusStudyPanel()
+    },
+    useNativeWikiSelection(): void {
+      nativeWikiSelection = true
     },
     hideWiki(): void {
       hideWikiPanel()
@@ -2015,6 +2055,75 @@ test('an external Return preserves native chat input and completes while the hid
     renderer.release()
   }
 })
+
+test('intentional Study Return accepts its own quiet native Wiki tab selection before the document is ready', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+  harness.focusStudy()
+  harness.useNativeWikiSelection()
+  const revealsBefore = harness.revealFocus.length,
+    renderer = harness.holdRenderer(),
+    opening = harness.reader.open(harness.selection, undefined, true),
+    result = opening.then(
+      () => ({ opened: true, error: '' }),
+      (error: unknown) => ({ opened: false, error: String(error) }),
+    )
+  try {
+    await renderer.started
+    await waitUntil(
+      () => harness.revealFocus.length > revealsBefore,
+      'the quiet native tab selection',
+    )
+
+    // Act
+    renderer.release()
+
+    // Assert
+    assert.deepEqual(await result, { opened: true, error: '' })
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true, false])
+    assert.equal(harness.focusListenerCount(), 0)
+  } finally {
+    renderer.release()
+    await result
+  }
+})
+
+for (const departure of ['source', 'other group', 'group roundtrip'] as const)
+  test(`a newer ${departure} after the own quiet Wiki selection still cancels the old Return`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.hideWiki()
+    harness.focusStudy()
+    harness.useNativeWikiSelection()
+    const revealsBefore = harness.revealFocus.length,
+      renderer = harness.holdRenderer(),
+      opening = harness.reader.open(harness.selection, undefined, true),
+      failed = assert.rejects(opening, /Native focus changed/)
+    try {
+      await renderer.started
+      await waitUntil(
+        () => harness.revealFocus.length > revealsBefore,
+        'the own quiet Wiki selection',
+      )
+
+      // Act: later learner input stays terminal even when the expected Wiki tab becomes active again.
+      if (departure === 'source') harness.focusUnrelatedDraft()
+      else harness.switchTabGroup(true)
+      if (departure === 'group roundtrip') harness.focusWiki()
+      renderer.release()
+
+      // Assert
+      await failed
+      assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true])
+      assert.equal(harness.focusListenerCount(), 0)
+    } finally {
+      renderer.release()
+      await failed.catch(() => undefined)
+    }
+  })
 
 test('a previous article render receipt cannot release a newer pending Wiki entry', async (context) => {
   // Arrange
