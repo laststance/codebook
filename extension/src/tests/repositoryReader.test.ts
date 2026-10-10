@@ -118,6 +118,7 @@ async function readerHarness(context: TestContext) {
   let activeGroup = sourceGroup
   let windowFocused = true
   let activateWikiPanel = (): void => {}
+  let blurWikiPanel = (): void => {}
   let focusStudyPanel = (): void => {}
   let hideWikiPanel = (): void => {}
   let nativeWikiSelection = false
@@ -501,6 +502,12 @@ async function readerHarness(context: TestContext) {
               documentReady = false
               viewStateChanged()
             }
+            blurWikiPanel = (): void => {
+              // Native view-state notifications require an actual state change.
+              if (!panel.active) return
+              panel.active = false
+              viewStateChanged()
+            }
             panels.add(panel)
             return panel
           },
@@ -748,6 +755,7 @@ async function readerHarness(context: TestContext) {
       activeEditor = undefined
       // Side-view chat leaves the last Wiki main group selected while its input owns keyboard.
       activeGroup = otherGroup
+      blurWikiPanel()
       for (const listener of focusListeners) listener()
     },
     setWindowFocus(focused: boolean): void {
@@ -1001,6 +1009,159 @@ test('selecting the Wiki after a quiet agent article displays its exact citation
   assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
   assert.equal((await harness.library.readProgress()).decisions.length, 0)
 })
+
+for (const readiness of ['document', 'article'] as const)
+  test(`selecting a recreated Wiki gives it keyboard focus after its deferred citation and current ${readiness} are ready`, async (context) => {
+    // Arrange: the agent updates an existing hidden Wiki while the learner types in a file.
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.hideWiki()
+    harness.focusUnrelatedDraft()
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+    harness.useNativeWikiSelection()
+    const renderer = harness.holdRenderer(readiness === 'article'),
+      shownBefore = harness.shown.length,
+      revealsBefore = harness.revealFocus.length
+    try {
+      // Act: native selection precedes the recreated document, as in the C23 editor trace.
+      harness.focusWiki()
+      await renderer.started
+      await waitUntil(
+        () => harness.shown.length === shownBefore + 1,
+        'the deferred citation to display before renderer readiness',
+      )
+      assert.equal(
+        harness.revealFocus.slice(revealsBefore).includes(false),
+        false,
+      )
+      renderer.release()
+      await waitUntil(
+        () =>
+          harness.reader.inspect().rendered &&
+          harness.focusListenerCount() === 0,
+        'the current Wiki document and completed focus handoff',
+      )
+
+      // Assert: readiness is followed by one owned activation, without a second article request.
+      assert.deepEqual(harness.revealFocus.slice(revealsBefore), [false])
+      assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+      assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+      assert.equal(harness.reader.inspect().view.error, '')
+    } finally {
+      renderer.release()
+    }
+  })
+
+for (const departure of ['window', 'window roundtrip', 'another file'] as const)
+  test(`${departure} departure during deferred citation loading prevents the recreated Wiki from taking keyboard later`, async (context) => {
+    // Arrange: hold both source acquisition and the new document after native Wiki selection.
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.hideWiki()
+    harness.focusUnrelatedDraft()
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+    const source = harness.holdSourceDocument(),
+      renderer = harness.holdRenderer(),
+      shownBefore = harness.shown.length,
+      revealsBefore = harness.revealFocus.length
+    try {
+      harness.focusWiki()
+      await source.started
+      await renderer.started
+
+      // Act: an intervening learner choice remains terminal even after the window returns.
+      if (departure === 'another file') harness.focusUnrelatedDraft('later.txt')
+      else {
+        harness.setWindowFocus(false)
+        if (departure === 'window roundtrip') harness.setWindowFocus(true)
+      }
+      const newerInput = harness.focusedSource()
+      source.release()
+      renderer.release()
+      await waitUntil(
+        () => harness.focusListenerCount() === 0,
+        'the retired deferred citation focus ownership',
+      )
+
+      // Assert: no late activation or misleading source error replaces the newer input.
+      assert.equal(
+        harness.revealFocus.slice(revealsBefore).includes(false),
+        false,
+      )
+      assert.equal(harness.shown.length, shownBefore)
+      assert.equal(harness.focusedSource(), newerInput)
+      assert.equal(harness.reader.inspect().view.error, '')
+    } finally {
+      source.release()
+      renderer.release()
+    }
+  })
+
+for (const departure of [
+  'chat',
+  'chat roundtrip',
+  'window',
+  'window roundtrip',
+  'another group',
+  'Close',
+] as const)
+  test(`${departure} while the selected Wiki document loads prevents its deferred preview from taking keyboard later`, async (context) => {
+    // Arrange: the source has been acquired, but the selected native Wiki has not created its document yet.
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.hideWiki()
+    harness.focusUnrelatedDraft()
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+    const renderer = harness.holdRenderer(),
+      shownBefore = harness.shown.length,
+      revealsBefore = harness.revealFocus.length
+    try {
+      harness.focusWiki()
+      await renderer.started
+      await waitUntil(
+        () => harness.shown.length === shownBefore + 1,
+        'the selected Wiki citation before document readiness',
+      )
+
+      // Act: the learner leaves before the pending document can receive keyboard focus.
+      if (departure === 'chat' || departure === 'chat roundtrip') {
+        harness.focusChat()
+        if (departure === 'chat roundtrip') harness.focusWiki()
+      } else if (departure === 'window' || departure === 'window roundtrip') {
+        harness.setWindowFocus(false)
+        if (departure === 'window roundtrip') harness.setWindowFocus(true)
+      } else if (departure === 'another group') harness.switchTabGroup(true)
+      else harness.reader.close()
+      const newerInput = harness.focusedSource()
+      renderer.release()
+      await waitUntil(
+        () => harness.focusListenerCount() === 0,
+        'the cancelled selected-Wiki handoff',
+      )
+
+      // Assert: late readiness cannot undo that newer native choice.
+      assert.equal(
+        harness.revealFocus.slice(revealsBefore).includes(false),
+        false,
+      )
+      assert.equal(harness.focusedSource(), newerInput)
+      assert.equal(harness.reader.inspect().view.error, '')
+    } finally {
+      renderer.release()
+    }
+  })
 
 test('selecting the Wiki while its requested article is loading completes that article and displays its cited source', async (context) => {
   // Arrange

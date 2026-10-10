@@ -421,6 +421,7 @@ export class RepositoryReader {
    * Hands intentional {@link open} input to a ready Wiki document, including one recreated after hiding.
    * @param generation - Rejects a Close or newer navigation instead of activating its old panel.
    * @param signal - Cancels the current navigation's bounded renderer wait.
+   * @param assertSelectedInput - Retains an already-selected Wiki during deferred citation work without another quiet selection.
    * @returns Completion of the current article's render acknowledgement and native handoff, not a pixel-paint guarantee.
    * @throws A renderer timeout, cancellation or newer native-input error; no activating reveal follows a failed wait.
    * @example await this.revealReadyPanel(generation, navigation.signal)
@@ -428,6 +429,7 @@ export class RepositoryReader {
   private async revealReadyPanel(
     generation: number,
     signal: AbortSignal,
+    assertSelectedInput?: () => void,
   ): Promise<void> {
     this.assertCurrent(generation)
     const panel = this.panel
@@ -441,27 +443,23 @@ export class RepositoryReader {
         quietSelectionAccepted ||= expected
         return expected
       })
-    let windowDeparted = !vscode.window.state.focused
-    const windowFocus = vscode.window.onDidChangeWindowState((state) => {
-        // Leaving and returning to the window cannot revive an old pending input handoff.
-        windowDeparted ||= !state.focused
-      }),
+    const windowFocus = this.retainWindowFocus(),
       revealState = panel.onDidChangeViewState(() => {
         // A quiet display can be visible without keyboard focus; confirm its own native view-state notification.
         if (quietRevealIssued && panel.visible && this.hasNativeWikiFocus())
           quietRevealAcknowledged = true
       }),
       assertInputRetained = (): void => {
+        assertSelectedInput?.()
         focus.assertRetained()
-        if (windowDeparted || !vscode.window.state.focused)
-          throw new Error(
-            'Native window focus changed while the Repository Wiki loaded; the newer learner focus was preserved.',
-          )
+        windowFocus.assertRetained()
       }
     try {
       assertInputRetained()
       // Visibility alone cannot focus a recreated iframe; reveal quietly before waiting for its own model receipt.
-      if (this.needsDocumentReveal(panel, revision)) {
+      if (
+        this.needsDocumentReveal(panel, revision, Boolean(assertSelectedInput))
+      ) {
         quietRevealIssued = true
         this.revealPanel(panel, true)
       }
@@ -493,12 +491,36 @@ export class RepositoryReader {
     }
   }
 
-  /** Tests whether {@link revealReadyPanel} must make a recreated/current document visible before its acknowledgement can arrive. @param panel - The same navigation-owned native pane. @param revision - The article whose receipt can permit handoff. @returns True when visibility or the current render receipt is missing. @example this.needsDocumentReveal(panel, revision) */
+  /** Retains window ownership across source acquisition and rendering for {@link revealDeferredCitation} and {@link revealReadyPanel}. @returns A sticky departure assertion and its listener cleanup. @example const focus = this.retainWindowFocus(); focus.assertRetained(); focus.dispose() */
+  private retainWindowFocus() {
+    let departed = !vscode.window.state.focused
+    const listener = vscode.window.onDidChangeWindowState((state) => {
+      // A later window return cannot revive the earlier input handoff.
+      departed ||= !state.focused
+    })
+    return {
+      assertRetained(): void {
+        if (departed || !vscode.window.state.focused)
+          throw new Error(
+            'Native window focus changed while the Repository Wiki loaded; the newer learner focus was preserved.',
+          )
+      },
+      dispose(): void {
+        listener.dispose()
+      },
+    }
+  }
+
+  /** Tests whether {@link revealReadyPanel} must make a recreated/current document visible before its acknowledgement can arrive. @param panel - The same navigation-owned native pane. @param revision - The article whose receipt can permit handoff. @param alreadySelected - A deferred citation retains the learner's visible selection without another quiet reveal. @returns True when visibility or an unselected document's current render receipt is missing. @example this.needsDocumentReveal(panel, revision) */
   private needsDocumentReveal(
     panel: vscode.WebviewPanel,
     revision: number,
+    alreadySelected = false,
   ): boolean {
-    return !panel.visible || this.rendered?.revision !== revision
+    return (
+      !panel.visible ||
+      (!alreadySelected && this.rendered?.revision !== revision)
+    )
   }
 
   /** Applies the current native column policy for both quiet and activating {@link revealReadyPanel} displays. @param panel - The current navigation's pane, whose latest placement is respected. @param preserveFocus - Keeps input while the document loads; false pays the validated ready handoff. @example this.revealPanel(panel, true) */
@@ -1063,38 +1085,61 @@ export class RepositoryReader {
   private async revealDeferredCitation(): Promise<void> {
     const generation = this.generation,
       request = ++this.sourcePreviewRequest,
-      focus = this.retainNativeFocus()
+      signal = this.navigation.signal,
+      panel = this.panel!,
+      needsDocumentHandoff = this.needsDocumentReveal(panel, this.revision),
+      focus = this.retainNativeFocus(),
+      windowFocus = this.retainWindowFocus()
     let departed = false
+    const viewState = panel.onDidChangeViewState(() => {
+        // Switching away and back cannot revive the first selected document's pending handoff.
+        departed ||= !panel.active || !panel.visible
+      }),
+      assertSelectedInput = (): void => {
+        try {
+          focus.assertRetained()
+          windowFocus.assertRetained()
+          this.assertSelectedPreview(request, departed)
+        } catch (error) {
+          departed = true
+          throw error
+        }
+      }
     try {
+      assertSelectedInput()
       const opened = await this.openSource(
         this.selection!,
         this.book!,
         generation,
         true,
-        () => {
-          try {
-            focus.assertRetained()
-          } catch (error) {
-            departed = true
-            throw error
-          }
-          if (
-            request !== this.sourcePreviewRequest ||
-            !this.hasNativeWikiFocus()
-          )
-            throw new Error(
-              'The newer native input was preserved instead of opening an old citation.',
-            )
-        },
+        assertSelectedInput,
       )
+      assertSelectedInput()
+      // Retire the preview before the ready handoff can emit another native view-state callback.
       this.commitDeferredPreview(generation, request, opened.uri)
+      if (needsDocumentHandoff)
+        await this.revealReadyPanel(generation, signal, assertSelectedInput)
     } catch (error) {
       // A newer native choice cancels automatic preview without reporting a user action as a source failure.
       if (this.previewRetired(generation, request, departed)) return
       throw error
     } finally {
       focus.dispose()
+      windowFocus.dispose()
+      viewState.dispose()
     }
+  }
+
+  /** Rejects an obsolete or abandoned native selection during {@link revealDeferredCitation}'s source and renderer waits. @param request - The source preview that originally acquired the selected Wiki. @param departed - Whether that selection was left, even if the learner has since returned. @throws When a newer preview or native input owns the handoff. @example this.assertSelectedPreview(request, false) */
+  private assertSelectedPreview(request: number, departed: boolean): void {
+    if (
+      departed ||
+      request !== this.sourcePreviewRequest ||
+      !this.hasActiveWikiFocus()
+    )
+      throw new Error(
+        'The newer native input was preserved instead of opening an old citation.',
+      )
   }
 
   /** Completes a command's original layout from {@link open} or {@link revealDeferredSource} after the learner selects Wiki. @param initialFocus - Releases the finishing background request before its normal Return begins. @example await this.completeDeferredReturn() */
