@@ -1,7 +1,7 @@
 # Cycle 0046 — Every defect Cycle 0045 left is fixed
 
 Type: bug-fix cycle\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: PR-open (draft pull request #88; nothing is delivered yet)\
 Goal version: 10 (9 until the owner's direction of 2026-10-05 on the target systems)\
@@ -53,7 +53,7 @@ Order (Issue #87, "Proposed Change"): this record first; then packages by area, 
 
 ## Current validation and delivery state
 
-Both normally installed hosts load C21 b79b388d/sourceHash4d0e873e, extension0.2.30/API1.7/common skill1.0.42. Task437 is now closed at two-host Ubuntu native development level: the exact Article Up failure reaches A/title with retained window focus and complete mapped-motion/cleanup evidence. Source4167/4166pass/one skip, package338 and two restored controls retain the same source hashes. Full331/332/423 remain open: their raw C21 outcomes are recorded, but the new-revision return's visible reading position needs investigation before family closure. Counts438/405 closed/32 native-pending plus implementing438. No full-cycle delivery, current-source CI, merge or final acceptance is claimed. Finding438 records the source-supported new-article focus-intent overwrite; its DOM regression and repair are next.
+Both normally installed hosts still load C21 b79b388d/sourceHash4d0e873e, extension0.2.30/API1.7/common skill1.0.42. Task437 is closed at bounded two-host Ubuntu native level. Finding438 now has source/DOM/control/full/static/package/review proof; the corrected renderer is uninstalled and C22 normal package/install is next. Full331/332/423 and fixed438 native proof remain required. Counts438/405 closed/33 native-pending, none implementing. No full-cycle delivery, current-source CI, merge or final acceptance is claimed.
 
 Prior normally installed candidate12: clean build `f7478e06b8ac68dec364b65317c93b29541c1073`, source repair `4b458158cc3e4f6e476eaf2615a090883f345d93`, extension0.2.30/API1.7/common skill1.0.42. Its29-entry VSIX has1,410,979bytes, SHA `7f8474b5c52a00ae724f7b9d259201e827b394bdbccf7897de033f41eb11baf6`, sourceHash `b16ff4ada7262422408b433c6123be3389a95073e3d8b6ace55d624006daf4b7`, installed code SHA `4498fc02c7e6bb5c2baf4e7d4f7bc59b16fc2d703361c90afbd576e4e7681511`; common skill SHA unchanged0a413f1c. Both ordinary dedicated-profile CLI installs exit0 and installed code matches package. One normal Reload per owned host (VS266/Cursor279) gives fresh public instances ce7f4ef5/137992d5 with the exact clean C12 revision/sourceHash and zero runs. Original settings hashes remain exact. Root releases only the load-preparation quiet token after terminal commands/status checks. No model request, database start, actual393 run, motion or final acceptance is claimed. Private native-final/candidate12-verification.json.
 
@@ -848,6 +848,18 @@ Selected increment: existing Repository Wiki DOM regression starts at a real rec
 
 Task437 remains closed on C21. Original331/332/423 and every other native task remain open. Counts438 total/405 closed/32 native-pending plus implementing438; the cycle returns to implementing. Entry/source-impact assessment remains current: ENTRY/DESKTOP/WIKI/SOURCE-LINKS and dependent REPLAY need this correction; unchanged source mechanisms and all integrated/other-OS/final requirements carry forward. No product source or tests changed in this finding record. The first438 insertion followed the missing-coverage note outside the table; the explicit continuity audit rejected it. The row is moved into the same table before further work, preserving the note and every criterion.
 
+### Finding438 source repair verified; C22 next (2026-10-10)
+
+Root continues the unchanged controlling contracts and current source-impact audit. The existing Repository Wiki DOM regression reproduces the C21 failure: leaving a recording control, then opening a new article/revision without location, returns to evidence-0-recording instead of article-title. The corrected cases use internally consistent publication/catalog revisions and the actual C21 Wiki viewport sizes339×654 and821×293. Four cases fail without the correction; all14 cases pass with it. The same-article list/explicit-location/background/alternate-control cases remain green.
+
+The source correction is one guard in {@link repositoryClient}: only an unchanged content key may inherit the prior observation-list control. A new article's default title wish is no longer overwritten; its explicit Return location still restores afterward through the existing path. No new utility, storage schema, API/skill version, native focus policy, runtime input or reader layout is introduced. A final-build compiled control removes only that guard, fails all four new cases while the original ten pass, and restores exact compiled bytes.
+
+Full4167/4166pass/one existing filesystem skip/zero failures, package/scripts338/338, serial ESLint, root Prettier and unchanged health/dupes/dead-code baselines pass. CodeRabbit completes both changed paths with0 findings. Host OCR accounts for both eligible files, no exclusions and0 findings. This is repair-delta review, not whole-cycle delivery review. Exact source/log/control hashes are in private native-final/n438/source-gates.json; product sourceHashceabed7e. Installed C21 and its actual failure remain source-qualified until clean C22 is normally installed and validated.
+
+Preserve preparation results: the first browser launch used the CLI's absent default Chrome path; the existing private Chrome executable then runs normally. Initial cases kept an inconsistent latestRevision and the helper's generic narrow viewport, so their visibility sub-assertion was not valid native-layout proof; the corrected publication model and actual viewport sizes retain the same visible-title requirement. The initial valid focus-ID failure remains, and the final four-case disabled-fix control proves the corrected cases. Context7 returns its monthly-quota error; local existing CLI/docs provide the fallback. The investigation-owned source boundary is released after source work; all test/browser/package handles are terminal.
+
+438 remains NATIVE-PENDING, alongside original331/332/423. Counts438/405 closed/33 native-pending, none implementing. ENTRY/DESKTOP/WIKI/SOURCE-LINKS and dependent REPLAY require normal C22 proof; LIVE/SAVE/GAPS/LEARNING/WIKI-UPDATE/SHORTCUTS/SKILL/REAL-PROJECTS carry unchanged mechanisms with all broader gaps. Commit only the verified repair/records, normally package/install C22, then verify new-article default title, explicit location, genuine same-article list replacement and original control/recording/Return conditions in both hosts. No final-stage or delivery requirement is reduced.
+
 ## Historical evidence checkpoints
 
 - [2026-10-10 complete snapshot](0046-evidence-checkpoint-20261010.md), captured byte-for-byte from committed efa98376 before shortening the active record, SHA-256 `e01c3e493f36550b1a9c66bde788666d63889412294ecd0f5509a033ec88aec2`. It preserves every previous entry through native task314 closure, including failures, source identities and older owner instructions. Existing incoming entry headings above forward to this unchanged copy.
@@ -865,4 +877,4 @@ Only this active record, PROJECT_STATE and the complete task table govern curren
 
 Result remains pending; delivery remains draft PR-open. No defect is carried or dropped; closure requires every current task and every finding discovered before delivery to be closed. Native development, review, merge, packaging/publication, installed verification and owner acceptance remain distinct.
 
-One next action: obtain the existing-renderer regression RED for438, repair new-article/list focus precedence, then finish original331/332/423 native proof. Counts438/405 closed/32 native-pending plus implementing438. Every other native task, full delivery and final acceptance remains required.
+One next action: normally package/install clean C22 and verify438 plus the original331/332/423 native charter, including actual same-article list replacement. Counts438/405 closed/33 native-pending, none implementing. Every other native task, full delivery and final acceptance remains required.

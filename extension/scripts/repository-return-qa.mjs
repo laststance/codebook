@@ -340,6 +340,106 @@ async function check(page, options, collected) {
     { whileAway: focusWhileRevisionArrives, atReturn: await focusedId() },
   )
 
+  // A newly selected article owns its initial focus; only a list update within the same article inherits the old control.
+  for (const scenario of [
+    {
+      name: 'revision in the side pane',
+      nodeId: 'order',
+      revision: 2,
+      width: 339,
+      height: 654,
+    },
+    {
+      name: 'article in the side pane',
+      nodeId: 'review-order',
+      revision: 1,
+      width: 339,
+      height: 654,
+    },
+    {
+      name: 'revision in the bottom pane',
+      nodeId: 'order',
+      revision: 2,
+      width: 821,
+      height: 293,
+    },
+    {
+      name: 'article in the bottom pane',
+      nodeId: 'review-order',
+      revision: 1,
+      width: 821,
+      height: 293,
+    },
+  ]) {
+    // Arrange: the learner leaves a recording control in the original article.
+    await openPane(undefined)
+    // These are the actual C21 native Wiki viewport sizes, not a reduced whole-editor acceptance target.
+    await page.setViewportSize({
+      width: scenario.width,
+      height: scenario.height,
+    })
+    await publish(options.message)
+    await leavePane('evidence-0-recording')
+    // Act: the agent selects a new article or revision without an explicit reading location.
+    await publish({
+      ...options.message,
+      revision: options.message.revision + 1,
+      catalog: options.message.catalog.map((entry) => ({
+        ...entry,
+        revision: scenario.revision,
+        revisions: scenario.revision === 2 ? [1, 2] : [1],
+        firstNodeId: scenario.nodeId,
+      })),
+      selection: {
+        ...options.message.selection,
+        revision: scenario.revision,
+        nodeId: scenario.nodeId,
+      },
+      book: {
+        ...options.message.book,
+        latestRevision: scenario.revision,
+        links: options.message.book.links.map((link) => ({
+          ...link,
+          nodeId: scenario.nodeId,
+        })),
+        revision: {
+          ...options.message.book.revision,
+          revision: scenario.revision,
+          document: {
+            ...options.message.book.revision.document,
+            nodes: options.message.book.revision.document.nodes.map((node) => ({
+              ...node,
+              id: scenario.nodeId,
+            })),
+          },
+        },
+      },
+    })
+    const whileAway = await focusedId()
+    await returnToPane()
+    const actual = await page.evaluate(() => {
+      const bounds = document
+        .getElementById('article-title')
+        .getBoundingClientRect()
+      return {
+        atReturn: document.activeElement.id,
+        titleVisible: bounds.top >= 0 && bounds.bottom <= innerHeight,
+        scrollY,
+      }
+    })
+    // Assert: an old observation cannot replace the new article's visible title as the return destination.
+    addCase(
+      `opening a new ${scenario.name} while away restores its visible title instead of the previous recording control`,
+      {
+        whileAway: 'body',
+        atReturn: 'article-title',
+        titleVisible: true,
+        scrollY: 0,
+      },
+      { whileAway, ...actual },
+    )
+  }
+
   // Cycle 0046 row 332. Arrange: the keyboard stands on View recording.
   await openPane(undefined)
   await publish(options.message)

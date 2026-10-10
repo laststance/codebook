@@ -461,9 +461,12 @@ function repositoryClient(
       evidenceKey = JSON.stringify([key, links])
     if (element('observations').dataset.key !== evidenceKey) {
       element('observations').dataset.key = evidenceKey
+      // A new article already owns its title or explicit Return focus; only its own list update inherits a control.
       const keyboardStandsAt = keyboardControl(),
         focusedId =
-          keyboardStandsAt && element('observations').contains(keyboardStandsAt)
+          !changed &&
+          keyboardStandsAt &&
+          element('observations').contains(keyboardStandsAt)
             ? keyboardStandsAt.id
             : undefined
       element('observations').replaceChildren(
