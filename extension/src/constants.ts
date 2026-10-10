@@ -486,6 +486,8 @@ export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
 export const MAIN_THREAD_WEBVIEW_PREFIX = 'mainThreadWebview-'
 export const REPOSITORY_SOURCE_SCHEME = 'codebook-repository-source'
 export const REPOSITORY_READER_DEBOUNCE_MS = 150
+/** Bounds the current-document acknowledgement before {@link RepositoryReader.open} hands native input to the Wiki. */
+export const REPOSITORY_READER_READY_TIMEOUT_MS = PRESENTATION_READY_TIMEOUT_MS
 export const REPOSITORY_VISITED_CITATIONS_LIMIT = 512
 export const REPOSITORY_NARROW_WIDTH_PX = 800
 // Intro, citations, observations and learner progress complement authored article sections.

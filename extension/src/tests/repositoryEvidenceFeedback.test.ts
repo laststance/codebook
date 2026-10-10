@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test'
 import type { RepositorySelection } from '../learnerSchemas'
 import { LearningLibrary } from '../learningLibrary'
 import type * as RepositoryReaderModule from '../repositoryReader'
+import type { RepositoryViewMessage } from '../repositoryView'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -83,6 +84,8 @@ async function feedbackHarness(context: TestContext) {
           },
         },
         window: {
+          state: { focused: true },
+          onDidChangeWindowState: disposable,
           tabGroups: {
             activeTabGroup: { viewColumn: 1 },
             onDidChangeTabs: disposable,
@@ -97,7 +100,10 @@ async function feedbackHarness(context: TestContext) {
           },
           createWebviewPanel: () => {
             let disposed = (): void => {}
+            let receivePanelMessage = (_value: unknown): void => {}
+            let documentReady = false
             return {
+              visible: true,
               reveal(): void {},
               onDidChangeViewState: disposable,
               dispose(): void {
@@ -108,9 +114,24 @@ async function feedbackHarness(context: TestContext) {
               },
               webview: {
                 html: '',
-                postMessage: async () => true,
+                postMessage: async (message: RepositoryViewMessage) => {
+                  // Notification tests keep native rendering healthy; only their evidence operation fails.
+                  if (!documentReady) {
+                    documentReady = true
+                    receivePanelMessage({ type: 'ready' })
+                    return true
+                  }
+                  receivePanelMessage({
+                    type: 'rendered',
+                    revision: message.revision,
+                    selection: message.selection,
+                    width: 1024,
+                  })
+                  return true
+                },
                 onDidReceiveMessage(callback: (value: unknown) => void) {
                   receive = callback
+                  receivePanelMessage = callback
                   return disposable()
                 },
               },

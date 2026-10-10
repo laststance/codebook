@@ -9,6 +9,7 @@ import {
   LEARNER_SELECTION_KINDS,
   REPOSITORY_FIXED_READING_SECTIONS,
   REPOSITORY_READER_DEBOUNCE_MS,
+  REPOSITORY_READER_READY_TIMEOUT_MS,
   REPOSITORY_SOURCE_SCHEME,
 } from './constants'
 import { requireWorkspace } from './environment'
@@ -28,6 +29,7 @@ import {
   type RepositoryViewMessage,
 } from './repositoryView'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { repositoryHtml } from './ui/repositoryHtml'
 import { citationLearningState } from './utils/citationLearningState'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
@@ -101,6 +103,8 @@ export class RepositoryReader {
   /** Prevents a focus callback from superseding an {@link open} whose final source checks are still pending. */
   private openingGeneration?: number
   private sourcePreviewRequest = 0
+  /** Only the current visible document may acknowledge the model that {@link revealReadyPanel} will activate. */
+  private documentReady = false
   private rendered?: {
     revision: number
     selection?: RepositorySelection
@@ -384,14 +388,15 @@ export class RepositoryReader {
       this.assertCurrent(generation)
       coldFocus?.assertRetained()
       anchoredSource?.assertFocused()
+      // Hand the settled source/layout input directly to the renderer phase's own native focus receipt.
       coldFocus?.dispose()
       sourceFocus?.dispose()
-      if (!background)
-        this.panel?.reveal(
-          this.panel.viewColumn ?? vscode.ViewColumn.Two,
-          false,
-        )
-      else await this.completeDeferredReturn(signal, initialFocus)
+      if (!background) {
+        // Native reveal can recreate a hidden document; keep input ownership until that exact article acknowledges rendering.
+        await this.revealReadyPanel(generation, navigation.signal)
+      } else {
+        await this.completeDeferredReturn(signal, initialFocus)
+      }
     } catch (error) {
       if (generation === this.generation && !this.disposed) {
         this.error = String(error)
@@ -408,6 +413,78 @@ export class RepositoryReader {
       sourceFocus?.dispose()
       signal?.removeEventListener('abort', cancel)
     }
+  }
+
+  /**
+   * Hands intentional {@link open} input to a ready Wiki document, including one recreated after hiding.
+   * @param generation - Rejects a Close or newer navigation instead of activating its old panel.
+   * @param signal - Cancels the current navigation's bounded renderer wait.
+   * @returns Completion of the current article's render acknowledgement and native handoff, not a pixel-paint guarantee.
+   * @throws A renderer timeout, cancellation or newer native-input error; no activating reveal follows a failed wait.
+   * @example await this.revealReadyPanel(generation, navigation.signal)
+   */
+  private async revealReadyPanel(
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    this.assertCurrent(generation)
+    const panel = this.panel,
+      revision = this.revision,
+      focus = this.retainNativeFocus()
+    let windowDeparted = !vscode.window.state.focused
+    const windowFocus = vscode.window.onDidChangeWindowState((state) => {
+        // Leaving and returning to the window cannot revive an old pending input handoff.
+        windowDeparted ||= !state.focused
+      }),
+      assertInputRetained = (): void => {
+        focus.assertRetained()
+        if (windowDeparted || !vscode.window.state.focused)
+          throw new Error(
+            'Native window focus changed while the Repository Wiki loaded; the newer learner focus was preserved.',
+          )
+      }
+    try {
+      if (!panel) throw new Error('Repository Wiki panel is unavailable.')
+      assertInputRetained()
+      // Visibility alone cannot focus a recreated iframe; reveal quietly before waiting for its own model receipt.
+      if (this.needsDocumentReveal(panel, revision))
+        this.revealPanel(panel, true)
+      await waitUntil(
+        () => {
+          this.assertCurrent(generation)
+          assertInputRetained()
+          return this.rendered?.revision === revision
+        },
+        'the current Repository Wiki article to render',
+        REPOSITORY_READER_READY_TIMEOUT_MS,
+        signal,
+      )
+      // A renderer acknowledgement cannot authorize activation over a newer learner choice.
+      this.assertCurrent(generation)
+      assertInputRetained()
+      focus.dispose()
+      windowFocus.dispose()
+      this.revealPanel(panel, false)
+    } finally {
+      focus.dispose()
+      windowFocus.dispose()
+    }
+  }
+
+  /** Tests whether {@link revealReadyPanel} must make a recreated/current document visible before its acknowledgement can arrive. @param panel - The same navigation-owned native pane. @param revision - The article whose receipt can permit handoff. @returns True when visibility or the current render receipt is missing. @example this.needsDocumentReveal(panel, revision) */
+  private needsDocumentReveal(
+    panel: vscode.WebviewPanel,
+    revision: number,
+  ): boolean {
+    return !panel.visible || this.rendered?.revision !== revision
+  }
+
+  /** Applies the current native column policy for both quiet and activating {@link revealReadyPanel} displays. @param panel - The current navigation's pane, whose latest placement is respected. @param preserveFocus - Keeps input while the document loads; false pays the validated ready handoff. @example this.revealPanel(panel, true) */
+  private revealPanel(
+    panel: vscode.WebviewPanel,
+    preserveFocus: boolean,
+  ): void {
+    panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Two, preserveFocus)
   }
 
   /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection. @example await reader.openFromAgent(input) */
@@ -653,6 +730,9 @@ export class RepositoryReader {
     this.assertCurrent(generation)
     source?.assertFocused()
     this.loading = false
+    // Loading receipts cannot authorize keyboard handoff before the usable article is rendered.
+    this.revision++
+    this.rendered = undefined
     this.watchSources()
     this.publish()
     await this.refreshSources(generation)
@@ -1230,6 +1310,7 @@ export class RepositoryReader {
   /** Installs a single nonce-scoped panel whose obsolete callbacks cannot act after Close. @example this.ensurePanel() */
   private ensurePanel(preserveFocus = false): void {
     if (this.panel) return
+    this.retireRenderedDocument()
     const panel = vscode.window.createWebviewPanel(
       'codebook.repositoryWiki',
       'codebook · Repository Wiki',
@@ -1238,8 +1319,11 @@ export class RepositoryReader {
     )
     this.panel = panel
     panel.onDidChangeViewState(() => {
+      if (this.panel !== panel) return
+      // A hidden panel loses its document; its last receipt cannot certify the next iframe.
+      this.retireHiddenDocument(panel)
       // Selecting the Wiki is the learner's explicit permission to replace the primary file with its cited source.
-      if (this.panel !== panel || !panel.active || !panel.visible) return
+      if (!panel.active || !panel.visible) return
       const generation = this.generation
       void this.revealDeferredSource().catch((error) => {
         if (this.panel !== panel || this.generation !== generation) return
@@ -1279,6 +1363,7 @@ export class RepositoryReader {
       if (this.panel === panel) {
         this.navigation.abort()
         this.panel = undefined
+        this.retireRenderedDocument()
         this.generation++
         this.statusGeneration++
         this.clearWatchers()
@@ -1288,25 +1373,54 @@ export class RepositoryReader {
     panel.webview.html = repositoryHtml()
   }
 
+  /** Retires document-local proof on creation, hiding or disposal for {@link ensurePanel}. @example this.retireRenderedDocument() */
+  private retireRenderedDocument(): void {
+    this.documentReady = false
+    this.rendered = undefined
+  }
+
+  /** Invalidates document-local readiness when {@link ensurePanel} observes that native content was hidden. @param panel - The current native panel whose visibility changed. @example this.retireHiddenDocument(panel) */
+  private retireHiddenDocument(panel: vscode.WebviewPanel): void {
+    if (!panel.visible) this.retireRenderedDocument()
+  }
+
+  /** Accepts passive readiness only for the current visible Wiki document for {@link receive}. @param panel - The already validated current panel. @param message - A ready signal or current-revision model acknowledgement. @example this.receiveDocument(panel, { type: 'ready' }) */
+  private receiveDocument(
+    panel: vscode.WebviewPanel,
+    message: Extract<
+      z.infer<typeof repositoryMessageSchema>,
+      { type: 'ready' | 'rendered' }
+    >,
+  ): void {
+    if (!panel.visible) return
+    if (message.type === 'ready') {
+      // A new visible document must render the current model before it receives native input.
+      this.rendered = undefined
+      this.documentReady = true
+      this.publish()
+      return
+    }
+    // A not-yet-ready document cannot authorize a native handoff.
+    if (this.documentReady) this.rendered = message
+  }
+
   /** Rejects untyped/stale webview actions before source, navigation, understanding, or evidence work. @example await this.receive(value) */
   private async receive(value: unknown): Promise<void> {
     if (!this.panel) return
     const message = repositoryMessageSchema.parse(value)
     this.assertOwner()
-    if (message.type === 'ready') {
-      this.publish()
+    if (message.type === 'ready' || message.type === 'rendered') {
+      if (message.type === 'rendered' && message.revision !== this.revision)
+        return
+      this.receiveDocument(this.panel, message)
       return
     }
     if (message.revision !== this.revision) {
       // Delayed render/scroll notifications are passive; obsolete controls still fail before any action.
-      if (message.type === 'rendered' || message.type === 'location') return
+      if (message.type === 'location') return
       throw new Error(
         'Article changed; inspect the current view before acting.',
       )
-    }
-    if (message.type === 'rendered') {
-      this.rendered = message
-      return
     }
     if (message.type === 'select') await this.open(message.selection)
     if (message.type === 'location') await this.remember(message.selection)

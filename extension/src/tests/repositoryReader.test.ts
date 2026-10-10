@@ -7,6 +7,7 @@ import type { RepositorySelection } from '../learnerSchemas'
 import { LearningLibrary } from '../learningLibrary'
 import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookDocument, BookObservationBinding } from '../repositorySchemas'
+import type { RepositoryViewMessage } from '../repositoryView'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -104,6 +105,7 @@ async function readerHarness(context: TestContext) {
   type NativeSelectionEvent = { kind: number; textEditor: NativeEditor }
   let activeEditor: NativeEditor | undefined
   const focusListeners = new Set<() => void>(),
+    windowFocusListeners = new Set<(state: { focused: boolean }) => void>(),
     selectionListeners = new Set<(event?: NativeSelectionEvent) => void>(),
     tabListeners = new Set<() => void>(),
     groupListeners = new Set<() => void>()
@@ -114,7 +116,9 @@ async function readerHarness(context: TestContext) {
   } = { viewColumn: 1, tabs: [] }
   const otherGroup: typeof sourceGroup = { viewColumn: 2, tabs: [] }
   let activeGroup = sourceGroup
+  let windowFocused = true
   let activateWikiPanel = (): void => {}
+  let hideWikiPanel = (): void => {}
   let requiresSourceFocus = false,
     coldLayout = false,
     arrangements = 0
@@ -123,6 +127,8 @@ async function readerHarness(context: TestContext) {
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined
   let layoutResponseGate: { entered(): void; wait: Promise<void> } | undefined
   let nativeCitationActivation = false
+  let rendererGate:
+    { entered(): void; wait: Promise<void>; loadedOnly: boolean } | undefined
   let citationActivationGate:
     | {
         stage: 'target tab' | 'text gap' | 'initial caret'
@@ -219,6 +225,19 @@ async function readerHarness(context: TestContext) {
           },
         },
         window: {
+          get state() {
+            return { focused: windowFocused }
+          },
+          onDidChangeWindowState(
+            callback: (state: { focused: boolean }) => void,
+          ) {
+            windowFocusListeners.add(callback)
+            return {
+              dispose(): void {
+                windowFocusListeners.delete(callback)
+              },
+            }
+          },
           registerTreeDataProvider: () => {
             wikiViewsRegistered += 1
             return {
@@ -348,6 +367,19 @@ async function readerHarness(context: TestContext) {
             }
             let disposed = (): void => {}
             let viewStateChanged = (): void => {}
+            let receivePanelMessage = (_message: unknown): void => {}
+            let documentReady = false
+            // Native webview content is recreated after hiding; readiness precedes its first model receipt.
+            const beginDocument = async (): Promise<void> => {
+              const held = rendererGate
+              if (held && !held.loadedOnly) {
+                held.entered()
+                await held.wait
+              }
+              if (!panel.visible || documentReady || !panels.has(panel)) return
+              documentReady = true
+              receivePanelMessage({ type: 'ready' })
+            }
             const panel = {
               title: '',
               viewColumn: column,
@@ -360,6 +392,8 @@ async function readerHarness(context: TestContext) {
               reveal(column: number, preserveFocus = false): void {
                 reveals.push(column)
                 revealFocus.push(preserveFocus)
+                panel.visible = true
+                void beginDocument()
               },
               dispose(): void {
                 panels.delete(panel)
@@ -370,13 +404,35 @@ async function readerHarness(context: TestContext) {
               },
               webview: {
                 html: '',
-                postMessage: async () => true,
+                postMessage: async (message: RepositoryViewMessage) => {
+                  // Default editor-effect fixtures acknowledge actual published models; a held renderer cannot certify a new document.
+                  const held = rendererGate
+                  if (held && (!held.loadedOnly || !message.loading)) {
+                    held.entered()
+                    await held.wait
+                  }
+                  if (!panel.visible || !documentReady) return false
+                  receivePanelMessage({
+                    type: 'rendered',
+                    revision: message.revision,
+                    selection: message.selection,
+                    width: 1024,
+                  })
+                  return true
+                },
                 onDidReceiveMessage: (callback: (value: unknown) => void) => {
                   receive = callback
+                  receivePanelMessage = callback
                   return disposable()
                 },
               },
             }
+            Object.defineProperty(panel.webview, 'html', {
+              get: () => '',
+              set: () => {
+                void beginDocument()
+              },
+            })
             const wikiTab = {
               input: new TabInputWebview(
                 'mainThreadWebview-codebook.repositoryWiki',
@@ -388,8 +444,16 @@ async function readerHarness(context: TestContext) {
               activeEditor = undefined
               activeGroup = otherGroup
               panel.active = true
+              panel.visible = true
+              void beginDocument()
               for (const listener of focusListeners) listener()
               for (const listener of groupListeners) listener()
+              viewStateChanged()
+            }
+            hideWikiPanel = (): void => {
+              panel.active = false
+              panel.visible = false
+              documentReady = false
               viewStateChanged()
             }
             panels.add(panel)
@@ -512,6 +576,25 @@ async function readerHarness(context: TestContext) {
     requireSourceFocus(): void {
       requiresSourceFocus = true
     },
+    /** Holds real reader-message acknowledgements during entry so readiness regressions can emulate a recreated native document. @example const renderer = harness.holdRenderer(); renderer.release() */
+    holdRenderer(loadedOnly = false) {
+      let entered!: () => void, unblock!: () => void
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          unblock = resolve
+        }),
+        held = { entered, wait, loadedOnly }
+      rendererGate = held
+      return {
+        started,
+        release(): void {
+          if (rendererGate === held) rendererGate = undefined
+          unblock()
+        },
+      }
+    },
     arrangements: () => arrangements,
     useColdLayout(): void {
       coldLayout = true
@@ -579,6 +662,7 @@ async function readerHarness(context: TestContext) {
     focusedSource: () => activeEditor,
     focusListenerCount: () =>
       focusListeners.size +
+      windowFocusListeners.size +
       selectionListeners.size +
       tabListeners.size +
       groupListeners.size,
@@ -618,8 +702,15 @@ async function readerHarness(context: TestContext) {
       activeGroup = otherGroup
       for (const listener of focusListeners) listener()
     },
+    setWindowFocus(focused: boolean): void {
+      windowFocused = focused
+      for (const listener of windowFocusListeners) listener({ focused })
+    },
     focusWiki(): void {
       activateWikiPanel()
+    },
+    hideWiki(): void {
+      hideWikiPanel()
     },
     focusUnrelatedDraft(filename = 'unrelated-draft.txt'): void {
       const document = {
@@ -1810,6 +1901,361 @@ test('late article navigation cannot replace a newer selection or reopen a close
   assert.equal(harness.reader.inspect().opened, false)
 })
 
+// Regression: Cycle0046 task428 — activating a not-yet-created native document leaves the Wiki without keyboard focus.
+// Value: protects=intentional Wiki entry waits for its current document; fails_when=activation precedes its render receipt; why_new=existing fixtures treated reveal as ready; seam=none.
+for (const entry of ['cold article', 'hidden Study Return'] as const)
+  test(`${entry} keeps native input until its current Wiki document is rendered, then gives the article its keyboard`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    if (entry === 'hidden Study Return') {
+      await harness.reader.open(harness.selection)
+      harness.hideWiki()
+    }
+    const revealsBefore = harness.revealFocus.length,
+      renderer = harness.holdRenderer(),
+      opening = harness.reader.open(
+        harness.selection,
+        undefined,
+        entry === 'hidden Study Return',
+      )
+    try {
+      await renderer.started
+      await waitUntil(
+        () => harness.revealFocus.length > revealsBefore,
+        'the owned Wiki display',
+      )
+      // Assert: initial visibility must not activate a document that does not exist yet.
+      assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true])
+      assert.equal(
+        harness.focusedSource()?.document.getText(),
+        'export const price = 24;\n',
+      )
+
+      // Act
+      renderer.release()
+      await opening
+
+      // Assert
+      assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true, false])
+      assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module')
+    } finally {
+      renderer.release()
+      await opening.catch(() => undefined)
+    }
+  })
+
+// Value: protects=newer native input while the document loads; fails_when=the readiness handoff ignores a departure; why_new=entry previously activated synchronously; seam=none.
+for (const departure of [
+  'chat',
+  'source key',
+  'window',
+  'window roundtrip',
+  'Close',
+] as const)
+  test(`a ${departure} while the Wiki document loads prevents the old entry from taking keyboard focus later`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    const renderer = harness.holdRenderer(),
+      opening = harness.reader.open(harness.selection),
+      failed = assert.rejects(
+        opening,
+        departure === 'Close'
+          ? /abort|obsolete/i
+          : departure.startsWith('window')
+            ? /Native window focus changed/
+            : /Native focus changed/,
+      )
+    try {
+      await renderer.started
+      await waitUntil(
+        () => harness.revealFocus.length > 0,
+        'the owned Wiki display',
+      )
+      assert.deepEqual(harness.revealFocus, [true])
+
+      // Act: actual editor effects retire ownership even when the original state later returns.
+      if (departure === 'chat') harness.focusChat()
+      else if (departure === 'source key') harness.selectSource(0, 1, 1)
+      else if (departure.startsWith('window')) {
+        harness.setWindowFocus(false)
+        if (departure === 'window roundtrip') harness.setWindowFocus(true)
+      } else harness.reader.close()
+      renderer.release()
+      await failed
+
+      // Assert
+      assert.deepEqual(harness.revealFocus, [true])
+      assert.equal(harness.focusListenerCount(), 0)
+    } finally {
+      renderer.release()
+      await failed.catch(() => undefined)
+    }
+  })
+
+test('an external Return preserves native chat input and completes while the hidden Wiki renderer is still unavailable', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+  harness.focusChat()
+  const revealsBefore = harness.revealFocus.length,
+    renderer = harness.holdRenderer()
+  try {
+    // Act
+    await harness.reader.open(harness.selection, undefined, true, true)
+
+    // Assert
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [])
+    assert.equal(harness.focusedSource(), undefined)
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module')
+  } finally {
+    renderer.release()
+  }
+})
+
+test('a previous article render receipt cannot release a newer pending Wiki entry', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  await harness.reader.open(harness.selection)
+  const previous = harness.reader.inspect().view,
+    revealsBefore = harness.revealFocus.length,
+    renderer = harness.holdRenderer(),
+    opening = harness.reader.open({ ...harness.selection, nodeId: 'order' })
+  try {
+    await renderer.started
+    await waitUntil(
+      () => harness.revealFocus.length > revealsBefore,
+      'the new article display',
+    )
+
+    // Act
+    harness.receive({
+      type: 'rendered',
+      revision: previous.revision,
+      selection: previous.selection,
+      width: 1024,
+    })
+    await Promise.resolve()
+
+    // Assert
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true])
+    assert.equal(harness.reader.inspect().rendered, undefined)
+    renderer.release()
+    await opening
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true, false])
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+  } finally {
+    renderer.release()
+    await opening.catch(() => undefined)
+  }
+})
+
+test('new native chat input cancels an unanchored Wiki entry while its document is still loading', async (context) => {
+  // Arrange: no source-acquisition receipt exists; the renderer wait must retain the actual native input itself.
+  const harness = await readerHarness(context),
+    renderer = harness.holdRenderer(),
+    opening = harness.reader.open(harness.selection),
+    failed = assert.rejects(opening, /Native focus changed/)
+  try {
+    await renderer.started
+    await waitUntil(
+      () => harness.revealFocus.length > 0,
+      'the unanchored Wiki display',
+    )
+
+    // Act
+    harness.focusChat()
+    renderer.release()
+    await failed
+
+    // Assert
+    assert.deepEqual(harness.revealFocus, [true])
+    assert.equal(harness.focusedSource(), undefined)
+    assert.equal(harness.focusListenerCount(), 0)
+  } finally {
+    renderer.release()
+    await failed.catch(() => undefined)
+  }
+})
+
+test('hiding Wiki retires its earlier same-article render receipt before the document is recreated', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  await harness.reader.open(harness.selection)
+  const inspect = harness.store.sources.inspect.bind(harness.store.sources)
+  let entered!: () => void, release!: () => void
+  const started = new Promise<void>((resolve) => {
+      entered = resolve
+    }),
+    wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+  harness.store.sources.inspect = async (...args) => {
+    entered()
+    await wait
+    return inspect(...args)
+  }
+  const opening = harness.reader.open(harness.selection)
+  try {
+    await started
+    assert.equal(
+      harness.reader.inspect().rendered?.revision,
+      harness.reader.inspect().view.revision,
+    )
+
+    // Act
+    harness.hideWiki()
+
+    // Assert: the hidden document's receipt cannot certify a recreated iframe, even for the same article revision.
+    assert.equal(harness.reader.inspect().rendered, undefined)
+  } finally {
+    release()
+    harness.store.sources.inspect = inspect
+    await opening.catch(() => undefined)
+  }
+})
+
+test('late hidden-document receipts cannot certify a visible Wiki before its new document is ready', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  const previous = harness.reader.inspect().view,
+    lateReceipt = {
+      type: 'rendered',
+      revision: previous.revision,
+      selection: previous.selection,
+      width: 390,
+    }
+  harness.hideWiki()
+
+  // Act: neither a hidden ready message nor a late model receipt revives the old document.
+  harness.receive({ type: 'ready' })
+  harness.receive(lateReceipt)
+
+  // Assert
+  assert.equal(harness.reader.inspect().rendered, undefined)
+  const renderer = harness.holdRenderer()
+  try {
+    // Act: visibility can precede the new document's actual ready message.
+    harness.focusWiki()
+    await renderer.started
+    harness.receive(lateReceipt)
+
+    // Assert
+    assert.equal(harness.reader.inspect().rendered, undefined)
+    renderer.release()
+    await waitUntil(
+      () => harness.reader.inspect().rendered,
+      'the recreated Wiki model',
+    )
+    assert.equal(harness.reader.inspect().rendered?.width, 1024)
+  } finally {
+    renderer.release()
+  }
+})
+
+test('a loading article receipt cannot authorize Wiki keyboard before its usable article is rendered', async (context) => {
+  // Arrange: allow the ready document to acknowledge its loading model, but hold its usable article.
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  await harness.reader.open(harness.selection)
+  const revealsBefore = harness.revealFocus.length,
+    renderer = harness.holdRenderer(true),
+    opening = harness.reader.open({ ...harness.selection, nodeId: 'order' })
+  try {
+    await renderer.started
+    await waitUntil(
+      () => harness.revealFocus.length > revealsBefore,
+      'the Wiki display after source preparation',
+    )
+    // Act: let the ready handoff's promise continuations run while the usable model remains held.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true])
+    renderer.release()
+    await opening
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true, false])
+    assert.equal(harness.reader.inspect().view.loading, false)
+  } finally {
+    renderer.release()
+    await opening.catch(() => undefined)
+  }
+})
+
+test('a newer article cancels an old renderer wait and only the latest article receives keyboard focus', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  const renderer = harness.holdRenderer(),
+    opening = harness.reader.open(harness.selection),
+    retired = assert.rejects(opening, /abort|obsolete/i)
+  try {
+    await renderer.started
+    await waitUntil(
+      () => harness.revealFocus.length > 0,
+      'the first article display',
+    )
+
+    // Act
+    const newer = harness.reader.open({ ...harness.selection, nodeId: 'order' })
+    renderer.release()
+    await retired
+    await newer
+
+    // Assert: the old quiet display is followed by one current activating handoff.
+    assert.deepEqual(
+      harness.revealFocus.filter((preserveFocus) => !preserveFocus),
+      [false],
+    )
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+    assert.equal(harness.shown.at(-1)?.text, 'export const total = 48;\n')
+    assert.equal(harness.focusListenerCount(), 0)
+  } finally {
+    renderer.release()
+    await retired.catch(() => undefined)
+  }
+})
+
+test(
+  'an unavailable Wiki renderer times out without taking native input, and a late receipt cannot revive that entry',
+  { timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    const renderer = harness.holdRenderer(),
+      opening = harness.reader.open(harness.selection),
+      failed = assert.rejects(
+        opening,
+        /Timed out waiting for the current Repository Wiki article to render/,
+      )
+    try {
+      // Act: retain the real production renderer deadline instead of replacing it with a test-only budget.
+      await renderer.started
+      await failed
+      renderer.release()
+      await Promise.resolve()
+
+      // Assert
+      assert.deepEqual(harness.revealFocus, [true])
+      assert.equal(
+        harness.focusedSource()?.document.getText(),
+        'export const price = 24;\n',
+      )
+      assert.equal(harness.focusListenerCount(), 0)
+    } finally {
+      renderer.release()
+      await failed.catch(() => undefined)
+    }
+  },
+)
+
 test('delayed scroll and render receipts from a previous article do not warn on the new article or overwrite its return context', async (context) => {
   // Arrange
   const harness = await readerHarness(context)
@@ -1839,7 +2285,12 @@ test('delayed scroll and render receipts from a previous article do not warn on 
     (await harness.library.readProgress()).repositorySelection?.nodeId,
     'order',
   )
-  assert.equal(harness.reader.inspect().rendered, undefined)
+  assert.deepEqual(harness.reader.inspect().rendered, {
+    type: 'rendered',
+    revision: harness.reader.inspect().view.revision,
+    selection: { ...harness.selection, nodeId: 'order' },
+    width: 1024,
+  })
   assert.equal((await harness.library.readProgress()).decisions.length, 0)
 })
 
