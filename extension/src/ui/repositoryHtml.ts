@@ -408,7 +408,15 @@ function repositoryClient(
         text('relations', 'No relationships authored for this article.')
       if (!location) {
         window.scrollTo(0, 0)
-        placeFocus(() => element('article-title'))
+        // A wrapped toolbar can hide the title; reveal it only when this deferred default focus is paid.
+        placeFocus(() => {
+          const title = element('article-title'),
+            bounds = title.getBoundingClientRect()
+          // Preserve the default top position when the title is already fully visible.
+          if (bounds.top < 0 || bounds.bottom > window.innerHeight)
+            title.scrollIntoView({ block: 'nearest' })
+          return title
+        })
       }
     }
     // Citation status changes update labels in place, without replacing the learner's focused control.

@@ -225,6 +225,17 @@ async function check(page, options, collected) {
       actual,
       passed: JSON.stringify(actual) === JSON.stringify(expected),
     })
+  /** Checks exact default-title placement or the retained-pose pixel tolerance for the location cases in {@link check}; kept inside the serialized browser flow. @param actual - Measured scroll and control position. @param scenario - The frozen position expectation for this case. @returns Whether the reading offset matches. @example matchesExpectedReadingOffset({ scrollY: 16, top: 412 }, { foreign: true, expectedScroll: 16, expectedTop: 412 }) */
+  const matchesExpectedReadingOffset = (actual, scenario) =>
+    scenario.foreign
+      ? actual.scrollY === scenario.expectedScroll &&
+        actual.top === scenario.expectedTop
+      : Math.abs(actual.top - scenario.expectedTop) <= 1
+  /** Checks focus, visibility and unchanged learner state for the reading cases in {@link check}. @param actual - Measured focused control and learner state. @param scenario - The frozen focus destination. @returns Whether reading returns without granting understanding. @example matchesExpectedReadingState({ focusedId: 'article-title', visible: true, understood: false }, { focusId: 'article-title' }) */
+  const matchesExpectedReadingState = (actual, scenario) =>
+    actual.focusedId === scenario.focusId &&
+    actual.visible === true &&
+    actual.understood === false
   for (const scenario of [
     {
       name: 'observation Return overrides a cached temporary pane position',
@@ -245,10 +256,12 @@ async function check(page, options, collected) {
       expectedTop: 110.5,
     },
     {
-      name: 'a different article ignores the previous article cached location',
+      name: 'a different article ignores cached reading and keeps its default title visible',
       focusId: 'article-title',
       explicit: false,
       foreign: true,
+      expectedTop: 412,
+      expectedScroll: 16,
     },
   ]) {
     // Arrange: the host's original control was halfway down; hidden-pane persistence saved one quarter instead.
@@ -277,16 +290,14 @@ async function check(page, options, collected) {
         focusedId: document.activeElement.id,
         top: bounds.top,
         scrollY,
+        visible: bounds.top >= 0 && bounds.bottom <= innerHeight,
         understood: document.getElementById('understand').checked,
       }
     }, scenario.focusId)
     // Assert: exact control and reading offset survive; this action never grants understanding.
     const passed =
-      actual.focusedId === scenario.focusId &&
-      actual.understood === false &&
-      (scenario.foreign
-        ? actual.scrollY === 0
-        : Math.abs(actual.top - scenario.expectedTop) <= 1)
+      matchesExpectedReadingState(actual, scenario) &&
+      matchesExpectedReadingOffset(actual, scenario)
     await page.screenshot({
       path: `${options.output}/case-${cases.length + 1}.png`,
     })
@@ -370,6 +381,14 @@ async function check(page, options, collected) {
       width: 821,
       height: 293,
     },
+    {
+      name: 'revision below a wrapped toolbar in the bottom pane',
+      nodeId: 'order',
+      revision: 2,
+      width: 821,
+      height: 293,
+      bookTitle: 'Recorded repository login history (native focus QA)',
+    },
   ]) {
     // Arrange: the learner leaves a recording control in the original article.
     await openPane(undefined)
@@ -378,13 +397,20 @@ async function check(page, options, collected) {
       width: scenario.width,
       height: scenario.height,
     })
-    await publish(options.message)
+    const initialMessage = {
+      ...options.message,
+      catalog: options.message.catalog.map((entry) => ({
+        ...entry,
+        title: scenario.bookTitle ?? entry.title,
+      })),
+    }
+    await publish(initialMessage)
     await leavePane('evidence-0-recording')
     // Act: the agent selects a new article or revision without an explicit reading location.
     await publish({
       ...options.message,
       revision: options.message.revision + 1,
-      catalog: options.message.catalog.map((entry) => ({
+      catalog: initialMessage.catalog.map((entry) => ({
         ...entry,
         revision: scenario.revision,
         revisions: scenario.revision === 2 ? [1, 2] : [1],
@@ -416,6 +442,7 @@ async function check(page, options, collected) {
       },
     })
     const whileAway = await focusedId()
+    const scrollWhileAway = await page.evaluate(() => window.scrollY)
     await returnToPane()
     const actual = await page.evaluate(() => {
       const bounds = document
@@ -434,9 +461,17 @@ async function check(page, options, collected) {
         whileAway: 'body',
         atReturn: 'article-title',
         titleVisible: true,
-        scrollY: 0,
+        // A wrapped toolbar may require scrolling to reveal the title; the short-title cases keep their exact top position.
+        ...(scenario.bookTitle ? { scrollWhileAway: 0 } : { scrollY: 0 }),
       },
-      { whileAway, ...actual },
+      {
+        whileAway,
+        atReturn: actual.atReturn,
+        titleVisible: actual.titleVisible,
+        ...(scenario.bookTitle
+          ? { scrollWhileAway }
+          : { scrollY: actual.scrollY }),
+      },
     )
   }
 
