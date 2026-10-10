@@ -310,8 +310,88 @@ async function check(page, options, collected) {
     })
   }
 
+  /** Checks real wheel reading while Return is still pending; called by {@link verifyCitationStatusReturn} after its first-focus case. @example await verifyPendingCitationWheel(checkingMessage, verifiedMessage) */
+  async function verifyPendingCitationWheel(checkingMessage, verifiedMessage) {
+    // Arrange: this new document still owes its first Return focus when real wheel input changes reading.
+    await openPane(undefined)
+    await page.setViewportSize({ width: 339, height: 654 })
+    await leavePane()
+    await publish(checkingMessage)
+    await page.mouse.move(180, 320)
+    await page.mouse.wheel(0, 48)
+    await page.waitForFunction(
+      () =>
+        document
+          .getElementById('evidence-0-observation')
+          .getBoundingClientRect().top < 300,
+    )
+    // Act: the pending control anchors current geometry, without replaying its earlier saved offset or taking focus.
+    await publish(verifiedMessage)
+    const focusBeforeFirstReturn = await focusedId()
+    await returnToPane()
+    // Assert
+    addCase(
+      'citation verification preserves recent wheel reading before the document first gains focus',
+      { whileAway: 'body', focus: 'evidence-0-observation', top: 278.5 },
+      {
+        whileAway: focusBeforeFirstReturn,
+        ...(await page.evaluate(() => ({
+          focus: document.activeElement.id,
+          top: document
+            .getElementById('evidence-0-observation')
+            .getBoundingClientRect().top,
+        }))),
+      },
+    )
+  }
+  /** Checks recent wheel reading after a remembered Return; called by {@link verifyCitationStatusReturn}. @example await verifyRememberedCitationWheel(checkingMessage, verifiedMessage) */
+  async function verifyRememberedCitationWheel(
+    checkingMessage,
+    verifiedMessage,
+  ) {
+    // Arrange: real wheel input moves reading before the debounced saved location catches up.
+    await page.mouse.move(180, 320)
+    await page.mouse.wheel(0, 48)
+    await page.waitForFunction(
+      () =>
+        document
+          .getElementById('evidence-0-observation')
+          .getBoundingClientRect().top < 300,
+    )
+    // Act: a status refresh must preserve the current viewport, not replay the older Return location.
+    await publish(checkingMessage)
+    await publish(verifiedMessage)
+    // Assert: neither keyboard nor the learner's new reading position is replaced.
+    addCase(
+      'citation status refresh preserves recent wheel scrolling and the focused observation',
+      { focus: 'evidence-0-observation', top: 278.5 },
+      await page.evaluate(() => ({
+        focus: document.activeElement.id,
+        top: document
+          .getElementById('evidence-0-observation')
+          .getBoundingClientRect().top,
+      })),
+    )
+  }
+  /** Runs the wheel check only for the after-frame case, selecting its appropriate starting document. @example await verifyCitationWheelAfterReturn('after restoration', false, checkingMessage, verifiedMessage) */
+  async function verifyCitationWheelAfterReturn(
+    statusTiming,
+    hasRememberedControl,
+    checkingMessage,
+    verifiedMessage,
+  ) {
+    // The before-frame case owns no wheel transition.
+    if (statusTiming !== 'after restoration') return
+    const verifyWheel = hasRememberedControl
+      ? verifyRememberedCitationWheel
+      : verifyPendingCitationWheel
+    await verifyWheel(checkingMessage, verifiedMessage)
+  }
   /** Verifies citation reflow before and after Return plus recent wheel input; called by {@link check} against the same renderer. @example await verifyCitationStatusReturn() */
-  async function verifyCitationStatusReturn() {
+  async function verifyCitationStatusReturn(
+    hasRememberedControl,
+    focusCaption,
+  ) {
     // Citation checks can settle before or after the frame that restores an explicit native Return.
     for (const statusTiming of ['before restoration', 'after restoration']) {
       // Arrange: the real side-pane width wraps the verified status onto two lines.
@@ -341,11 +421,16 @@ async function check(page, options, collected) {
       }
       await openPane(undefined)
       await page.setViewportSize({ width: 339, height: 654 })
-      await publish({
-        ...statusMessage,
-        selection: { ...statusMessage.selection, location: returnLocation },
-      })
-      await leavePane('evidence-0-observation')
+      if (hasRememberedControl) {
+        await publish({
+          ...statusMessage,
+          selection: { ...statusMessage.selection, location: returnLocation },
+        })
+        await leavePane('evidence-0-observation')
+      } else {
+        // A recreated Wiki can receive Return and citation verification before any control ever gets keyboard focus.
+        await leavePane()
+      }
 
       // Act: the usable article arrives before its asynchronous source verification.
       const checkingMessage = {
@@ -383,7 +468,7 @@ async function check(page, options, collected) {
 
       // Assert: two-line verification keeps the exact Return offset and takes no keyboard while away.
       addCase(
-        `citation verification ${statusTiming} preserves the explicit Return reading position`,
+        `citation verification ${statusTiming} preserves the explicit Return reading position${focusCaption}`,
         {
           whileAway: 'body',
           focus: 'evidence-0-observation',
@@ -403,34 +488,19 @@ async function check(page, options, collected) {
           }))),
         },
       )
-      if (statusTiming === 'after restoration') {
-        // Arrange: real wheel input moves reading before the debounced saved location catches up.
-        await page.mouse.move(180, 320)
-        await page.mouse.wheel(0, 48)
-        await page.waitForFunction(
-          () =>
-            document
-              .getElementById('evidence-0-observation')
-              .getBoundingClientRect().top < 300,
-        )
-        // Act: a status refresh must preserve the current viewport, not replay the older Return location.
-        await publish(checkingMessage)
-        await publish(verifiedMessage)
-        // Assert: neither keyboard nor the learner's new reading position is replaced.
-        addCase(
-          'citation status refresh preserves recent wheel scrolling and the focused observation',
-          { focus: 'evidence-0-observation', top: 278.5 },
-          await page.evaluate(() => ({
-            focus: document.activeElement.id,
-            top: document
-              .getElementById('evidence-0-observation')
-              .getBoundingClientRect().top,
-          })),
-        )
-      }
+      await verifyCitationWheelAfterReturn(
+        statusTiming,
+        hasRememberedControl,
+        checkingMessage,
+        verifiedMessage,
+      )
     }
   }
-  await verifyCitationStatusReturn()
+  await verifyCitationStatusReturn(true, '')
+  await verifyCitationStatusReturn(
+    false,
+    ' before the document first gains focus',
+  )
 
   // Cycle 0046 row 331. Arrange: the learner works in another part of the editor (the chat, a file), and the pane's document has no focus.
   await openPane(undefined)

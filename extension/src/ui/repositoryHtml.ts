@@ -124,6 +124,10 @@ function repositoryClient(
     }
     target.value = selected
   }
+  /** Selects the existing reading anchor for {@link capture} while a recreated document still owes Return focus. @returns The actual keyboard control, otherwise its pending Return element, or null when neither exists. @example readingAnchorControl()?.id // => 'evidence-1-recording' before its first focus */
+  const readingAnchorControl = (): HTMLElement | null =>
+    keyboardControl() ?? document.getElementById(location?.focusId ?? '')
+  /** Captures current reading geometry for {@link persist} and status reflow, including a Return target before its document first gains focus. @returns A section-relative pose and any visible control's current viewport anchor. @example const pose = capture() // => current reading position without taking focus */
   const capture = () => {
     if (!current?.selection) return undefined
     const sections = Array.from(
@@ -135,13 +139,13 @@ function repositoryClient(
     })
     const section = sections[sectionIndex],
       top = section?.getBoundingClientRect().top ?? 0
-    // While the learner is away the keyboard's place is the control the learner left, which the active element no longer names.
-    const focused = keyboardControl(),
-      bounds = focused?.getBoundingClientRect()
+    // A recreated document may still owe Return focus and have no keyboard memory when citations settle.
+    const readingControl = readingAnchorControl(),
+      bounds = readingControl?.getBoundingClientRect()
     // A visible article control is a stable return anchor even when adjacent recovery text changes the section height.
     const visibleFocus =
-      focused?.id &&
-      focused.closest('[data-section]') &&
+      readingControl?.id &&
+      readingControl.closest('[data-section]') &&
       bounds &&
       bounds.height > 0 &&
       bounds.width > 0 &&
@@ -154,7 +158,7 @@ function repositoryClient(
       fraction: section
         ? Math.min(1, Math.max(0, -top / Math.max(1, section.offsetHeight)))
         : 0,
-      focusId: focused?.id || location?.focusId || 'article-title',
+      focusId: readingControl?.id || location?.focusId || 'article-title',
       ...(visibleFocus
         ? { focusViewportFraction: bounds.top / innerHeight }
         : {}),
