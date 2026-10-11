@@ -54,6 +54,17 @@ This rule is absolute. No planning choice, review outcome or skill default overr
 
 Never embed a demonstration or validation application in the extension, its runtime dependencies, build graph, commands, or VSIX. Open the owner-designated real repository as an external workspace. Keep isolated unit-test data outside production imports and package assets. Packaging must reject application fixtures or experiment dependencies.
 
+## WSL development desktop
+
+When developing and testing Ubuntu applications through WSLg on the Windows host:
+
+- Keep at most **one application window each** for the browser, VS Code and Cursor across QA profiles. Reuse existing windows and tabs; preserve drafts, unsaved files and settings before closing extra owned windows. Chromium/Electron child processes are not additional application windows.
+- Use the owner's desktop split: **the supervising terminal stays on the left; the active validation application occupies the larger region on the right**. Apply this placement to Ubuntu/WSLg windows too, using supported window move/resize actions. Preserve the terminal and use normal zoom.
+- Take and inspect a **current screenshot before testing** to confirm this layout. Record the display size, actual window/viewport geometry, scaling, host and theme; derive coordinates from the current screen rather than reusing another machine's coordinates.
+- Put the browser and editors in the same right-hand region and switch their foreground there for browser display and browser-to-editor verification. Confirm the actual visible application and input focus after each switch before further input; an activation command's success alone is insufficient. If ordinary switching still prevents verified native input, report the failure so the owner can temporarily minimize the supervising terminal.
+- Respect desktop user-control signals: yield input while the owner operates the desktop, then rediscover the intended window before continuing. Preserve the one-window limit when reopening or following editor protocol links.
+- Record interactions and inspect video frames for transitions and motion, following the existing evidence rules. The desktop screenshot establishes placement only; the approved product PNG, both-host coverage and every required acceptance condition still govern the product.
+
 ## Working conventions
 
 - Japanese chat; English code, comments and documents except quoted user requests.
