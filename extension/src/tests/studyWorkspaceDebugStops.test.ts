@@ -7,6 +7,59 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
+test('Cursor chat regains keyboard at a pause despite a stalled layout query when its source tab report is stale', async () => {
+  // Arrange: Cursor names a visible source tab while its separate chat holds the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('actions.ts', 2)
+    chat.focus()
+    assert.equal(chat.focused(), true)
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+
+    // Act: a debugger pause must return the known chat without waiting for another part's layout.
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    await waitUntil(
+      () => chat.focused(),
+      'known chat keyboard while the native layout reply is held',
+      300,
+    )
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer'],
+    )
+  } finally {
+    release()
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Cycle 0046 task5: historical capture can occupy its full bound before any captured-source render reaches the reader.
 test('Cursor chat is usable at a debugger pause before historical capture publishes its observation', async () => {
   // Arrange: retain the chat while a prepared live run has not published a pause.

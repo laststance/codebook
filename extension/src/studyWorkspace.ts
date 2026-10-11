@@ -2687,10 +2687,11 @@ export class StudyWorkspace {
   private async placeOfRememberedGroup(
     group: vscode.TabGroup | undefined,
   ): Promise<vscode.ViewColumn | 'other' | 'unknown'> {
+    // An absent group already identifies another part; no layout reply is needed to restore its chat.
+    if (!group) return 'other'
     const count = editorLayoutGroupCount(
       await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
     )
-    if (!group) return 'other'
     if (count === undefined) return 'unknown'
     return this.hasMainEditorFocus(count)
       ? this.placeByMainCount(group, count)
