@@ -27,6 +27,93 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+
+// Regression: 466 — failed Reload must retain its initiating Summary and recovery controls.
+// Found by /qa on 2026-10-11.
+// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Value: protects=the current Summary document through failed Reload and retry; fails_when=reload withdraws its HTML before reading the archive; why_new=existing failed-reload coverage checks Wiki Return only; seam=none
+test('Reload in Learning summary keeps its recovery controls after a read failure and retries without reopening the summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true),
+    headerPath = join(harness.store.path(harness.studyId), 'header.json'),
+    header = await readFile(headerPath)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    assert.equal(harness.summary.visible, true)
+    await writeFile(headerPath, '{broken')
+
+    // Act
+    harness.receive({
+      type: 'action',
+      revision: harness.reader.inspect().view!.revision,
+      action: 'reload-recording',
+    })
+    await waitUntil(
+      () => harness.controller.state().readiness === 'failed',
+      'the Summary reload reaches its recording-read failure',
+      2_000,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(
+      harness.summary.webview.html.includes('id="recording-transport"'),
+      true,
+    )
+    assert.equal(
+      harness.summary.webview.html.includes(
+        'Open saved learning from Codebook to view its summary.',
+      ),
+      false,
+    )
+    assert.equal(harness.summary.visible, true)
+    assert.equal(harness.reader.inspect().view!.recording!.readiness, 'failed')
+    const failedRevision = harness.controller.state().revision
+
+    // Retry through the same Summary after its archive is repaired.
+    await writeFile(headerPath, header)
+    harness.receive({
+      type: 'action',
+      revision: harness.reader.inspect().view!.revision,
+      action: 'reload-recording',
+    })
+    await waitUntil(
+      () =>
+        harness.controller.state().revision > failedRevision &&
+        harness.controller.state().readiness === 'ready',
+      'the same Summary retry presents its repaired recording',
+      2_000,
+    )
+    await harness.controller.settle()
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.equal(
+      harness.summary.webview.html.includes('id="recording-transport"'),
+      true,
+    )
+    assert.equal(harness.reader.inspect().view!.recording!.readiness, 'ready')
+
+    // Explicit Close still withdraws the recording controls.
+    await harness.reader.close()
+    assert.equal(
+      harness.summary.webview.html.includes(
+        'Open saved learning from Codebook to view its summary.',
+      ),
+      true,
+    )
+  } finally {
+    await writeFile(headerPath, header)
+    await harness.close()
+  }
+})
+
 // Value: protects=a moment committed without native values names where to load them, and the hint leaves once they load; fails_when=the Study message never flags the moment, or keeps the hint after Run and Debug loads values until another seek; why_new=the soft inspection gate commits such moments; seam=TestReplayDebugger models the native load notification
 test('a replay moment whose recorded values Run and Debug has not loaded tells the learner where to load them until they load', async () => {
   // Arrange: Variables stays hidden, so native Run and Debug does not load the recorded values within the grace.

@@ -7145,7 +7145,8 @@ export class StudyWorkspace {
       const studyId = this.selection.studyId
       if (!this.recordingActive || !studyId)
         throw new Error('Select a recording first.')
-      this.leavePlayback()
+      // Same-study Reload keeps its Summary document so a failed read can publish recovery there.
+      this.leavePlayback(true)
       await this.openRecording(studyId)
       return
     }
@@ -9741,13 +9742,19 @@ export class StudyWorkspace {
     }
   }
 
-  /** Leaves historical presentation on explicit navigation, never stopping or continuing the independently owned runtime. @example this.leavePlayback() */
-  private leavePlayback(): void {
+  /**
+   * Leaves historical presentation on explicit navigation without mutating the independently owned runtime.
+   * Reader navigation and Close withdraw the summary; {@link action} retains it only while reloading the current recording.
+   * @param preserveSummary - Keeps the current Summary document available for loading, error and retry messages during same-study Reload.
+   * @example this.leavePlayback(true)
+   */
+  private leavePlayback(preserveSummary = false): void {
     this.nodeHistoryPlaybackController?.pause()
     this.repositoryRecordingOpen = undefined
     if (!this.recordingActive) return
     this.playback?.leave()
-    this.clearLearningSummary()
+    // Only same-study Reload keeps the reader's current Summary and its reading context.
+    if (!preserveSummary) this.clearLearningSummary()
     this.dropReplayViewport()
     this.recordingActive = false
     this.playbackPending = undefined

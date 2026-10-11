@@ -271,7 +271,11 @@ export class PlaybackController {
     this.queue({ studyId: this.studyId, positionMs, save: false }, false)
   }
 
-  /** Pauses when the replay surface hides; the recorded application's lifecycle never calls this method. @example controller.hide() */
+  /**
+   * Pauses historical replay when {@link StudyWorkspace} reports native surface visibility, or the reader leaves or disposes it.
+   * A failed load or presentation remains failed until an explicit replay control retries it.
+   * @example controller.hide()
+   */
   hide(): void {
     if (!this.studyId || this.disposed) return
     this.controlRevision++
@@ -281,8 +285,31 @@ export class PlaybackController {
     this.request = undefined
     this.requestedMs = this.presented?.projection.positionMs
     this.remember()
-    this.readiness = this.presented ? 'ready' : 'idle'
+    this.readiness = this.hiddenReadiness()
     this.dependencies.changed()
+  }
+
+  /**
+   * Preserves failure ownership while {@link hide} derives the paused presentation state.
+   * @returns The existing failure, or readiness of the last committed moment after pending work is cancelled.
+   * @example this.hiddenReadiness() // => 'failed' after an unreadable recording
+   */
+  private hiddenReadiness() {
+    // A native cover changes visibility, not whether the last read succeeded.
+    if (this.readiness === 'failed') return 'failed'
+    return this.presented ? 'ready' : 'idle'
+  }
+
+  /**
+   * Names the selected history eligible for a native visibility presentation; {@link reveal} calls it before queuing work.
+   * @returns The selected study ID, or `undefined` when disposal, a pending request or a failure owns the presentation.
+   * @example this.visibilityStudyId() // => undefined while the recording is failed
+   */
+  private visibilityStudyId(): string | undefined {
+    // Pending and failed requests wait for their existing owner or an explicit replay control.
+    if (this.disposed || ['loading', 'failed'].includes(this.readiness))
+      return undefined
+    return this.studyId
   }
 
   /**
@@ -292,17 +319,16 @@ export class PlaybackController {
    * @example controller.reveal()
    */
   reveal(): void {
-    if (this.disposed || !this.studyId) return
-    // A seek may itself reveal Application; its pending presentation keeps ownership of the requested moment.
-    if (this.readiness === 'loading') return
+    const studyId = this.visibilityStudyId()
+    // Only an admitted selected history may recover from an ordinary visibility change.
+    if (!studyId) return
     // A hidden first load has no committed bundle; revealing explicitly restarts that cancelled read.
     if (!this.presented) {
-      if (this.readiness === 'idle')
-        this.queue({ studyId: this.studyId, save: true })
+      if (this.readiness === 'idle') this.queue({ studyId, save: true })
       return
     }
     this.queue({
-      studyId: this.studyId,
+      studyId,
       positionMs: this.presented.projection.positionMs,
       restore: this.presented,
       save: false,
