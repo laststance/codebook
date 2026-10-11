@@ -68,3 +68,44 @@ test('Cycle 0046 resumes from totals that include every task and its current clo
   // Assert
   assert.deepEqual(mismatches, [])
 })
+
+// Regression: Cycle 0046 task481 — the current replay action still asks to fix closed465 and verify closed26.
+// Found by /qa on 2026-10-11.
+// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md#cursor-retained-motion-reentry-after-context-restoration-2026-10-11
+// Value: protects=actionable current replay gaps; fails_when=the next action asks to fix a closed defect; why_new=count checks do not inspect gap actions; seam=none; no_claim=native replay completion.
+test('the current replay action never asks to repair an already closed cycle defect', async () => {
+  // Arrange
+  const table = await readFile(
+    new URL('../../../docs/cycles/0046-carried-defects.md', import.meta.url),
+    'utf8',
+  )
+  const state = await readFile(
+    new URL('../../../PROJECT_STATE.md', import.meta.url),
+    'utf8',
+  )
+
+  // Act: the final cell owns current closure, and the gap row's final cell owns its next action.
+  const taskRows = table.split('\n').filter((line) => /^\| \d+ \|/.test(line))
+  const closedTaskIds = taskRows
+    .filter((row) =>
+      /^(?:FIXED|EVIDENCE)/.test(
+        row
+          .split(/(?<!\\)\|/)
+          .at(-2)
+          .trim(),
+      ),
+    )
+    .map((row) => row.split(/(?<!\\)\|/)[1].trim())
+  const nextAction = state
+    .split('\n')
+    .find((line) => line.startsWith('| AC-REPLAY |'))
+    ?.split(/(?<!\\)\|/)
+    .at(-2)
+  assert.ok(nextAction, 'the current replay gap must keep its next action')
+  const requestedRepairs = [...nextAction.matchAll(/\bFix\s*(\d+)(?:'s|\b)/g)]
+    .map((match) => match[1])
+    .filter((taskId) => closedTaskIds.includes(taskId))
+
+  // Assert
+  assert.deepEqual(requestedRepairs, [])
+})
