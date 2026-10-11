@@ -3309,10 +3309,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private selectVerifiedServer(matches: ServerMatch[]): boolean {
-    if (!matches.length) return false
+    // A background worker shares the server's PID but cannot supply its route's native pauses.
+    const mainThreads = matches.filter(
+      (candidate) => candidate.identity.isMainThread,
+    )
+    if (!mainThreads.length) return false
     // A native adapter may expose one inspected worker through nested sessions; use only its deepest session.
-    const selected = matches.find((candidate) =>
-      matches.every((other) => {
+    const selected = mainThreads.find((candidate) =>
+      mainThreads.every((other) => {
         if (candidate.session.id === other.session.id) return true
         for (
           let ancestor = candidate.session.parentSession;
@@ -3325,7 +3329,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     if (
       !selected ||
-      matches.some(
+      mainThreads.some(
         (candidate) =>
           candidate.identity.pid !== selected.identity.pid ||
           candidate.identity.processGroup !== selected.identity.processGroup ||

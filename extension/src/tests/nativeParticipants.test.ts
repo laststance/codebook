@@ -563,6 +563,30 @@ test('one owned Next worker with nested debugger sessions still reaches its firs
   assert.equal(harness.proxies.server.closed, false)
 })
 
+test('the main server pause is captured when a nested background worker shares its PID', async (context) => {
+  // Arrange: the real route runs in the parent; the descendant is another JavaScript thread.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser', 'server'],
+    {
+      duplicateServerSession: true,
+      serverWorkerThread: true,
+      runtimeConstants: { ACTIVE_TIMEOUT_MS: 100 },
+    },
+  )
+
+  // Act
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+
+  // Assert
+  assert.equal(harness.run.view().status, 'paused-server')
+  assert.equal(first.pause.sessionId, 'server-session')
+  assert.equal(harness.parentServerProxy.closed, false)
+  assert.equal(harness.proxies.server.closed, true)
+})
+
 test('two distinct owned server workers reject before application input', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(

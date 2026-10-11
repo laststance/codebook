@@ -1,27 +1,82 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
+import { Worker } from 'node:worker_threads'
 
 import { Cdp } from '../runtimeSupport/cdp'
 import { verifyServerInspectorOwnership } from '../utils/verifyServerInspectorOwnership'
 
+test('a real worker inspector identifies its thread separately from the owned process', async (context) => {
+  // Arrange: a Node worker shares the process PID, repository and launch marker.
+  const processGroup = Number(
+    execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], {
+      encoding: 'utf8',
+    }).trim(),
+  )
+  const modulePath = resolve(
+    __dirname,
+    '../utils/verifyServerInspectorOwnership.js',
+  )
+  const worker = new Worker(
+    `const { parentPort } = require('node:worker_threads');
+const { Session } = require('node:inspector');
+const { verifyServerInspectorOwnership } = require(${JSON.stringify(modulePath)});
+const session = new Session();
+session.connect();
+const inspector = { request: (method, parameters) => new Promise((resolve, reject) => session.post(method, parameters, (error, response) => error ? reject(error) : resolve(response))) };
+verifyServerInspectorOwnership(inspector, process.cwd(), ${processGroup}, new AbortController().signal, () => {}).then(
+  identity => { parentPort.postMessage(identity); session.disconnect(); },
+  error => { parentPort.postMessage({ error: String(error) }); session.disconnect(); }
+);`,
+    { eval: true, env: { ...process.env, NEXT_PRIVATE_WORKER: '1' } },
+  )
+  context.after(() => worker.terminate())
+
+  // Act
+  const identity = await new Promise<Record<string, unknown>>(
+    (resolve, reject) => {
+      worker.once('message', resolve)
+      worker.once('error', reject)
+    },
+  )
+
+  // Assert: matching process ownership must not imply the main JavaScript target.
+  assert.equal(identity.error, undefined)
+  assert.equal(identity.pid, process.pid)
+  assert.equal(identity.isMainThread, false)
+  assert.ok(typeof identity.threadId === 'number')
+  assert.equal(identity.threadId > 0, true)
+})
+
 /** Supplies explicit inspector responses while the OS group check remains real; ownership tests call this without launching an application. @example inspectorResponse({ pid: process.pid, cwd: process.cwd(), worker: '1' }) */
-function inspectorResponse(value: unknown, exception = false) {
+function inspectorResponse(
+  value: unknown,
+  exception = false,
+  threadValue: unknown = { isMainThread: true, threadId: 0 },
+) {
   class Socket extends EventTarget {
     send(message: string): void {
       const request = JSON.parse(message)
       assert.equal(request.method, 'Runtime.evaluate')
-      assert.equal(
-        request.params.expression,
-        '({pid:process.pid,cwd:process.cwd(),worker:process.env.NEXT_PRIVATE_WORKER})',
+      const readingThread = request.params.expression.includes(
+        'node:worker_threads',
       )
+      if (!readingThread)
+        assert.equal(
+          request.params.expression,
+          '({pid:process.pid,cwd:process.cwd(),worker:process.env.NEXT_PRIVATE_WORKER})',
+        )
       this.dispatchEvent(
         new MessageEvent('message', {
           data: JSON.stringify({
             id: request.id,
             result: {
-              result: { type: 'object', value },
+              result: {
+                type: 'object',
+                value: readingThread ? threadValue : value,
+              },
               ...(exception
                 ? { exceptionDetails: { text: 'Unavailable' } }
                 : {}),
@@ -61,7 +116,42 @@ test('selected server identity must match both the repository and the actual OS 
   assert.equal(identity.pid, process.pid)
   assert.equal(identity.processGroup, processGroup)
   assert.equal(identity.workspace, await realpath(process.cwd()))
+  assert.equal(identity.isMainThread, true)
+  assert.equal(identity.threadId, 0)
   inspector.close()
+})
+
+test('missing or contradictory thread identity cannot become an owned server candidate', async () => {
+  // Arrange
+  const processGroup = Number(
+    execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], {
+      encoding: 'utf8',
+    }).trim(),
+  )
+  for (const thread of [
+    {},
+    { isMainThread: 'true', threadId: 0 },
+    { isMainThread: true, threadId: 1 },
+    { isMainThread: false, threadId: 0 },
+    { isMainThread: false, threadId: -1 },
+  ]) {
+    const inspector = inspectorResponse(
+      { pid: process.pid, cwd: process.cwd(), worker: '1' },
+      false,
+      thread,
+    )
+    // Act / Assert
+    await assert.rejects(
+      verifyServerInspectorOwnership(
+        inspector,
+        process.cwd(),
+        processGroup,
+        new AbortController().signal,
+        () => undefined,
+      ),
+    )
+    inspector.close()
+  }
 })
 
 test('foreign worker groups cannot gain server debugger control through a matching repository', async () => {

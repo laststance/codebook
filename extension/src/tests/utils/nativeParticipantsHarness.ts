@@ -54,6 +54,8 @@ export async function nativeParticipantsHarness(
   options: {
     duplicateServerSession?: boolean
     distinctServerWorker?: boolean
+    /** Models a background Node worker whose PID/cwd match the main server but whose JavaScript thread owns no declared route. */
+    serverWorkerThread?: boolean
     /** Declares a participant's stops at another column of line 1 than the default 1:1, to model a request the debugger binds elsewhere on the line. */
     declaredColumn?: Partial<Record<Participant, number>>
     /** Replaces a participant's sealed map; the default maps only generated 0:0 to source 1:1. */
@@ -439,11 +441,24 @@ export async function nativeParticipantsHarness(
         id: 'server-child',
         parentSession: serverParent,
         configuration: { ...serverParent.configuration },
+        ...(options.serverWorkerThread
+          ? {
+              getDebugProtocolBreakpoint: async (breakpoint: {
+                id: string
+              }) => ({
+                id: adapterId(breakpoint),
+                verified: false,
+                line: boundAt.server.line,
+                column: boundAt.server.column,
+              }),
+            }
+          : {}),
       }
     : undefined
   const sessions: Record<Participant, DebugSession> = {
     browser: session('browser'),
-    server: serverChild ?? serverParent,
+    server:
+      options.serverWorkerThread || !serverChild ? serverParent : serverChild,
   }
   const emitScript = (name: Participant) =>
     listeners[name].get('Debugger.scriptParsed')?.({
@@ -687,54 +702,65 @@ export async function nativeParticipantsHarness(
   let serverProxyConnections = 0
   const acknowledge = (sourcePath: string): void => {
     for (const name of ['browser', 'server'] as const) {
-      const selected = breakpoints.filter(
-          (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
-        ),
-        requestSequence = ++sequence
-      run.onRequest(sessions[name], {
-        type: 'request',
-        seq: requestSequence,
-        command: 'setBreakpoints',
-        arguments: {
-          source: { path: sourcePath },
-          breakpoints: selected.map((breakpoint) =>
-            sourceBreakpointRequest(breakpoint.location.range.start),
+      // Editor breakpoints reach both the real server and its same-PID worker target.
+      const targets = [
+        sessions[name],
+        ...(name === 'server' && options.serverWorkerThread && serverChild
+          ? [serverChild]
+          : []),
+      ]
+      for (const target of targets) {
+        const selected = breakpoints.filter(
+            (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
           ),
-        },
-      })
-      // A request the adapter never answers leaves the breakpoint without a current receipt.
-      if (
-        selected.some(
-          (breakpoint) =>
-            breakpoint.location.range.start.character + 1 === unansweredColumn,
+          requestSequence = ++sequence
+        run.onRequest(target, {
+          type: 'request',
+          seq: requestSequence,
+          command: 'setBreakpoints',
+          arguments: {
+            source: { path: sourcePath },
+            breakpoints: selected.map((breakpoint) =>
+              sourceBreakpointRequest(breakpoint.location.range.start),
+            ),
+          },
+        })
+        // A request the adapter never answers leaves the breakpoint without a current receipt.
+        if (
+          selected.some(
+            (breakpoint) =>
+              breakpoint.location.range.start.character + 1 ===
+              unansweredColumn,
+          )
         )
-      )
-        continue
-      run.onResponse(sessions[name], {
-        type: 'response',
-        seq: ++sequence,
-        command: 'setBreakpoints',
-        request_seq: requestSequence,
-        success: !failedRegistration,
-        body: {
-          breakpoints: selected.map((breakpoint) => ({
-            id: adapterId(breakpoint),
-            // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
-            ...(acknowledgedAt
-              ? {
-                  verified: true,
-                  ...acknowledgedAt({
-                    line: breakpoint.location.range.start.line + 1,
-                    column: breakpoint.location.range.start.character + 1,
-                  }),
-                }
-              : { verified: false }),
-          })),
-        },
-      })
-      // The adapter resolved the breakpoints after it answered: it verifies them by news.
-      const news = verifiedByNewsAt[name]
-      if (news) announceVerified(name, news.line, news.column)
+          continue
+        run.onResponse(target, {
+          type: 'response',
+          seq: ++sequence,
+          command: 'setBreakpoints',
+          request_seq: requestSequence,
+          success: !failedRegistration,
+          body: {
+            breakpoints: selected.map((breakpoint) => ({
+              id: adapterId(breakpoint),
+              // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
+              ...(acknowledgedAt &&
+              !(options.serverWorkerThread && target === serverChild)
+                ? {
+                    verified: true,
+                    ...acknowledgedAt({
+                      line: breakpoint.location.range.start.line + 1,
+                      column: breakpoint.location.range.start.character + 1,
+                    }),
+                  }
+                : { verified: false }),
+            })),
+          },
+        })
+        // The adapter resolved the breakpoints after it answered: it verifies them by news.
+        const news = verifiedByNewsAt[name]
+        if (news) announceVerified(name, news.line, news.column)
+      }
     }
   }
   const vscode = {
@@ -932,6 +958,13 @@ export async function nativeParticipantsHarness(
                     : 1235,
                 processGroup: 1234,
                 workspace: repository.directory,
+                isMainThread:
+                  !options.serverWorkerThread ||
+                  candidate === parentServerProxy,
+                threadId:
+                  options.serverWorkerThread && candidate !== parentServerProxy
+                    ? 1
+                    : 0,
               }
             },
             close: async (): Promise<void> => {
