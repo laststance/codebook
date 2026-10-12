@@ -2679,6 +2679,47 @@ async function check(page, options, collected) {
             JSON.stringify(statusBeforeNotice),
       })
 
+      // Arrange: native Summary can be 299 px wide within an ordinary expanded editor.
+      await page.setViewportSize({ width: 299, height: 928 })
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      const compactEmptyBefore = await statusRegion('presentation-status')
+      const compactLooksBefore = await looksAsWithout('#presentation-status')
+      // Act: disclose an unconfirmed layout, then expand its controls and confirm it.
+      await publish({ ...withValues, presentation: presentationOf(false) })
+      const compactClosedNotice = await presentationLine()
+      await page.locator('#reader-options > summary').click()
+      const compactOpenNotice = await presentationLine()
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      const compactEmptyAfter = await statusRegion('presentation-status')
+      const compactLooksAfter = await looksAsWithout('#presentation-status')
+      // Assert: compact replay retains the status gap required in both native hosts.
+      cases.push({
+        name: 'a 299 px learning summary places its layout notice eight pixels below closed and expanded pane controls and clears it without an empty band',
+        actual: {
+          compactClosedNotice,
+          compactOpenNotice,
+          compactEmptyBefore,
+          compactEmptyAfter,
+          compactLooksBefore,
+          compactLooksAfter,
+        },
+        passed:
+          compactClosedNotice.disclosureOpen === false &&
+          compactClosedNotice.belowDisclosure === 8 &&
+          compactOpenNotice.disclosureOpen === true &&
+          compactOpenNotice.belowDisclosure === 8 &&
+          JSON.stringify(compactEmptyBefore) ===
+            JSON.stringify(emptyRegion('presentation-status')) &&
+          JSON.stringify(compactEmptyAfter) ===
+            JSON.stringify(emptyRegion('presentation-status')) &&
+          JSON.stringify(compactLooksBefore) ===
+            JSON.stringify({ moved: [], samePixels: true }) &&
+          JSON.stringify(compactLooksAfter) ===
+            JSON.stringify({ moved: [], samePixels: true }),
+      })
+      await page.locator('#reader-options > summary').click()
+      await page.setViewportSize({ width: 600, height: 800 })
+
       // Arrange: a press on the replay thumb that moves nothing fires neither input nor change (SD-17).
       await publish(withValues)
       const playheadValue = () =>
