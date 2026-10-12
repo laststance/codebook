@@ -414,6 +414,9 @@ export const SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS = 200
 export const SHOW_NATIVE_VARIABLES_EXPAND_ATTEMPTS = 2
 /** The host's own Run and Debug view command, which Show Variables runs when the host registers no command that focuses Variables. VS Code 1.140 and Cursor 3.23 register `workbench.debug.action.focusVariablesView` (the view's own focus command; a `workbench.debug.variablesView.focus` does not exist in either). */
 export const NATIVE_RUN_AND_DEBUG_VIEW_COMMAND = 'workbench.view.debug'
+/** Selects the current native debugger model without moving editor keyboard focus; {@link ReplayDebugger} uses it only while its historical session remains the active owner. */
+export const NATIVE_DEBUG_FOCUS_SESSION_COMMAND =
+  'workbench.action.debug.focusProcess'
 /** What Show Variables tells the learner when the host registers neither a Variables focus command nor {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND}. */
 export const SHOW_NATIVE_VARIABLES_MANUAL_STEP =
   'Open Run and Debug and expand Variables to see the recorded values.'

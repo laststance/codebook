@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type * as vscode from 'vscode'
 
 import {
+  NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
   REPLAY_DEBUG_SESSION_NAME,
@@ -29,8 +30,8 @@ export type ReplayInspection = 'inspected' | 'uninspected' | 'no-values'
 /** Why {@link ReplayDebugger} asks the reader to re-evaluate its Run and Debug hint and Node debugger availability. */
 export type ReplayDebuggerChange = 'values-loaded' | 'session-ended'
 
-/** What {@link ReplayDebugger.awaitRetrieval} waits for native Variables to have asked of the presented stop: its inspection frame's scopes, or also the first scope's values. */
-export type ReplayRetrievalStage = 'scopes' | 'values'
+/** What {@link ReplayDebugger.awaitRetrieval} waits for the native client to retrieve: the current stack, its inspection frame's scopes, or the first scope's values. */
+export type ReplayRetrievalStage = 'stack' | 'scopes' | 'values'
 
 /** How one {@link ReplayDebugger} inspection wait ends: with a presentation outcome or with the error that ended it. */
 type InspectionOutcome = { inspection: ReplayInspection } | { error: unknown }
@@ -77,6 +78,11 @@ export class ReplayDebugger {
       typeof vscode,
       'EventEmitter' | 'DebugAdapterInlineImplementation'
     > & {
+      commands?: Pick<typeof vscode.commands, 'getCommands'> & {
+        executeCommand: (
+          ...arguments_: Parameters<typeof vscode.commands.executeCommand>
+        ) => ReturnType<typeof vscode.commands.executeCommand>
+      }
       debug: Pick<
         typeof vscode.debug,
         | 'registerDebugAdapterDescriptorFactory'
@@ -85,7 +91,9 @@ export class ReplayDebugger {
         | 'stopDebugging'
       > &
         // Optional so an editor surface without the focused stack item (a test port) keeps the full grace.
-        Partial<Pick<typeof vscode.debug, 'activeStackItem'>>
+        Partial<
+          Pick<typeof vscode.debug, 'activeStackItem' | 'activeDebugSession'>
+        >
     },
     private readonly changed: (reason: ReplayDebuggerChange) => void = () => {},
     private readonly failed: (error: unknown) => void = () => {},
@@ -436,21 +444,18 @@ export class ReplayDebugger {
       this.selected = { snapshot, label, sourceUri: sourceDocument?.uri }
     }
     // The editor can dispose the adapter just before it reports termination; a disposed adapter shows nothing, which is not "no values".
-    if (adapter.disposed) {
-      // Only an unavailable owner is replaced by the next explicit reopen.
-      this.giveUp()
-      throw new Error(HISTORICAL_DEBUGGER_CLOSED)
-    }
+    this.assertAdapterAvailable(adapter)
     // The native session shows this stop from now on, so an interrupted wait cannot make retire() restart it.
     this.hasPresented = true
     this.lastPresentedSnapshot = snapshot
     // Gaps and scope-less stops have nothing for Variables to load: commit at once and leave the session-level state alone.
     if (!adapter.hasLoadableValues) return 'no-values'
+    await this.selectNativeInspectionModel(adapter, revision, signal)
     // While Run and Debug requests no values, waiting on every stop would stall playback without ever loading them.
     // A paused frame of another session keeps the Run and Debug focus, so this stop's values are not requested either: the grace would only delay the frame.
     const inspection = adapter.inspectionReady
       ? 'inspected'
-      : this.valuesUnrequested || this.foreignPauseFocused()
+      : this.nativeValuesRemainUnrequested()
         ? 'uninspected'
         : await this.awaitInspection(adapter, revision, signal)
     signal.throwIfAborted()
@@ -466,7 +471,7 @@ export class ReplayDebugger {
    * again in VS Code 1.140); its tree holds no row of the stop until then. The adapter serving `scopes` for the stop's inspection
    * frame is the earliest moment that tree can hold those rows, and serving the first scope's `variables` is the moment they are listed.
    *
-   * @param stage - `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
+   * @param stage - `'stack'` for the current stack receipt, `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
    * @param timeoutMs - Longest wait; a view that shows another session, or a host that never asks, ends it there.
    * @returns
    * - `true` once native Variables retrieved that stage of the presented stop (at once when it already had)
@@ -497,14 +502,98 @@ export class ReplayDebugger {
 
   /**
    * Tells a pending {@link awaitRetrieval} check whether native Variables retrieved the stage it waits for.
-   * @param stage - `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
+   * @param stage - `'stack'` for the current stack receipt, `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
    * @returns The adapter's answer for that stage; `undefined` while no adapter is held.
    * @example this.hasRetrieved('scopes') // => true once the adapter served the stop's scopes
    */
   private hasRetrieved(stage: ReplayRetrievalStage): boolean | undefined {
-    return stage === 'scopes'
-      ? this.adapter?.scopesRetrieved
-      : this.adapter?.inspectionReady
+    const adapter = this.adapter
+    if (!adapter) return undefined
+    return {
+      stack: adapter.stackRetrieved,
+      scopes: adapter.scopesRetrieved,
+      values: adapter.inspectionReady,
+    }[stage]
+  }
+
+  /** Selects the current owned native model after its real stack receipt without borrowing editor keyboard focus; {@link present} calls it before inspection. @param adapter - Adapter owning this selection. @param revision - Presentation that must still own the model. @param signal - Cancels an outdated selection. @example await this.selectNativeInspectionModel(adapter, revision, signal) */
+  private async selectNativeInspectionModel(
+    adapter: ReplayDebugAdapter,
+    revision: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const commands = await this.nativeInspectionCommands(signal)
+    signal.throwIfAborted()
+    // Even an unsupported-command answer may arrive after another moment was selected.
+    this.assertInspectionOwnership(adapter, revision)
+    if (!commands) return
+    const stackRetrieved = await untilAborted(
+      this.awaitRetrieval('stack', REPLAY_DEBUG_INSPECTION_GRACE_MS),
+      signal,
+    )
+    signal.throwIfAborted()
+    this.assertInspectionOwnership(adapter, revision)
+    if (!stackRetrieved) return
+    // The no-argument host entry preserves focus and selects its current model; never ask it to replace a foreign active session.
+    if (!this.ownsNativeInspectionModel()) return
+    await untilAborted(
+      awaitResponse(
+        commands.executeCommand(NATIVE_DEBUG_FOCUS_SESSION_COMMAND),
+        'native historical model selection',
+        signal,
+        REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+      ),
+      signal,
+    )
+    this.assertInspectionOwnership(adapter, revision)
+  }
+
+  /** Resolves supported native model commands within the ordinary native-operation bound for {@link selectNativeInspectionModel}. @param signal - Cancels an abandoned presentation. @returns The editor command port only when it registers the native selection entry. @example await this.nativeInspectionCommands(signal) // => undefined on an unsupported host */
+  private async nativeInspectionCommands(signal: AbortSignal) {
+    const commands = this.editor.commands
+    if (!commands) return undefined
+    const supported = await untilAborted(
+      awaitResponse(
+        commands.getCommands(true),
+        'native historical model command availability',
+        signal,
+        REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+      ),
+      signal,
+    )
+    return supported?.includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND)
+      ? commands
+      : undefined
+  }
+
+  /** Rejects a lost historical owner before and after the native model request in {@link selectNativeInspectionModel}. @param adapter - Adapter serving the expected moment. @param revision - Expected presentation. @throws The existing closed or superseded presentation error after ownership changes. @example this.assertInspectionOwnership(adapter, revision) */
+  private assertInspectionOwnership(
+    adapter: ReplayDebugAdapter,
+    revision: number,
+  ): void {
+    const ownershipError = this.ownershipError(adapter, revision)
+    if (ownershipError) throw ownershipError
+  }
+
+  /** Rejects a disposed native adapter in {@link present} before a recorded stop can be treated as displayed; only an explicit reopen replaces its expired owner. @param adapter - Adapter selected for presentation. @throws The historical debugger closed error after native disposal. @example this.assertAdapterAvailable(adapter) */
+  private assertAdapterAvailable(adapter: ReplayDebugAdapter): void {
+    if (!adapter.disposed) return
+    this.giveUp()
+    throw new Error(HISTORICAL_DEBUGGER_CLOSED)
+  }
+
+  /** Preserves a foreign native debugger choice after readiness in {@link selectNativeInspectionModel}. @returns Whether the current native session still belongs to this historical owner without a foreign selected frame. @example this.ownsNativeInspectionModel() // => false after the learner selects another session */
+  private ownsNativeInspectionModel(): boolean {
+    return Boolean(
+      this.session &&
+      this.editor.debug.activeDebugSession?.id === this.session.id &&
+      !this.foreignPauseFocused(),
+    )
+  }
+
+  /** Keeps {@link present} from waiting again while Variables remains unrequested or the learner holds another paused session. @returns Whether the current stop should commit truthfully without an inspection wait. @example this.nativeValuesRemainUnrequested() // => true with a foreign focused pause */
+  private nativeValuesRemainUnrequested(): boolean {
+    return this.valuesUnrequested || this.foreignPauseFocused()
   }
 
   /**

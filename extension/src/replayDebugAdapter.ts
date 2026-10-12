@@ -123,6 +123,16 @@ export class ReplayDebugAdapter {
     )
   }
 
+  /** Gives {@link ReplayDebugger.awaitRetrieval} the current native stack receipt before historical model selection; native client requests trigger it. @returns Whether the current selection's inspection stack was served. @example adapter.stackRetrieved // => true after the current stackTrace request */
+  get stackRetrieved(): boolean {
+    return (
+      !this.closed &&
+      this.configured &&
+      this.selectionValid &&
+      this.inspectedStack
+    )
+  }
+
   /**
    * Lets {@link ReplayDebugger.present} commit gaps and scope-less stops at once: only a selection whose inspection frame has recorded scopes can load values in native Variables.
    *
