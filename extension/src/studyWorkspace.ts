@@ -1497,6 +1497,13 @@ export class StudyWorkspace {
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
+          const recoveredCoveredReplay = await this.revealCoveredReplay(
+            input.action,
+            transition.cancellation.signal,
+            focusedPane.beforeScopeFocus,
+          )
+          this.assertLifetime(lifetime)
+          focusedPane.assertUndeparted()
           await this.arrange(
             transition.cancellation.signal,
             'study',
@@ -1516,7 +1523,8 @@ export class StudyWorkspace {
           }
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
-          if (!returnForeignFocus) focusedPane.assertCurrent()
+          if (!returnForeignFocus)
+            this.assertCompositionFocus(focusedPane, recoveredCoveredReplay)
           this.assertPlacedEvidenceUnchanged(
             transition.runtimeIdentity,
             recordedBundle,
@@ -1679,6 +1687,76 @@ export class StudyWorkspace {
     this.presentationOperation = pending
     this.publish()
     return pending.then(() => this.presentationState())
+  }
+
+  /**
+   * Recovers covered replay for {@link admitPresentation} before explicit arrangement confirms its source.
+   * @param action - Saving a preference must not reveal a pane the learner covered.
+   * @param signal - Cancels recovery when the placement loses ownership.
+   * @param beforeScopeFocus - Announces only this owned Application tab to the native departure watcher.
+   * @returns Whether the arrangement replaced a covering tab with its recorded Application.
+   * @throws When visibility or the same recorded frame cannot settle within the existing placement bounds.
+   * @example await this.revealCoveredReplay('restore', signal, focusedPane.beforeScopeFocus)
+   */
+  private async revealCoveredReplay(
+    action: PresentationIntent['action'],
+    signal: AbortSignal,
+    beforeScopeFocus: ReturnType<
+      StudyWorkspace['trackFocusedStudyPane']
+    >['beforeScopeFocus'],
+  ): Promise<boolean> {
+    const recordedApplication = this.app
+    // Other compositions and preference saves retain the learner's current native tab.
+    if (!this.mayRevealCoveredReplay(action) || !recordedApplication)
+      return false
+    beforeScopeFocus({
+      matchesEditor: () => recordedApplication.active,
+      matchesGroup: () =>
+        recordedApplication === this.app &&
+        recordedApplication.visible &&
+        vscode.window.tabGroups.activeTabGroup.viewColumn ===
+          recordedApplication.viewColumn,
+    })
+    recordedApplication.reveal(recordedApplication.viewColumn, true)
+    await waitUntil(
+      () => recordedApplication === this.app && recordedApplication.visible,
+      'recorded Application visibility during Restore',
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    )
+    await this.settleOwnedPlayback(signal)
+    return true
+  }
+
+  /**
+   * Limits {@link revealCoveredReplay} to explicit arrangement of a covered Summary recording.
+   * @param action - A preference save retains the learner's covering tab.
+   * @returns Whether the current composition permits visibility recovery.
+   * @example this.mayRevealCoveredReplay('restore') // true for a covered saved recording
+   */
+  private mayRevealCoveredReplay(
+    action: PresentationIntent['action'],
+  ): boolean {
+    return (
+      this.summaryComposition &&
+      this.replayApplicationCovered &&
+      action !== 'save-preference'
+    )
+  }
+
+  /**
+   * Verifies native focus for {@link admitPresentation} after layout measurement.
+   * @param focusedPane - Watches departures throughout the admitted arrangement.
+   * @param recoveredReplay - The declared App replacement remains an owned focus borrow.
+   * @example this.assertCompositionFocus(focusedPane, false) // requires the original native target
+   */
+  private assertCompositionFocus(
+    focusedPane: ReturnType<StudyWorkspace['trackFocusedStudyPane']>,
+    recoveredReplay: boolean,
+  ): void {
+    // A covering file is intentionally replaced only by the announced recorded Application.
+    if (recoveredReplay) focusedPane.assertUndeparted()
+    else focusedPane.assertCurrent()
   }
 
   /**

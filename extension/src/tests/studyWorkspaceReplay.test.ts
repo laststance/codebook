@@ -304,6 +304,118 @@ test('replay reads app, source and sidebar summary then restores their shared la
   }
 })
 
+// Regression: 492 — Restore must recover the recorded moment retired by an Application-covering tab.
+test('Restore uncovers the recorded application and recovers its source without changing history or running the target again', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (candidate) => candidate.mode === 'recording',
+    )
+    assert.ok(viewport)
+    const application = viewport.panel
+    const applicationGroup = harness.groups.find(
+      (group) => group.activeTab === application.nativeTab,
+    )
+    assert.ok(applicationGroup)
+    const selection = harness.reader.inspect().view!.model.selection
+    const source = harness.reader.inspect().sourceUri
+    const bundle = harness.controller.bundle()
+    const progress = await (
+      await harness.reader.learningStorage()
+    ).readProgress()
+    harness.focusMutableDraft('restore-cover.ts', applicationGroup.viewColumn)
+    application.notifyViewState()
+    assert.equal(harness.controller.state().cleared, true)
+    assert.equal(application.visible, false)
+    const reveal = application.reveal.bind(application)
+    // Native hosts notify the watched tab change when Restore selects its owned App.
+    application.reveal = (column, preserveFocus): void => {
+      reveal(column, preserveFocus)
+      harness.announceTabChange()
+    }
+
+    // Act
+    await harness.reader.action('arrange')
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(application.visible, true)
+    assert.equal(applicationGroup.activeTab, application.nativeTab)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(harness.reader.presentationState().reason, undefined)
+    assert.equal(harness.controller.state().cleared, false)
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.equal(harness.reader.inspect().sourceUri, source)
+    assert.deepEqual(harness.reader.inspect().view!.model.selection, selection)
+    assert.equal(harness.controller.bundle(), bundle)
+    assert.equal(harness.runtimes[0]!.dispatches, 1)
+    assert.deepEqual(
+      await (await harness.reader.learningStorage()).readProgress(),
+      progress,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('Restore preserves a newer source choice made while it reveals the covered recording', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (candidate) => candidate.mode === 'recording',
+    )
+    assert.ok(viewport)
+    const application = viewport.panel
+    harness.focusMutableDraft('restore-cover.ts', 1)
+    application.notifyViewState()
+    const reveal = application.reveal.bind(application)
+    application.reveal = (column, preserveFocus): void => {
+      reveal(column, preserveFocus)
+      harness.announceTabChange()
+      // The exact owned switch settles before the learner selects a different file.
+      harness.focusMutableDraft('newer-source-choice.ts', 1)
+      application.notifyViewState()
+    }
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+    const chosenGroup = harness.groups.find((group) => group.viewColumn === 1)
+    assert.ok(chosenGroup)
+    const chosenInput = chosenGroup.activeTab!.input
+    assert.ok('uri' in chosenInput)
+    assert.equal(
+      chosenInput.uri.path.split('/').at(-1),
+      'newer-source-choice.ts',
+    )
+    assert.equal(harness.runtimes[0]!.dispatches, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('Restore after focused reading recovers the confirmed Study layout when native space is available', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
