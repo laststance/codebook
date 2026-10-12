@@ -338,10 +338,20 @@ test('Restore uncovers the recorded application and recovers its source without 
     assert.equal(harness.controller.state().cleared, true)
     assert.equal(application.visible, false)
     const reveal = application.reveal.bind(application)
-    // Native hosts notify the watched tab change when Restore selects its owned App.
+    const visibility = Object.getOwnPropertyDescriptor(application, 'visible')
+    assert.ok(visibility?.get)
+    const readVisibility = visibility.get.bind(application)
+    let visibilityPending = false
+    // The public panel receipt arrives after native tab notifications in the real host.
+    Object.defineProperty(application, 'visible', {
+      get: () => !visibilityPending && readVisibility(),
+    })
     application.reveal = (column, preserveFocus): void => {
+      visibilityPending = true
       reveal(column, preserveFocus)
       harness.announceTabChange()
+      visibilityPending = false
+      application.notifyViewState()
     }
     // Native historical debugging fronts its restored captured source after the owned App reveal.
     harness.changeAfterNextSourceDisplay((editor) => {

@@ -1735,15 +1735,15 @@ export class StudyWorkspace {
         )
       )
     }
-    const retainsRecordedApp = (): boolean =>
-      recordedApplication === this.app && recordedApplication.visible
+    const retainsRecordedApp = (): boolean => recordedApplication === this.app
     beforeScopeFocus({
       matchesEditor: () =>
         recordedApplication.active || matchesRecordedEditor(),
-      // The same historical stop may front its captured source; another native file still revokes Restore.
+      // The owned tab can precede its visible receipt; source recovery still requires the App to be visible.
       matchesGroup: () =>
         retainsRecordedApp() &&
-        (matchesRecordedAppGroup() || matchesRecordedSourceGroup()),
+        (matchesRecordedAppGroup() ||
+          (recordedApplication.visible && matchesRecordedSourceGroup())),
     })
     recordedApplication.reveal(recordedApplication.viewColumn, true)
     await waitUntil(
