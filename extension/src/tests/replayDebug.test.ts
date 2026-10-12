@@ -471,6 +471,51 @@ test('missing history clears native stack and labels the selected moment truthfu
   )
 })
 
+test('historical jumps ask native debugging to keep the keyboard on replay controls through recorded points and gaps', () => {
+  // Arrange
+  const { adapter, request, messages } = harness()
+  adapter.select(recorded(), 'Recorded')
+  request('configurationDone')
+
+  // Act
+  adapter.select(undefined, 'Not recorded at this moment')
+  adapter.select(recorded(), 'Recorded again')
+
+  // Assert: the host may inspect each historical stop without borrowing the learner's keyboard.
+  assert.deepEqual(
+    messages
+      .filter((message) => 'event' in message && message.event === 'stopped')
+      .map((message) => message.body),
+    [
+      {
+        reason: 'pause',
+        description: 'Recorded',
+        threadId: 1,
+        allThreadsStopped: true,
+        preserveFocusHint: true,
+      },
+      {
+        reason: 'pause',
+        description: 'Not recorded at this moment',
+        threadId: 2,
+        allThreadsStopped: true,
+        preserveFocusHint: true,
+      },
+      {
+        reason: 'pause',
+        description: 'Recorded again',
+        threadId: 3,
+        allThreadsStopped: true,
+        preserveFocusHint: true,
+      },
+    ],
+  )
+  assert.equal(
+    request('stackTrace', { threadId: 3 }).body.stackFrames[0].name,
+    'createInvoice',
+  )
+})
+
 test('seeking retires the focused historical thread before a gap can retain native variable rows', () => {
   // Arrange
   const { adapter, request, messages } = harness()
@@ -495,6 +540,7 @@ test('seeking retires the focused historical thread before a gap can retain nati
           description: 'Not recorded at this moment',
           threadId: 2,
           allThreadsStopped: true,
+          preserveFocusHint: true,
         },
       },
     ],

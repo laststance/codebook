@@ -546,7 +546,7 @@ export class ReplayDebugAdapter {
     return handle
   }
 
-  /** Notifies native views of a new moment or missing history only after DAP configuration. @example this.stopped() */
+  /** Reports configured historical selections without borrowing replay-control keyboard focus; called by {@link ReplayDebugAdapter.select} and {@link ReplayDebugAdapter.handleMessage}. @example this.stopped() */
   private stopped(): void {
     this.stoppedAtMs = Date.now()
     this.event('stopped', {
@@ -554,6 +554,8 @@ export class ReplayDebugAdapter {
       description: this.label,
       threadId: this.threadId,
       allThreadsStopped: true,
+      // Historical inspection changes the moment, while the learner keeps the keyboard where it was.
+      preserveFocusHint: true,
     })
   }
 
