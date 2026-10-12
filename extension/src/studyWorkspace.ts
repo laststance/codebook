@@ -695,6 +695,8 @@ export class StudyWorkspace {
   }
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
+  /** Positive host-lifetime discovery retained by {@link chatFocusCommand}; absent commands remain discoverable later. */
+  private registeredChatFocusCommand = false
   private layoutReceipt?: {
     mode: 'study' | 'repository' | 'study-reentry'
     signature: string
@@ -2663,13 +2665,20 @@ export class StudyWorkspace {
 
   /**
    * Names the host's command that focuses its chat, where the host registers one; asked by {@link focusReturnCommand} for a remembered tab that is known to lie outside the main editor.
+   * A positively discovered built-in command stays known in this extension host, so subsequent pause returns need no catalog roundtrip. An absent command is checked again on the next request.
    * @returns {@link CURSOR_FOCUS_AGENT_COMMAND} in Cursor, `undefined` in a host without it.
    * @example await this.chatFocusCommand() // => 'composer.focusComposer' in Cursor, undefined in VS Code
    */
   private async chatFocusCommand(): Promise<string | undefined> {
-    return (await vscode.commands.getCommands(true)).includes(
-      CURSOR_FOCUS_AGENT_COMMAND,
+    // Discovery cannot delay a subsequent pause after this host already registered its built-in chat command.
+    if (this.registeredChatFocusCommand) return CURSOR_FOCUS_AGENT_COMMAND
+    if (
+      (await vscode.commands.getCommands(true)).includes(
+        CURSOR_FOCUS_AGENT_COMMAND,
+      )
     )
+      this.registeredChatFocusCommand = true
+    return this.registeredChatFocusCommand
       ? CURSOR_FOCUS_AGENT_COMMAND
       : undefined
   }

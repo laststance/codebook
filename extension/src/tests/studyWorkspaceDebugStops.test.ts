@@ -7,6 +7,128 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
+// Cycle 0046 task5: a verified built-in chat command must not wait for another native catalog reply at each pause.
+// Value: protects=subsequent chat keyboard restoration; fails_when=every pause reacquires a stalled catalog; why_new=existing cases hold layout or capture, not repeated catalog discovery; seam=none; no_claim=continuous native focus (controlled editor fixture).
+test('Cursor chat regains keyboard at a later pause while a redundant command catalog reply is stalled', async (context) => {
+  // Arrange: the first real return confirms the command in this host session.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('actions.ts', 2)
+    chat.focus()
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    await waitUntil(() => chat.focused(), 'first verified chat return', 300)
+    const originalCommands = harness.editor.commands.getCommands
+    const heldCatalog = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    context.mock.method(harness.editor.commands, 'getCommands', async () => {
+      await heldCatalog
+      return originalCommands()
+    })
+
+    // Act: the next real pause must not wait for a catalog the host already answered.
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.pauseDebugger()
+    await waitUntil(
+      () => chat.focused(),
+      'subsequent chat keyboard while redundant catalog reply is stalled',
+      300,
+    )
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer', 'composer.focusComposer'],
+    )
+  } finally {
+    release()
+    context.mock.restoreAll()
+    live?.close()
+    await harness.close()
+  }
+})
+
+test('Cursor chat regains keyboard when its command becomes available after an earlier pause could not return it', async (context) => {
+  // Arrange: this host has not registered its chat command at the first pause.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let isChatCommandRegistered = false
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    const originalCommands = harness.editor.commands.getCommands
+    context.mock.method(harness.editor.commands, 'getCommands', async () => {
+      const commands = await originalCommands()
+      return isChatCommandRegistered
+        ? commands
+        : commands.filter((command) => command !== 'composer.focusComposer')
+    })
+    harness.focusMutableDraft('actions.ts', 2)
+    chat.focus()
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    await harness.reader['returnsKeyboardToChatAtPause']()
+    assert.equal(chat.focused(), false)
+
+    // Act: a later registered command must remain discoverable in the same reader.
+    isChatCommandRegistered = true
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.pauseDebugger()
+    await waitUntil(() => chat.focused(), 'newly available chat keyboard', 300)
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer'],
+    )
+  } finally {
+    context.mock.restoreAll()
+    live?.close()
+    await harness.close()
+  }
+})
+
 test('Cursor chat regains keyboard at a pause despite a stalled layout query when its source tab report is stale', async () => {
   // Arrange: Cursor names a visible source tab while its separate chat holds the keyboard.
   const harness = await workspaceHarness()
