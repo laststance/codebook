@@ -611,6 +611,8 @@ export class StudyWorkspace {
   private summaryHeldFocus = false
   /** Whether the Study pane's own document last reported that it has the keyboard (`pane-focus`, sent at its window's focus and blur events and once at load); `false` until a report, after a blur, and for a newly bound pane. {@link focusPaneForGridCommand} reads it to leave a pane alone that has the keyboard already. */
   private studyPaneReportsKeyboard = false
+  /** The current bottom document's real input report; {@link loadPlayback} preserves that keyboard through native Summary reveals. */
+  private momentsReportsKeyboard = false
   // The wait for a hidden summary's report that it lost the focus; see {@link releaseHiddenSummaryFocus}.
   private summaryFocusRelease?: ReturnType<typeof setTimeout>
   // Set while Show Variables runs its commands: Run and Debug takes the focus on purpose then, also where its view hides the summary.
@@ -6573,10 +6575,16 @@ export class StudyWorkspace {
     this.publish()
   }
 
-  /** Opens the shared reader without runtime input while preserving the learner's navigation chrome. @example await workspace.open() */
+  /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome.
+   * @param signal - Cancels an obsolete reader entry.
+   * @param origin - Identifies the existing navigation/placement contract for this entry.
+   * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
+   * @example await workspace.open(signal, 'study', true)
+   */
   async open(
     signal?: AbortSignal,
     origin: 'study' | 'repository' | 'presentation' = 'study',
+    preserveRecordingKeyboard = false,
   ): Promise<void> {
     if (origin !== 'presentation') this.assertPresentationIdle()
     signal?.throwIfAborted()
@@ -6988,6 +6996,7 @@ export class StudyWorkspace {
         await this.showLearningSummary(
           signal,
           origin !== 'repository' && (firstOpen || compositionChanged),
+          preserveRecordingKeyboard,
         )
       }
       if (request === this.readerOpenNumber)
@@ -9390,6 +9399,12 @@ export class StudyWorkspace {
     studyId: string,
     signal: AbortSignal,
   ): Promise<PlaybackData> {
+    // Capture the actual existing holder before I/O or composition changes; later learner choices are preserved by native reveal options too.
+    const preserveRecordingKeyboard = Boolean(
+      vscode.window.state.focused &&
+      this.moments?.visible &&
+      this.momentsReportsKeyboard,
+    )
     const intent = this.repositoryRecordingOpen
     const origin =
       intent?.studyId === studyId &&
@@ -9468,7 +9483,7 @@ export class StudyWorkspace {
       this.recordingRevealedByEntry !==
       this.playback!.state().presentationRevision
     )
-      await this.open(signal, origin)
+      await this.open(signal, origin, preserveRecordingKeyboard)
     signal.throwIfAborted()
     await this.ensureReplayViewport(signal)
     signal.throwIfAborted()
@@ -11662,10 +11677,16 @@ export class StudyWorkspace {
     panel.webview.html = studyHtml('context')
   }
 
-  /** Opens the replay summary beside native chat without modifying either editor content; commands and recording entry call it. @example await workspace.showLearningSummary() */
+  /** Reveals the replay summary for commands and recording entry while preserving an already owned bottom keyboard when {@link loadPlayback} requests it.
+   * @param signal - Cancels an obsolete Summary entry.
+   * @param revealPlayback - Reveals the bottom controls for explicit recording entry only.
+   * @param preserveFocus - Reveals both native views without taking the current keyboard; an explicit Summary command keeps its default focus behavior.
+   * @example await workspace.showLearningSummary(signal, true, true)
+   */
   async showLearningSummary(
     signal?: AbortSignal,
     revealPlayback = false,
+    preserveFocus = false,
   ): Promise<void> {
     if (!this.recordingActive || !this.summaryComposition || this.closing)
       throw new StudyError(
@@ -11704,12 +11725,19 @@ export class StudyWorkspace {
     }
     try {
       assertCurrent()
+      const focusOptions = preserveFocus ? { preserveFocus: true } : undefined
       // Only explicit replay entry reveals the bottom controls; passive ticks never reopen a closed panel.
       if (revealPlayback) {
-        await vscode.commands.executeCommand('codebook.observedMoments.focus')
+        await vscode.commands.executeCommand(
+          'codebook.observedMoments.focus',
+          focusOptions,
+        )
         assertCurrent()
       }
-      await vscode.commands.executeCommand('codebook.learningSummary.focus')
+      await vscode.commands.executeCommand(
+        'codebook.learningSummary.focus',
+        focusOptions,
+      )
       assertCurrent()
       await waitUntil(
         () => {
@@ -12132,6 +12160,7 @@ export class StudyWorkspace {
         {
           resolveWebviewView: async (view) => {
             this.moments = view
+            this.momentsReportsKeyboard = false
             view.webview.options = {
               enableScripts: true,
               localResourceRoots: [],
@@ -12150,12 +12179,15 @@ export class StudyWorkspace {
             view.onDidDispose(() => {
               if (this.moments === view) {
                 this.moments = undefined
+                this.momentsReportsKeyboard = false
                 this.lastPublished = undefined
                 this.publish()
               }
             })
             view.onDidChangeVisibility(() => {
               if (this.moments === view) {
+                // A hidden or replaced bottom view cannot claim a later recording's keyboard.
+                if (!view.visible) this.momentsReportsKeyboard = false
                 this.lastPublished = undefined
                 this.publish()
               }
@@ -14382,6 +14414,9 @@ export class StudyWorkspace {
       // The Study pane's report is kept for an Arrange or an Enlarge, which leave a pane alone that has the keyboard.
       if (owner !== undefined && owner === this.contextPanel)
         this.studyPaneReportsKeyboard = message.focused
+      // Only the currently registered bottom document can establish recording-entry input ownership.
+      if (owner !== undefined && owner === this.moments)
+        this.momentsReportsKeyboard = message.focused
       return
     }
     await this.initialize()

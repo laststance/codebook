@@ -5381,3 +5381,79 @@ test('opening the recording of this session’s own run while no study is select
     await harness.close()
   }
 })
+
+// Regression: Cycle0046 original85 — a native recording open leaves bottom Saved studies for Summary BODY.
+// Found by /qa on 2026-10-13; report: docs/cycles/0046-carried-defects-of-cycle-0045.md#original85-recording-open-cause-confirmed-on-c40-2026-10-13
+// Value: protects=bottom replay-control keyboard across recording entry; fails_when=native Summary reveal forces focus; why_new=DOM cases omit host focus commands; seam=existing view-focus port; no_claim=native input or pixel proof.
+test('opening a recording while the bottom pane holds keyboard reveals Summary without taking that keyboard', async () => {
+  // Arrange: both contributed views exist, and the general bottom pane reports its real input ownership.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.action('return-current')
+    await harness.reader.open()
+    harness.receivePlaybackPanel({ type: 'pane-focus', focused: true })
+    const commandsBefore = harness.viewFocusCommands.length
+
+    // Act: the public recording loader enters the same existing bottom view.
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert: both native reveals preserve the input the bottom renderer already owns.
+    assert.deepEqual(harness.viewFocusCommands.slice(commandsBefore), [
+      { command: 'codebook.observedMoments.focus', preserveFocus: true },
+      { command: 'codebook.learningSummary.focus', preserveFocus: true },
+    ])
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('an explicit Summary entry still focuses Summary after a recording preserved the bottom keyboard', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receivePlaybackPanel({ type: 'pane-focus', focused: true })
+    const commandsBefore = harness.viewFocusCommands.length
+
+    // Act: a deliberate Summary command is a new learner choice.
+    await harness.reader.showLearningSummary()
+
+    // Assert
+    assert.deepEqual(harness.viewFocusCommands.slice(commandsBefore), [
+      { command: 'codebook.learningSummary.focus', preserveFocus: false },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a hidden bottom pane never claims keyboard preservation for a later recording entry', async () => {
+  // Arrange: a delayed focus report cannot make an invisible view an input owner.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.action('return-current')
+    await harness.reader.open()
+    harness.hidePlaybackPanel()
+    harness.receivePlaybackPanel({ type: 'pane-focus', focused: true })
+    const commandsBefore = harness.viewFocusCommands.length
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert: ordinary explicit entry retains its default native focus behavior.
+    assert.deepEqual(harness.viewFocusCommands.slice(commandsBefore), [
+      { command: 'codebook.observedMoments.focus', preserveFocus: false },
+      { command: 'codebook.learningSummary.focus', preserveFocus: false },
+    ])
+  } finally {
+    await harness.close()
+  }
+})

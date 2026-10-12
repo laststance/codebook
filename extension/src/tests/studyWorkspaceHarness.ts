@@ -2187,6 +2187,7 @@ export async function workspaceHarness(
   }
   const summaryListeners = new Set<(message: unknown) => void>()
   const summaryVisibilityListeners = new Set<() => void>()
+  const viewFocusCommands: { command: string; preserveFocus: boolean }[] = []
   const summary = {
     visible: false,
     webview: {
@@ -2350,6 +2351,19 @@ export async function workspaceHarness(
             contextKeys.set(String(layout), contextValue)
             return
           }
+          // Visibility alone did not expose the native focus handoff that leaves a replay control behind.
+          if (
+            name === 'codebook.observedMoments.focus' ||
+            name === 'codebook.learningSummary.focus'
+          )
+            viewFocusCommands.push({
+              command: name,
+              preserveFocus:
+                typeof layout === 'object' &&
+                layout !== null &&
+                'preserveFocus' in layout &&
+                layout.preserveFocus === true,
+            })
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
             playbackPanel.visible = true
@@ -3365,6 +3379,7 @@ export async function workspaceHarness(
     controls,
     outline,
     commands,
+    viewFocusCommands,
     articleOpens,
     articleReturns,
     receiveContext: (message: unknown): void =>
