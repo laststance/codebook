@@ -1906,7 +1906,7 @@ function studyClient(
     generalName: string,
   ): string => message.liveTitle ?? profileTitle ?? generalName
   /**
-   * Says whether a Study message shows a replay in the bottom panel's pane, which shows the transport alone then; read by {@link showsLiveStrip} and before the recording's save state is written.
+   * Says whether a Study message shows a replay in the bottom panel's pane, which shows one transport; read by {@link showsLiveStrip} and before the save state and unrelated Node history are written.
    * The live strip and the save state are left out there by keeping their status regions empty, not by taking them from the page: when the replay is left, the run's state and the save state are written into regions that exist. Both say how things stand at that moment, so their announcement then is no old news.
    * @param message - The current Study message.
    * @example isReplayInBottomPanel(message) // => false in the Study pane, which shows the strip beside a replay
@@ -2736,13 +2736,16 @@ function studyClient(
       showChosenEntry(message, previous)
       const nodeHistories = message.nodeHistoryCatalog ?? []
       const nodeHistory = message.nodeHistory
+      // Application replay keeps unrelated Node status nodes empty without hiding those regions.
+      const nodeHistoryIsSuppressed = isReplayInBottomPanel(message)
+      const nodeHistoryStatusText = nodeHistory
+        ? `${nodeHistory.status}${nodeHistory.reason ? ` · ${nodeHistory.reason}` : ''} · ${nodeHistory.entries.length} verified events. Test output is the recorded surface; application video and synchronized application replay are unavailable.`
+        : nodeHistories.length
+          ? 'Choose a Node test history from Saved studies to inspect its verified output and debugger stops.'
+          : 'No Node test history has been saved in this workspace.'
       text(
         'node-history-status',
-        nodeHistory
-          ? `${nodeHistory.status}${nodeHistory.reason ? ` · ${nodeHistory.reason}` : ''} · ${nodeHistory.entries.length} verified events. Test output is the recorded surface; application video and synchronized application replay are unavailable.`
-          : nodeHistories.length
-            ? 'Choose a Node test history from Saved studies to inspect its verified output and debugger stops.'
-            : 'No Node test history has been saved in this workspace.',
+        nodeHistoryIsSuppressed ? '' : nodeHistoryStatusText,
       )
       const nodeHistoryUnderstanding = element(
         'node-history-understood',
@@ -2872,6 +2875,7 @@ function studyClient(
         playbackState?.mode === 'playing' ? 'Pause' : 'Play'
       nodeHistoryToggle.disabled =
         !nodeHistory ||
+        nodeHistoryIsSuppressed ||
         !playbackState?.sequence ||
         playbackState.loading ||
         (playbackState.mode === 'paused' &&
@@ -2926,20 +2930,23 @@ function studyClient(
             : position?.type === 'output'
               ? 'Test output · debugger not recorded at this moment'
               : 'Select an event to move through the recorded test history.'
+      const nodeHistoryPositionText = position
+        ? `${momentDescription} · ${(position.elapsedMs / 1000).toFixed(2)} s · output shown through this event.`
+        : momentDescription
       text(
         'node-history-position',
-        position
-          ? `${momentDescription} · ${(position.elapsedMs / 1000).toFixed(2)} s · output shown through this event.`
-          : momentDescription,
+        nodeHistoryIsSuppressed ? '' : nodeHistoryPositionText,
       )
       // A saved stop committed without native values keeps the same muted guidance row as replay, separate from the position facts.
       text(
         'node-history-hint',
-        position?.nativeValuesUninspected ? options.nativeValuesHint : '',
+        !nodeHistoryIsSuppressed && position?.nativeValuesUninspected
+          ? options.nativeValuesHint
+          : '',
       )
       offerShowVariables(
         'node-history-show-variables',
-        Boolean(position?.nativeValuesUninspected),
+        !nodeHistoryIsSuppressed && Boolean(position?.nativeValuesUninspected),
         options.nodeTransportFocus,
         'node-history',
       )

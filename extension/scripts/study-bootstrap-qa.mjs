@@ -3281,6 +3281,120 @@ async function check(page, options, collected) {
               stopShown: true,
             }),
       })
+
+      // Arrange: a retained Node journal must not add another transport to application replay (row 509).
+      const nodeJournalWithoutReplay = {
+        ...options.message,
+        nodeHistory: {
+          header: { studyId: 'node-study' },
+          status: 'complete',
+          entries: [
+            {
+              type: 'output',
+              sequence: 1,
+              elapsedMs: 0,
+              channel: 'stdout',
+              text: 'First recorded output',
+            },
+            {
+              type: 'output',
+              sequence: 2,
+              elapsedMs: 1000,
+              channel: 'stdout',
+              text: 'Second recorded output',
+            },
+          ],
+        },
+        nodeHistoryEventCount: 2,
+        nodeHistoryPosition: {
+          type: 'output',
+          sequence: 1,
+          eventIndex: 0,
+          elapsedMs: 0,
+        },
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence: 1,
+          loading: false,
+          startMs: 0,
+          endMs: 1000,
+          positionMs: 0,
+        },
+      }
+      await publish({
+        ...panelReplay,
+        ...nodeJournalWithoutReplay,
+        recording: panelReplay.recording,
+      })
+      // Act: inspect the unrelated controls and status regions, then return to the independent Node reader.
+      const nodeDuringApplicationReplay = {
+        regions: [
+          await statusRegion('node-history-status'),
+          await statusRegion('node-history-position'),
+          await statusRegion('node-history-hint'),
+        ],
+        height: await page
+          .locator('#node-history')
+          .evaluate((section) =>
+            Math.round(section.getBoundingClientRect().height),
+          ),
+        nodePlayVisible: await page
+          .locator('#node-history-playback-toggle')
+          .isVisible(),
+        nodePlayDisabled: await page
+          .locator('#node-history-playback-toggle')
+          .isDisabled(),
+        nodeTimelineVisible: await page
+          .locator('#node-history-playhead')
+          .isVisible(),
+        applicationPlayVisible: await page
+          .locator('#playback-toggle')
+          .isVisible(),
+        looks: await looksAsWithout('#node-history'),
+      }
+      await publish(nodeJournalWithoutReplay)
+      const nodeAfterApplicationReplay = {
+        status: await page.locator('#node-history-status').textContent(),
+        nodePlayVisible: await page
+          .locator('#node-history-playback-toggle')
+          .isVisible(),
+        nodePlayEnabled: await page
+          .locator('#node-history-playback-toggle')
+          .isEnabled(),
+        nodeTimelineVisible: await page
+          .locator('#node-history-playhead')
+          .isVisible(),
+        understood: await page.locator('#node-history-understood').isChecked(),
+      }
+      // Assert: empty rendered status nodes take no space; the normal Node reader keeps its own controls.
+      cases.push({
+        name: 'application replay in the bottom panel shows one transport and empty rendered Node status regions; leaving it restores the independent Node journal without marking understanding',
+        actual: { nodeDuringApplicationReplay, nodeAfterApplicationReplay },
+        passed:
+          JSON.stringify(nodeDuringApplicationReplay) ===
+            JSON.stringify({
+              regions: [
+                { ...emptyRegion('node-history-status'), role: 'status/null' },
+                emptyRegion('node-history-position'),
+                emptyRegion('node-history-hint'),
+              ],
+              height: 0,
+              nodePlayVisible: false,
+              nodePlayDisabled: true,
+              nodeTimelineVisible: false,
+              applicationPlayVisible: true,
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(nodeAfterApplicationReplay) ===
+            JSON.stringify({
+              status:
+                'complete · 2 verified events. Test output is the recorded surface; application video and synchronized application replay are unavailable.',
+              nodePlayVisible: true,
+              nodePlayEnabled: true,
+              nodeTimelineVisible: true,
+              understood: false,
+            }),
+      })
     }
   }
   // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.

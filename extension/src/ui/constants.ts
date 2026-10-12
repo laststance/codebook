@@ -188,6 +188,8 @@ export const STUDY_STYLES = `
 .learning-header{margin-bottom:12px}.learning-header p{margin:0}.learning-header h1{margin:4px 0 8px}
 /* During a replay the bottom panel shows the transport alone. The live strip and the recording's save state are left out there by their own emptiness, not by this rule: both are status regions, which stay rendered so that their text, written when the replay is left, changes a region that exists. */
 body.moments-only[data-replay=true] .learning-header,body.moments-only[data-replay=true] #observed-moments,body.moments-only[data-replay=true] #saved-studies,body.moments-only[data-replay=true] [data-action="open-article"],body.moments-only[data-replay=true] [data-action="return-wiki"],body.moments-only[data-replay=true] #evidence-details{display:none}
+/* Application replay owns the bottom transport; unrelated Node controls leave while their empty status regions remain rendered. */
+body.moments-only[data-replay=true] #node-history{padding:0;margin:0;border:0}body.moments-only[data-replay=true] #node-history>:not([role=status]){display:none}
 body[data-replay=true]{padding-bottom:calc(var(--playback-height,150px) + 20px)}
 body[data-replay=true] #recording-transport{position:fixed;z-index:3;bottom:0;left:0;right:0;margin:0;padding:10px 16px;border-top:1px solid var(--vscode-panel-border,#444);background:var(--vscode-editor-background,#181818);max-height:60vh;overflow:auto}
 /* While the recovery details are open the summary above keeps at least 60% of the pane; the closed footer may grow to 60vh, so the values hint never makes it scroll. The bottom panel's transport is not bounded. */
