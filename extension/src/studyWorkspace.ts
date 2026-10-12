@@ -2685,7 +2685,7 @@ export class StudyWorkspace {
 
   /**
    * Says where the group of a remembered tab lies: in the main editor, in another editor part, or in a place the editor does not tell; asked by {@link focusReturnCommand} before it chooses a command.
-   * The editor answers a layout read for the editor part that has the focus, so the count it gives is the main editor's only when the main editor is known to have the focus ({@link hasMainEditorFocus}). Without that proof the count still says two things ({@link placeByUnprovenCount}); for every other group nothing is guessed.
+   * An unchanged measured main-part receipt already identifies groups behind its leaves ({@link isOutsideRetainedMainPart}), without borrowing focus or reading another part's layout. Otherwise the editor answers a layout read for the editor part that has the focus, so its count is the main editor's only when {@link hasMainEditorFocus} holds. Without that proof the count still says two things ({@link placeByUnprovenCount}); for every other group nothing is guessed.
    * @param group - The group that still shows the remembered tab, `undefined` for a text tab another editor part held the keyboard over.
    * @returns
    * - The group's view column for a group of the main editor.
@@ -2698,13 +2698,47 @@ export class StudyWorkspace {
   ): Promise<vscode.ViewColumn | 'other' | 'unknown'> {
     // An absent group already identifies another part; no layout reply is needed to restore its chat.
     if (!group) return 'other'
+    // Only a group beyond the retained main leaves is identified; main-group returns still use a fresh layout read.
+    if (this.isOutsideRetainedMainPart(group)) return 'other'
+    return this.placeByCurrentLayout(group)
+  }
+
+  /**
+   * Measures unconfirmed group membership for {@link placeOfRememberedGroup} when its retained evidence cannot identify another part.
+   * @param group - The current native group whose main-part membership remains unconfirmed.
+   * @returns The main view column, `other` for a proven foreign part, or `unknown` without sufficient native scope evidence.
+   * @example await this.placeByCurrentLayout(sourceGroup) // => 2 when the focused main layout proves that column
+   */
+  private async placeByCurrentLayout(
+    group: vscode.TabGroup,
+  ): Promise<vscode.ViewColumn | 'other' | 'unknown'> {
     const count = editorLayoutGroupCount(
       await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
     )
+    // A missing layout never grants main-part membership.
     if (count === undefined) return 'unknown'
     return this.hasMainEditorFocus(count)
       ? this.placeByMainCount(group, count)
       : this.placeByUnprovenCount(group, count)
+  }
+
+  /**
+   * Identifies a foreign group for {@link placeOfRememberedGroup} while measured native group identity and columns are unchanged.
+   * Resizing does not change membership; this count never supplies geometry or authorizes a layout write.
+   * @param group - The current group whose membership the remembered focus needs.
+   * @returns Whether the retained main-part boundary proves this group lies outside it; false for stale or absent evidence.
+   * @example this.isOutsideRetainedMainPart(chatGroup) // => true behind the same measured main groups
+   */
+  private isOutsideRetainedMainPart(group: vscode.TabGroup): boolean {
+    const receipt = this.layoutReceipt
+    // Additions, removals, moves and replacement groups release the prior part boundary.
+    if (
+      !receipt ||
+      !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)
+    )
+      return false
+    const count = editorLayoutGroupCount(JSON.parse(receipt.signature))
+    return count !== undefined && group.viewColumn > count
   }
 
   /**

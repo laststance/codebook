@@ -7,6 +7,107 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 
+// Cycle 0046 task5: a retained main-part membership proof must not wait for another part's layout reply.
+// Value: protects=known separate-chat keyboard restoration; fails_when=return waits for redundant native layout; why_new=stale-source coverage has no named chat group; seam=none; no_claim=native continuous focus (controlled editor).
+test('Cursor chat regains keyboard at a pause despite a stalled layout query when its native group membership is retained', async () => {
+  // Arrange: the measured main-part receipt already separates this named chat group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+
+    // Act: a real pause must restore the known foreign group without another layout response.
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    await waitUntil(
+      () => chat.focused(),
+      'known native chat group while redundant layout reply is stalled',
+      300,
+    )
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer'],
+    )
+  } finally {
+    release()
+    live?.close()
+    await harness.close()
+  }
+})
+
+test('a new main editor group cannot inherit the separate chat command from the previous layout receipt', async () => {
+  // Arrange: the receipt placed the original chat behind two main groups.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    // Act: native group creation occupies the chat's former ordinal in the main part.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusThirdEditorGroup',
+    )
+    const addedMainGroup = harness.groups.find(
+      (group) => group.viewColumn === 3,
+    )
+    assert.ok(addedMainGroup)
+    const command = await readerSeams(harness).focusReturnCommand(
+      addedMainGroup,
+      true,
+    )
+
+    // Assert: an at-pause return never gives a main group the chat command.
+    assert.equal(command, undefined)
+    assert.deepEqual(
+      harness.commands.filter((value) => value === 'composer.focusComposer'),
+      [],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Cycle 0046 task5: a verified built-in chat command must not wait for another native catalog reply at each pause.
 // Value: protects=subsequent chat keyboard restoration; fails_when=every pause reacquires a stalled catalog; why_new=existing cases hold layout or capture, not repeated catalog discovery; seam=none; no_claim=continuous native focus (controlled editor fixture).
 test('Cursor chat regains keyboard at a later pause while a redundant command catalog reply is stalled', async (context) => {
@@ -262,6 +363,11 @@ test('a file chosen while the early chat return waits keeps native keyboard owne
       () => {},
       'normal',
     )
+    // A newly added main group releases the old membership receipt; this case still exercises a pending scope query.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusThirdEditorGroup',
+    )
+    assert.equal(harness.groups.length, 4)
     chat.focusTab()
     const held = harness.holdNextCommand('vscode.getEditorLayout')
     release = held.release
@@ -327,6 +433,11 @@ test('Read Source revokes a pending chat return when the captured source is alre
       () => {},
       'normal',
     )
+    // A newly added main group releases the old membership receipt; this case still exercises a pending scope query.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusThirdEditorGroup',
+    )
+    assert.equal(harness.groups.length, 4)
     chat.focusTab()
     const held = harness.holdNextCommand('vscode.getEditorLayout')
     release = held.release
@@ -360,7 +471,7 @@ test('Read Source revokes a pending chat return when the captured source is alre
   }
 })
 
-test('a newly displayed capture retains its pending chat return before its source identity is published', async () => {
+test('a newly displayed capture retains its pending chat return before its source identity is published', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
@@ -400,11 +511,23 @@ test('a newly displayed capture retains its pending chat return before its sourc
     )
     chat.focusTab()
     const commandsBeforePause = harness.commands.length
-    const held = harness.holdNextCommand('vscode.getEditorLayout')
-    release = held.release
+    const originalCommands = harness.editor.commands.getCommands
+    let noteDiscoveryStarted = (): void => {}
+    const discoveryStarted = new Promise<void>((resolve) => {
+      noteDiscoveryStarted = resolve
+    })
+    const pendingDiscovery = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // Membership is known; the first required host-command lookup remains genuinely pending.
+    context.mock.method(harness.editor.commands, 'getCommands', async () => {
+      noteDiscoveryStarted()
+      await pendingDiscovery
+      return originalCommands()
+    })
     harness.focusMutableDraft('mode.ts', 2)
     harness.pauseDebugger()
-    await held.started
+    await discoveryStarted
 
     // Act: capture finishes while native command discovery is still pending.
     harness.service.action({
@@ -425,7 +548,7 @@ test('a newly displayed capture retains its pending chat return before its sourc
       harness.reader['sourceUri']?.toString(),
       harness.focusedSource()?.document.uri.toString(),
     )
-    held.release()
+    release()
     await rendered
 
     // Assert
@@ -439,6 +562,7 @@ test('a newly displayed capture retains its pending chat return before its sourc
     )
   } finally {
     release()
+    context.mock.restoreAll()
     live?.close()
     await harness.close()
   }
