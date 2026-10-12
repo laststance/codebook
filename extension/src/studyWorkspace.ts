@@ -1693,7 +1693,7 @@ export class StudyWorkspace {
    * Recovers covered replay for {@link admitPresentation} before explicit arrangement confirms its source.
    * @param action - Saving a preference must not reveal a pane the learner covered.
    * @param signal - Cancels recovery when the placement loses ownership.
-   * @param beforeScopeFocus - Announces only this owned Application tab to the native departure watcher.
+   * @param beforeScopeFocus - Announces this App and its captured source, which native historical debugging may focus during recovery.
    * @returns Whether the arrangement replaced a covering tab with its recorded Application.
    * @throws When visibility or the same recorded frame cannot settle within the existing placement bounds.
    * @example await this.revealCoveredReplay('restore', signal, focusedPane.beforeScopeFocus)
@@ -1709,13 +1709,41 @@ export class StudyWorkspace {
     // Other compositions and preference saves retain the learner's current native tab.
     if (!this.mayRevealCoveredReplay(action) || !recordedApplication)
       return false
+    const recordedSource = this.sourceUri?.toString(),
+      recordedSourceColumn = this.studyPanePositions().sourceColumn
+    // Freeze the captured target before recovery so another source file cannot become the borrow.
+    const matchesRecordedEditor = (): boolean =>
+      recordedSource !== undefined &&
+      vscode.window.activeTextEditor?.viewColumn === recordedSourceColumn &&
+      vscode.window.activeTextEditor?.document.uri.toString() === recordedSource
+    const matchesRecordedSourceGroup = (): boolean => {
+      const group = vscode.window.tabGroups.activeTabGroup,
+        input = group.activeTab?.input
+      return (
+        group.viewColumn === recordedSourceColumn &&
+        input instanceof vscode.TabInputText &&
+        input.uri.toString() === recordedSource
+      )
+    }
+    const matchesRecordedAppGroup = (): boolean => {
+      const group = vscode.window.tabGroups.activeTabGroup
+      return (
+        group.viewColumn === recordedApplication.viewColumn &&
+        this.isCodebookPaneInput(
+          group.activeTab?.input,
+          'codebook.scopedBrowser',
+        )
+      )
+    }
+    const retainsRecordedApp = (): boolean =>
+      recordedApplication === this.app && recordedApplication.visible
     beforeScopeFocus({
-      matchesEditor: () => recordedApplication.active,
+      matchesEditor: () =>
+        recordedApplication.active || matchesRecordedEditor(),
+      // The same historical stop may front its captured source; another native file still revokes Restore.
       matchesGroup: () =>
-        recordedApplication === this.app &&
-        recordedApplication.visible &&
-        vscode.window.tabGroups.activeTabGroup.viewColumn ===
-          recordedApplication.viewColumn,
+        retainsRecordedApp() &&
+        (matchesRecordedAppGroup() || matchesRecordedSourceGroup()),
     })
     recordedApplication.reveal(recordedApplication.viewColumn, true)
     await waitUntil(

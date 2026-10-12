@@ -343,6 +343,10 @@ test('Restore uncovers the recorded application and recovers its source without 
       reveal(column, preserveFocus)
       harness.announceTabChange()
     }
+    // Native historical debugging fronts its restored captured source after the owned App reveal.
+    harness.changeAfterNextSourceDisplay((editor) => {
+      harness.focusExistingSource(editor)
+    })
 
     // Act
     await harness.reader.action('arrange')
