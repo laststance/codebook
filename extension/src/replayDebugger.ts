@@ -65,6 +65,10 @@ export class ReplayDebugger {
   private valuesUnrequested = false
   /** Pending {@link awaitInspection} and {@link awaitRetrieval} checks, re-run whenever the native client's request was served, values load, a `stopped` event is sent or ownership changes. */
   private readonly inspectionWaiters = new Set<() => void>()
+  /** Default native model resolution is allowed only for an observed launch cohort that began without another active debugger. */
+  private nativeSessionsObservedFromEmptyContext = false
+  /** Other sessions observed by {@link trackNativeSessionOwnership}; they may pause without taking the selected frame. */
+  private readonly competingNativeSessions = new Set<string>()
 
   /**
    * Registers the owned historical debug adapter for {@link StudyWorkspace}.
@@ -92,12 +96,16 @@ export class ReplayDebugger {
       > &
         // Optional so an editor surface without the focused stack item (a test port) keeps the full grace.
         Partial<
-          Pick<typeof vscode.debug, 'activeStackItem' | 'activeDebugSession'>
+          Pick<
+            typeof vscode.debug,
+            'activeStackItem' | 'activeDebugSession' | 'onDidStartDebugSession'
+          >
         >
     },
     private readonly changed: (reason: ReplayDebuggerChange) => void = () => {},
     private readonly failed: (error: unknown) => void = () => {},
   ) {
+    this.trackNativeSessionOwnership()
     this.disposables.push(
       this.editor.debug.registerDebugAdapterDescriptorFactory(
         REPLAY_DEBUG_TYPE,
@@ -160,6 +168,7 @@ export class ReplayDebugger {
     )
     this.disposables.push(
       this.editor.debug.onDidTerminateDebugSession((session) => {
+        this.competingNativeSessions.delete(session.id)
         if (session.id !== this.session?.id) return
         this.forgetEndedSession()
         // Codebook retiring its own session to change stops keeps the learner's Run and Debug layout, so values stay unrequested and the hint stays.
@@ -171,6 +180,22 @@ export class ReplayDebugger {
         this.valuesUnrequested = false
         // The reader's listener and its error channel may both throw; neither may escape into the editor's event loop. When both do, the owner is already detached, which is the signal that remains.
         this.tellReader('session-ended')
+      }),
+    )
+  }
+
+  /** Watches public native starts for {@link selectNativeInspectionModel}; the constructor treats an already active debugger as an unknown cohort and keeps its native choices. @example this.trackNativeSessionOwnership() // competing starts disable default historical selection */
+  private trackNativeSessionOwnership(): void {
+    const started = this.editor.debug.onDidStartDebugSession
+    this.nativeSessionsObservedFromEmptyContext = Boolean(
+      started && !this.editor.debug.activeDebugSession,
+    )
+    if (!started) return
+    this.disposables.push(
+      started((session) => {
+        // The configuration owner distinguishes our own pending launch before its adapter is adopted.
+        if (session.configuration.codebookReplayOwner === this.token) return
+        this.competingNativeSessions.add(session.id)
       }),
     )
   }
@@ -534,11 +559,11 @@ export class ReplayDebugger {
     signal.throwIfAborted()
     this.assertInspectionOwnership(adapter, revision)
     if (!stackRetrieved) return
-    // The no-argument host entry preserves focus and selects its current model; never ask it to replace a foreign active session.
-    if (!this.ownsNativeInspectionModel()) return
+    // Null means no explicit session and avoids older Cursor's undefined-parent match; only an unambiguous owned cohort may use the native default resolver.
+    if (!this.canSelectNativeInspectionModel()) return
     await untilAborted(
       awaitResponse(
-        commands.executeCommand(NATIVE_DEBUG_FOCUS_SESSION_COMMAND),
+        commands.executeCommand(NATIVE_DEBUG_FOCUS_SESSION_COMMAND, null),
         'native historical model selection',
         signal,
         REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
@@ -588,6 +613,19 @@ export class ReplayDebugger {
       this.session &&
       this.editor.debug.activeDebugSession?.id === this.session.id &&
       !this.foreignPauseFocused(),
+    )
+  }
+
+  /** Keeps {@link selectNativeInspectionModel} from using an ambiguous default resolver: older Cursor accepts null for an unspecified session, but every host can choose another paused session when more than one is present. @returns Whether current ownership and the observed native cohort both permit default selection. @example this.canSelectNativeInspectionModel() // => false after another native debugger starts */
+  private canSelectNativeInspectionModel(): boolean {
+    return this.ownsNativeInspectionModel() && this.nativeSelectionIsExclusive()
+  }
+
+  /** Checks the public lifecycle cohort for {@link canSelectNativeInspectionModel}; an initially active session is never guessed to be the only one. @returns Whether observation began without another active debugger and no competing native start remains. @example this.nativeSelectionIsExclusive() // => false while a learner session is alive */
+  private nativeSelectionIsExclusive(): boolean {
+    return (
+      this.nativeSessionsObservedFromEmptyContext &&
+      this.competingNativeSessions.size === 0
     )
   }
 
