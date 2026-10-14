@@ -206,11 +206,23 @@ export async function workspaceHarness(
   const disposable = () => ({ dispose(): void {} })
   let outlineUpdates = 0
   class EventEmitter {
-    event = () => disposable()
-    fire(): void {
-      outlineUpdates++
+    private readonly listeners = new Set<(value: unknown) => void>()
+    event = (listener: (value: unknown) => void) => {
+      this.listeners.add(listener)
+      return {
+        dispose: (): void => {
+          this.listeners.delete(listener)
+        },
+      }
     }
-    dispose(): void {}
+    fire(value?: unknown): void {
+      // Tree notifications use undefined; document changes retain their URI and never count as outline rebuilds.
+      if (value === undefined) outlineUpdates++
+      for (const listener of this.listeners) listener(value)
+    }
+    dispose(): void {
+      this.listeners.clear()
+    }
   }
   class Uri {
     readonly fsPath: string
@@ -407,6 +419,12 @@ export async function workspaceHarness(
     for (const listener of groupChangeListeners) listener(event)
   }
   let sourceProvider = async (_uri: Uri) => ''
+  let nextSourceUpdate: { wait: Promise<void>; entered(): void } | undefined
+  const virtualSourceDocuments = new Map<
+    string,
+    { text: string; languageId: string }
+  >()
+  const sourceDocumentChanges: string[] = []
   const historicalDebugPresentations: Array<{
     snapshot: ReplayDebugSnapshot | undefined
     label: string
@@ -563,7 +581,8 @@ export async function workspaceHarness(
   let delayedPanelKind: string | undefined
   let deferredPanelRegistration = false
   let registerDelayedPanel = (): void => {}
-  let nextOpen: { wait: Promise<void>; entered(): void } | undefined
+  let nextOpen:
+    { wait: Promise<void>; entered(): void; uri?: string } | undefined
   let nextCommand:
     { name: string; wait: Promise<void>; entered(): void } | undefined
   let nextPrimaryFocusResponse:
@@ -2159,24 +2178,40 @@ export async function workspaceHarness(
   }
   /** Resolves displayed URIs through the fake workspace loader so native source tabs keep real document text. @example (await openSourceDocument(Uri.file(path))).getText() */
   const openSourceDocument = async (uri: Uri) => {
-    const held = nextOpen
-    nextOpen = undefined
+    const held =
+      nextOpen && (!nextOpen.uri || nextOpen.uri === uri.toString())
+        ? nextOpen
+        : undefined
+    if (held) nextOpen = undefined
     if (held) {
       held.entered()
       await held.wait
     }
     if (sourceOpenFailure && uri.scheme !== 'file')
       throw new Error('Injected current source open failure')
-    const text =
+    // VS Code keeps one document model for an open URI; provider events update it independently of editor reveals.
+    const existing =
+      uri.scheme !== 'file' && virtualSourceDocuments.get(uri.toString())
+    let text = existing ? existing.text : ''
+    // A cached model keeps its bytes; uncached inputs use their own file or provider boundary.
+    if (!existing)
+      text =
         uri.scheme === 'file'
           ? await readFile(uri.fsPath, 'utf8')
-          : await sourceProvider(uri),
-      normalized = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+          : await sourceProvider(uri)
+    const model = existing || {
+      text: text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'),
+      languageId: uri.path.endsWith('.tsx') ? 'typescriptreact' : 'typescript',
+    }
+    if (uri.scheme !== 'file') virtualSourceDocuments.set(uri.toString(), model)
     return {
       uri,
-      getText: () => normalized,
+      getText: () => model.text,
+      get languageId() {
+        return model.languageId
+      },
       validatePosition: (position: Position) => {
-        const lines = normalized.split('\n'),
+        const lines = model.text.split('\n'),
           line = Math.min(position.line, lines.length - 1)
         return new Position(
           line,
@@ -2303,6 +2338,16 @@ export async function workspaceHarness(
   let summaryResolved = false
   const editorDependencies = {
     vscode: {
+      languages: {
+        async setTextDocumentLanguage(
+          document: { uri: Uri },
+          languageId: string,
+        ) {
+          const model = virtualSourceDocuments.get(document.uri.toString())
+          if (model) model.languageId = languageId
+          return document
+        },
+      },
       EventEmitter,
       Uri,
       TabInputText,
@@ -3155,10 +3200,31 @@ export async function workspaceHarness(
         textDocuments,
         registerTextDocumentContentProvider: (
           _scheme: string,
-          provider: { provideTextDocumentContent(uri: Uri): Promise<string> },
+          provider: {
+            provideTextDocumentContent(uri: Uri): Promise<string>
+            onDidChange?: (listener: (value: unknown) => void) => {
+              dispose(): void
+            }
+          },
         ) => {
           sourceProvider = provider.provideTextDocumentContent
-          return disposable()
+          const subscription = provider.onDidChange?.((value) => {
+            if (!(value instanceof Uri)) return
+            const model = virtualSourceDocuments.get(value.toString())
+            if (!model) return
+            const held = nextSourceUpdate
+            nextSourceUpdate = undefined
+            void provider
+              .provideTextDocumentContent(value)
+              .then(async (text) => {
+                // Renderer delivery follows the provider result; tests can hold that real boundary without a reader seam.
+                held?.entered()
+                await held?.wait
+                model.text = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+                sourceDocumentChanges.push(value.toString())
+              })
+          })
+          return subscription ?? disposable()
         },
         openTextDocument: openSourceDocument,
         onDidChangeTextDocument: disposable,
@@ -4052,6 +4118,25 @@ export async function workspaceHarness(
         })
     },
     /**
+     * Models native552's debugger-group report while the active text receipt still names the prior captured editor; source-replacement tests call it before rendering the next stop.
+     * @param column - The group the debugger named, independently of the editor that retained keyboard focus.
+     * @returns A callback that clears only this retained receipt; it restores no group and emits no active-editor event. The caller ends or explicitly changes that native report.
+     * @example const release = harness.reportGroupWithRetainedEditor(1); try { await readerSeams(harness).refresh() } finally { release() }
+     */
+    reportGroupWithRetainedEditor(column: number): () => void {
+      const previous = activeTabGroup,
+        retained = { value: focusedSourceEditor() },
+        group = groups.find((candidate) => candidate.viewColumn === column)
+      assert.ok(group, 'The reported debugger group must already exist')
+      partialFocusEditor = retained
+      activeTabGroup = group
+      changedGroups({ opened: [], closed: [], changed: [previous, group] })
+      return (): void => {
+        // A newer retained receipt must survive cleanup of the earlier modelled report.
+        if (partialFocusEditor === retained) partialFocusEditor = undefined
+      }
+    },
+    /**
      * Opens a file in front of a group without giving it the keyboard, as the Explorer does at one click, as an agent does for a file it edits, and as the editor's debugger does for the paused file while the learner's `debug.focusEditorOnBreak` is off: the tab is a preview tab, the editor reports it as the active text editor when the group is the active one, and the keyboard stays where it is.
      * @param filename - The file.
      * @param column - The view column of the group.
@@ -4247,6 +4332,7 @@ export async function workspaceHarness(
     },
     /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
     textDocumentShows: () => [...textDocumentShows],
+    sourceDocumentChanges: () => [...sourceDocumentChanges],
     /**
      * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
      * @example harness.revealPanelsLater()
@@ -4807,7 +4893,8 @@ export async function workspaceHarness(
       nextHistoricalDebugDisposal = { wait, entered }
       return { started, release }
     },
-    holdNextSource() {
+    /** Holds a native document open for reader race tests, optionally after unrelated citation opens have passed. @param options - An exact URI limits the hold to that input. @example const held = harness.holdNextSource({ uri: sourceUri }); await held.started; held.release() */
+    holdNextSource(options?: { uri: string }) {
       let release = (): void => {},
         reject = (_error: Error): void => {},
         entered = (): void => {}
@@ -4818,8 +4905,21 @@ export async function workspaceHarness(
         release = resolve
         reject = rejectPromise
       })
-      nextOpen = { wait, entered }
+      nextOpen = { wait, entered, uri: options?.uri }
       return { started, release, reject }
+    },
+    /** Holds delivery of the next provider result to its existing native document model for source-readiness races. @returns The actual delivery-start receipt and its release. @example const held = harness.holdNextSourceUpdate(); await held.started; held.release() */
+    holdNextSourceUpdate() {
+      let release = (): void => {},
+        entered = (): void => {}
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const wait = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      nextSourceUpdate = { wait, entered }
+      return { started, release }
     },
     async close(): Promise<void> {
       await reader.retire(harness.service)

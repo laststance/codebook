@@ -185,6 +185,7 @@ import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
+import { isLiveSourceViewUri } from './utils/isLiveSourceViewUri'
 import {
   editorLayoutSchema,
   isProportionalEditorLayout,
@@ -595,6 +596,11 @@ export class StudyWorkspace {
   /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. */
   private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
   private readonly documents = new Map<string, string>()
+  /** Public provider notifications keep an explicitly selected live source input while {@link renderSelection} changes its captured bytes. */
+  private readonly sourceChanges = new vscode.EventEmitter<vscode.Uri>()
+  /** Opaque native live view, separate from every canonical captured hash URI; pinned copies are frozen before a successor is allocated. */
+  private liveSourceView?: { uri: vscode.Uri; studyId: string }
+  private sourceIdentity?: vscode.TextEditorDecorationType
   private readonly runtimeSourcePaths = new Set<string>()
   private app?: vscode.WebviewPanel
   private initialAppPlacement?: {
@@ -7795,6 +7801,7 @@ export class StudyWorkspace {
       this.repositoryLayoutOrigin = undefined
       this.repositoryLayoutRestored = undefined
       this.sourceUri = undefined
+      this.liveSourceView = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.readerCreatedContextGroup = undefined
@@ -8621,6 +8628,8 @@ export class StudyWorkspace {
     for (const watcher of this.citationWatchers.splice(0)) watcher.dispose()
     for (const disposable of this.disposables) disposable.dispose()
     this.highlight?.dispose()
+    this.sourceIdentity?.dispose()
+    this.sourceChanges.dispose()
     this.treeChanges.dispose()
   }
 
@@ -10584,7 +10593,8 @@ export class StudyWorkspace {
    *
    * Source opens are serialized, and obsolete selection work is invalidated before it can qualify context/app correspondence. An unchanged
    * selection is not rendered again unless `forceSource` is set or its last render failed once (see {@link failedSelectionKey}). Showing a
-   * source closes the unpinned captured tabs that earlier runs or studies left for the same declared file.
+   * source closes the unpinned captured tabs that earlier runs or studies left for the same declared file. Explicit live Source/Read
+   * uses an opaque provider view so later captured bytes can update its native input; canonical saved-source URIs remain immutable.
    *
    * @param preserveFocus - Whether the keyboard focus stays where it is; `false` moves it into the source.
    * @param forceSource - Renders also when the selection did not change.
@@ -10677,7 +10687,7 @@ export class StudyWorkspace {
             captured.path === declaredSourcePosition?.path &&
             captured.hash === source.hash,
         )
-        const uri = vscode.Uri.from({
+        const canonicalUri = vscode.Uri.from({
           scheme: STUDY_SOURCE_SCHEME,
           authority: this.library!.workspaceKey,
           path: capturedSourceUriPath({
@@ -10691,11 +10701,42 @@ export class StudyWorkspace {
             fallbackName: `${itemId.split('/').at(-1)}.mts`,
           }),
         })
+        // Canonical source resources always retain their captured bytes, even when the native live view follows a later file.
+        const previousCanonicalText = this.documents.get(
+          canonicalUri.toString(),
+        )
+        this.documents.set(canonicalUri.toString(), source.text)
+        const uri =
+          this.liveComposition &&
+          !this.recordingActive &&
+          message.model.selection.follow &&
+          study
+            ? this.liveSourceViewUri(canonicalUri, study.id, preserveFocus)
+            : canonicalUri
+        const previousViewText = this.documents.get(uri.toString())
         this.documents.set(uri.toString(), source.text)
+        // Read the canonical language while its captured bytes are cached; later pruning may legitimately evict that recoverable URI.
+        const canonicalDocument = isLiveSourceViewUri(uri)
+          ? await vscode.workspace.openTextDocument(canonicalUri)
+          : undefined
+        this.assertLifetime(lifetime)
+        if (this.isRenderSuperseded(revision)) return
         // Native documents retain their own visible bytes; the provider cache must remain bounded across edits.
         for (const cached of this.documents.keys()) {
           if (this.documents.size <= MAX_SOURCE_DOCUMENTS) break
-          this.documents.delete(cached)
+          // Opaque pinned views have no saved-hash fallback; their provider bytes cannot be evicted.
+          if (cached !== uri.toString() && !this.isPinnedSourceView(cached))
+            this.documents.delete(cached)
+        }
+        // All remaining entries are protected pinned views; refuse growth rather than evicting their immutable bytes.
+        if (this.documents.size > MAX_SOURCE_DOCUMENTS) {
+          if (previousViewText === undefined)
+            this.documents.delete(uri.toString())
+          if (previousCanonicalText === undefined)
+            this.documents.delete(canonicalUri.toString())
+          throw new Error(
+            'Captured source view capacity is full. Close or unpin an older captured view and Retry.',
+          )
         }
         const document = await vscode.workspace.openTextDocument(uri)
         signal?.throwIfAborted()
@@ -10775,15 +10816,94 @@ export class StudyWorkspace {
           this.replacesEditorFocusedByPause(targetColumn, document.uri)
         sourceDisplay = { uri, revision, lifetime }
         this.pendingSourceDisplay = sourceDisplay
-        const editor = await vscode.window.showTextDocument(document, {
-          viewColumn: targetColumn,
-          preserveFocus: preserveFocus && !takesPausedFocus,
-          preview: false,
-          selection: new vscode.Range(position, position),
-        })
+        const existingView =
+          preserveFocus && !placement && isLiveSourceViewUri(uri)
+            ? vscode.window.visibleTextEditors.find(
+                (visible) =>
+                  visible.document.uri.toString() === uri.toString() &&
+                  visible.viewColumn === targetColumn,
+              )
+            : undefined
+        // Updating an existing input neither replaces its DOM editor nor guesses whether source, chat or a view owns the keyboard.
+        const editor =
+          existingView ??
+          (await vscode.window.showTextDocument(document, {
+            viewColumn: targetColumn,
+            preserveFocus: preserveFocus && !takesPausedFocus,
+            preview: false,
+            selection: new vscode.Range(position, position),
+          }))
+        if (isLiveSourceViewUri(uri)) {
+          signal?.throwIfAborted()
+          if (this.isRenderSuperseded(revision)) return
+          // Pinning during native I/O freezes the previously displayed bytes before any provider event can mutate that model.
+          if (
+            previousViewText !== undefined &&
+            this.isPinnedSourceView(uri.toString())
+          ) {
+            this.documents.set(uri.toString(), previousViewText)
+            throw new Error(
+              'The captured source was pinned during its update. Unpin it and Retry to follow the current pause.',
+            )
+          }
+          this.sourceChanges.fire(uri)
+          await waitUntil(
+            () => {
+              this.assertLifetime(lifetime)
+              signal?.throwIfAborted()
+              if (
+                revision !== this.revision ||
+                this.pendingHistory !== undefined
+              )
+                throw new Error('Captured source view was superseded.')
+              return (
+                normalizeNativeSourceText(editor.document.getText()) ===
+                normalizeNativeSourceText(source.text)
+              )
+            },
+            'the selected captured source bytes',
+            PRESENTATION_READY_TIMEOUT_MS,
+            signal,
+          )
+          this.assertLifetime(lifetime)
+          if (revision !== this.revision) return
+          if (
+            canonicalDocument &&
+            document.languageId !== canonicalDocument.languageId
+          )
+            await vscode.languages.setTextDocumentLanguage(
+              document,
+              canonicalDocument.languageId,
+            )
+          this.assertLifetime(lifetime)
+          if (revision !== this.revision) return
+          // The native annotation names the selected capture without adding a header to its source bytes.
+          const sourceName = declaredSourcePosition?.path ?? itemId
+          const sourceLabel = message.model.observation
+            ? `Captured: ${sourceName}:${source.line} · declared ${declaredSourcePosition?.line ?? source.line}`
+            : `Declared source: ${sourceName}:${source.line} · not yet observed`
+          const endOfLine = new vscode.Position(
+            position.line,
+            source.text.split('\n')[position.line]?.length ?? 0,
+          )
+          editor.setDecorations(this.sourceIdentity!, [
+            {
+              range: new vscode.Range(endOfLine, endOfLine),
+              hoverMessage: `${sourceLabel} · captured SHA-256 ${source.hash}`,
+              renderOptions: {
+                after: {
+                  contentText: `  ${sourceLabel}`,
+                },
+              },
+            },
+          ])
+          if (existingView)
+            editor.revealRange(new vscode.Range(position, position))
+        }
         if (this.closing || lifetime !== this.lifetime) return
         // The chat that had the keyboard before this pause gets it back; without one the learner is told once where the keyboard is. A render that was asked for with the keyboard is the learner's choice of the source: no return follows it, and the chat's record ends.
-        if (preserveFocus) await this.settleKeyboardAtPause(takesPausedFocus)
+        if (preserveFocus && !existingView)
+          await this.settleKeyboardAtPause(takesPausedFocus)
         if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
@@ -10813,7 +10933,7 @@ export class StudyWorkspace {
           )
         const previousUri = this.sourceUri
         this.sourceUri = uri
-        // Every visible copy of the same immutable source describes the same selected stop.
+        // Every visible copy of the admitted source input describes the same selected capture.
         if (this.highlight)
           for (const visibleEditor of vscode.window.visibleTextEditors) {
             if (visibleEditor.document.uri.toString() === uri.toString())
@@ -10837,8 +10957,9 @@ export class StudyWorkspace {
               tab.input instanceof vscode.TabInputText &&
               this.ownsCapturedSourceTab(tab) &&
               tab.input.uri.toString() !== uri.toString() &&
-              ((replacesPreviousPlaceholder &&
-                tab.input.uri.toString() === previousUri.toString()) ||
+              (isLiveSourceViewUri(tab.input.uri) ||
+                (replacesPreviousPlaceholder &&
+                  tab.input.uri.toString() === previousUri.toString()) ||
                 (declaredPath !== undefined &&
                   capturedSourceDeclaredPath(tab.input.uri.path) ===
                     declaredPath))
@@ -10906,6 +11027,57 @@ export class StudyWorkspace {
       this.reportFailedSelection(selectionKey, error)
     })
     return this.rendering
+  }
+
+  /**
+   * Chooses an opaque live input for {@link renderSelection} after an explicit source request; saved and replay sources keep their canonical URI.
+   * @param canonicalUri - Immutable captured-source identity, never changed by provider notifications.
+   * @param studyId - Current owning live run/study; the caller already excludes replay, non-following and source-derived selections.
+   * @param preserveFocus - A false value identifies the existing explicit Source/Read entry that may open the live input.
+   * @returns The unpinned same-study view URI, a new explicitly requested view, or the original immutable URI.
+   * @example const uri = this.liveSourceViewUri(capturedUri, study.id, false)
+   */
+  private liveSourceViewUri(
+    canonicalUri: vscode.Uri,
+    studyId: string,
+    preserveFocus: boolean,
+  ): vscode.Uri {
+    const previous = [this.liveSourceView]
+      .filter((view) => view !== undefined)
+      .filter((view) => view.studyId === studyId || !preserveFocus)
+      .find((view) => !this.isPinnedSourceView(view.uri.toString()))
+    if (previous) {
+      // Explicit Source may reuse the view for another run; a background update remains bound to its original owner.
+      this.liveSourceView = { uri: previous.uri, studyId }
+      return previous.uri
+    }
+    // Background work never converts an immutable or pinned native document into a mutable view.
+    if (preserveFocus) return canonicalUri
+    const uri = vscode.Uri.from({
+      scheme: STUDY_SOURCE_SCHEME,
+      authority: canonicalUri.authority,
+      path: `/source-view/${randomUUID()}/Captured-live-source.mts`,
+    })
+    this.liveSourceView = { uri, studyId }
+    return uri
+  }
+
+  /**
+   * Protects every pinned native copy before {@link liveSourceViewUri} reuses a view or {@link renderSelection} evicts provider bytes.
+   * @param uri - The native document identity to check across all groups.
+   * @returns True when an opaque source view is pinned anywhere in the window.
+   * @example if (this.isPinnedSourceView(viewUri.toString())) keepCapturedBytes()
+   */
+  private isPinnedSourceView(uri: string): boolean {
+    return vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter((tab) => tab.isPinned)
+      .some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          isLiveSourceViewUri(tab.input.uri) &&
+          tab.input.uri.toString() === uri,
+      )
   }
 
   /**
@@ -12073,10 +12245,16 @@ export class StudyWorkspace {
         'editor.stackFrameHighlightBackground',
       ),
     })
+    this.sourceIdentity = vscode.window.createTextEditorDecorationType({
+      after: { color: new vscode.ThemeColor('descriptionForeground') },
+    })
     this.disposables.push(
       vscode.workspace.registerTextDocumentContentProvider(
         STUDY_SOURCE_SCHEME,
-        { provideTextDocumentContent: (uri) => this.provideSource(uri) },
+        {
+          onDidChange: this.sourceChanges.event,
+          provideTextDocumentContent: (uri) => this.provideSource(uri),
+        },
       ),
     )
     this.outline = vscode.window.createTreeView('codebook.learningOutline', {
@@ -12289,7 +12467,7 @@ export class StudyWorkspace {
     )
   }
 
-  /** Resolves only this workspace's versioned read-only source URIs after reload. @example await this.provideSource(uri) */
+  /** Resolves this workspace's immutable captured sources after reload and currently cached opaque live views for the native provider. @example await this.provideSource(uri) */
   private async provideSource(uri: vscode.Uri): Promise<string> {
     await this.initialize()
     if (
@@ -12300,6 +12478,11 @@ export class StudyWorkspace {
       throw new Error('Captured source belongs to another workspace.')
     const cached = this.documents.get(uri.toString())
     if (cached !== undefined) return cached
+    // A view is ephemeral presentation, never a recoverable hash-addressed saved snapshot.
+    if (isLiveSourceViewUri(uri))
+      throw new Error(
+        'This live source view is unavailable. Open the selected captured source again.',
+      )
     const pathSegments = uri.path.split('/').filter(Boolean)
     if (pathSegments[0] === 'node-history') {
       const [, studyIdText, sequenceText, expectedHash] = pathSegments,

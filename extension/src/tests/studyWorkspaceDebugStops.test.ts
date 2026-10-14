@@ -4,8 +4,378 @@ import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
-import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
+import {
+  configuredWorkspaceHarness,
+  readerSeams,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
+import { commitNextStop } from './utils/configuredServiceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+
+// Cycle0046 native552: a later frame clears the manual sign while its captured source still has the keyboard.
+// Every case uses the same valid two-source capture; only the observable native focus boundary differs.
+for (const scenario of [
+  {
+    name: 'keeps the learner source keyboard after another frame with native focus disabled',
+    separatePart: true,
+    returnToView: false,
+    returnToChat: false,
+    providerBoundary: 'ordinary',
+    focused: true,
+  },
+  {
+    name: 'leaves the keyboard in chat when the learner returned before the new frame',
+    separatePart: true,
+    returnToView: false,
+    returnToChat: true,
+    providerBoundary: 'ordinary',
+    focused: true,
+  },
+  {
+    name: 'takes no keyboard from another window after a manual source choice',
+    separatePart: true,
+    returnToView: false,
+    returnToChat: false,
+    providerBoundary: 'ordinary',
+    focused: false,
+  },
+  {
+    name: 'does not infer source keyboard ownership without a separate editor part',
+    separatePart: false,
+    returnToView: false,
+    returnToChat: false,
+    providerBoundary: 'ordinary',
+    focused: true,
+  },
+  {
+    name: 'leaves an unreported native view choice alone after the learner left captured source',
+    separatePart: true,
+    returnToChat: false,
+    returnToView: true,
+    providerBoundary: 'ordinary',
+    focused: true,
+  },
+  {
+    name: 'keeps a pinned native projection immutable when the next captured file arrives',
+    separatePart: true,
+    returnToChat: false,
+    returnToView: false,
+    providerBoundary: 'pinned',
+    focused: true,
+  },
+  {
+    name: 'keeps a projection pinned during native document I/O immutable and offers Retry',
+    separatePart: true,
+    returnToChat: false,
+    returnToView: false,
+    providerBoundary: 'pin-late',
+    focused: true,
+  },
+  {
+    name: 'waits for delayed native content delivery before the new captured moment becomes ready',
+    separatePart: true,
+    returnToChat: false,
+    returnToView: false,
+    providerBoundary: 'delivery-held',
+    focused: true,
+  },
+  {
+    name: 'does not update or commit a live source after Close during native document I/O',
+    separatePart: true,
+    returnToChat: false,
+    returnToView: false,
+    providerBoundary: 'close-late',
+    focused: true,
+  },
+]) {
+  test(`the next captured source ${scenario.name}`, async () => {
+    // Arrange: the learner works in captured source beside a separately identified Cursor chat part.
+    const harness = await configuredWorkspaceHarness()
+    harness.useHostAppName('Cursor')
+    const chat = scenario.separatePart
+      ? harness.addSeparateEditorPart()
+      : undefined
+    let releaseNativeReceipt = (): void => {}
+    let releaseSourceDelivery = (): void => {}
+    try {
+      const secondarySource = harness.study.descriptor!.sources[1]!
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        key: randomUUID(),
+        configuration: {
+          ...harness.study.configuration,
+          version: 2,
+          participant: 'browser',
+          additionalStops: [
+            {
+              participant: 'browser',
+              anchorIndex: 1,
+              source: {
+                path: secondarySource.path,
+                hash: secondarySource.hash,
+                line: 1,
+                column: 1,
+              },
+              inspections: [{ path: 'mode', mode: 'value', required: true }],
+            },
+          ],
+        },
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      readerSeams(harness).stopOwnTimer()
+      await harness.reader.action('return-current')
+      harness.service.action({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        key: randomUUID(),
+        action: 'repository-click',
+      })
+      harness.pauseDebugger({ focusesEditorOnBreak: false })
+      await readerSeams(harness).refresh()
+      const immutableSource = harness.editor.window.visibleTextEditors.find(
+        (editor) =>
+          editor.document.uri.toString() === harness.reader.inspect().sourceUri,
+      )
+      assert.ok(immutableSource)
+      await harness.reader.action('source')
+      harness.workInActiveTextEditor('mouse')
+      const runtime = harness.configuredRuntimes[0]!
+      const previous = runtime.snapshots[0]!
+      const source = secondarySource.text
+      const showsBefore = harness.textDocumentShows().length
+      const displayedBefore = harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.scheme === 'codebook-source',
+      )
+      assert.ok(displayedBefore)
+      const displayedUri = displayedBefore.document.uri.toString()
+      const displayedTab = harness.groups
+        .flatMap((group) => group.tabs)
+        .find(
+          (tab) =>
+            'uri' in tab.input && tab.input.uri.toString() === displayedUri,
+        )
+      assert.ok(displayedTab)
+      if (scenario.providerBoundary === 'pinned') displayedTab.isPinned = true
+
+      // Act: the synthetic reader boundary receives another immutable source version after a running thread and new frame.
+      harness.resumeDebugger()
+      // A newer chat or window choice revokes ownership before the replacement snapshot is read.
+      if (scenario.returnToChat) chat!.focusTab()
+      if (scenario.returnToView) harness.focusView()
+      harness.changeWindowFocus(scenario.focused)
+      harness.pauseDebugger({ focusesEditorOnBreak: false })
+      releaseNativeReceipt = harness.reportGroupWithRetainedEditor(1)
+      // Drain the frame's old-source repaint before holding the later snapshot's native document acquisition.
+      if (
+        scenario.providerBoundary === 'pin-late' ||
+        scenario.providerBoundary === 'close-late'
+      )
+        await readerSeams(harness).refresh()
+      const next = commitNextStop(runtime)
+      const nextSnapshotId = next.id
+      const originalSource = runtime.source.bind(runtime)
+      // Each synthetic snapshot keeps its own immutable source bytes, including the earlier one during final retirement.
+      runtime.source = (item: string, snapshotId?: string) =>
+        snapshotId === nextSnapshotId
+          ? {
+              source,
+              javascript: 'emitted javascript',
+              sourceMap: 'emitted source map',
+            }
+          : originalSource(item)
+      next.source = {
+        ...previous.source,
+        text: source,
+        hash: secondarySource.hash,
+      }
+      next.values = { 'value:mode': 'display' }
+      next.unavailableValues = []
+      const heldOpen =
+        scenario.providerBoundary === 'pin-late' ||
+        scenario.providerBoundary === 'close-late'
+          ? harness.holdNextSource({ uri: displayedUri })
+          : undefined
+      const heldDelivery =
+        scenario.providerBoundary === 'delivery-held'
+          ? harness.holdNextSourceUpdate()
+          : undefined
+      if (heldDelivery) releaseSourceDelivery = heldDelivery.release
+      const changesBefore = harness.sourceDocumentChanges().length
+      const refreshed = readerSeams(harness).refresh()
+      if (heldOpen) {
+        await heldOpen.started
+        if (scenario.providerBoundary === 'close-late') {
+          const closed = harness.reader.close()
+          heldOpen.release()
+          await refreshed
+          await closed
+          assert.equal(harness.reader.inspect().opened, false)
+          assert.equal(harness.reader.inspect().sourceUri, undefined)
+          assert.equal(harness.sourceDocumentChanges().length, changesBefore)
+          assert.equal(
+            displayedBefore.document.getText(),
+            'const nextTheme = "dark";\n',
+          )
+          return
+        }
+        displayedTab.isPinned = true
+        heldOpen.release()
+      }
+      if (heldDelivery) {
+        await heldDelivery.started
+        assert.equal(harness.reader.inspect().view!.loading, true)
+        assert.equal(readerSeams(harness).isSourceShown(), false)
+        assert.equal(displayedBefore.document.getText(), previous.source.text)
+        heldDelivery.release()
+      }
+      await refreshed
+      assert.equal(
+        immutableSource.document.getText(),
+        'const nextTheme = "dark";\n',
+      )
+
+      // Assert: a native pin freezes its captured bytes, including a pin arriving during I/O.
+      if (
+        scenario.providerBoundary === 'pinned' ||
+        scenario.providerBoundary === 'pin-late'
+      ) {
+        assert.equal(
+          displayedBefore.document.getText(),
+          'const nextTheme = "dark";\n',
+        )
+        assert.equal(
+          harness.groups.flatMap((group) => group.tabs).includes(displayedTab),
+          true,
+        )
+        if (scenario.providerBoundary === 'pin-late') {
+          assert.match(
+            harness.reader.inspect().view!.errors.join('\n'),
+            /pinned during its update/,
+          )
+          displayedTab.isPinned = false
+          await readerSeams(harness).refresh()
+          assert.equal(displayedBefore.document.getText(), source)
+        }
+        return
+      }
+
+      // Assert: updated captured bytes reach the same input without replacing it or taking another context's keyboard.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.equal(displayedBefore.document.getText(), source)
+      assert.equal(
+        harness.editor.window.visibleTextEditors.some(
+          (editor) => editor.document.uri.toString() === displayedUri,
+        ),
+        true,
+      )
+      assert.equal(harness.keyboardInView(), scenario.returnToView)
+      if (chat) assert.equal(chat.focused(), scenario.returnToChat)
+    } finally {
+      releaseSourceDelivery()
+      releaseNativeReceipt()
+      await harness.close()
+    }
+  })
+}
+
+test('captured source capacity preserves every pinned view and recovers after an older view is unpinned', async () => {
+  // Arrange: one real reader boundary has captured a valid source and the learner pins each explicitly opened view.
+  const harness = await configuredWorkspaceHarness()
+  try {
+    await harness.start()
+    readerSeams(harness).stopOwnTimer()
+    await harness.reader.action('click')
+    const pinned = []
+    // The existing provider cache has room for 34 captured documents; native pins protect their bytes.
+    for (let index = 0; index < 34; index++) {
+      await harness.reader.action('source')
+      const sourceUri = harness.reader.inspect().sourceUri
+      const displayed = harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.toString() === sourceUri,
+      )
+      const tab = harness.groups
+        .flatMap((group) => group.tabs)
+        .find(
+          (value) =>
+            'uri' in value.input && value.input.uri.toString() === sourceUri,
+        )
+      assert.ok(displayed)
+      assert.ok(tab)
+      tab.isPinned = true
+      pinned.push({ tab, document: displayed.document })
+    }
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: another explicit source open cannot evict a pinned view to obtain space.
+    await harness.reader.action('source')
+
+    // Assert: the refusal happens before native replacement, retains all captured bytes and names the recovery.
+    assert.equal(pinned.length, 34)
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.equal(harness.reader.inspect().view!.loading, false)
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /Captured source view capacity is full/,
+    )
+    for (const retained of pinned) {
+      assert.equal(
+        harness.groups.flatMap((group) => group.tabs).includes(retained.tab),
+        true,
+      )
+      assert.equal(retained.document.getText(), 'const nextTheme = "dark";\n')
+    }
+    pinned[0]!.tab.isPinned = false
+    await harness.reader.action('source')
+    assert.equal(readerSeams(harness).isSourceShown(), true)
+    assert.deepEqual([...harness.reader.inspect().view!.errors], [])
+  } finally {
+    await harness.close()
+  }
+})
+
+test('explicit Source in another live run reuses its unpinned native view without accumulating old live tabs', async () => {
+  // Arrange: the first live run has an explicitly selected native source view.
+  const harness = await configuredWorkspaceHarness()
+  try {
+    const first = await harness.start()
+    readerSeams(harness).stopOwnTimer()
+    await harness.reader.action('click')
+    await harness.reader.action('source')
+    const sourceUri = harness.reader.inspect().sourceUri
+    assert.ok(sourceUri)
+    await harness.reader.action('stop')
+
+    // Act: the learner explicitly selects Source in the next run of the same workspace.
+    const second = await harness.start()
+    readerSeams(harness).stopOwnTimer()
+    await harness.reader.action('click')
+    await harness.reader.action('source')
+
+    // Assert: the view identity stays a view, while the selected captured run changes and old unpinned views retire.
+    assert.notEqual(second.id, first.id)
+    assert.equal(harness.reader.inspect().sourceUri, sourceUri)
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      `${harness.service.instanceId}_${second.id}`,
+    )
+    assert.equal(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) =>
+            'uri' in tab.input &&
+            tab.input.uri.path.startsWith('/source-view/'),
+        ).length,
+      1,
+    )
+    assert.equal(readerSeams(harness).isSourceShown(), true)
+  } finally {
+    await harness.close()
+  }
+})
 
 // Cycle 0046 task5: a retained main-part membership proof must not wait for another part's layout reply.
 // Value: protects=known separate-chat keyboard restoration; fails_when=return waits for redundant native layout; why_new=stale-source coverage has no named chat group; seam=none; no_claim=native continuous focus (controlled editor).
