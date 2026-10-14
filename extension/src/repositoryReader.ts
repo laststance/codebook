@@ -273,6 +273,8 @@ export class RepositoryReader {
       initialFocus.assertRetained()
       // Invalid article/citation/section input must fail before any native effect or temporary focus anchor.
       this.assertRequestedArticle(selection, book)
+      // Disable the old article and its queued focus restoration before native layout acquisition.
+      this.publish()
       const acquireSourceFocus =
         selection && book
           ? async () => {

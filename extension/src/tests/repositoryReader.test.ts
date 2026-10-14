@@ -143,7 +143,8 @@ async function readerHarness(context: TestContext) {
     | undefined
   const panelColumns: number[] = [],
     reveals: number[] = [],
-    revealFocus: boolean[] = []
+    revealFocus: boolean[] = [],
+    publishedMessages: RepositoryViewMessage[] = []
   let provider = async (_uri: Uri) => '',
     workspace = source.directory,
     connections = 0
@@ -444,6 +445,7 @@ async function readerHarness(context: TestContext) {
               webview: {
                 html: '',
                 postMessage: async (message: RepositoryViewMessage) => {
+                  publishedMessages.push(message)
                   // Default editor-effect fixtures acknowledge actual published models; a held renderer cannot certify a new document.
                   const held = rendererGate
                   if (held && (!held.loadedOnly || !message.loading)) {
@@ -630,6 +632,7 @@ async function readerHarness(context: TestContext) {
     panelColumns,
     reveals,
     revealFocus,
+    publishedMessages,
     receive: (message: unknown): void => receive(message),
     requireSourceFocus(): void {
       requiresSourceFocus = true
@@ -2874,4 +2877,25 @@ test('a Repository Wiki reader whose dispose fails while it closes its pane rele
   assert.equal(viewsBefore, 2)
   assert.equal(disposal, 'Error: The Repository Wiki pane could not be closed.')
   assert.equal(harness.wikiViewsRegistered(), 1)
+})
+
+test('reopening the Wiki marks its existing article as loading before source and layout navigation', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  assert.equal(harness.publishedMessages.at(-1)?.loading, false)
+  const arrangement = harness.holdArrangement()
+  const opening = harness.reader.open(harness.selection)
+  try {
+    // Act
+    await arrangement.started
+    // Assert: inspect the actual host message, rather than its private loading field.
+    assert.equal(harness.publishedMessages.at(-1)?.loading, true)
+    arrangement.release()
+    await opening
+    assert.equal(harness.publishedMessages.at(-1)?.loading, false)
+  } finally {
+    arrangement.release()
+    await opening.catch(() => undefined)
+  }
 })
