@@ -1328,8 +1328,11 @@ for (const mode of ['study-workspace', 'living-book', 'guided-walkthrough'])
       )
       assert.equal(reader.presentationState().reader.contentTab, 'live')
       assert.equal(reader.presentationState().reader.followingCurrentRun, true)
-      assert.equal(reader.presentationState().mode, mode)
-      assert.equal(harness.counts().panels, 2)
+      // Live uses native chat beside App/source; the saved preference still belongs to the learner.
+      assert.equal(reader.presentationState().mode, 'study-workspace')
+      assert.equal(reader.presentationState().preference.mode, mode)
+      assert.equal(reader.presentationState().panes.contextColumn, undefined)
+      assert.equal(harness.counts().panels, 1)
       assert.equal(harness.runtimes.length, 0)
       assert.equal(harness.service.records.size, 0)
       assert.equal(

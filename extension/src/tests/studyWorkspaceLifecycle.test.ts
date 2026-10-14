@@ -1632,7 +1632,7 @@ test('following the current run after its Application pane was closed says that 
 
 // Value: protects=the line about a closed Application pane leaving once a pane exists again; fails_when=the line stays through the next run, although that run's pane shows the application; why_new=Cycle 0045 H2-F1 (the line is kept under its own kind, which no render retires); seam=WorkspaceViewport
 test('a new run that opens the Application pane again retires the line about the closed one', async () => {
-  // Arrange: the learner closed the Application pane of a live run and followed the current run, which left the line.
+  // Arrange: the learner stays following the current run after closing its Application pane.
   const harness = await workspaceHarness()
   try {
     await harness.reader.open()
@@ -1642,9 +1642,8 @@ test('a new run that opens the Application pane again retires the line about the
       () => {},
       'normal',
     )
-    await harness.reader.select('repository/workspace/overview')
     harness.reader['app']!.dispose()
-    await harness.reader.action('return-current')
+    await readerSeams(harness).refresh()
     const linesBeforeTheNewRun = [...harness.postedMessages().at(-1)!.errors]
 
     // Act: a new run takes its viewport lease, which opens the pane again.

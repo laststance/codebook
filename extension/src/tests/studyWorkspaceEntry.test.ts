@@ -7,8 +7,271 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   readerSeams,
   recordedReaderHarness,
+  saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+
+for (const entry of ['idle Live selection', 'cold Live reopening'])
+  test(`starting a run after ${entry} preserves the separate chat keyboard without rearranging its prepared panes`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      const overview = harness.reader.presentationState()
+      assert.equal(overview.reader.contentTab, 'overview')
+      assert.equal(overview.panes.contextColumn, 3)
+      chat.focusTab()
+      await harness.reader.returnToCurrent({
+        presentationId: overview.presentationId,
+        expectedRevision: overview.reader.contentRevision,
+      })
+      assert.equal(chat.focused(), true)
+      // Reopening the explicitly selected Live screen must prepare it before any run exists too.
+      if (entry === 'cold Live reopening') {
+        await harness.reader.close()
+        await harness.reader.open()
+      }
+      const prepared = harness.reader.presentationState()
+      chat.focusTab()
+      const commandsBeforeStart = harness.commands.length,
+        sourcesBeforeStart = harness.textDocumentShows().length
+
+      // Act
+      harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await [...harness.service.records.values()][0]!.preparation
+      await readerSeams(harness).refresh()
+
+      // Assert
+      assert.equal(prepared.reader.contentTab, 'live')
+      assert.equal(prepared.reader.followingCurrentRun, true)
+      assert.equal(prepared.layoutConfirmed, true)
+      assert.equal(prepared.panes.appColumn, 1)
+      assert.equal(prepared.panes.sourceColumn, 2)
+      assert.equal(prepared.panes.contextColumn, undefined)
+      assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+      assert.equal(chat.focused(), true)
+      assert.deepEqual(
+        harness
+          .textDocumentShows()
+          .slice(sourcesBeforeStart)
+          .filter((shown) => !shown.preserveFocus),
+        [],
+      )
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBeforeStart)
+          .filter(
+            (command) =>
+              command === 'vscode.setEditorLayout' ||
+              command === 'workbench.action.focusFirstEditorGroup',
+          ),
+        [],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+test('Close during Live preparation keeps its keyboard settlement without an obsolete return to the separate chat', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  let releaseArrangement = (): void => {}
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    const state = harness.reader.presentationState(),
+      arrangement = harness.holdNextLayoutResponse()
+    releaseArrangement = arrangement.release
+    const returning = harness.reader.returnToCurrent({
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      }),
+      refused = assert.rejects(returning, /workspace was closed/)
+    await arrangement.started
+    const commandsBeforeClose = harness.commands.length
+
+    // Act
+    const closing = harness.reader.close()
+    arrangement.release()
+    await refused
+    await closing
+
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBeforeClose)
+        .filter((command) => command === 'composer.focusComposer'),
+      [],
+    )
+  } finally {
+    releaseArrangement()
+    await harness.close()
+  }
+})
+
+test('Close while Live return waits for a Node preview leaves the closed reader revision unchanged', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  readerSeams(harness).stopOwnTimer()
+  let releasePreview = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().at(-1)!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          history.studyId && !harness.reader.inspect().view?.loading,
+      'the selected Node history is ready',
+      1_000,
+    )
+    harness.addNodeHistoryPreview(history.studyId, 2)
+    const preview = harness.holdNextTabCloseResponse(),
+      state = harness.reader.presentationState()
+    releasePreview = preview.release
+    const returning = harness.reader
+      .returnToCurrent({
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => 'completed',
+        () => 'cancelled',
+      )
+    await preview.started
+
+    // Act
+    await harness.reader.close()
+    const closedRevision =
+      harness.reader.presentationState().reader.contentRevision
+    preview.release()
+    const outcome = await returning
+
+    // Assert
+    assert.equal(outcome, 'cancelled')
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(
+      harness.reader.presentationState().reader.contentRevision -
+        closedRevision,
+      0,
+    )
+  } finally {
+    releasePreview()
+    await harness.close()
+  }
+})
+
+for (const newerAction of [
+  'Close',
+  'a new source choice',
+  'a same-source selection',
+  'another window',
+])
+  test(`Live return waiting for the native command catalog preserves ${newerAction}`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    let releaseCatalog = (): void => {},
+      enteredCatalog = (): void => {}
+    const catalogEntered = new Promise<void>((resolve) => {
+        enteredCatalog = resolve
+      }),
+      catalog = new Promise<void>((resolve) => {
+        releaseCatalog = resolve
+      })
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      chat.focusTab()
+      const originalCommands = harness.editor.commands.getCommands
+      context.mock.method(harness.editor.commands, 'getCommands', async () => {
+        enteredCatalog()
+        await catalog
+        return originalCommands()
+      })
+      const state = harness.reader.presentationState(),
+        returning = harness.reader
+          .returnToCurrent({
+            presentationId: state.presentationId,
+            expectedRevision: state.reader.contentRevision,
+          })
+          .then(
+            () => 'completed',
+            () => 'cancelled',
+          )
+      await catalogEntered
+      const commandsBeforeChoice = harness.commands.length
+
+      // Act
+      if (newerAction === 'Close') await harness.reader.close()
+      else if (newerAction === 'a new source choice')
+        harness.focusMutableDraft('newer-choice.ts', 1)
+      else if (newerAction === 'a same-source selection')
+        harness.changeFocusedSourceSelection(46)
+      else harness.changeWindowFocus(false)
+      releaseCatalog()
+      const outcome = await returning
+
+      // Assert
+      assert.equal(outcome, newerAction === 'Close' ? 'cancelled' : 'completed')
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBeforeChoice)
+          .filter((command) => command === 'composer.focusComposer'),
+        [],
+      )
+      if (newerAction === 'Close')
+        assert.equal(harness.reader.presentationState().state, 'closed')
+      else if (newerAction === 'a new source choice') {
+        assert.equal(chat.focused(), false)
+        assert.equal(
+          harness
+            .focusedSource()
+            ?.document.uri.path.endsWith('/newer-choice.ts'),
+          true,
+        )
+      } else if (newerAction === 'a same-source selection')
+        assert.equal(harness.focusedSource()?.selections[0]?.active.line, 46)
+    } finally {
+      releaseCatalog()
+      context.mock.restoreAll()
+      await harness.close()
+    }
+  })
+
 test('first Study entry from one editor group keeps empty Context separate from the application', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

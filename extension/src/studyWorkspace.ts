@@ -604,6 +604,8 @@ export class StudyWorkspace {
   }
   private contextPanel?: vscode.WebviewPanel
   private liveComposition = false
+  /** {@link returnCurrentSelection} records an open reader's explicit Live intent so Open and cold reentry prepare chat layout before a runtime starts. */
+  private liveCompositionRequested = false
   private summaryComposition = false
   private summaryView?: vscode.WebviewView
   private summaryDocumentActive = false
@@ -1020,6 +1022,7 @@ export class StudyWorkspace {
       !this.selection.follow ||
       this.recordingActive ||
       this.selection.tab !== 'live' ||
+      !this.liveComposition ||
       !this.sourceReady()
     )
       await this.returnCurrentSelection()
@@ -6671,7 +6674,9 @@ export class StudyWorkspace {
         this.selection.follow &&
         this.selection.tab === 'live' &&
         Boolean(
-          this.liveComposition || (currentRecord && !currentRecord.stopped),
+          this.liveComposition ||
+          this.liveCompositionRequested ||
+          (currentRecord && !currentRecord.stopped),
         )
       const summaryComposition = this.recordingActive
       const compositionChanged =
@@ -7466,9 +7471,11 @@ export class StudyWorkspace {
     }
   }
 
-  /** Releases only historical rendering and follows current execution when a learner or MCP control explicitly returns. @example await this.returnCurrentSelection() */
+  /** Prepares the native Live composition and releases historical rendering when a learner or MCP control explicitly returns, before a later run starts. @example await this.returnCurrentSelection() */
   private async returnCurrentSelection(): Promise<void> {
     this.assertPresentationIdle()
+    const lifetime = this.lifetime,
+      returnForeignFocus = this.retainForeignTabFocus(undefined)
     this.returningCurrent = true
     try {
       this.historyRequest++
@@ -7476,10 +7483,50 @@ export class StudyWorkspace {
       this.pendingHistory = undefined
       // A selected Node journal would otherwise keep masking the live application and debugger after the return.
       await this.retireNodeHistorySelection()
+      this.assertLifetime(lifetime)
       this.readerSelectionRevision++
       this.selection = { ...this.selection, follow: true, tab: 'live' }
+      // An open reader's explicit Live control prepares native chat layout; a closed reader only remembers its source selection.
+      if (this.opened) this.liveCompositionRequested = true
       await this.refresh()
       await this.renderSelection(true, true)
+      // The explicit selection owns arrangement; a subsequent background start must not borrow the chat keyboard to retire Context.
+      if (this.opened && !this.liveComposition)
+        await this.open(undefined, 'presentation')
+    } finally {
+      await this.finishCurrentReturn(lifetime, returnForeignFocus)
+    }
+  }
+
+  /**
+   * Settles a Live return's remembered focus and releases its gate; {@link returnCurrentSelection} calls it after rendering or refusal.
+   * @param lifetime - The reader lifetime that admitted this return; Close invalidates it.
+   * @param returnForeignFocus - The existing native focus return, if another editor part originally held the keyboard.
+   * @returns After restoring retained focus or preserving a newer window, tab or source selection.
+   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus)
+   */
+  private async finishCurrentReturn(
+    lifetime: number,
+    returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
+  ): Promise<void> {
+    const assertRetainedFocus = this.retainPresentationPlacement(),
+      selections = JSON.stringify(vscode.window.activeTextEditor?.selections)
+    // Native command discovery can wait; recheck ownership immediately before its eventual focus dispatch.
+    const stillCurrent = (): boolean => {
+      try {
+        this.assertLifetime(lifetime)
+        assertRetainedFocus()
+        if (!vscode.window.state.focused) return false
+        return (
+          JSON.stringify(vscode.window.activeTextEditor?.selections) ===
+          selections
+        )
+      } catch {
+        return false
+      }
+    }
+    try {
+      if (stillCurrent()) await returnForeignFocus?.(false, stillCurrent)
     } finally {
       this.returningCurrent = false
     }
