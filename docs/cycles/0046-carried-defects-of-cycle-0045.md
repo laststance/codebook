@@ -1718,6 +1718,12 @@ Third frozen CodeRabbit review completes actualexit0/review_completed/outcomecom
 
 All14historical tests and six source guard plus annotation/provider-deferral assertion controls remain source-bound. Both normally installed profiles still load clean C47/eb3af9b0/source48fdf462 and are closed; no desktop/runtime/PG operation occurs. Next clean candidate/normal install and original both-host native correction with values/source/image/pins/reload/lifetime/video/inspected frames.558 remains OPEN, IMPLEMENTING; no UI review-complete, whole-task5/integrated/delivery/OS/fixed-nine/owner acceptance claim. Counts563/542 closed/19native-pending/2implementing444/558:21remaining, original20 retained. QA/investigate/freeze remain active until original correction, and every full-goal gate remains.
 
+### C48 clean source candidate ready; native correction next (2026-10-15)
+
+Local implementation commit79febf545d7eb89880234d46ee3553ebfd4eebab preserves every reviewed production/test byte; no push/merge or cycle closure. Fresh normal clean packaging exits0: sourceHashb970c1b26d761b162b97a2b6630a61a8b3a7a5c72fde8edce24ab1963503b6e6,29entries/1,427,557bytes, VSIXc16dcb8ecd470edd2ab64b120d45a8751277daec64e2926a7f2cc51b7e8e421a/codeebbfe44e3e01c9141c4a7f9c9393a4e7f5bb258692b0c9af7c553022863fef58. Extension0.2.30/API1.7/common skill1.0.42; skillSHA0a413f1c unchanged. Private c48-historical-source-20261015/candidate.json and full build-identity.json bind identity; original C47 package/proof stays intact. Final unchanged record/package checks pass13/13 and340/340, formatting/whitespace pass. No extension-test reader runs during cleanup/build; every producer/reviewer is terminal.
+
+Installed profiles remain unchanged clean C47/eb3af9b0/source48fdf462 with closed presentations; no actual native correction or new runtime/PG/model input occurs. Next normal exact C48 install/reload in existing singular QA windows, actual loaded public/source identity, original savedauth42-to75 source-key/value/image correction plus pins/reload/newer input/lifetime with current geometry/preflight/video/inspected frames and exact originals.558 stays implementing;563/542closed/19native-pending/2implementing444/558:21remaining. Every full product/CI/delivery/OS/nine-project/owner/inherited gate remains; goal/QA/investigation/freeze stay active.
+
 ## Historical evidence checkpoints
 
 ### C45 retained evidence and start-focus investigation entry (2026-10-14)
