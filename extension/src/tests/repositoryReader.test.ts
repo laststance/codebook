@@ -2414,8 +2414,15 @@ test('a previous article render receipt cannot release a newer pending Wiki entr
   try {
     await renderer.started
     await waitUntil(
-      () => harness.revealFocus.length > revealsBefore,
-      'the new article display',
+      () =>
+        harness.reader.inspect().view.selection?.nodeId === 'order' &&
+        harness.reader
+          .inspect()
+          .view.sources.some(
+            (source) =>
+              source.path === 'src/order.ts' && source.status === 'current',
+          ),
+      'the updated citation before accepting render receipts',
     )
 
     // Act
@@ -2428,11 +2435,11 @@ test('a previous article render receipt cannot release a newer pending Wiki entr
     await Promise.resolve()
 
     // Assert
-    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true])
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [])
     assert.equal(harness.reader.inspect().rendered, undefined)
     renderer.release()
     await opening
-    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true, false])
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [false])
     assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
   } finally {
     renderer.release()
@@ -2545,7 +2552,7 @@ test('late hidden-document receipts cannot certify a visible Wiki before its new
   }
 })
 
-test('a loading article receipt cannot authorize Wiki keyboard before its usable article is rendered', async (context) => {
+test('a visible Wiki waits for its updated article without selecting its tab or taking keyboard', async (context) => {
   // Arrange: allow the ready document to acknowledge its loading model, but hold its usable article.
   const harness = await readerHarness(context)
   harness.requireSourceFocus()
@@ -2556,17 +2563,24 @@ test('a loading article receipt cannot authorize Wiki keyboard before its usable
   try {
     await renderer.started
     await waitUntil(
-      () => harness.revealFocus.length > revealsBefore,
-      'the Wiki display after source preparation',
+      () =>
+        harness.reader.inspect().view.selection?.nodeId === 'order' &&
+        harness.reader
+          .inspect()
+          .view.sources.some(
+            (source) =>
+              source.path === 'src/order.ts' && source.status === 'current',
+          ),
+      'the updated article citation to become current',
     )
     // Act: let the ready handoff's promise continuations run while the usable model remains held.
     await new Promise<void>((resolve) => setImmediate(resolve))
 
     // Assert
-    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true])
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [])
     renderer.release()
     await opening
-    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [true, false])
+    assert.deepEqual(harness.revealFocus.slice(revealsBefore), [false])
     assert.equal(harness.reader.inspect().view.loading, false)
   } finally {
     renderer.release()

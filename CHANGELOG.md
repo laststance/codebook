@@ -2,7 +2,7 @@
 
 ## [0.2.30.0] - 2026-10-07 (development candidate)
 
-Cycle 0046 is a bug-fix cycle with no increment. It holds the 46 defects Cycle 0045 left and the 486 that were found while it ran, 532 rows in all. The cycle must close with none of them carried forward. It is the third cycle under the rule that every defect a cycle leaves is fixed in the next one. One row is a security defect of 0.2.29.0 that deletes files outside the Wiki folder (the first bullet under "What a cloned repository can put beside the Wiki"): update every editor window, because a window of 0.2.29.0 still does it.
+Cycle 0046 is a bug-fix cycle with no increment. It holds the 46 defects Cycle 0045 left and the 488 that were found while it ran, 534 rows in all. The cycle must close with none of them carried forward. It is the third cycle under the rule that every defect a cycle leaves is fixed in the next one. One row is a security defect of 0.2.29.0 that deletes files outside the Wiki folder (the first bullet under "What a cloned repository can put beside the Wiki"): update every editor window, because a window of 0.2.29.0 still does it.
 
 - **Read Source follows the actual source editor in Cursor.** A delayed chat-tab report no longer refuses the reading view. New tab choices still cancel a pending reading operation, while a wrapper-only tab refresh preserves it. (rows 399, 401 to 403)
 

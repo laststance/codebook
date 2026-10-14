@@ -458,10 +458,8 @@ export class RepositoryReader {
       }
     try {
       assertInputRetained()
-      // Visibility alone cannot focus a recreated iframe; reveal quietly before waiting for its own model receipt.
-      if (
-        this.needsDocumentReveal(panel, revision, Boolean(assertSelectedInput))
-      ) {
+      // Ready visible documents receive updated models without a queued tab selection that could cover newer input.
+      if (this.needsNativeDocumentReveal(panel, Boolean(assertSelectedInput))) {
         quietRevealIssued = true
         this.revealPanel(panel, true)
       }
@@ -513,16 +511,20 @@ export class RepositoryReader {
     }
   }
 
-  /** Tests whether {@link revealReadyPanel} must make a recreated/current document visible before its acknowledgement can arrive. @param panel - The same navigation-owned native pane. @param revision - The article whose receipt can permit handoff. @param alreadySelected - A deferred citation retains the learner's visible selection without another quiet reveal. @returns True when visibility or an unselected document's current render receipt is missing. @example this.needsDocumentReveal(panel, revision) */
-  private needsDocumentReveal(
+  /** Prevents {@link revealReadyPanel} from reselecting a ready visible document while its updated model is pending. @param panel - The navigation-owned native pane. @param alreadySelected - A deferred citation already owns its visible native selection. @returns Whether a hidden or unready document needs an actual native display. @example this.needsNativeDocumentReveal(panel) */
+  private needsNativeDocumentReveal(
     panel: vscode.WebviewPanel,
-    revision: number,
     alreadySelected = false,
   ): boolean {
-    return (
-      !panel.visible ||
-      (!alreadySelected && this.rendered?.revision !== revision)
-    )
+    return !panel.visible || (!alreadySelected && !this.documentReady)
+  }
+
+  /** Tests whether {@link revealDeferredCitation} must complete the current document's handoff before native activation. @param panel - The same navigation-owned native pane. @param revision - The article whose receipt can permit handoff. @returns True when visibility or the current render receipt is missing. @example this.needsDocumentHandoff(panel, revision) */
+  private needsDocumentHandoff(
+    panel: vscode.WebviewPanel,
+    revision: number,
+  ): boolean {
+    return !panel.visible || this.rendered?.revision !== revision
   }
 
   /** Applies the current native column policy for both quiet and activating {@link revealReadyPanel} displays. @param panel - The current navigation's pane, whose latest placement is respected. @param preserveFocus - Keeps input while the document loads; false pays the validated ready handoff. @example this.revealPanel(panel, true) */
@@ -1089,7 +1091,7 @@ export class RepositoryReader {
       request = ++this.sourcePreviewRequest,
       signal = this.navigation.signal,
       panel = this.panel!,
-      needsDocumentHandoff = this.needsDocumentReveal(panel, this.revision),
+      needsDocumentHandoff = this.needsDocumentHandoff(panel, this.revision),
       focus = this.retainNativeFocus(),
       windowFocus = this.retainWindowFocus()
     let departed = false
