@@ -596,10 +596,10 @@ export class StudyWorkspace {
   /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. */
   private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
   private readonly documents = new Map<string, string>()
-  /** Public provider notifications keep an explicitly selected live source input while {@link renderSelection} changes its captured bytes. */
+  /** Public provider notifications retain the selected native input while {@link renderSelection} changes live or historical captured bytes. */
   private readonly sourceChanges = new vscode.EventEmitter<vscode.Uri>()
-  /** Opaque native live view, separate from every canonical captured hash URI; pinned copies are frozen before a successor is allocated. */
-  private liveSourceView?: { uri: vscode.Uri; studyId: string }
+  /** Opaque native display, separate from every canonical captured hash URI; pinned copies stay frozen before a successor is allocated. */
+  private sourceView?: { uri: vscode.Uri; studyId: string }
   private sourceIdentity?: vscode.TextEditorDecorationType
   private readonly runtimeSourcePaths = new Set<string>()
   private app?: vscode.WebviewPanel
@@ -7417,6 +7417,10 @@ export class StudyWorkspace {
     if (action === 'retry') {
       if (this.saving)
         throw new Error('Wait for the pending understanding write.')
+      const failedRecordedSource =
+        this.recordingActive && this.errors.has('reader')
+          ? this.playback?.state()
+          : undefined
       this.saving = true
       this.publish()
       try {
@@ -7473,6 +7477,26 @@ export class StudyWorkspace {
       this.lastApplicationKey = undefined
       this.lastOutlineSelection = undefined
       await this.refresh()
+      const playback = this.playback,
+        replayState = playback?.state()
+      // Retry owns only the same failed source presentation; a newer recording or control keeps its intent.
+      if (
+        playback &&
+        replayState?.readiness === 'failed' &&
+        replayState.studyId &&
+        replayState.requestedMs !== undefined &&
+        failedRecordedSource?.studyId === replayState.studyId &&
+        failedRecordedSource.revision === replayState.revision
+      ) {
+        playback.command({
+          action: 'seek',
+          studyId: replayState.studyId,
+          expectedRevision: replayState.revision,
+          positionMs: replayState.requestedMs,
+        })
+        await playback.settle()
+        return
+      }
       await this.renderSelection(true, true)
     }
   }
@@ -7801,7 +7825,7 @@ export class StudyWorkspace {
       this.repositoryLayoutOrigin = undefined
       this.repositoryLayoutRestored = undefined
       this.sourceUri = undefined
-      this.liveSourceView = undefined
+      this.sourceView = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.readerCreatedContextGroup = undefined
@@ -9732,7 +9756,13 @@ export class StudyWorkspace {
     const viewport = await this.ensureReplayViewport(signal)
     signal.throwIfAborted()
     // Opening the workspace may focus context over a manually moved source group; restore only when its native tab is inactive.
-    await this.renderSelection(true, !this.sourceReady(), signal)
+    await this.renderSelection(
+      true,
+      !this.sourceReady(),
+      signal,
+      undefined,
+      bundle === this.playback?.bundle(),
+    )
     signal.throwIfAborted()
     if (!this.sourceReady())
       throw new Error(
@@ -10594,12 +10624,14 @@ export class StudyWorkspace {
    * Source opens are serialized, and obsolete selection work is invalidated before it can qualify context/app correspondence. An unchanged
    * selection is not rendered again unless `forceSource` is set or its last render failed once (see {@link failedSelectionKey}). Showing a
    * source closes the unpinned captured tabs that earlier runs or studies left for the same declared file. Explicit live Source/Read
-   * uses an opaque provider view so later captured bytes can update its native input; canonical saved-source URIs remain immutable.
+   * uses an opaque provider view so later captured bytes can update its native input; recording entry primes the same kind of display
+   * for historical moments, while canonical saved-source URIs remain immutable.
    *
    * @param preserveFocus - Whether the keyboard focus stays where it is; `false` moves it into the source.
    * @param forceSource - Renders also when the selection did not change.
    * @param signal - The caller's cancellation; an aborted render ends its loading state without an error line.
    * @param placement - The column an arrangement gives the source, or the layout receipt a reentry may restore it into.
+   * @param restoreRecordedSource - The controller is re-presenting its committed moment after a recorded-surface return; permits source visibility recovery, never a new seek over a learner-hidden input.
    * @returns Once the source is shown, the render was superseded, or its failure was reported as the reader's `reader` line with the loading state ended.
    * @throws The signal's reason when it aborted before the render was queued, or the lifetime error when the reader closed meanwhile.
    * @example await this.renderSelection(true, !this.sourceReady(), signal)
@@ -10614,6 +10646,7 @@ export class StudyWorkspace {
           kind: 'reentry'
           receipt: NonNullable<StudyWorkspace['layoutReceipt']>
         },
+    restoreRecordedSource = false,
   ): Promise<void> {
     signal?.throwIfAborted()
     if (
@@ -10706,15 +10739,49 @@ export class StudyWorkspace {
           canonicalUri.toString(),
         )
         this.documents.set(canonicalUri.toString(), source.text)
+        // Recorded moments reuse the same native input; immutable resources remain separate from this display.
+        const followsSourceView =
+          this.recordingActive ||
+          (this.liveComposition && message.model.selection.follow)
+        const currentView = this.sourceView
+        // Historical background updates protect the current native input before provider bytes can change.
+        const protectsHistoricalInput = Boolean(
+          this.recordingActive &&
+          preserveFocus &&
+          !placement &&
+          !this.replayLoadAwaitingReady &&
+          currentView &&
+          currentView.studyId === study?.id &&
+          this.sourceUri?.toString() === currentView.uri.toString(),
+        )
+        if (protectsHistoricalInput && currentView)
+          this.assertRecordedSourceInput(
+            currentView.uri,
+            restoreRecordedSource &&
+              this.recordedSourceCanReturn(currentView.uri),
+          )
         const uri =
-          this.liveComposition &&
-          !this.recordingActive &&
-          message.model.selection.follow &&
-          study
-            ? this.liveSourceViewUri(canonicalUri, study.id, preserveFocus)
+          followsSourceView && study
+            ? this.sourceViewUri(canonicalUri, study.id, preserveFocus)
             : canonicalUri
         const previousViewText = this.documents.get(uri.toString())
-        this.documents.set(uri.toString(), source.text)
+        // Existing displays keep their published provider bytes through acquisition; a cancelled seek must not become a later pin rollback.
+        const updatesExistingView =
+          isLiveSourceViewUri(uri) && previousViewText !== undefined
+        if (!updatesExistingView)
+          this.documents.set(uri.toString(), source.text)
+        /** Rechecks the native historical input before this render's effects, restoring its cached capture on refusal. @param canRestore - Current native tabs admit the controller's committed-moment return. @example recheckHistoricalInput(false) */
+        const recheckHistoricalInput = (canRestore: boolean): void => {
+          if (!protectsHistoricalInput) return
+          try {
+            this.assertRecordedSourceInput(uri, canRestore)
+          } catch (error) {
+            // A rejected late update retains the provider bytes of the protected prior capture too.
+            if (previousViewText !== undefined)
+              this.documents.set(uri.toString(), previousViewText)
+            throw error
+          }
+        }
         // Read the canonical language while its captured bytes are cached; later pruning may legitimately evict that recoverable URI.
         const canonicalDocument = isLiveSourceViewUri(uri)
           ? await vscode.workspace.openTextDocument(canonicalUri)
@@ -10746,6 +10813,10 @@ export class StudyWorkspace {
           this.pendingHistory !== undefined
         )
           return
+        // Native I/O can outlive a learner's replacement or pin; recheck before any reveal or content event.
+        recheckHistoricalInput(
+          restoreRecordedSource && this.recordedSourceCanReturn(uri),
+        )
         let sourceColumn =
           placement?.kind === 'arrange' ? placement.column : undefined
         // Reentry cannot overwrite a learner move during source I/O; only explicit Arrange retains an unconditional target.
@@ -10809,7 +10880,22 @@ export class StudyWorkspace {
         const confirmedLayout = await this.confirmedLayoutBehindHiddenArea(
           Boolean(placement),
         )
+        recheckHistoricalInput(
+          restoreRecordedSource && this.recordedSourceCanReturn(uri),
+        )
+        // Same-input updates do not reveal a hidden editor area; an owned recorded seek restores the panel explicitly.
+        if (this.recordingActive && confirmedLayout) {
+          await vscode.commands.executeCommand(
+            'workbench.action.toggleMaximizedPanel',
+          )
+          this.assertLifetime(lifetime)
+          signal?.throwIfAborted()
+          if (revision !== this.revision) return
+        }
         if (this.closing || lifetime !== this.lifetime) return
+        recheckHistoricalInput(
+          restoreRecordedSource && this.recordedSourceCanReturn(uri),
+        )
         // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
         const takesPausedFocus =
           preserveFocus &&
@@ -10846,25 +10932,21 @@ export class StudyWorkspace {
               'The captured source was pinned during its update. Unpin it and Retry to follow the current pause.',
             )
           }
-          this.sourceChanges.fire(uri)
-          await waitUntil(
-            () => {
-              this.assertLifetime(lifetime)
-              signal?.throwIfAborted()
-              if (
-                revision !== this.revision ||
-                this.pendingHistory !== undefined
-              )
-                throw new Error('Captured source view was superseded.')
-              return (
-                normalizeNativeSourceText(editor.document.getText()) ===
-                normalizeNativeSourceText(source.text)
-              )
-            },
-            'the selected captured source bytes',
-            PRESENTATION_READY_TIMEOUT_MS,
-            signal,
-          )
+          // Only an admitted native input starts publication of new view bytes.
+          this.documents.set(uri.toString(), source.text)
+          try {
+            await this.updateSourceViewBytes(
+              editor,
+              source.text,
+              revision,
+              lifetime,
+              signal,
+            )
+          } catch (error) {
+            // Cancellation/refusal keeps the provider aligned with the actual display, including a still-visible pinned capture.
+            this.documents.set(uri.toString(), editor.document.getText())
+            throw error
+          }
           this.assertLifetime(lifetime)
           if (revision !== this.revision) return
           if (
@@ -10879,9 +10961,21 @@ export class StudyWorkspace {
           if (revision !== this.revision) return
           // The native annotation names the selected capture without adding a header to its source bytes.
           const sourceName = declaredSourcePosition?.path ?? itemId
-          const sourceLabel = message.model.observation
+          const recordedMoment = (
+            this.playbackPending ?? this.playback?.bundle()
+          )?.projection.positionMs
+          const recordedTimeLabel =
+            recordedMoment === undefined
+              ? 'time unavailable'
+              : `${(recordedMoment / MILLISECONDS_PER_SECOND).toFixed(2)} s`
+          let sourceLabel = message.model.observation
             ? `Captured: ${sourceName}:${source.line} · declared ${declaredSourcePosition?.line ?? source.line}`
             : `Declared source: ${sourceName}:${source.line} · not yet observed`
+          // Historical provenance names the selected time; a gap cannot inherit another capture's annotation.
+          if (this.recordingActive)
+            sourceLabel = message.model.observation
+              ? `Recorded: ${sourceName}:${source.line} · ${recordedTimeLabel} · declared ${declaredSourcePosition?.line ?? source.line}`
+              : 'Recorded source · Not recorded at this moment'
           const endOfLine = new vscode.Position(
             position.line,
             source.text.split('\n')[position.line]?.length ?? 0,
@@ -11030,40 +11124,162 @@ export class StudyWorkspace {
   }
 
   /**
-   * Chooses an opaque live input for {@link renderSelection} after an explicit source request; saved and replay sources keep their canonical URI.
-   * @param canonicalUri - Immutable captured-source identity, never changed by provider notifications.
-   * @param studyId - Current owning live run/study; the caller already excludes replay, non-following and source-derived selections.
-   * @param preserveFocus - A false value identifies the existing explicit Source/Read entry that may open the live input.
-   * @returns The unpinned same-study view URI, a new explicitly requested view, or the original immutable URI.
-   * @example const uri = this.liveSourceViewUri(capturedUri, study.id, false)
+   * Admits provider delivery immediately for {@link renderSelection}, while keeping source-byte, lifetime and cancellation checks inside the existing readiness bound.
+   * @param editor - Current native display whose actual text must match the selected capture.
+   * @param text - Exact captured bytes, normalized only for the native document's line endings.
+   * @param revision - Rendering intent that owns this update.
+   * @param lifetime - Reader opening that admitted the update.
+   * @param signal - Playback or caller cancellation.
+   * @throws When the current intent ends or native text does not arrive within the existing readiness bound.
+   * @example await this.updateSourceViewBytes(editor, source.text, revision, lifetime, signal)
    */
-  private liveSourceViewUri(
+  private async updateSourceViewBytes(
+    editor: vscode.TextEditor,
+    text: string,
+    revision: number,
+    lifetime: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const observation = new AbortController()
+      let finished = false
+      const finish = (failure?: { cause: unknown }): void => {
+        if (finished) return
+        finished = true
+        subscription.dispose()
+        observation.abort()
+        signal?.removeEventListener('abort', check)
+        if (failure) reject(failure.cause)
+        else resolve()
+      }
+      const check = (): void => {
+        try {
+          this.assertLifetime(lifetime)
+          signal?.throwIfAborted()
+          if (this.isRenderSuperseded(revision))
+            throw new Error('Captured source view was superseded.')
+          if (
+            normalizeNativeSourceText(editor.document.getText()) ===
+            normalizeNativeSourceText(text)
+          )
+            finish()
+        } catch (error) {
+          finish({ cause: error })
+        }
+      }
+      const subscription = vscode.workspace.onDidChangeTextDocument((event) => {
+        // Another document's edit cannot settle this captured source.
+        if (event.document.uri.toString() === editor.document.uri.toString())
+          check()
+      })
+      signal?.addEventListener('abort', check, { once: true })
+      // Close and newer intent may emit no document event; retain the existing bounded observation for them.
+      void waitUntil(
+        () => {
+          check()
+          return finished
+        },
+        'the selected captured source bytes',
+        PRESENTATION_READY_TIMEOUT_MS,
+        observation.signal,
+      ).catch((error: unknown) => finish({ cause: error }))
+      // Subscribe before notifying the provider, then check already-delivered or unchanged bytes too.
+      this.sourceChanges.fire(editor.document.uri)
+      check()
+    })
+  }
+
+  /**
+   * Retains a live-updating native source input for {@link renderSelection}; live Source/Read primes it, while recording entry primes historical display.
+   * @param canonicalUri - Immutable captured-source identity; provider events never change its bytes.
+   * @param studyId - Current selected study owning this display, independently of its captured resources.
+   * @param preserveFocus - False for an explicit source entry that may reveal a new input.
+   * @returns An unpinned display URI, a newly primed historical view, or the canonical resource for an unprimed live view.
+   * @example const uri = this.sourceViewUri(capturedUri, study.id, false)
+   */
+  private sourceViewUri(
     canonicalUri: vscode.Uri,
     studyId: string,
     preserveFocus: boolean,
   ): vscode.Uri {
-    const previous = [this.liveSourceView]
+    const current = this.sourceView
+    const previous = [current]
       .filter((view) => view !== undefined)
-      .filter((view) => view.studyId === studyId || !preserveFocus)
+      .filter(
+        (view) =>
+          view.studyId === studyId || !preserveFocus || this.recordingActive,
+      )
       .find((view) => !this.isPinnedSourceView(view.uri.toString()))
     if (previous) {
-      // Explicit Source may reuse the view for another run; a background update remains bound to its original owner.
-      this.liveSourceView = { uri: previous.uri, studyId }
+      // Explicit recorded entry may select another study in the same display; background live updates keep their owner.
+      this.sourceView = { uri: previous.uri, studyId }
       return previous.uri
     }
-    // Background work never converts an immutable or pinned native document into a mutable view.
-    if (preserveFocus) return canonicalUri
+    // Live background work never converts immutable resources; recording entry creates its display before native source input.
+    if (preserveFocus && !this.recordingActive) return canonicalUri
     const uri = vscode.Uri.from({
       scheme: STUDY_SOURCE_SCHEME,
       authority: canonicalUri.authority,
-      path: `/source-view/${randomUUID()}/Captured-live-source.mts`,
+      path: `/source-view/${randomUUID()}/Captured-source.mts`,
     })
-    this.liveSourceView = { uri, studyId }
+    this.sourceView = { uri, studyId }
     return uri
   }
 
   /**
-   * Protects every pinned native copy before {@link liveSourceViewUri} reuses a view or {@link renderSelection} evicts provider bytes.
+   * Protects a historical native input before {@link renderSelection} changes provider bytes for a background moment.
+   * @param uri - Current display identity, checked against every pinned copy and actual visible editor.
+   * @param restoreRecordedSource - The controller is restoring its committed moment and native tabs still admit its owned return; only visibility recovery is allowed.
+   * @throws When any copy is pinned, or a new moment would recreate a learner-hidden input.
+   * @example this.assertRecordedSourceInput(currentView.uri, false)
+   */
+  private assertRecordedSourceInput(
+    uri: vscode.Uri,
+    restoreRecordedSource: boolean,
+  ): void {
+    if (this.isPinnedSourceView(uri.toString()))
+      throw new Error(
+        'The recorded source view is pinned. Unpin it and Retry to follow the selected recorded moment.',
+      )
+    // A committed-moment return may reopen its source; a new background seek may not.
+    if (
+      !restoreRecordedSource &&
+      !vscode.window.visibleTextEditors.some(
+        (editor) => editor.document.uri.toString() === uri.toString(),
+      )
+    )
+      throw new Error(
+        'The recorded source input is no longer visible. Use Source or Restore Study workspace layout to reopen it.',
+      )
+  }
+
+  /**
+   * Admits a committed-moment source return for {@link renderSelection} only while its tab survives beneath the owned Wiki or no active tab.
+   * @param uri - Historical display whose original native tab must still exist.
+   * @returns Whether the current native tab model permits restoring that display without replacing another learner input.
+   * @example this.recordedSourceCanReturn(currentView.uri) // false after its source tab closes
+   */
+  private recordedSourceCanReturn(uri: vscode.Uri): boolean {
+    const group = vscode.window.tabGroups.all.find((candidate) =>
+      candidate.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === uri.toString(),
+      ),
+    )
+    // A closed source, foreign text input or native settings tab cannot become a background return target.
+    return Boolean(
+      group &&
+      (!group.activeTab ||
+        this.isCodebookPaneInput(
+          group.activeTab.input,
+          'codebook.repositoryWiki',
+        )),
+    )
+  }
+
+  /**
+   * Protects every pinned native copy before {@link sourceViewUri} reuses a view or {@link renderSelection} evicts provider bytes.
    * @param uri - The native document identity to check across all groups.
    * @returns True when an opaque source view is pinned anywhere in the window.
    * @example if (this.isPinnedSourceView(viewUri.toString())) keepCapturedBytes()
@@ -12467,7 +12683,7 @@ export class StudyWorkspace {
     )
   }
 
-  /** Resolves this workspace's immutable captured sources after reload and currently cached opaque live views for the native provider. @example await this.provideSource(uri) */
+  /** Resolves this workspace's immutable captured sources after reload and currently cached opaque source views for the native provider. @example await this.provideSource(uri) */
   private async provideSource(uri: vscode.Uri): Promise<string> {
     await this.initialize()
     if (
@@ -12481,7 +12697,7 @@ export class StudyWorkspace {
     // A view is ephemeral presentation, never a recoverable hash-addressed saved snapshot.
     if (isLiveSourceViewUri(uri))
       throw new Error(
-        'This live source view is unavailable. Open the selected captured source again.',
+        'This captured source view is unavailable. Open the selected captured source again.',
       )
     const pathSegments = uri.path.split('/').filter(Boolean)
     if (pathSegments[0] === 'node-history') {

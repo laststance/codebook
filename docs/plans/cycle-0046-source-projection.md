@@ -1,7 +1,7 @@
 # Cycle 0046 — Preserve native source input across recorded stops
 
-Status: bounded engineering review complete; source implementation and controlled regressions pass; final source review/package and installed native proof pending.
-Scope: defect552 and dependent original5 in the existing bug-fix cycle. No feature increment or acceptance waiver.
+Status: live552 bounded repair proved in both hosts; reviewed historical558 source draft implemented and controlled tests pass; corrected frozen reviews, clean installation and both-host native correction remain pending.
+Scope: live defect552 and historical defect558, with dependent original5 in the existing bug-fix cycle. No feature increment or acceptance waiver.
 
 ## Problem and evidence
 
@@ -185,16 +185,194 @@ Claude Code CLI outside review is owner-skipped under DEVELOPMENT.md. Local conf
 
 Scope accepted as-is. Architecture2 findings; Code Quality1; Test4 planned gaps; Performance1. Eight total four-section findings are mapped to required implementation/proof, not claimed fixed. Reality14/14 applicable rows emitted, two future-behavior premises unverified. Test diagram and value cards produced; zero test retirements, zero TODO proposals, zero deferred defects. Zero unresolved decisions; failure modes have explicit handling/required tests, zero accepted silent critical gaps. Outside provider Claude Code CLI owner-skipped; no cross-model credit. One sequential lane, zero parallel lanes. Lake Score N/A (mechanism choices; no comparable numeric completeness scores).
 
+## Historical display amendment — defect558 (review decisions approved)
+
+Fixed review target: this plan's new historical-display amendment, scoped to558 and original5 regression dependencies. Agent-selected under the owner's complete-product/recommended-option authority; not a newly user-named path. The live552 implementation/review remains historical qualified evidence. No accepted goal, canonical source/citation, saved history or native debugger outcome changes.
+
+### Evidence and cause
+
+Current installed C47/eb3af9b0/source48fdf462: savedauth42 source is genuinely selected with Mouse2 and physicalRight/Left. Originalseek75 replaces its canonical native input with preserveFocus true, immediately orphaning keyboard on BODY. An independent reset/source-key/seek repeats it and remains BODY for2s. Native facts/source/frame still match. presentPlayback calls renderSelection(true); holdsKeyboardInActiveEditor excludes recordings, and the projection is live-only. Valid two-case reader regression fails the source-input case and passes an unreported native-view guard. Removing that exclusion makes source pass but view fail, so focus inference is rejected and compiled bytes restore exactly. Private c47-replay-native-input-20261015 binds exact traces/RED/control. Native value visibility is separately proved in Cursor; VS remains required.
+
+### Proposed architecture
+
+Reuse the already reviewed content-provider display projection for the selected recorded moment, while every canonical captured URI/cache/resource and saved source citation remains immutable. Create a separate opaque historical display at ordinary recording entry, before the learner can hold its input. Updates reuse that same native model without background show/open/focus commands. The replay debugger already accepts the current source-display URI/hash; pass the admitted ephemeral display there for native frame correspondence, never persist it in recording/citations. Keep Node history and ordinary source-derived reading canonical unless a separately proved recording path needs this display.
+
+Generalize naming only where the existing live-only names would misstate the new role; search for equivalent utilities first, reuse the exact scheme/path classifier and keep its canonical-folder guard. One shared source view per current display/study is sufficient; no new service, schema, setting, dependency, command or focus getter. A generic captured-view title uses a native annotation that explicitly identifies recorded time/path/hash/line, or Not recorded at this moment in a gap. Source bytes contain no header.
+
+Keep the existing canonical cache, serialized rendering, actual normalized displayed-byte wait within5000ms, language update, revision/lifetime/cancellation admission, sourceReady, layout/ownership and disposal checks. A held/obsolete seek cannot repaint or commit a newer point. Gap entry clears execution/history, paints the existing truthful source sentinel in the same input, continues available video under4A, and restores matching source/debugger at the next point. No earlier values/line are represented as current.
+
+### Pinned and replaced input contract
+
+A pinned native copy stays byte/identity immutable. A background historical seek that would mutate its current view must refuse before a replacement reveal, retain its labelled previous capture and offer Unpin/Retry through existing error recovery. Never quietly replace that focused pin and recreate BODY, and never evict its opaque provider bytes. An explicit new recorded entry may create a distinct display with ordinary current ownership checks; it cannot mutate a pin. Pin during delayed native I/O restores previous cached bytes and refuses before a provider event, retaining the current tested late-pin guard. Existing34entry cache/capacity limit and recovery remain.
+
+A learner-closed/replaced source input is not silently recreated by a background update; use existing current pane/source ownership recovery. Newer source/view/window intent wins. Source/Read/Restore are explicit entries; their successful keys/context are verified separately. A current unreported view or chat receives no focus call. Do not retain a stale manual-sign flag across debugger retirement or infer keyboard ownership from the active text receipt.
+
+### Frozen implementation and proof tasks
+
+1. Existing reader/provider/classifier boundary: historical opaque display plus canonical resource preservation and truthful metadata. Reuse existing utilities; no new class/component/schema assumed.
+2. Strengthen the existing two-case RED/view guard at native document/input continuity and exact bytes. Add captured-point/gap/backward-forward/canonical immutability, pin before/late I/O/refusal/Retry, held delivery/newseek/Close, live/history/Node transition and capacity/ownership cases using the existing harness, without a production-only seam. Test names describe learner behavior; every meaningful change has failing control and adjacent preservation.
+3. All workspace partitions/full suite, unchanged static baselines, package gates after readers end, frozen CodeRabbit and host OCR coverage. The existing current RED remains until the complete safe repair passes; no isolated guard-removal green is adopted.
+4. Clean candidate normal install in both profiles; repeat the same original savedauth42→75 source-key failure, then42→23 and gaps/backward-forward with actual visible native values/source/image and trusted keys. Verify chat/unreported view/newer window/pin/lifetime, record current geometry/preflight/native motion frames and exact originals. No whole-task5/integrated/final credit from mechanism tests.
+
+Primary AC-REPLAY/ENTRY/DESKTOP/GAPS; dependencies LIVE/SAVE/LEARNING/SOURCE-LINKS. All other mechanisms/gaps retain their source-bound assessments.21pending=every original20 plus558; bug-fix cycle carries nothing. No deferred defect or next feature increment.
+
+### Scope Challenge558 — verified scope and preparation
+
+Target/report: docs/plans/cycle-0046-source-projection.md / historical-display amendment558. Existing authorization is the complete-product goal and required bug-fix engineering amendment; target is agent-selected, not a newly user-named path. Preamble1258-1792014306-e670496d, interactive/proactive true; no instruction block. Full156044-character skill read acknowledged. Root behavioral design found by the installed design-doc finder and fully read earlier this current session; no office-hours/new-product detour. Brain unavailable, Aside absent; Context7/official VS Code virtual-document guide supplies primary provider/language documentation. Prior branch decisions and origin/main checked; no Oct15 repair merge. Claude CLI outside voice remains explicitly owner-skipped, local codex_reviews unset is not fabricated disabled. No native fallback/subagent.
+
+Scope Challenge: scope accepted as-is.9proposed changed files: reader, existing exact-namespace helper documentation, existing replay partition, this plan, activecycle/tasktable/state/README/CHANGELOG.0newclasses/services. Structure selector auto-selects Original arrangement (Recommended) under owner recommendation authority: three localized source/test paths plus six mandatory records, preserving all contracts; no smaller arrangement can omit those required record updates. No feature cut, no deferred carried defect. It approves arrangement, not remedies below. Fewer moving parts: reuse current provider/cache/renderer/byte-admission/debug-source override; no new service/schema/command/settings/dependency.
+
+### Architecture558
+
+[P1] (confidence:10/10) extension/src/studyWorkspace.ts:10712 — `!this.recordingActive &&` excludes history from display reuse; :3723 `!this.recordingActive &&` forbids historical keyboard promotion. Native quiet replacement then BODY is independently reproduced. Keep the existing no-inference policy and extend a distinct live-updating historical display; canonical resources remain immutable. Disposition: R4/D1 accepted under standing owner auto-recommendation.
+
+[P1] (confidence:9/10) extension/src/studyWorkspace.ts:11054 — `if (preserveFocus) return canonicalUri` returns to a replacing document when a protected view cannot be reused. A historical background pin must refuse with labelled prior capture/Unpin+Retry before source replacement, not fall back and lose input. Explicit Source/Read can create a distinct view with ordinary explicit focus permission. Pin/reload recovery remains a required native unknown, not assumed durable. Disposition: R5/D2 accepted; every canonical capture remains recoverable independently.
+
+### Code Quality558
+
+[P2] (confidence:9/10) extension/src/studyWorkspace.ts:10875 — `const sourceLabel = message.model.observation` currently distinguishes captured/declaration but not historical/gap provenance. Generalize selected-view/private naming and annotation to actual recorded path/time/hash/line or Not recorded at this moment, without adding source headers or reopening an editor. Existing R2 non-mutating metadata covers this required integration; no new independent UI policy. Legacy exact-scheme/path classifier behavior stays unchanged, caller ownership checks remain; no extraction or new utility needed. Disposition: preserve R2, add necessary historical provenance.
+
+[P1] (confidence:9/10) extension/src/studyWorkspace.ts:10847 — `this.sourceChanges.fire(uri)` precedes the existing actual-byte wait. Historical native frame publication must remain after normalized displayed bytes/language and current revision/lifetime/cancellation admission, especially during replacement seeks. setTextDocumentLanguage emits close/open; preserve provider/view ownership through those events. Existing R3/5000ms admission and Close/late delivery contracts apply unchanged. Disposition: inherited R3 required proof, no event-dispatch-only shortcut.
+
+### Tests558
+
+Framework: native Node test runner, existing workspace harness/partitions; extension/package.json:304 `pnpm build && node --test dist/tests/*.test.js`. Package checks wait until every compiled-output reader ends. No framework/bootstrap/eval/LLM change. Source/retire/present/provider/classifier and actual two-case test code are read before this diagram. Existing live11/namespace4/protocol/lifetime tests retain their own scope; they do not prove historical view behavior.
+
+```text
+Recording Open/Seek/Play
+  -> presentPlayback
+     -> retire old native debugger [existing bounded ownership/cancel tests]
+     -> selected captured/gap source
+     -> renderSelection + canonical cache [existing immutable/source-ready tests]
+        -> historical view creation on normal entry [GAP]
+        -> same-study existing visible view [RED558/source + unreported-view guard]
+        |  -> pinned in any copy [GAP / live early+late controls inherited]
+        |  |  -> historical background refuse/label/recovery [GAP]
+        |  -> emitter -> native text/language -> current byte admission [GAP / live delivery control inherited]
+        |  |  -> late newerseek/Close/window/source choice [GAP]
+        |  -> source metadata captured/recorded/gap [GAP]
+        -> canonical/node/current-file/citation route [existing; critical regression]
+        -> cache34/all-protected refusal/recovery [existing; historical regression]
+     -> native sourceUri/hash override only matching frame [existing protocol; historical alias regression]
+     -> image/source/scopes commit shared point [existing; native current correction GAP]
+User journeys [->E2E: root-operated native]
+  -> original saved auth42 + genuine Source/keys -> seek75 [FAIL558 twice]
+  ->75->42->23 + gaps/backward-forward [required after correction]
+  -> Source/Read/Restore/Close + actual visible Variables [required both hosts]
+  -> view/chat/other-window + pin/reload/newer input [required; no inferred focus]
+```
+
+[P1] (confidence:10/10) extension/src/tests/studyWorkspaceReplay.test.ts:33 — `for (const scenario of [` now captures the formerly uncovered source/view boundary. Current2case/1pass/1fail and guard-removal reversal are causal evidence; strengthen at same native input/exact bytes, preserve both behavior assertions. Existing source material stays immutable. Disposition: required regression, no test retirement.
+
+[P1] (confidence:9/10) this amendment: proposed historical pin refusal and current byte/lifetime waits require history-specific cases; live552 controls alone do not cover new callers. Extend the existing replay fixture for early/late pin/refusal/Unpin+Retry, held event delivery/newseek/Close and source replacement. Disposition: required approved preservation under R3/R5, no separate depth reduction.
+
+[P1] (confidence:9/10) this amendment: proposed native source override needs captured-point/gap/canonical byte/Node and live-return integration. Existing ReplayDebugAdapter URI/scheme/hash validation is unchanged; add current display alias without persisting it in artifacts. Disposition: required R4/regression proof, no new public API.
+
+[P1] (confidence:10/10) private c47-replay-native-input-20261015/cursor/repro-2/results.json:1 — actual point75 commits with BODY. Only installed original native corrected scenario plus outside input/pin/lifetime/values/image verifies this behavior. Disposition: both hosts required, saved real dashboard history, recorded interaction/inspected frames. No natural/final/nine-project acceptance credit.
+
+Value: protects=historical source input and later native view choice; fails_when=a replacement or inferred focus moves keyboard; why_new=live-only tests omit replay; seam=none; no_claim=native focus (controlled editor).
+Value: protects=immutable pinned capture/refusal/recovery; fails_when=provider mutates any pinned copy or quietly replaces it; why_new=historical pin policy is new; seam=none; no_claim=installed pin/reload.
+Value: protects=matching bytes/frame after delayed seek or Close; fails_when=old delivery commits/repaints a newer point; why_new=historical view shares provider state; seam=none; no_claim=host event timing.
+Value: protects=canonical history, native frame URI/hash, gaps and Node/live transitions; fails_when=display identity is persisted or current source replaces evidence; why_new=replay display routing changes; seam=none; no_claim=real-host/OS/final acceptance.
+
+No tests made obsolete, no optional eval scope or new contract pending. Required integration/native depth is inherited from goal/replay/original5, not chosen for convenience. Test Plan/task JSONL are recorded after current choices and final outputs; no new proposed tests built during this review.
+
+### Performance558
+
+[P2] (confidence:9/10) extension/src/studyWorkspace.ts:10727 — `if (this.documents.size <= MAX_SOURCE_DOCUMENTS) break` retains34entry bound; protected views cannot be evicted. Generalize existing pruning/rotation/refusal to historical displays, preserving cache byte/lifetime ownership. Existing5000ms displayed-byte admission remains; no debounce/focus timer/provider-ready shortcut. Source work is per accepted render, not per key. Large-language/source/restart performance is unknown and checked natively, no speedup/benchmark claim. Disposition: inherited bound and required historical regression, no new limit/dependency.
+
+Four-section count9: Architecture2, Quality2, Test4, Performance1. All findings map to implementation/proof; no critical silent failure accepted, no deferred defect. Pin/reload/view-init/native correction are future unverified premises, not pass evidence.
+
+### Decision ledger558
+
+### R4: Historical native display identity
+Plan baseline: R1 approved a separate live reader view and kept canonical replay documents. New contradictory558 native evidence shows their replacement orphans input; source resources/evidence must stay immutable.
+Runtime evidence: two original captured-source42→75 losses; valid source-input RED plus unreported-view guard; compiled recording-exclusion removal reverses their failures and is rejected.
+Comparison grid:
+| Choice | Current | A | B |
+| --- | --- | --- | --- |
+| Historical display | Canonical widget replaced | Separate opaque display, update same model | Retain canonical replacement/focus inference |
+| Canonical/history/citations | Immutable | Immutable; ephemeral URI never persisted | Immutable |
+| Outside input | Must retain | No background show/focus on content updates | Demonstrated unreported-view takeover risk |
+| Pins | Must freeze | Existing guard, separate R5 policy pending | Existing guard, separate R5 policy pending |
+| Readiness/native proof | R3/goal required | Unchanged5000ms and both-host proof | Unchanged5000ms and both-host proof |
+Question D1: Codebook558 loses keyboard when a historical source is replaced. Recommendation:A because existing provider updates preserve the actual input without guessing focus. Options differ in kind, not coverage. A reuses the current display/provider with canonical resources unchanged (human:~2h/agent:unknown); B promotes a replacement by inferred focus (human:~1h/agent:unknown) and its view guard already fails. A risks provider/language/lifetime integration that tests/native proof must cover; B has demonstrated user-input takeover. Net:preserve the existing model or reintroduce the rejected inference.
+Header: History display
+Options:
+A) Reuse display (Recommended): public same-URI content events, immutable canonical sources/pins; no background focus; required byte/lifetime/native verification unchanged.
+B) Focus replacement: replace canonical input and infer focus; known view guard fails; source/evidence/pin/readiness contracts remain required.
+State: approved
+Actual answer: A) Reuse display — authorized auto-choice under DEVELOPMENT.md standing owner recommendation rule/complete-product goal.
+Accepted scope: Separate ephemeral historical display using existing provider/native source override, immutable canonical resources and all existing preservation/proof gates. R5 remains independent.
+
+### R5: Pinned historical update boundary
+Plan baseline: pinned bytes/identity must stay immutable; existing live selection can rotate. Historical input loss means quiet rotation cannot claim safe keyboard.
+Runtime evidence: existing early/late pin code is read, historical pin/native reload behavior is unknown and required. Canonical resources independently survive.
+Comparison grid:
+| Choice | Current | A | B |
+| --- | --- | --- | --- |
+| Protected historical update | Unspecified | Refuse before replacing, clear truthful unavailable native context, retain prior labelled capture, Unpin/Retry | Rotate another input/group, additional placement/input unknowns |
+| Pin bytes/identity | Immutable | Immutable in all copies | Immutable in all copies |
+| Explicit Source/Read | Existing action | May create distinct owned display, explicit focus | May create distinct owned display, explicit focus |
+| R4/R2/R3/canonical resources | Approved | Unchanged | Unchanged |
+| Native pin/reload | Required unknown | Test/refusal/recovery before closure | Test/new-placement/recovery before closure |
+Question D2: A pinned history view cannot be updated or quietly replaced while retaining its keyboard. Recommendation:A because a clear refusal protects it with existing recovery; B adds group/placement ownership. Options differ in kind, not coverage. A provides an actionable current reader error and Unpin/Retry (human:~1h/agent:unknown); B creates another active display/group (human:~2h/agent:unknown), risking layout and input. A temporarily prevents that update until explicit recovery; B needs new placement proof. Net:truthful protected-view refusal or extra layout complexity.
+Header: Protected history
+Options:
+A) Refuse update (Recommended): preserve every pin/previous labelled capture; no replacement; existing error/Unpin+Retry and explicit Source/Read recovery, canonical resources unaffected.
+B) Rotate layout: preserve pins in another group/input, requiring new ownership/focus/layout proofs; other approved values stay fixed.
+State: approved
+Actual answer: A) Refuse update — authorized auto-choice under DEVELOPMENT.md standing owner recommendation rule/complete-product goal.
+Accepted scope: Historical background protected-view refusal and existing explicit recovery, every pin immutable; no new layout/control/schema. Full actual pin/reload proof remains mandatory.
+
+Approval readiness: PASS — R4/D1 and R5/D2 actual authorized auto-choices; inherited R2/R3 metadata/byte/lifetime and every original contract/proof retained. Production implementation and native results remain unverified.
+
+### Outside Voice558 and obligations
+
+Claude Code CLI is explicitly owner-skipped under DEVELOPMENT.md; no outside process or native replacement is launched. Actual local config is unset, not reported disabled. Outside coverage is skipped/non-clean, independent of this host's review. Current bug-fix cycle requires every finding repaired; no TODOS file/proposal/deferred defect. Root native operation is not delegated. No other design/CEO increment is selected; native metadata uses the approved source hierarchy and existing error recovery, with current image comparison mandatory.
+
+### Current558 reality receipts
+
+Premises: native historical replacement loss verified, source-input/view-guard reversal verified, existing provider/byte/language and matching native source override verified. New historical provider integration/pin-reload preservation/corrected two-host native input are unverified=3. A plan is not deployed proof.
+REALITY: premise-table pass source/native/proposed behavior separated and3future unknowns counted docs/plans/cycle-0046-source-projection.md:202
+REALITY: already-done pass fetched origin/main; Oct15 source path log empty;558 not merged docs/cycles/0046-carried-defects-of-cycle-0045.md:1
+REALITY: surface-check pass existing provider registration/events/byte wait and native source URI-hash override read extension/src/studyWorkspace.ts:12255
+REALITY: binding-decisions pass owner goal says "選択肢はReccomendをpickしてください" and every bug-fix finding remains required DEVELOPMENT.md:28
+REALITY: numbers pass decoded59frames [measured: artifacts/cycle-0046/c47-replay-native-input-20261015/cursor/repro-2/motion-map.json:1]; controlled2cases [measured: artifacts/cycle-0046/c47-replay-native-input-20261015/regression-two-case-red.log:1]; cache34entries [source: extension/src/constants.ts:225]; existing5000ms bound [source: extension/src/constants.ts:243]; task effort [estimated] docs/plans/cycle-0046-source-projection.md:220
+REALITY: deferred-asks pass every original20 plus558 retained; no increment or deferred defect docs/cycles/0046-carried-defects.md:7
+REALITY: pr-count pass no additional PR; draft88 and owner up-to-three-part delivery remain independent DEVELOPMENT.md:28
+REALITY: prior-art pass public native content-provider events reused, no vendor fork; Context7/official doc and live552 source integration provide baseline docs/plans/cycle-0046-source-projection.md:15
+REALITY: contract-assumptions pass ReplayDebugAdapter allows owned scheme and overrides only matching hash; new history view behavior remains unverified extension/src/replayDebugAdapter.ts:262
+REALITY: falsification-box pass original native BODY plus view-guard reversal rejects inference; later current source/window/pin regression rejects display amendment artifacts/cycle-0046/c47-replay-native-input-20261015/guard-removal-control.log:1
+REALITY: stop-reasons pass proposed protected-view refusal/late pin/delivery/capacity must be triggered by history tests before closure docs/plans/cycle-0046-source-projection.md:220
+REALITY: reporter-environment pass exact Ubuntu Cursor C47 saved history and real root source keys reproduced twice; VS/nativeWindows/macOS not inferred PROJECT_STATE.md:8
+REALITY: dependency-fallback pass one current module/provider/native adapter, no predecessor dependency/new service; canonical sources remain available extension/src/studyWorkspace.ts:9713
+REALITY: obligation-tiers pass all current558/native/guard/pin findings repaired in Cycle0046, no next-PR deferral or acceptance shortcut DEVELOPMENT.md:129
+
+### Implementation Tasks558
+
+Estimated human effort only; agent duration is unknown, not a deadline promise.
+- [ ] **T558-1 (P1, human:~2h / agent:unknown)** — reader/native source — implement current historical display reuse and exact canonical/data/metadata boundaries. Architecture/Quality/R4; source reader and existing classifier documentation. Verify current source/view RED becomes complete GREEN, exact bytes/canonical state and no background replacement/focus.
+- [ ] **T558-2 (P1, human:~2h / agent:unknown)** — replay preservation — implement and prove protected-view refusal/latepin/Retry, delayed newseek/Close and gap/Node/live/capacity/ownership regression through existing primitives. Architecture/Test/R5/R3; existing reader/replay partition/harness only if necessary. Existing tests are retained; valid failure controls restore compiled bytes.
+- [ ] **T558-3 (P1, human:~2h / agent:unknown)** — source cut/delivery evidence — all workspace partitions/full suite/static/package after readers, frozen CodeRabbit/host OCR, normal clean candidate installs. Test/Performance; current package gates unchanged.
+- [ ] **T558-4 (P1, human:~2h / agent:unknown)** — actual native correction — root repeats exact saved-source keyboard scenario plus values/image/gaps/owned lifetime/pins/other input in both hosts, current preflight/video/inspected native frames and exact original restoration. No whole-product/final credit from mechanism tests.
+
+Sequential implementation, no parallelization opportunity. One shared source/render/ownership module: T558-1→T558-2→T558-3→T558-4; tests/records share this same lane, no subagent/native delegation. No new task beyond the carried defect and necessary preservation/proof. No tests retired.
+
+### Completion summary558
+
+Scope accepted as-is, original9file/0class arrangement authorized;0feature cuts. Architecture2, CodeQuality2, Test4gap families, Performance1 =9mapped requirements. Test diagram/value cards/native framework/current RED and rejected control produced;0test retirements/0TODO proposals/0deferred defects/0unresolved choices. Reality14/14applicable rows emitted,3future implementation/native premises unknown. Failure modes use existing bounded byte/lifetime/source/native error and explicitly required pin/reload/closed-view checks;0silent critical gaps accepted. OutsideClaudeCLI owner-skipped, no independent/cross-model coverage. One sequential lane/0parallel lanes. LakeScore N/A (mechanism/pin choices differ in kind). Review decisions approve implementation of the bounded amendment; production/native/full-cycle delivery remains unverified.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 | --- | --- | --- | --- | --- | --- |
-| CEO Review | /plan-ceo-review | Scope and strategy | 0 for this repair | Not needed for bounded defect | Accepted product unchanged |
-| Outside Review | Claude Code CLI | Independent opinion | 0 for this repair | Owner-skipped | No outside coverage |
-| Eng Review | /plan-eng-review | Architecture and tests | 1 for this repair | ISSUES OPEN | 8 accepted implementation/proof requirements; 0 unresolved choices |
-| Design Review | Existing v9 design | Native source hierarchy | 1 inherited specification | Specification approved; current UI unverified | Current annotation/native image comparison required |
-| DX Review | /plan-devex-review | Public interface | 0 for this repair | No public contract change | Existing controls/API retained |
+| CEO Review | /plan-ceo-review | Product scope |0for558 | Not needed | Accepted product unchanged; no feature cut |
+| Outside Review | Claude Code CLI | Independent opinion |0for558 | Owner-skipped | Actual config unset, explicit owner opt-out; no outside/native replacement |
+| Eng Review | /plan-eng-review | Historical source architecture/tests |2bounded plan reviews | ISSUES OPEN | Current558:9mapped implementation/proof requirements,0unresolved choices,0accepted silent critical gaps |
+| Design Review | Approvedv9/native source state contract | Source/history hierarchy |1inherited specification | Approved specification, current UI correction unverified | Current image/motion comparison required |
+| DX Review | /plan-devex-review | Public API/setup |0for558 | No public interface change | Existing commands/schema/skill remain |
 
-**OUTSIDE COVERAGE:** Claude Code CLI; plan-review phase; owner-skipped, no completed external opinion.
-**VERDICT:** Bounded repair decisions approved for implementation; mapped issues and native proof remain open. No delivery clearance; eng review required at the corrected implementation cut.
+**OUTSIDE COVERAGE:** Claude Code CLI, plan phase, owner-skipped; no independent/cross-model coverage.
+**VERDICT:** Historical-display decisions R4/D1 and R5/D2 approved for bounded implementation; inherited R2/R3/canonical/preservation and all native gates retained. Mapped implementation/proof remains open; no whole-cycle/delivery clearance, corrected source review still required.
 NO UNRESOLVED DECISIONS

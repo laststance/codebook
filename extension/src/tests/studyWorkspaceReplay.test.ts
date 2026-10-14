@@ -10,6 +10,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bookObservationHash } from '../utils/bookObservationHash'
+import { capturedSourceUriPath } from '../utils/capturedSourceUriPath'
 import { citationContext } from '../utils/citationContext'
 import type { ShownInterpretation } from '../utils/projectRecording'
 
@@ -27,6 +28,687 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+
+// Regression: 558 — replacing the historical source cannot orphan its native keyboard.
+// Found by /qa on 2026-10-15.
+// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Value: protects=source keyboard through a historical seek; fails_when=a replacement hides its focused input while preserving focus; why_new=recording tests omit a genuine source selection before seeking; seam=none; no_claim=native keyboard (controlled editor).
+for (const scenario of [
+  {
+    name: 'keeps the keyboard in the historical source the learner selected',
+    choosesView: false,
+    focused: true,
+  },
+  {
+    name: 'leaves the keyboard in an unreported native view after the learner left historical source',
+    choosesView: true,
+    focused: true,
+  },
+  {
+    name: 'takes no keyboard from another window after a historical source choice',
+    choosesView: true,
+    focused: false,
+  },
+]) {
+  test(`seeking a saved recording gap ${scenario.name}`, async () => {
+    // Arrange: a saved captured stop is open and the learner clicks into its native source.
+    const harness = await recordedReaderHarness(true, true)
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await harness.controller.settle()
+      await harness.reader.action('source')
+      harness.workInActiveTextEditor('mouse')
+      // A native view can own the keyboard while the editor still reports the earlier source.
+      if (scenario.choosesView) harness.focusView()
+      harness.changeWindowFocus(scenario.focused)
+      const selectedSourceUri = harness.reader.inspect().sourceUri,
+        shownBefore = harness.textDocumentShows().length
+      const captured = harness.reader.inspect().view!.model.observation
+      assert.ok(captured)
+      const canonicalDocument = await harness.editor.workspace.openTextDocument(
+        harness.editor.Uri.from({
+          scheme: 'codebook-source',
+          authority: (await harness.reader.learningStorage()).workspaceKey,
+          path: capturedSourceUriPath({
+            owner: harness.studyId,
+            itemId: captured.itemId,
+            hash: captured.source.hash,
+            declaredPath: 'src/theme.ts',
+            fallbackName: 'theme.mts',
+          }),
+        }),
+      )
+
+      // Act: the prior native input must remain usable when its history becomes unavailable.
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 20,
+      })
+      await harness.controller.settle()
+
+      // Assert: historical bytes change in the same input, without guessing its keyboard owner.
+      assert.equal(harness.controller.state().presentedMs, 20)
+      const gapEditor = harness.editor.window.visibleTextEditors.find(
+        (editor) =>
+          editor.document.uri.toString() === harness.reader.inspect().sourceUri,
+      )
+      assert.equal(
+        gapEditor?.document.getText(),
+        '// Not recorded at this moment.\n',
+      )
+      assert.equal(
+        harness.historicalDebugPresentations.at(-1)?.snapshot,
+        undefined,
+      )
+      assert.equal(harness.reader.inspect().sourceUri, selectedSourceUri)
+      assert.deepEqual(harness.textDocumentShows().slice(shownBefore), [])
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(harness.keyboardInView(), scenario.choosesView)
+      assert.equal(canonicalDocument.getText(), 'const nextTheme = "dark";\n')
+
+      // Repeated backward/forward traversal restores exact captured source and clears it again in the gap.
+      for (const positionMs of [100, 20, 100]) {
+        harness.controller.command({
+          action: 'seek',
+          studyId: harness.studyId,
+          expectedRevision: harness.controller.state().revision,
+          positionMs,
+        })
+        await harness.controller.settle()
+        assert.equal(harness.controller.state().presentedMs, positionMs)
+        assert.equal(harness.reader.inspect().sourceUri, selectedSourceUri)
+        assert.equal(
+          gapEditor?.document.getText(),
+          positionMs === 100
+            ? 'const nextTheme = "dark";\n'
+            : '// Not recorded at this moment.\n',
+        )
+        assert.equal(harness.keyboardInView(), scenario.choosesView)
+        assert.equal(canonicalDocument.getText(), 'const nextTheme = "dark";\n')
+      }
+      assert.deepEqual(harness.textDocumentShows().slice(shownBefore), [])
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
+for (const pinDuringOpen of [false, true]) {
+  test(`a historical seek preserves pinned captured bytes ${pinDuringOpen ? 'when pinned during native document I/O' : 'when pinned before the seek'} and Unpin with Retry recovers the requested moment`, async () => {
+    // Arrange: a selected historical source is visible before the learner protects its native input.
+    const harness = await recordedReaderHarness(true, true)
+    let releaseSource = (): void => {}
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await harness.controller.settle()
+      await harness.reader.action('source')
+      const sourceUri = harness.reader.inspect().sourceUri
+      assert.ok(sourceUri)
+      const sourceEditor = harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.toString() === sourceUri,
+      )
+      const sourceTab = harness.groups
+        .flatMap((group) => group.tabs)
+        .find(
+          (tab) => 'uri' in tab.input && tab.input.uri.toString() === sourceUri,
+        )
+      assert.ok(sourceEditor)
+      assert.ok(sourceTab)
+      const showsBefore = harness.textDocumentShows().length
+      const identitiesBefore = harness.sourceIdentityDecorations().length
+      const savedContext = await harness.store.readContext(harness.studyId)
+      const held = pinDuringOpen
+        ? harness.holdNextSource({ uri: sourceUri })
+        : undefined
+      if (held) releaseSource = held.release
+      else sourceTab.isPinned = true
+
+      // Act: a gap cannot mutate any protected copy or replace the learner's input quietly.
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 20,
+      })
+      if (held) {
+        await held.started
+        sourceTab.isPinned = true
+        held.release()
+      }
+      await harness.controller.settle()
+
+      // Assert: the previous labelled capture stays immutable and saved context stays canonical.
+      assert.equal(harness.controller.state().readiness, 'failed')
+      assert.equal(harness.controller.state().presentedMs, 100)
+      assert.equal(
+        sourceEditor.document.getText(),
+        'const nextTheme = "dark";\n',
+      )
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.deepEqual(
+        harness.sourceIdentityDecorations().slice(identitiesBefore),
+        [],
+      )
+      assert.match(harness.reader.inspect().view!.errors.join('\n'), /pinned/)
+      assert.deepEqual(
+        await harness.store.readContext(harness.studyId),
+        savedContext,
+      )
+
+      // The ordinary Retry must recover the requested gap after the learner unpins the capture.
+      sourceTab.isPinned = false
+      await harness.reader.action('retry')
+      await harness.controller.settle()
+      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.controller.state().presentedMs, 20)
+      assert.equal(
+        sourceEditor.document.getText(),
+        '// Not recorded at this moment.\n',
+      )
+      assert.equal(harness.reader.inspect().sourceUri, sourceUri)
+    } finally {
+      releaseSource()
+      await harness.close()
+    }
+  })
+}
+
+for (const closeDuringDelivery of [false, true]) {
+  test(`a historical source update ${closeDuringDelivery ? 'cannot publish after Close during delayed native delivery' : 'waits for actual native bytes before committing the shared gap moment'}`, async () => {
+    // Arrange: delay the real provider-to-document boundary of an already selected capture.
+    const harness = await recordedReaderHarness(true, true)
+    let releaseDelivery = (): void => {}
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await harness.controller.settle()
+      const sourceUri = harness.reader.inspect().sourceUri
+      const sourceEditor = harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.toString() === sourceUri,
+      )
+      assert.ok(sourceEditor)
+      const held = harness.holdNextSourceUpdate()
+      releaseDelivery = held.release
+
+      // Act: the requested gap cannot commit while the native input still contains the captured stop.
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 20,
+      })
+      await held.started
+      assert.equal(harness.controller.state().presentedMs, 100)
+      assert.equal(
+        sourceEditor.document.getText(),
+        'const nextTheme = "dark";\n',
+      )
+      assert.equal(readerSeams(harness).isSourceShown(), false)
+      if (closeDuringDelivery) {
+        // Close cancels ownership without needing the withheld document event to arrive.
+        await harness.reader.close()
+        held.release()
+        await harness.controller.settle()
+        assert.equal(harness.reader.inspect().opened, false)
+        assert.equal(harness.reader.inspect().sourceUri, undefined)
+        // Close retains the last confirmed playhead for normal reopening, without committing the withheld gap.
+        assert.equal(harness.controller.state().studyId, harness.studyId)
+        assert.equal(harness.controller.state().presentedMs, 100)
+        return
+      }
+      held.release()
+      await harness.controller.settle()
+
+      // Assert: admission follows actual native delivery and all affected historical state is cleared.
+      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.controller.state().presentedMs, 20)
+      assert.equal(
+        sourceEditor.document.getText(),
+        '// Not recorded at this moment.\n',
+      )
+      assert.equal(
+        harness.historicalDebugPresentations.at(-1)?.snapshot,
+        undefined,
+      )
+      assert.equal(harness.reader.inspect().sourceUri, sourceUri)
+    } finally {
+      releaseDelivery()
+      await harness.close()
+    }
+  })
+}
+
+test('a newer historical seek supersedes withheld source I/O and keeps its own captured bytes and playhead', async () => {
+  // Arrange: the existing source input belongs to a captured stop.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseSource = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    assert.ok(sourceUri)
+    const sourceEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.toString() === sourceUri,
+    )
+    const held = harness.holdNextSource({ uri: sourceUri })
+    releaseSource = held.release
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await held.started
+
+    // Act: a newer captured point takes ownership before the old gap's native acquisition returns.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 200,
+    })
+    held.release()
+    await harness.controller.settle()
+
+    // Assert: no old gap becomes the final native source or historical debugger context.
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().presentedMs, 200)
+    assert.equal(
+      sourceEditor?.document.getText(),
+      'const nextTheme = "dark";\n',
+    )
+    assert.equal(harness.reader.inspect().sourceUri, sourceUri)
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.snapshot?.frames[0]?.name,
+      'applyTheme',
+    )
+  } finally {
+    releaseSource()
+    await harness.close()
+  }
+})
+
+test('a new historical seek refuses to recreate a learner-closed source until explicit Source restores its native input', async () => {
+  // Arrange: the learner closes the actual source tab while retaining the saved recording.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    const sourceTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find(
+        (tab) => 'uri' in tab.input && tab.input.uri.toString() === sourceUri,
+      )
+    assert.ok(sourceTab)
+    harness.closeTabByHand(sourceTab)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: background time travel cannot reopen the input the learner explicitly removed.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await harness.controller.settle()
+
+    // Assert: the refusal precedes a native reveal and supplies the ordinary Source recovery.
+    assert.equal(harness.controller.state().readiness, 'failed')
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /no longer visible/,
+    )
+    await harness.reader.action('source')
+    assert.equal(harness.reader.inspect().sourceUri, sourceUri)
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await harness.controller.settle()
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().presentedMs, 20)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('historical source capacity freezes every pinned display and permits explicit recovery after one older view is unpinned', async () => {
+  // Arrange: each explicitly opened display is pinned at one captured historical point.
+  const harness = await recordedReaderHarness(true, true)
+  const unconfirmedFixtureLayout =
+    'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.'
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    // This synthetic recording has no confirmed native geometry before any pin; capacity recovery must preserve that separate warning.
+    assert.deepEqual(
+      [...harness.reader.inspect().view!.errors],
+      [unconfirmedFixtureLayout],
+    )
+    const pinned = []
+    // The existing cache bound is 34 documents; a pin freezes each display's provider bytes.
+    for (let index = 0; index < 34; index++) {
+      await harness.reader.action('source')
+      const sourceUri = harness.reader.inspect().sourceUri
+      const sourceEditor = harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.toString() === sourceUri,
+      )
+      const sourceTab = harness.groups
+        .flatMap((group) => group.tabs)
+        .find(
+          (tab) => 'uri' in tab.input && tab.input.uri.toString() === sourceUri,
+        )
+      assert.ok(sourceEditor)
+      assert.ok(sourceTab)
+      sourceTab.isPinned = true
+      pinned.push({ tab: sourceTab, document: sourceEditor.document })
+    }
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: another explicit Source entry cannot obtain room by evicting an immutable pinned view.
+    await harness.reader.action('source')
+
+    // Assert: no replacement occurs, every protected capture survives, and ordinary unpinning makes recovery possible.
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /capacity is full/,
+    )
+    assert.equal(pinned.length, 34)
+    for (const capture of pinned) {
+      assert.equal(
+        harness.groups.flatMap((group) => group.tabs).includes(capture.tab),
+        true,
+      )
+      assert.equal(capture.document.getText(), 'const nextTheme = "dark";\n')
+    }
+    pinned[0]!.tab.isPinned = false
+    await harness.reader.action('source')
+    assert.equal(readerSeams(harness).isSourceShown(), true)
+    assert.deepEqual(
+      [...harness.reader.inspect().view!.errors],
+      [unconfirmedFixtureLayout],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a learner draft chosen during historical source I/O stays visible and receives no obsolete quiet source replacement', async () => {
+  // Arrange: a recorded source is visible when the seek starts acquiring its native document.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseSource = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    assert.ok(sourceUri)
+    const sourceEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.toString() === sourceUri,
+    )
+    assert.ok(sourceEditor)
+    const held = harness.holdNextSource({ uri: sourceUri })
+    releaseSource = held.release
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await held.started
+    const draft = harness.focusMutableDraft(
+      'history-notes.txt',
+      sourceEditor.viewColumn,
+    )
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the native source reply arrives after the learner selected another input in that group.
+    held.release()
+    await harness.controller.settle()
+
+    // Assert: refuse before revealing or committing the older request, preserving the learner's draft and keyboard.
+    assert.equal(harness.controller.state().readiness, 'failed')
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      draft.document.uri.toString(),
+    )
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    releaseSource()
+    await harness.close()
+  }
+})
+
+test('re-presenting a committed recording refuses to reopen a source the learner closed', async () => {
+  // Arrange: the saved point remains selected after the learner closes its source input.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    const sourceTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find(
+        (tab) => 'uri' in tab.input && tab.input.uri.toString() === sourceUri,
+      )
+    assert.ok(sourceTab)
+    harness.closeTabByHand(sourceTab)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: an ordinary surface re-presentation is not an explicit Source or Restore request.
+    harness.controller.hide()
+    harness.controller.reveal()
+    await harness.controller.settle()
+
+    // Assert: preserve the last confirmed point without silently creating the removed native input.
+    assert.equal(harness.controller.state().readiness, 'failed')
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /no longer visible/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Regression: 561 — an abandoned seek cannot become the provider rollback for a later pinned capture.
+test('pinning the displayed capture during a newer seek preserves provider bytes after an earlier source acquisition was cancelled', async () => {
+  // Arrange: capture A is displayed while seek B waits for the same native document.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseEarlier = (): void => {},
+    releaseLater = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    assert.ok(sourceUri)
+    const sourceEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.toString() === sourceUri,
+    )
+    const sourceTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find(
+        (tab) => 'uri' in tab.input && tab.input.uri.toString() === sourceUri,
+      )
+    assert.ok(sourceEditor)
+    assert.ok(sourceTab)
+    const earlier = harness.holdNextSource({ uri: sourceUri })
+    releaseEarlier = earlier.release
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await earlier.started
+    const later = harness.holdNextSource({ uri: sourceUri })
+    releaseLater = later.release
+
+    // Act: seek C cancels B; the learner pins the still-displayed A while C waits for its own native reply.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 200,
+    })
+    earlier.release()
+    await later.started
+    sourceTab.isPinned = true
+    later.release()
+    await harness.controller.settle()
+
+    // Assert: both the displayed document and the actual registered provider retain A, never the cancelled gap B.
+    assert.equal(harness.controller.state().readiness, 'failed')
+    assert.equal(sourceEditor.document.getText(), 'const nextTheme = "dark";\n')
+    assert.equal(
+      await harness.providedSource(sourceEditor.document.uri),
+      'const nextTheme = "dark";\n',
+    )
+  } finally {
+    releaseEarlier()
+    releaseLater()
+    await harness.close()
+  }
+})
+
+// Regression: 559 — source annotation calls remain observable independently of execution-line highlights.
+test('historical source annotations identify the recorded file, time, hash and selected line and replace that identity inside a gap', async () => {
+  // Arrange: read a saved point through its actual historical native display.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act and Assert: each selected moment replaces the native annotation without changing source bytes.
+    for (const positionMs of [100, 20, 100]) {
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs,
+      })
+      await harness.controller.settle()
+      const annotation = harness.sourceIdentityDecorations().at(-1)
+      assert.ok(
+        annotation,
+        'The native source identity must be applied, not omitted from the observation channel.',
+      )
+      assert.equal(annotation.uri, harness.reader.inspect().sourceUri)
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(annotation.ranges)),
+        positionMs === 100
+          ? [
+              {
+                range: {
+                  start: { line: 0, character: 25 },
+                  end: { line: 0, character: 25 },
+                },
+                hoverMessage:
+                  'Recorded: src/theme.ts:1 · 0.10 s · declared 1 · captured SHA-256 f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771',
+                renderOptions: {
+                  after: {
+                    contentText:
+                      '  Recorded: src/theme.ts:1 · 0.10 s · declared 1',
+                  },
+                },
+              },
+            ]
+          : [
+              {
+                range: {
+                  start: { line: 0, character: 31 },
+                  end: { line: 0, character: 31 },
+                },
+                hoverMessage:
+                  'Recorded source · Not recorded at this moment · captured SHA-256 17ded4ea5073e886425bd977a54edd857924d864f44b3c1b83d9e8aec53893e1',
+                renderOptions: {
+                  after: {
+                    contentText:
+                      '  Recorded source · Not recorded at this moment',
+                  },
+                },
+              },
+            ],
+      )
+    }
+  } finally {
+    await harness.close()
+  }
+})
 
 // Regression: 466 — failed Reload must retain its initiating Summary and recovery controls.
 // Found by /qa on 2026-10-11.

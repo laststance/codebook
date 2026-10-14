@@ -300,7 +300,12 @@ export async function workspaceHarness(
   ]
   let activeTabGroup = groups[0]!
   let separateEditorPart:
-    | { group: (typeof groups)[number]; layout: unknown; focused: boolean }
+    | {
+        group: (typeof groups)[number]
+        tab: Tab
+        layout: unknown
+        focused: boolean
+      }
     | undefined
   let separatePartLayoutReport: unknown
   type SourceEditor = {
@@ -351,6 +356,7 @@ export async function workspaceHarness(
     decoratedColumns: number[] = [],
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
     decoratedRangeCounts: number[] = []
+  const sourceIdentityCalls: { uri: string; ranges: readonly unknown[] }[] = []
   let retainedReadingRange: Range | undefined
   /** Models native scrolling for display and explicit reveal without conflating their callbacks. @example scrollReadingRange(new Range(position, position)) */
   const scrollReadingRange = (range: Range, revealType?: number): void => {
@@ -381,9 +387,21 @@ export async function workspaceHarness(
       return reportedColumn ?? group.viewColumn
     },
     setDecorations(
-      _decoration?: unknown,
+      decoration?: unknown,
       ranges: readonly unknown[] = [],
     ): void {
+      // Inline source identity is metadata; execution-highlight checks observe only the native line decoration.
+      if (
+        decoration &&
+        typeof decoration === 'object' &&
+        'sourceIdentity' in decoration
+      ) {
+        sourceIdentityCalls.push({
+          uri: document.uri.toString(),
+          ranges: [...ranges],
+        })
+        return
+      }
       decoratedColumns.push(reportedColumn ?? group.viewColumn)
       decoratedRangeCounts.push(ranges.length)
     },
@@ -418,6 +436,11 @@ export async function workspaceHarness(
     staleNamedGroup = undefined
     for (const listener of groupChangeListeners) listener(event)
   }
+  const textDocumentChangeListeners = new Set<
+    (event: {
+      document: Pick<SourceEditor['document'], 'uri' | 'getText'>
+    }) => void
+  >()
   let sourceProvider = async (_uri: Uri) => ''
   let nextSourceUpdate: { wait: Promise<void>; entered(): void } | undefined
   const virtualSourceDocuments = new Map<
@@ -2665,6 +2688,8 @@ export async function workspaceHarness(
               await response.wait
             }
           }
+          if (name === 'workbench.action.toggleMaximizedPanel')
+            returnHiddenEditorArea()
           if (name === 'vscode.getEditorLayout') {
             if (asynchronousLayoutReads)
               await new Promise<void>((resolve) => setImmediate(resolve))
@@ -2907,7 +2932,10 @@ export async function workspaceHarness(
           errorMessages.push(message)
           return undefined
         },
-        createTextEditorDecorationType: disposable,
+        createTextEditorDecorationType: (options: { after?: unknown }) => ({
+          ...disposable(),
+          ...(options.after ? { sourceIdentity: true } : {}),
+        }),
         createTreeView: (
           _id: string,
           options: { treeDataProvider: { getTreeItem: typeof outlineItem } },
@@ -3222,12 +3250,27 @@ export async function workspaceHarness(
                 await held?.wait
                 model.text = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
                 sourceDocumentChanges.push(value.toString())
+                for (const listener of textDocumentChangeListeners)
+                  listener({
+                    document: { uri: value, getText: () => model.text },
+                  })
               })
           })
           return subscription ?? disposable()
         },
         openTextDocument: openSourceDocument,
-        onDidChangeTextDocument: disposable,
+        onDidChangeTextDocument: (
+          listener: (event: {
+            document: Pick<SourceEditor['document'], 'uri' | 'getText'>
+          }) => void,
+        ) => {
+          textDocumentChangeListeners.add(listener)
+          return {
+            dispose(): void {
+              textDocumentChangeListeners.delete(listener)
+            },
+          }
+        },
         createFileSystemWatcher: (pattern: RelativePattern) => {
           watchedPatterns.push(pattern)
           return watcher
@@ -3822,6 +3865,8 @@ export async function workspaceHarness(
     decoratedColumns: () => [...decoratedColumns],
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. @example harness.decoratedRangeCounts().at(-1) // => 0 once the stop's highlight was cleared */
     decoratedRangeCounts: () => [...decoratedRangeCounts],
+    /** Reports native source-identity annotations separately from execution highlights for source/time/gap regressions. @example harness.sourceIdentityDecorations().at(-1)?.ranges */
+    sourceIdentityDecorations: () => [...sourceIdentityCalls],
     moveSource(column: number): void {
       const editor = lastSourceEditor
       assert.ok(editor)
@@ -4333,6 +4378,8 @@ export async function workspaceHarness(
     /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
     textDocumentShows: () => [...textDocumentShows],
     sourceDocumentChanges: () => [...sourceDocumentChanges],
+    /** Reads the actual registered content provider for source-cache regressions, independently of the native document model. @param uri - The fixture's real native source identity. @returns Provider bytes before native line-ending normalization. @example await harness.providedSource(sourceEditor.document.uri) */
+    providedSource: (uri: Uri): Promise<string> => sourceProvider(uri),
     /**
      * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
      * @example harness.revealPanelsLater()
@@ -4403,13 +4450,16 @@ export async function workspaceHarness(
       }
       separateEditorPart = {
         group,
+        tab: chatTab,
         layout: { orientation: 1, groups: [{ size: 743 }] },
         focused: false,
       }
       groups.push(group)
       changedGroups({ opened: [group], closed: [], changed: [] })
       return {
-        tab: chatTab,
+        get tab() {
+          return separateEditorPart?.tab ?? chatTab
+        },
         layout: () => structuredClone(separateEditorPart?.layout),
         focused: () => separateEditorPart?.focused,
         focus(): void {
@@ -4713,9 +4763,12 @@ export async function workspaceHarness(
       for (const editor of visibleSourceEditors)
         editor.group = groups[previous.indexOf(editor.group)] ?? editor.group
       // Full-model replacement keeps the same separate part behind its newly reported native wrapper.
-      if (separateEditorPart)
+      if (separateEditorPart) {
         separateEditorPart.group =
           groups[previous.indexOf(separateEditorPart.group)]!
+        separateEditorPart.tab =
+          refreshedTabs.get(separateEditorPart.tab) ?? separateEditorPart.tab
+      }
       if (change === 'move') {
         const first = groups[0]!.tabs
         groups[0]!.tabs = groups[1]!.tabs

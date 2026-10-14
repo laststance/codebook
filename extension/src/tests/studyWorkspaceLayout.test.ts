@@ -4289,7 +4289,7 @@ async function recordingInCursor() {
 }
 
 // Value: protects=the confirmed layout of a recording in Cursor across a seek that shows another source tab; fails_when=the group objects Cursor replaces with that tab change count as other groups (the Agent chat's group holds no tab Codebook knows), so the next status read answers layoutConfirmed false with "The Study arrangement is not confirmed. …" although no pixel of the grid changed; why_new=Cycle 0045 NF-5, normal panel height (observed on candidate 13: 2 of 2 seeks that changed the source tab); seam=workspace harness with a separate editor part and the fake editor's group object replacement
-test('a recorded seek in Cursor that shows another source tab leaves the layout confirmed', async () => {
+test('a recorded seek in Cursor keeps its source input and confirmed layout through native group-wrapper refresh', async () => {
   // Arrange
   const { harness, chat } = await recordingInCursor()
   try {
@@ -4306,13 +4306,14 @@ test('a recorded seek in Cursor that shows another source tab leaves the layout 
       positionMs: 100,
     })
     await harness.controller.settle()
+    harness.resyncEditorGroups(undefined, true, true)
 
     // Assert
     const state = await harness.reader.readPresentationState()
     assert.equal(before.layoutConfirmed, true)
     assert.equal(harness.controller.state().readiness, 'ready')
-    // The seek showed another source tab, and the editor answered it with new group objects in the same columns and the same grid.
-    assert.notEqual(harness.reader.inspect().sourceUri, sourceBefore)
+    // The selected source updates in one native input; an independent tab-model refresh preserves its logical groups.
+    assert.equal(harness.reader.inspect().sourceUri, sourceBefore)
     assert.equal(
       harness.groups.some((group) => groupsBefore.includes(group)),
       false,
