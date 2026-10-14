@@ -71,8 +71,8 @@ function showsActiveTextEditor(group: vscode.TabGroup): boolean {
 
 /**
  * Tells {@link BrowserViewport.showsFocusingPause} whether the editor gives the paused file the keyboard focus at a breakpoint.
- * @returns `true` unless the learner turned `debug.focusEditorOnBreak` off.
- * @example isFocusEditorOnBreakOn() // => true with the editor's default settings
+ * @returns Whether the effective `debug.focusEditorOnBreak` preference enables source keyboard focus.
+ * @example isFocusEditorOnBreakOn() // => false with the normal Codebook default
  */
 function isFocusEditorOnBreakOn(): boolean {
   return (

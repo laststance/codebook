@@ -40,6 +40,20 @@ import {
 } from './utils/fakeFileWatching'
 import { loadModule } from './utils/loadModule'
 
+// Value: protects=normal installed breakpoints keeping keyboard input while native frame/value inspection commits; fails_when=the native focus default contribution is omitted or enabled; seam=normal extension manifest, not native keyboard proof.
+test('ordinary installations let native breakpoints preserve keyboard input by default', async () => {
+  // Arrange
+  const manifest = JSON.parse(
+    await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
+  )
+
+  // Act
+  const defaults = manifest.contributes.configurationDefaults
+
+  // Assert
+  assert.deepEqual(defaults, { 'debug.focusEditorOnBreak': false })
+})
+
 test('browser Wiki opening rejects a manifest from another checkout and opens a matching generated site', async () => {
   // Arrange
   const projectRoot = await mkdtemp(join(tmpdir(), 'codebook-wiki-project-'))

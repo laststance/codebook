@@ -25,6 +25,9 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "configurationDefaults": {
+      "debug.focusEditorOnBreak": false
+    },
     "debuggers": [
       {
         "type": "codebook-replay",

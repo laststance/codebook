@@ -635,7 +635,7 @@ export class StudyWorkspace {
   private readonly sessionsWentOnAtMs = new Map<string, number>()
   /** The debug sessions that started while this reader existed and have not ended, whose adapter's messages it therefore sees ({@link followStopsOf}); {@link forgetSession} takes a session out when it ends. A session that started before the reader has none to tell a stop from a selected frame. */
   private readonly followedSessions = new Set<string>()
-  /** Whether the stack frame the editor reports now came with a stop of the debugger, which opens the paused file with the keyboard; `false` for a frame the learner selected in the Call Stack view and for one the editor brought to the front later by itself, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
+  /** Whether the stack frame the editor reports now came with a stop of the debugger, which can open the paused file with the keyboard when its focus preference is enabled; `false` for a frame the learner selected in the Call Stack view and for one the editor brought to the front later by itself, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
   private frameCameWithStop = false
   /** Whether the learner gave a sign of working in the active text editor since the editor reported a frame whose file it opened without the keyboard ({@link noteLearnersSignAtFrame}): a pane or the captured source that covers that editor then takes the keyboard as at a stop. `false` at every new stack item ({@link judgeKeyboardAtStackItemChange}). */
   private learnerChoseEditorAtFrame = false
@@ -2884,7 +2884,7 @@ export class StudyWorkspace {
 
   /**
    * Starts the record of the keyboard outside the text editors and the Study panes for the whole editor session; called once by {@link installReaders}.
-   * The record must exist before a run pauses: the editor's debugger opens the paused file with the keyboard before any code of the reader runs for that pause. With it the reader follows every debug session's stops ({@link followStopsOf}).
+   * The record must exist before a run pauses: when the native focus preference is enabled, the editor's debugger opens the paused file with the keyboard before any code of the reader runs for that pause. With it the reader follows every debug session's stops ({@link followStopsOf}).
    * @example this.watchKeyboardOutsideEditors()
    */
   private watchKeyboardOutsideEditors(): void {
@@ -3526,7 +3526,7 @@ export class StudyWorkspace {
 
   /**
    * Settles the keyboard at a pause of a live run, right after the reader showed the captured source there without being asked for the keyboard; called by {@link renderSelection}.
-   * At a pause the editor's debugger opens the paused file with the keyboard, and the captured source that takes that file's place takes the keyboard with it. Where the chat had the keyboard just before the pause (Cursor's Agent chat as a tab of another editor part), it gets the keyboard back and nothing is told ({@link returnsKeyboardToChatAtPause}). Where the reader knows of no such chat (a learner in a file or on another tab of the main editor, and every side-view chat: VS Code's, and Cursor's Agent pane in the secondary side bar), the keyboard stays and the learner is told once ({@link tellPaneTookPausedFocus}) when the source took it. The Application pane settles the same question through its viewport's lease, before its reveal ({@link presentation}).
+   * At a pause with native source focus enabled the editor's debugger opens the paused file with the keyboard, and the captured source that takes that file's place takes the keyboard with it. Where the chat had the keyboard just before the pause (Cursor's Agent chat as a tab of another editor part), it gets the keyboard back and nothing is told ({@link returnsKeyboardToChatAtPause}). Where the reader knows of no such chat (a learner in a file or on another tab of the main editor, and every side-view chat: VS Code's, and Cursor's Agent pane in the secondary side bar), the keyboard stays and the learner is told once ({@link tellPaneTookPausedFocus}) when the source took it. The Application pane settles the same question through its viewport's lease, before its reveal ({@link presentation}).
    * A return the editor refuses (its layout read, its command list or the chat's focus command rejects) leaves the keyboard where it is and is treated as no return: a keyboard courtesy never fails the render that called it.
    * @param tookKeyboard - Whether the captured source took the keyboard from the paused file.
    * @returns Once the keyboard is given back, found where it was, or left with the sentence told.
@@ -11020,7 +11020,7 @@ export class StudyWorkspace {
    * Says whether showing the captured source in a group would hide a text editor that has the keyboard, as far as the reader can know: the one the editor's debugger focused at a pause, or one the learner gave a sign of working in ({@link holdsKeyboardInActiveEditor}); called by {@link renderSelection} before it shows the source.
    *
    * At a breakpoint the editor opens the paused file in the active group and gives it the keyboard focus (`debug.focusEditorOnBreak`,
-   * on by default). When that group is the source group, the captured source takes that file's place, and showing it while preserving
+   * when enabled). Codebook contributes a preserving default; explicit preferences still win. When that group is the source group, the captured source takes that file's place, and showing it while preserving
    * the focus hides the focused editor without focusing anything: the keyboard focus falls to the document body. The Application
    * pane's reveal follows the same rule for its own group ({@link BrowserViewport}).
    *
