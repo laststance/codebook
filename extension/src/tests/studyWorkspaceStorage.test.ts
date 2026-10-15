@@ -102,7 +102,7 @@ test('starting a live viewport after closing recorded Study leaves its old film 
     await harness.controller.settle()
     await harness.reader.close()
     // Act
-    const liveViewport = harness.reader.presentation.createViewport(
+    const liveViewport = await harness.reader.presentation.createViewport(
       'next-live-run',
       () => {},
       () => {},
@@ -134,7 +134,7 @@ test('starting a live viewport while recorded Study is open preserves the indepe
     })
     await harness.controller.settle()
     // Act
-    const liveViewport = harness.reader.presentation.createViewport(
+    const liveViewport = await harness.reader.presentation.createViewport(
       'next-live-run',
       () => {},
       () => {},

@@ -134,6 +134,7 @@ export class HostBrowser {
       const owner = await currentStorageOwner()
       // A launch cancelled while its owner was read removes nothing and creates nothing.
       signal.throwIfAborted()
+      if (this.closing) throw new Error('Owned browser is closing')
       this.startAbandonedProfileSweep(owner)
       this.managedProfile = await realpath(
         await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
@@ -154,9 +155,40 @@ export class HostBrowser {
       signal.throwIfAborted()
       const { BrowserViewport } = await import('./browserViewport.js')
       signal.throwIfAborted()
-      this.viewport = this.createViewport
-        ? this.createViewport(this.runId, this.record, this.fail, this.scenario)
-        : new BrowserViewport(this.runId, this.record, this.fail, this.scenario)
+      // Keep the raw preparation tracked after request cancellation so a late native viewport cannot escape cleanup.
+      const preparingViewport = this.trackAcquisition(
+        Promise.resolve()
+          .then(() => {
+            signal.throwIfAborted()
+            if (this.closing) throw new Error('Owned browser is closing')
+            return this.createViewport
+              ? this.createViewport(
+                  this.runId,
+                  this.record,
+                  this.fail,
+                  this.scenario,
+                  signal,
+                )
+              : new BrowserViewport(
+                  this.runId,
+                  this.record,
+                  this.fail,
+                  this.scenario,
+                )
+          })
+          .then((viewport) => {
+            this.viewport = viewport
+            // The accepting request can be gone while the native resource still finishes creating.
+            if (this.closing || signal.aborted) this.closeViewport()
+          }),
+      )
+      await awaitResponse(
+        preparingViewport,
+        'owned App viewport preparation',
+        signal,
+      )
+      signal.throwIfAborted()
+      if (this.closing) throw new Error('Owned browser is closing')
       debugConfiguration = {
         ...debugConfiguration,
         type: 'pwa-chrome',
@@ -544,7 +576,7 @@ export class HostBrowser {
     const failures = await settleCleanup([
       {
         description: 'owned viewport close',
-        release: () => this.viewport?.close(),
+        release: (): void => this.closeViewport(),
       },
       {
         description: 'owned CDP bridge close',
@@ -561,6 +593,10 @@ export class HostBrowser {
       {
         description: 'pending browser acquisitions',
         release: (): Promise<void> => this.drainAcquisitions(),
+      },
+      {
+        description: 'late owned viewport close',
+        release: (): void => this.closeViewport(),
       },
       // A launch may reveal its editor after the first sweep; check again after acquisition settles.
       {
@@ -597,6 +633,17 @@ export class HostBrowser {
       host: this.host.id,
       remainingOwnedTabs: 0,
     })
+  }
+
+  /**
+   * Retires the current viewport during {@link close} and after cancelled preparation in {@link launch}, retaining a failed close for retry.
+   * @example this.closeViewport() // the same retired viewport is not closed again by the late cleanup sweep
+   */
+  private closeViewport(): void {
+    const viewport = this.viewport
+    viewport?.close()
+    // A release callback must not clear a successor installed during the retired viewport's close.
+    if (this.viewport === viewport) this.viewport = undefined
   }
 
   /**

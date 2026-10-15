@@ -849,7 +849,7 @@ for (const arrangement of ['live', 'replay'] as const)
         })
         await harness.service.record(receipt).preparation
         await harness.reader.open()
-        live = harness.reader.presentation.createViewport(
+        live = await harness.reader.presentation.createViewport(
           receipt.runId,
           () => {},
           () => {},
@@ -926,7 +926,7 @@ test("a Restore after a Read in the live arrangement beside a third group of the
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -982,7 +982,7 @@ test("a Restore of a Read in the live arrangement that the learner's change of f
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1054,7 +1054,7 @@ test("Close Study Workspace after a Read of the application and then of the capt
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1103,7 +1103,7 @@ test('Close Study Workspace after a Read in the live arrangement whose captured 
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1159,7 +1159,7 @@ test('Close Study Workspace after a Read during which the learner opened another
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1209,7 +1209,7 @@ test("Close Study Workspace after a Read in the live arrangement while Cursor's 
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1265,7 +1265,7 @@ test("a Read in the live arrangement that the editor refuses after its Expand ra
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1321,7 +1321,7 @@ for (const arrangement of ['live', 'replay'] as const)
         })
         await harness.service.record(receipt).preparation
         await harness.reader.open()
-        live = harness.reader.presentation.createViewport(
+        live = await harness.reader.presentation.createViewport(
           receipt.runId,
           () => {},
           () => {},
@@ -1391,7 +1391,7 @@ test("a Restore after Enlarge application in the live arrangement beside a third
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1511,7 +1511,7 @@ for (const order of [
       })
       await harness.service.record(receipt).preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -1629,7 +1629,7 @@ test("Enlarge application in the live arrangement that the editor refuses after 
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1679,7 +1679,7 @@ test("a Restore after Enlarge application that arranges nothing applies no layou
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},

@@ -38,12 +38,18 @@ export interface ViewportLease {
   /** Called right after the leased pane took the keyboard from that editor, so the owner can tell the learner where it is. */
   tookKeyboardFromEditor?(): void
 }
+/**
+ * Prepares an owned App viewport before {@link HostBrowser.launch} starts its debugger; asynchronous factories retain the run's cancellation signal.
+ * @returns The ready viewport, directly or after native preparation completes.
+ * @example const viewport = await createViewport(runId, record, fail, 'normal', signal)
+ */
 export type BrowserViewportFactory = (
   runId: string,
   record: (type: string, detail?: unknown) => unknown,
   fail: (reason: string) => void,
   scenario: Scenario,
-) => BrowserViewport
+  signal?: AbortSignal,
+) => BrowserViewport | Promise<BrowserViewport>
 export interface ViewportRecordingObserver {
   elapsedMs(): number
   frame(input: {

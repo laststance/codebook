@@ -4891,7 +4891,7 @@ test('pressing Recording after the historical session ended presents the saved m
   const harness = await recordedReaderHarness(true, true)
   const liveFailures: string[] = []
   try {
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'attached-live',
       () => {},
       (reason) => liveFailures.push(reason),
@@ -4933,7 +4933,7 @@ test('the workspace harness answers a recording viewport only while its own rend
   // Arrange: a live viewport and the recording viewport share one Application panel, and the recording renderer was written last.
   const harness = await recordedReaderHarness(true, true)
   try {
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'attached-live',
       () => {},
       () => {},
@@ -4978,7 +4978,7 @@ test('the workspace harness live viewport leaves an attached renderer panel alon
   // Arrange
   const harness = await recordedReaderHarness(true, true)
   try {
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'attached-live',
       () => {},
       () => {},
@@ -5015,7 +5015,7 @@ test('opening a recording while a live run is attached presents its saved frame'
   const harness = await recordedReaderHarness(true, true)
   const liveFailures: string[] = []
   try {
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'attached-live',
       () => {},
       (reason) => liveFailures.push(reason),
@@ -5135,7 +5135,7 @@ test('pressing Recording again while a live run is attached presents the saved f
   const harness = await recordedReaderHarness(true, true)
   const liveFailures: string[] = []
   try {
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'attached-live',
       () => {},
       (reason) => liveFailures.push(reason),
@@ -5172,7 +5172,7 @@ test('pressing Recording after the editor closed the Application panel of an att
   const harness = await recordedReaderHarness(true, true)
   const liveFailures: string[] = []
   try {
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'attached-live',
       () => {},
       (reason) => liveFailures.push(reason),

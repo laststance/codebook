@@ -438,12 +438,14 @@ for (const positionMs of [0, 100])
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     const failures: string[] = []
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     try {
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         'handoff-live',
         () => {},
         (reason) => failures.push(reason),
@@ -525,14 +527,16 @@ for (const failure of ['native layout failure', 'newer learner tab'] as const)
     const harness = await recordedReaderHarness(true)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     let draft: ReturnType<typeof harness.focusMutableDraft> | undefined
     let release = (): void => {}
     try {
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         'retained-replay-failure',
         () => {},
         () => {},
@@ -623,11 +627,15 @@ test('same-column mode changes recover native inner-focus delivery while preserv
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   let live:
-    | ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>>
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
     | undefined
   try {
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       'same-column',
       () => {},
       () => {},
@@ -683,13 +691,15 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         'tab-resync',
         () => {},
         () => {},
@@ -732,13 +742,15 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         'group-resync',
         () => {},
         () => {},
@@ -837,11 +849,15 @@ test('explicit same-mode restoration recovers inner-focus delivery without repla
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   let live:
-    | ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>>
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
     | undefined
   try {
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       'unchanged-mode',
       () => {},
       () => {},
@@ -883,13 +899,15 @@ for (const failure of ['creation throws', 'unretained tab'] as const)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     const failures: string[] = []
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         'failed-handoff',
         () => {},
         (reason) => failures.push(reason),
@@ -1004,13 +1022,15 @@ test('closing the adopted application during native layout rejects the transitio
   const failures: string[] = []
   let release = (): void => {},
     live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
   try {
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       'close-current',
       () => {},
       (reason) => failures.push(reason),
@@ -1055,10 +1075,14 @@ test('restoring replay keeps the live renderer attached without requesting a pan
   const harness = await recordedReaderHarness(true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   let live:
-    | ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>>
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
     | undefined
   try {
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       'retained-live',
       () => {},
       () => {},
@@ -1104,13 +1128,15 @@ for (const change of ['move', 'close'] as const)
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     const failures: string[] = []
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     try {
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         'interrupted-creation',
         () => {},
         (reason) => failures.push(reason),
@@ -1582,7 +1608,7 @@ test('following the current run after its Application pane was closed says that 
   const leaseFailures: string[] = []
   try {
     await harness.reader.open()
-    const lease = harness.reader.presentation.createViewport(
+    const lease = await harness.reader.presentation.createViewport(
       'live-run',
       () => {},
       (reason) => leaseFailures.push(reason),
@@ -1636,7 +1662,7 @@ test('a new run that opens the Application pane again retires the line about the
   const harness = await workspaceHarness()
   try {
     await harness.reader.open()
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'live-run',
       () => {},
       () => {},
@@ -1647,7 +1673,7 @@ test('a new run that opens the Application pane again retires the line about the
     const linesBeforeTheNewRun = [...harness.postedMessages().at(-1)!.errors]
 
     // Act: a new run takes its viewport lease, which opens the pane again.
-    harness.reader.presentation.createViewport(
+    await harness.reader.presentation.createViewport(
       'next-run',
       () => {},
       () => {},
@@ -3185,7 +3211,7 @@ test('a live run ending preserves side-view typing even while its Application re
       key: randomUUID(),
     })
     await harness.service.record(receipt).preparation
-    const live = harness.reader.presentation.createViewport(
+    const live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -3267,7 +3293,7 @@ for (const preparation of ['initialization', 'progress read'])
         key: randomUUID(),
       })
       await harness.service.record(receipt).preparation
-      const live = harness.reader.presentation.createViewport(
+      const live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -3368,7 +3394,7 @@ for (const replacement of ['a newer live lease', 'a replacement document'])
         key: randomUUID(),
       })
       await harness.service.record(receipt).preparation
-      const live = harness.reader.presentation.createViewport(
+      const live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -3395,7 +3421,7 @@ for (const replacement of ['a newer live lease', 'a replacement document'])
       live.close()
       await inspectionStarted
       if (replacement === 'a newer live lease')
-        harness.reader.presentation.createViewport(
+        await harness.reader.presentation.createViewport(
           randomUUID(),
           () => {},
           () => {},
@@ -3437,7 +3463,7 @@ test('a live run that ends while its Application pane has the keyboard and the S
       key: randomUUID(),
     })
     await harness.service.record(receipt).preparation
-    const live = harness.reader.presentation.createViewport(
+    const live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -3466,7 +3492,7 @@ test('a live run that ends while its Application pane has the keyboard and the S
         .filter((command) => /^workbench\.action\.focus/.test(command)),
       sentences: harness.informationMessages.map((message) => message.message),
     }
-    const second = harness.reader.presentation.createViewport(
+    const second = await harness.reader.presentation.createViewport(
       randomUUID(),
       () => {},
       () => {},
@@ -3522,7 +3548,7 @@ for (const situation of [
         key: randomUUID(),
       })
       await harness.service.record(receipt).preparation
-      const live = harness.reader.presentation.createViewport(
+      const live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -3628,7 +3654,7 @@ test('a run that ends with its Application pane active sends no keyboard command
       key: randomUUID(),
     })
     await harness.service.record(receipt).preparation
-    const live = harness.reader.presentation.createViewport(
+    const live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},

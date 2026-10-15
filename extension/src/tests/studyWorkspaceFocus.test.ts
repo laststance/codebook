@@ -677,7 +677,7 @@ test('Living book adopts an MCP-first application into its reserved main pane be
     mode: 'living-book',
   })
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport(
+    viewport = await reader.presentation.createViewport(
       'mcp-first-run',
       () => {},
       () => {},
@@ -711,7 +711,7 @@ test('MCP-first Study opens when its application covers the selected chat-like t
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   const chat = harness.openWiki(1)
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport(
+    viewport = await reader.presentation.createViewport(
       'mcp-chat-run',
       () => {},
       () => {},
@@ -743,7 +743,7 @@ test('MCP-first Study preserves a newer chat tab choice during application regis
     chat = harness.openWiki(1)
   const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser')
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport(
+    viewport = await reader.presentation.createViewport(
       'mcp-chat-run',
       () => {},
       () => {},
@@ -781,7 +781,7 @@ test('Living book preserves a learner move of its MCP-first application before t
     mode: 'living-book',
   })
   const reader = harness.createReader(),
-    viewport = reader.presentation.createViewport(
+    viewport = await reader.presentation.createViewport(
       'mcp-first-run',
       () => {},
       () => {},
@@ -1056,8 +1056,10 @@ for (const loss of [
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
     let live:
-      | ReturnType<
-          NonNullable<typeof harness.reader.presentation.createViewport>
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
         >
       | undefined
     try {
@@ -1069,7 +1071,7 @@ for (const loss of [
       })
       await harness.service.record(receipt).preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -1129,7 +1131,11 @@ test('Focus after a failed run reaches the Application pane without a pane click
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
   let live:
-    | ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>>
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
     | undefined
   try {
     const receipt = harness.service.start({
@@ -1140,7 +1146,7 @@ test('Focus after a failed run reaches the Application pane without a pane click
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},

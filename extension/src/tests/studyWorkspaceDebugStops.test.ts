@@ -396,7 +396,7 @@ test('Cursor chat regains keyboard at a pause despite a stalled layout query whe
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -446,7 +446,7 @@ test('a new main editor group cannot inherit the separate chat command from the 
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -497,7 +497,7 @@ test('Cursor chat regains keyboard at a later pause while a redundant command ca
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -559,7 +559,7 @@ test('Cursor chat regains keyboard when its command becomes available after an e
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -617,7 +617,7 @@ test('Cursor chat regains keyboard at a pause despite a stalled layout query whe
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -671,7 +671,7 @@ test('Cursor chat is usable at a debugger pause before historical capture publis
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -727,7 +727,7 @@ test('a file chosen while the early chat return waits keeps native keyboard owne
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -797,7 +797,7 @@ test('Read Source revokes a pending chat return when the captured source is alre
     })
     await harness.service.record(receipt).preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -873,7 +873,7 @@ test('a newly displayed capture retains its pending chat return before its sourc
     })
     const record = harness.service.record(receipt)
     await record.preparation
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -954,7 +954,7 @@ test('a server stop that the editor shows 800 ms after the browser session went 
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1045,7 +1045,7 @@ for (const arrival of [
       const record = harness.service.record(receipt)
       await record.preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -1106,7 +1106,7 @@ test('a server stop read while the browser session is paused again is not shown 
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1183,7 +1183,7 @@ test('a server stop read behind the frame of a session the reader does not hear 
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1240,7 +1240,7 @@ test("a server stop read after the editor reported the browser's thread gives th
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1300,7 +1300,7 @@ for (const way of [
       const record = harness.service.record(receipt)
       await record.preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -1377,7 +1377,7 @@ test('a stop that the run resumes before the editor showed it still gives the pa
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1461,7 +1461,7 @@ for (const sign of [
       const record = harness.service.record(receipt)
       await record.preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -1533,7 +1533,7 @@ test('a learner who selects a frame and then clicks into its file has the keyboa
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1598,7 +1598,7 @@ for (const scenario of [
         const record = harness.service.record(receipt)
         await record.preparation
         await harness.reader.open()
-        live = harness.reader.presentation.createViewport(
+        live = await harness.reader.presentation.createViewport(
           receipt.runId,
           () => {},
           () => {},
@@ -1701,7 +1701,7 @@ for (const course of [
       const record = harness.service.record(receipt)
       await record.preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -1758,7 +1758,7 @@ test("the reader's own source activation is no sign of learner work after the ke
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1824,7 +1824,7 @@ test("a selection that a command moves in a selected frame's file is no sign of 
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1872,7 +1872,7 @@ test("a learner who clicked into a frame's file and then selects another frame i
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1922,7 +1922,7 @@ test('a pause whose stacks the adapter declares invalid gives the paused file th
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -1973,7 +1973,7 @@ for (const learner of [
       const record = harness.service.record(receipt)
       await record.preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},
@@ -2032,7 +2032,7 @@ test('a learner who clicks into a file while the session runs has the keyboard i
     const record = harness.service.record(receipt)
     await record.preparation
     await harness.reader.open()
-    live = harness.reader.presentation.createViewport(
+    live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
@@ -2088,7 +2088,7 @@ for (const since of [
       const record = harness.service.record(receipt)
       await record.preparation
       await harness.reader.open()
-      live = harness.reader.presentation.createViewport(
+      live = await harness.reader.presentation.createViewport(
         receipt.runId,
         () => {},
         () => {},

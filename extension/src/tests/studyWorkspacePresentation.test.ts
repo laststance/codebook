@@ -3006,7 +3006,7 @@ test('a presentation selection on a closed reader that already owns a live Appli
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   const draft = harness.focusMutableDraft()
-  const viewport = harness.reader.presentation.createViewport(
+  const viewport = await harness.reader.presentation.createViewport(
     'run-before-reader',
     () => {},
     () => {},
@@ -3417,7 +3417,7 @@ test('the first presentation selection closes the old host’s dead panes when a
     ),
     deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
   const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
-  const viewport = harness.reader.presentation.createViewport(
+  const viewport = await harness.reader.presentation.createViewport(
     'run-before-reader',
     () => {},
     () => {},

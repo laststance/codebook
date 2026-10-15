@@ -18,6 +18,7 @@ import {
 } from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 
+import type { BrowserViewportFactory } from '../runtimeSupport/browserViewport'
 import type * as HostModule from '../runtimeSupport/hostBrowser'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
@@ -74,6 +75,7 @@ async function loadHostBrowser(
  * @param options.removeFolder - Stands in for the adapter's folder removal; the real one by default.
  * @param options.removeAbandonedProfiles - Stands in for the sweep of the profile folders a killed editor left; the real one by default.
  * @param options.currentStorageOwner - Stands in for the read of this process's machine, boot and start, for a test that holds it; the real one by default.
+ * @param options.createViewport - Holds or rejects the real factory boundary while the test observes launch and cleanup ordering.
  * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and no process is found.
  * @example
  * const managed = await managedBrowser(context)
@@ -87,6 +89,7 @@ async function managedBrowser(
     removeFolder?: typeof rm
     removeAbandonedProfiles?: (root: string) => Promise<string[]>
     currentStorageOwner?: () => Promise<{ hostname: string }>
+    createViewport?: BrowserViewportFactory
   } = {},
 ) {
   const root = await realpath(
@@ -153,7 +156,7 @@ async function managedBrowser(
     },
     'normal',
     undefined,
-    undefined,
+    options.createViewport,
     root,
   )
   return { browser, root, events, processProbes }
@@ -172,6 +175,178 @@ function profileOf(events: { type: string; detail: unknown }[]): string {
   )
   return created.detail.profile
 }
+
+test('a managed run waits for its App viewport before launching the debugger', async (context) => {
+  // Arrange: the factory has started but has not yet produced its native resource.
+  let finishViewport = (
+    _viewport: Awaited<ReturnType<BrowserViewportFactory>>,
+  ): void => {}
+  let noteFactoryStarted = (): void => {}
+  const factoryStarted = new Promise<void>((resolve) => {
+    noteFactoryStarted = resolve
+  })
+  const pendingViewport = new Promise<
+    Awaited<ReturnType<BrowserViewportFactory>>
+  >((resolve) => {
+    finishViewport = resolve
+  })
+  let debuggerStarts = 0
+  let viewportCloses = 0
+  // The nominal viewport class owns native editor dependencies; this fixture models only the adapter's close boundary.
+  const viewport = {
+    close: () => {
+      viewportCloses++
+    },
+  } as Awaited<ReturnType<BrowserViewportFactory>>
+  const managed = await managedBrowser(context, {
+    createViewport: () => {
+      noteFactoryStarted()
+      return pendingViewport
+    },
+    startDebugging: async () => {
+      debuggerStarts++
+      return true
+    },
+  })
+
+  // Act
+  const launching = managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const launchResult = launching.then(
+    () => 'launched',
+    (error: unknown) => String(error),
+  )
+  try {
+    await factoryStarted
+    await nextEventLoopTurn()
+
+    // Assert: a pending native App cannot be bypassed by starting execution first.
+    assert.equal(debuggerStarts, 0)
+    finishViewport(viewport)
+    assert.equal(await launchResult, 'launched')
+    assert.equal(debuggerStarts, 1)
+    await managed.browser.close()
+    assert.equal(viewportCloses, 1)
+  } finally {
+    finishViewport(viewport)
+    await launchResult
+    await managed.browser.close().catch(() => undefined)
+  }
+})
+
+test('closing a managed run retires an App viewport that finishes after cancellation', async (context) => {
+  // Arrange
+  let finishViewport = (
+    _viewport: Awaited<ReturnType<BrowserViewportFactory>>,
+  ): void => {}
+  let noteFactoryStarted = (): void => {}
+  const factoryStarted = new Promise<void>((resolve) => {
+    noteFactoryStarted = resolve
+  })
+  const pendingViewport = new Promise<
+    Awaited<ReturnType<BrowserViewportFactory>>
+  >((resolve) => {
+    finishViewport = resolve
+  })
+  let viewportCloses = 0
+  let debuggerStarts = 0
+  // This native-resource stand-in makes a missed late close observable without constructing an editor in Node.
+  const viewport = {
+    close: () => {
+      viewportCloses++
+    },
+  } as Awaited<ReturnType<BrowserViewportFactory>>
+  const managed = await managedBrowser(context, {
+    createViewport: () => {
+      noteFactoryStarted()
+      return pendingViewport
+    },
+    startDebugging: async () => {
+      debuggerStarts++
+      return true
+    },
+  })
+  const cancellation = new AbortController()
+  const launchResult = managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      cancellation.signal,
+    )
+    .then(
+      () => 'launched',
+      (error: unknown) => String(error),
+    )
+  let closeSettled = false
+  let closing: Promise<string> | undefined
+  try {
+    await factoryStarted
+
+    // Act: Close begins while the accepted factory still owns an unresolved resource.
+    cancellation.abort(new Error('cancelled while App was preparing'))
+    closing = managed.browser.close().then(
+      () => {
+        closeSettled = true
+        return 'closed'
+      },
+      (error: unknown) => {
+        closeSettled = true
+        return String(error)
+      },
+    )
+    await nextEventLoopTurn()
+    finishViewport(viewport)
+
+    // Assert
+    assert.equal(debuggerStarts, 0)
+    assert.equal(closeSettled, false)
+    assert.equal(await closing, 'closed')
+    assert.equal(
+      await launchResult,
+      'Error: Cancelled owned App viewport preparation',
+    )
+    assert.equal(viewportCloses, 1)
+    assert.equal(await exists(profileOf(managed.events)), false)
+  } finally {
+    finishViewport(viewport)
+    await launchResult
+    await closing
+    await managed.browser.close().catch(() => undefined)
+  }
+})
+
+test('a failed App viewport preparation never starts the managed debugger', async (context) => {
+  // Arrange
+  let debuggerStarts = 0
+  const rejectedViewport = Promise.reject<
+    Awaited<ReturnType<BrowserViewportFactory>>
+  >(new Error('App group registration refused'))
+  // Keep the original buggy adapter's ignored promise from becoming an unrelated unhandled-rejection failure.
+  void rejectedViewport.catch(() => undefined)
+  const managed = await managedBrowser(context, {
+    createViewport: () => rejectedViewport,
+    startDebugging: async () => {
+      debuggerStarts++
+      return true
+    },
+  })
+  try {
+    // Act / Assert
+    await assert.rejects(
+      managed.browser.launch(
+        { type: 'editor-browser', name: 'owned', request: 'launch' },
+        new AbortController().signal,
+      ),
+      /App group registration refused/,
+    )
+    assert.equal(debuggerStarts, 0)
+    await managed.browser.close()
+    assert.equal(await exists(profileOf(managed.events)), false)
+  } finally {
+    await managed.browser.close().catch(() => undefined)
+  }
+})
 
 /** Says whether a path still exists. @example await exists('/tmp/codebook-browser-a1b2c3') // => false after its run closed */
 function exists(path: string): Promise<boolean> {
@@ -751,7 +926,7 @@ test('a managed launch cancelled while it reads its owner starts no sweep of aba
 })
 
 // Value: protects=no sweep of abandoned profile folders outlives the close of its run; fails_when=a launch that reaches its sweep after the browser's close ran starts one, which no close waits for any more (Cycle 0046 row 98); why_new=no test closed a browser before its launch reached the sweep; seam=the read of the storage owner, which the test holds, and the sweep, which counts its starts
-test('a managed browser that was closed before its launch reached the sweep of abandoned profile folders starts none', async (context) => {
+test('closing a managed browser before its owner is read prevents a later sweep or browser creation', async (context) => {
   // Arrange: the read of the owner ends only when the test releases it.
   let releaseOwner!: (owner: { hostname: string }) => void
   const ownerRead = new Promise<{ hostname: string }>((resolve) => {
@@ -772,30 +947,27 @@ test('a managed browser that was closed before its launch reached the sweep of a
       return []
     },
   })
-  // Act: the browser is closed while its launch, which nothing cancelled, waits for its owner; the launch then goes on, and a second close removes what it created.
-  const launch = managed.browser.launch(
-    { type: 'editor-browser', name: 'owned', request: 'launch' },
-    new AbortController().signal,
-  )
+  // Act: Close retires the pending launch even when its external signal was not cancelled.
+  const launch = managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    .then(
+      () => 'launched',
+      (error: unknown) => String(error),
+    )
   await ownerAsked
   await managed.browser.close()
   releaseOwner({ hostname: hostname() })
-  await launch
-  const profile = profileOf(managed.events)
+  const launchOutcome = await launch
   await managed.browser.close()
   // Assert
+  assert.equal(launchOutcome, 'Error: Owned browser is closing')
   assert.equal(sweepsStarted, 0)
-  assert.equal(await exists(profile), false)
   assert.deepEqual(
     managed.events.map((event) => event.type),
-    [
-      'browser.cleanup-verified',
-      'browser.managed-profile',
-      'host.debugger-started',
-      'browser.managed-exit-verified',
-      'browser.managed-profile-removed',
-      'browser.cleanup-verified',
-    ],
+    ['browser.cleanup-verified', 'browser.cleanup-verified'],
   )
 })
 
