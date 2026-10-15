@@ -376,3 +376,7 @@ Scope accepted as-is, original9file/0class arrangement authorized;0feature cuts.
 **OUTSIDE COVERAGE:** Claude Code CLI, plan phase, owner-skipped; no independent/cross-model coverage.
 **VERDICT:** Historical-display decisions R4/D1 and R5/D2 approved for bounded implementation; inherited R2/R3/canonical/preservation and all native gates retained. Mapped implementation/proof remains open; no whole-cycle/delivery clearance, corrected source review still required.
 NO UNRESOLVED DECISIONS
+
+### Historical558 verification update (2026-10-15)
+
+T558-1–3 are implemented and checked on clean79febf54/sourceb970c1b2;14historical cases, valid assertion controls, full4254/4253pass/one existing skip, package340/static and frozen CodeRabbit/host OCR retain their source-bound evidence. T558-4 has bounded original two-host source-key correction plus fresh pin/refusal/Retry, actual available-video gaps, newer Explorer input, ordinary reload/reentry and Close. The cycle record and private c48-recovery-20261015/proof.json distinguish455reused original native frames from296fresh guard/reload samples plus32preflight samples. Native pin protection and ordinary unpinned restart are independently verified; no ephemeral URI or pinned-view survival across restart claim. Exact scoped originals restore; inherited full geometry and all integrated/other-OS/final acceptance remain open.558 is closed at this defect boundary; original20 tasks remain. The earlier plan/review statuses above are dated premises, not current installed-state claims.
