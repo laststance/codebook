@@ -1,6 +1,6 @@
 # Cycle 0046: preserve the native input of a selected stack frame
 
-Status: bounded source-group engineering review complete; source verified, Cursor native components partial; background Application and VS native proof pending.
+Status: bounded source-group review complete; Cursor source components partial, actual background Application loss confirmed; App repair amendment and VS proof pending.
 Task: original 273, with 263/225/274 and live/replay source ownership as regression dependencies.
 Authority: Cycle 0046 bug-fix scope, PRODUCT_GOAL version 10, AC-LIVE/ENTRY/DESKTOP. Every original task remains required; this is no feature increment or whole-task closure.
 
@@ -72,6 +72,12 @@ Private artifacts/cycle-0046/n273-c48-20261015 holds final-focused.log, final-gu
 ### Installed C49 partial proof (2026-10-15)
 
 Cursor source/view background Retry retains the selected native file and actual source/list input, with truthful existing Source recovery. Explicit Source restores captured23 and same-pause physical keys work. Root inspects429 additional native frames in24sheets across round2 command/Retry/Source/keys/view and round3 explicit Live Return. The latter actually exposes Application over native frame236 and ends with IFRAME input, with3 transient BODY samples; it is not the actual background capture caller or a zero-BODY pass. Normal Restore supplied no App exposure. Round2 has endpoints/SDK/video but no retained per-phase full sample aggregate; round1 continuous1607 samples retain their own narrower scope. Scoped originals restore exactly with126Cursor/123VS saved histories retained; full inherited/undo history stays qualified. Private n273-c49-20261015/cursor-native-partial-proof.json and cycle entry govern details. P4 remains partially unverified (VS); P5 remains unverified (background Application/other original criteria). No whole273/cycle/integrated acceptance.
+
+### Actual background Application counterexample on C49 (2026-10-15)
+
+A finite real owned paused-PNG completion hold4506ms, one genuine native Down Call Stack and same actual frame40/file in App1 reproduce the remaining App failure. Release -> actual background capture/HostBrowser.reveal -> BODY before the App becomes visible; the later source2 show follows loss by205ms.27BODY samples at the final read and33through explicit Focus Application recovery, zero outside, actual PNG/renderer hashb933dd1f. Root inspects180native frames/9sheets and16changing-preflight samples. This is controlled native timing evidence, not a natural acceptance run or2s of BODY. Exact scoped originals restore, new Cursor0b36a4f5 loads unchanged C49,127Cursor/123VS histories retained. Private cursor/app-capture-round/native-background-failure.json and cycle entry hold full evidence/limits.
+
+P5 has a current counterexample; R1 source-group admission alone cannot close273. Before App production changes, amend the engineering plan for preservation and exact capture/display correspondence. Native moves unconditionally focus the target in the current installed handler; native lock commands return no previous state for a borrowed group. No focus getter or safe relocation/locking contract is established. The owner-answer boolean catches rejection and falls back, so an owner throw is not admission. Do not implement these as a guessed fix or replace missing renderer proof with stored bytes silently. Every original source/list/App/gesture/invalidation and263/274/native/final obligation remains.
 
 ## Scope record
 
