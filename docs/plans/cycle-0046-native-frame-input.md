@@ -79,6 +79,48 @@ A finite real owned paused-PNG completion hold4506ms, one genuine native Down Ca
 
 P5 has a current counterexample; R1 source-group admission alone cannot close273. Before App production changes, amend the engineering plan for preservation and exact capture/display correspondence. Native moves unconditionally focus the target in the current installed handler; native lock commands return no previous state for a borrowed group. No focus getter or safe relocation/locking contract is established. The owner-answer boolean catches rejection and falls back, so an owner throw is not admission. Do not implement these as a guessed fix or replace missing renderer proof with stored bytes silently. Every original source/list/App/gesture/invalidation and263/274/native/final obligation remains.
 
+### App amendment preparation: native ownership and acquisition lifetime (2026-10-15)
+
+The App amendment is still at scope preparation in engineering review `1258-1792053824-d9e4e3eb`. No App remedy or new decision ledger has been approved. The completed R1 review below authorizes only its existing source-group repair; its seven-path complexity estimate does not apply to this amendment.
+
+Root reviewed all153 acquired frames from three finite native primitive recordings (31/76/46), with every sheet and hash mapped by `artifacts/cycle-0046/n273-c49-20261015/cursor/owned-group-primitive-proof.json`. These are platform preparation observations on the unchanged C49 Cursor instance, not repaired Codebook behavior:
+
+| Attempt | Actual observation | Consequence for the amendment |
+| --- | --- | --- |
+| High requested column | Column9 creates an extra empty group but puts the marker in borrowed column2; ownership admission refuses before opening source | Do not infer ownership from a high requested column or the group-count increase |
+| Explicit group, unfocused workbench | The empty group appears in the auxiliary chat part; the main-group admission refuses | The missing foreground precondition makes this attempt inadmissible for main-group feasibility |
+| Explicit group, verified native source input | A new empty main group is locked before marker creation; the marker is visible in column1 above both retained source groups, all original tab fingerprints remain, and actual chat input stays focused | Dedicated-group creation and lock preparation are feasible at this narrow boundary; no background or debugger-routing claim |
+
+The third attempt's next operation passed a string file URI to `vscode.open`; the actual command rejected it before opening the file. Source routing therefore remains NOT RUN. A future routing check must use the documented `vscode.Uri` argument and actual debugger gestures; the successful preparation cannot substitute for original273's source/list/App conditions. No further probe was started to hide that failure.
+
+Fresh cleanup verifies exact settings/playback/progress bytes, both source texts and dirty flags, selections and full visible ranges, every original tab tuple, active source, zoom and original main grid. The grid initially differed by one pixel between its two rows; applying normalized original sizes through `vscode.setEditorLayout` restores exact329/328. No probe object, marker tab, debugger or owned actor remains; Cursor's127 saved entries remain. The root-owned native quiet token is released. Full inherited/undo history remains qualified. No user setting, source save or model request was needed for this cleanup.
+
+Read-only caller tracing supplies a further design constraint. {@link StudyWorkspace.presentation} currently creates its App synchronously through {@link StudyWorkspace.ensureApp}; {@link BrowserViewportFactory} returns {@link BrowserViewport} synchronously. {@link HostBrowser.launch} invokes that factory after managed-profile creation and before debugger launch. {@link HostBrowser.close} closes the known viewport before draining raw acquisitions, while {@link HostBrowser.createCursorTab} explicitly cleans up late acquisitions. An asynchronous App preparation must therefore define cancellation and late-result disposal before changing this factory boundary. A bare `await createViewport()` does not establish that guarantee. Preserve independent replay ownership, explicit recovery, current renderer acknowledgement and the original layout captured before any reservation. The implementation/API choice, complexity selector and Sections1–4 of the App amendment remain pending.
+
+### App amendment structure selector D1
+
+Estimated affected files:18, new classes/services:0. The estimate is3production paths (StudyWorkspace, BrowserViewport and HostBrowser),12existing test/harness paths and3plan/cycle/state records. Ten existing test/harness paths call or model the viewport factory; runtime-hostCleanup and runtime-browserViewport additionally need acquisition/admission coverage. This is an impact estimate, not implemented work. Environment and ConfiguredBrowserRun only forward the factory type and need inspection, not an assumed source edit.
+
+Question D1 — App preparation structure
+Project: Codebook Cycle0046, original273 App amendment, branch codex/cycle-0046-carried-defects-of-cycle-0045.
+ELI10: The App panel must be prepared before it can cover a debugger-selected file. Preparing an owned editor group is asynchronous, so a cancelled run could finish preparing its panel after cleanup already ran. Choose where that preparation belongs without changing the required product behavior.
+Stakes if we pick wrong: a stopped run can leave a panel behind or background capture can again replace the learner's input.
+Recommendation: A because the existing factory and acquisition owner can keep one creation and cleanup boundary without an additional preparation channel.
+Note: options differ in kind, not coverage — no completeness score.
+Pending remedies not decided here: R2 App-group ownership and final-effect admission; original273's complete native criteria.
+
+A) Original arrangement (recommended) (human: estimated2days / CC: estimated2hours)
+  ✅ Use the existing viewport factory boundary, with explicit asynchronous acquisition and late-result cleanup in its existing owner.
+  ✅ Preserve the same required source/list/App behavior, capture acknowledgement, cancellation, replay and original-layout obligations.
+  ❌ Approximately18existing paths need coordinated changes and verification; direct factory tests must await the result.
+B) Investigate smaller arrangement (human: estimated2hours / CC: bounded30minutes)
+  ✅ Inspect whether existing preparation can establish ownership without changing the synchronous factory or adding another lifecycle channel.
+  ✅ Keep the complete required behavior and pending R2 remedy unchanged while investigating the narrower arrangement.
+  ❌ No smaller arrangement with equivalent cancellation and MCP-first behavior is established; implementation remains unapproved during the investigation.
+Net: one explicit acquisition boundary costs test-call migration; the alternative first needs evidence that a smaller boundary preserves the same guarantees.
+
+Feature answers: no cuts proposed; every original task and contract retained. Structure: D1=A, auto-selected under DEVELOPMENT.md's standing owner instruction to take the recommendation. Accepted scope: review making the existing viewport factory asynchronous with cleanup by its existing owner; estimated18paths/0new classes/services. Pending remedies: R2 and complete original273 native obligations. This selector approves no App remedy or implementation before Scope Challenge C and the remaining review sections.
+
 ## Scope record
 
 Review target and report file: docs/plans/cycle-0046-native-frame-input.md. The standing owner recommendation-choice instruction selects the concrete active273 repair draft; no renewed target/implementation permission is requested. Scope accepted as-is: estimated7repository paths (existing workspace, harness, debug-stop partition, this plan and3current cycle/state/task records),0new classes/services. Complexity selector B is skipped under its fewer-than8/fewer-than2 rule. This is the source-group repair step of273, not a claim that the other original273 conditions can be omitted. Sequential implementation, no parallelization opportunity.
