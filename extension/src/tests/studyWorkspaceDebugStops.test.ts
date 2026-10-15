@@ -990,15 +990,20 @@ test('a server stop that the editor shows 800 ms after the browser session went 
     await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
-    // Assert: the keyboard is still in the Call Stack view; the source and the pane were shown, both without the keyboard, and nothing was told.
+    // Assert: the ambiguous native file stays open; the pane preserves the list input and the capture offers explicit recovery.
     assert.equal(harness.keyboardInView(), true)
-    assert.equal(harness.textDocumentShows().length > before.shows, true)
-    assert.deepEqual(
-      harness
-        .textDocumentShows()
-        .slice(before.shows)
-        .filter((shown) => !shown.preserveFocus),
-      [],
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+        '/actions.ts',
+      ),
+      true,
+    )
+    assert.deepEqual(harness.textDocumentShows().slice(before.shows), [])
+    assert.equal(harness.reader.inspect().rendered, undefined)
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /The native source editor was kept open\. Choose Focus Captured Source to show the capture\./,
     )
     assert.deepEqual(
       harness
@@ -1565,6 +1570,103 @@ test('a learner who selects a frame and then clicks into its file has the keyboa
   }
 })
 
+for (const scenario of [
+  { opensWithKeyboard: false, duringSourceIO: false },
+  { opensWithKeyboard: true, duringSourceIO: false },
+  { opensWithKeyboard: false, duringSourceIO: true },
+  { opensWithKeyboard: true, duringSourceIO: true },
+]) {
+  // Value: protects=the actual native source/view input after frame selection; fails_when=background source replacement hides an ambiguous input; why_new=the old port checked preserveFocus but missed native BODY; seam=none; no_claim=controlled native port, installed both-host proof remains required.
+  test(
+    (scenario.opensWithKeyboard
+      ? 'Call Stack navigation keeps source input when captured source refreshes'
+      : 'Call Stack frame clicks keep list input when captured source refreshes') +
+      (scenario.duringSourceIO ? ' after source acquisition starts' : ''),
+    async () => {
+      // Arrange: equivalent native frame receipts can leave input in the list or its source.
+      const harness = await workspaceHarness()
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      let live: { close(): void } | undefined
+      let releaseNativeReceipt = (): void => {}
+      try {
+        const receipt = harness.service.start({
+          instanceId: harness.service.instanceId,
+          profile: 'repository-browser',
+          configuration: harness.configuration,
+          key: randomUUID(),
+        })
+        const record = harness.service.record(receipt)
+        await record.preparation
+        await harness.reader.open()
+        live = harness.reader.presentation.createViewport(
+          receipt.runId,
+          () => {},
+          () => {},
+          'normal',
+        )
+        harness.focusMutableDraft('actions.ts', 2)
+        harness.pauseDebugger()
+        harness.service.action({
+          instanceId: harness.service.instanceId,
+          runId: record.id,
+          key: randomUUID(),
+          action: 'repository-click',
+        })
+        await readerSeams(harness).refresh()
+        harness.focusView()
+        // A later frame can arrive while the original stopped frame's source is still being acquired.
+        const held = scenario.duringSourceIO
+          ? harness.holdNextSource()
+          : undefined
+        const pendingRender = held ? harness.reader.action('retry') : undefined
+        if (held) {
+          releaseNativeReceipt = held.release
+          await held.started
+        }
+        const nativeSource = harness.selectStackFrame(
+          'native-caller.tsx',
+          2,
+          scenario.opensWithKeyboard ? 'navigation-command' : 'click',
+        )
+        // Both real gestures expose the same clean preview tab; an unchanged tab report is no keyboard/selection sign.
+        harness.reportActiveTextTab({ isPreview: true, isDirty: false })
+        const showsBefore = harness.textDocumentShows().length
+
+        // Act: a background render must preserve either native owner instead of guessing which one has input.
+        held?.release()
+        await (pendingRender ?? harness.reader.action('retry'))
+
+        // Assert: the selected native input stays usable and captured-source absence has an explicit recovery.
+        assert.equal(harness.keyboardOnBody(), false)
+        assert.equal(harness.keyboardInView(), !scenario.opensWithKeyboard)
+        assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+        assert.equal(nativeSource.getText(), 'Original learner draft.\n')
+        assert.equal(harness.reader.inspect().rendered, undefined)
+        assert.match(
+          harness.reader.inspect().view!.errors.join('\n'),
+          /The native source editor was kept open\. Choose Focus Captured Source to show the capture\./,
+        )
+
+        // Act: the existing explicit source request can intentionally replace that native input.
+        await harness.reader.action('source')
+
+        // Assert: the captured source recovers with meaningful keyboard input and no stale protection error.
+        assert.equal(harness.keyboardOnBody(), false)
+        assert.equal(harness.keyboardInView(), false)
+        assert.equal(
+          harness.reader.inspect().sourceUri?.startsWith('codebook-source:'),
+          true,
+        )
+        assert.deepEqual([...harness.reader.inspect().view!.errors], [])
+      } finally {
+        releaseNativeReceipt()
+        live?.close()
+        await harness.close()
+      }
+    },
+  )
+}
+
 for (const course of [
   {
     name: 'is reported as a new object while it is a preview tab still',
@@ -1640,9 +1742,9 @@ for (const course of [
     }
   })
 
-// Value: protects=the keyboard of a learner in the Call Stack view at a selected frame while the reader renders the pause again: the reader's own showing of the captured source over the frame's file, and the selection it sets there, are no sign of the learner, and the Application pane that then comes to the front leaves the keyboard in the view; fails_when=every text editor that becomes active after a frame, or every change of a selection, counts as the learner's choice of that editor, so the reader's own render makes the pane take the keyboard from the Call Stack view at its next reveal; why_new=Cycle 0046 row 273 (the bound of its fix: only what the learner did is a sign); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, the reader's Retry, revealApplicationPaneOverPausedFile
-test("the reader's own showing of the captured source at a selected frame is no sign of the learner: the Application pane that comes to the front afterwards leaves the keyboard in the Call Stack view", async () => {
-  // Arrange: a live run paused, its captured source shown; the learner clicked into the Call Stack view and selected the caller's frame, whose file the editor opened over the captured source.
+// Value: protects=the keyboard of a learner in the Call Stack view at a selected frame while the reader renders the pause again: the reader's own showing of the captured source over the frame's file, and the selection it sets there, are no sign of the learner, and the Application pane that then comes to the front leaves the keyboard in the view; fails_when=every text editor that becomes active after a frame, or every change of a selection, counts as the learner's choice of that editor, so the reader's own render makes the pane take the keyboard from the Call Stack view at its next reveal; why_new=Cycle 0046 row 273 (the bound of its fix: only what the learner did is a sign); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, the reader's Source action, revealApplicationPaneOverPausedFile
+test("the reader's own source activation is no sign of learner work after the keyboard returns to the Call Stack view", async () => {
+  // Arrange: the selected native frame occupies the source group; explicit Source will report a genuine active-editor change.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   let live: { close(): void } | undefined
@@ -1678,17 +1780,18 @@ test("the reader's own showing of the captured source at a selected frame is no 
       reveals: harness.panelReveals().length,
     }
 
-    // Act: the reader renders the pause once more, which shows the captured source over the frame's file, and the Application pane comes to the front.
-    await harness.reader.action('retry')
+    // Act: Source intentionally activates its capture; an unreported later view choice must survive the Application reveal.
+    await harness.reader.action('source')
+    harness.focusView()
     await harness.revealApplicationPaneOverPausedFile()
 
-    // Assert: the source was shown and the pane revealed, both without the keyboard, which is still in the Call Stack view.
+    // Assert: only the explicit Source request took input; the later pane leaves meaningful input in the Call Stack view.
     assert.deepEqual(
       harness
         .textDocumentShows()
         .slice(before.shows)
         .map((shown) => shown.preserveFocus),
-      [true],
+      [false],
     )
     assert.deepEqual(
       harness
@@ -1698,6 +1801,7 @@ test("the reader's own showing of the captured source at a selected frame is no 
       [],
     )
     assert.equal(harness.keyboardInView(), true)
+    assert.equal(harness.keyboardOnBody(), false)
   } finally {
     live?.close()
     await harness.close()

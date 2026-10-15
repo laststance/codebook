@@ -10896,6 +10896,21 @@ export class StudyWorkspace {
         recheckHistoricalInput(
           restoreRecordedSource && this.recordedSourceCanReturn(uri),
         )
+        // A selected native frame can own either source or list input; replacing its editor cannot safely preserve both.
+        if (
+          preserveFocus &&
+          this.hasLiveRun() &&
+          !this.recordingActive &&
+          !this.frameCameWithStop &&
+          isStackFrameItem(vscode.debug.activeStackItem) &&
+          !this.learnerWorksInActiveEditor() &&
+          this.isLearnersEditor(vscode.window.activeTextEditor) &&
+          vscode.window.activeTextEditor?.viewColumn === targetColumn &&
+          this.isFocusedGroupShowingOtherText(targetColumn, document.uri)
+        )
+          throw new Error(
+            'The native source editor was kept open. Choose Focus Captured Source to show the capture.',
+          )
         // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
         const takesPausedFocus =
           preserveFocus &&

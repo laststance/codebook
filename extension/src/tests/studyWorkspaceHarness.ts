@@ -3023,6 +3023,20 @@ export async function workspaceHarness(
             group.activeTab !== tab || !options?.preserveFocus,
           )
           const showsAnotherTab = group.activeTab !== tab
+          // A quiet replacement hides the focused native text input without focusing its replacement (C48 original273).
+          if (
+            options?.preserveFocus &&
+            windowState.focused &&
+            group === activeTabGroup &&
+            group.activeTab?.input instanceof TabInputText &&
+            group.activeTab.input.uri.toString() !==
+              sourceDocument.uri.toString() &&
+            !keyboardInView &&
+            !keyboardInSideBar &&
+            !separateEditorPart?.focused &&
+            focusedSourceEditor()
+          )
+            keyboardOnBody = true
           group.activeTab = tab
           if (!options?.preserveFocus) {
             // Cursor beside the chat: a text editor that takes the keyboard is reported as the active text editor, while the chat's group stays the named one until a tab or group changes (as after the command that focuses the first editor group).
