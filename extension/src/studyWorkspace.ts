@@ -140,6 +140,7 @@ import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
 import { isDebugResumeMessage } from './runtimeSupport/utils/isDebugResumeMessage'
 import { isDebugStopsInvalidation } from './runtimeSupport/utils/isDebugStopsInvalidation'
+import { isOpenedByStopsOwnHandling } from './runtimeSupport/utils/isOpenedByStopsOwnHandling'
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { isStopKeyboardHandOverDue } from './runtimeSupport/utils/isStopKeyboardHandOverDue'
 import { readsExplicitFocusEditorOnBreak } from './runtimeSupport/utils/readsExplicitFocusEditorOnBreak'
@@ -3074,7 +3075,7 @@ export class StudyWorkspace {
     })
     if (this.isLearnersStopFromEditor(stop.reason))
       this.keyboardOutsideEditors = undefined
-    // The stop waits for the keyboard hand-over: the next text editor that becomes active after this read is the paused file.
+    // The stop waits for the keyboard hand-over: a text editor that its own handling makes active after this read is the paused file.
     this.stopHandOver.arm(sessionId)
   }
 
@@ -3131,7 +3132,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the frame that arrives now was brought to the front by the editor's own handling of the stop a note stands for, which opens the paused file with the keyboard; asked by {@link cameWithStop}.
+   * Says whether the frame that arrives now was brought to the front by the editor's own handling of the stop a note stands for, which opens the paused file with the keyboard; asked by {@link cameWithStop}, and by {@link openedByStopsOwnHandling} when the paused file becomes active before its frame is reported.
    * A stop the editor's handling may leave in the background ({@link StopNote}) reaches the front in two other ways, both without the keyboard: the editor passes the focus to a session that is still stopped (`passFocusScheduler` of both editors, which focuses the frame preserving the focus), and the learner selects its frame in the Call Stack view.
    * - A stop read behind another session's frame is judged by the editor's own rule ({@link cameBeforeFocusPass}), not by a time since the stop: its handling tries twice, right after the top frame is loaded and again once the rest of the stack is, at least 420 ms later, and takes the keyboard when by then no frame is focused.
    * - A stop whose adapter asked to keep the focus, or whose session went on before a frame of it was reported, counts for a frame within {@link STOP_OWN_FOCUS_BOUND_MS} of the stop: there only the first try can bring it, right after the adapter's answers.
@@ -11732,17 +11733,19 @@ export class StudyWorkspace {
   /**
    * Gives the keyboard to the file the editor's debugger opened at a stop Codebook did not cause, once per stop; called first by the active-editor listener of {@link installReaders}.
    * Under Codebook's contributed `debug.focusEditorOnBreak: false`, VS Code and Cursor open the paused file in the active group preserving the focus, which hides the editor that had the keyboard and leaves it on no element (Cycle 0046 finding 589: a learner's Step Into, an adapter refresh after a palette command). At a stop the run caused the chat keeps the keyboard ({@link returnsKeyboardToChatAtPause}); at any other stop the paused file gets it, as the editor's own default would give it. The pause is then settled to the learner ({@link leavePauseToLearner}), so no later reveal returns the keyboard to the chat.
+   * Only the file the stop's own handling opened is the paused file ({@link openedByStopsOwnHandling}): a stop the editor kept in the background reaches the front later by its pass of the focus or by the learner's click in the Call Stack view, both preserving the focus, and the editor's default gives no file the keyboard there (Cycle 0046 finding 602).
    * @param editor - The text editor that became active; the captured source and no editor are skipped.
    * @example this.handOverStopKeyboard(editor)
    */
   private handOverStopKeyboard(editor: vscode.TextEditor | undefined): void {
     const sessionId = this.stopHandOver.armedSessionId()
-    // Only a text editor other than the captured source that becomes active after the stop was read is the paused file.
+    // Only a text editor other than the captured source that the stop's own handling made active is the paused file.
     if (
       sessionId === undefined ||
       !editor ||
       editor.document.uri.scheme === STUDY_SOURCE_SCHEME ||
-      !this.isStopHandOverDue(sessionId)
+      !this.isStopHandOverDue(sessionId) ||
+      !this.openedByStopsOwnHandling(sessionId)
     )
       return
     this.stopHandOver.markDone()
@@ -11772,6 +11775,22 @@ export class StudyWorkspace {
         debugSettings.inspect<boolean>('focusEditorOnBreak'),
       ),
       isCodebookCausedStop: codebookStopLedger.isCodebookCausedStop(sessionId),
+    })
+  }
+
+  /**
+   * Says whether the text editor that becomes active now was opened by the stop's own handling ({@link isOpenedByStopsOwnHandling}), from the stop's note while its frame is still to come ({@link wasShownByItsStop}) and from the frame's judgement once it came ({@link frameCameWithStop}); asked by {@link handOverStopKeyboard}.
+   * @param sessionId - The debug session of the stop that waits for its hand-over.
+   * @returns `true` when the stop's own handling brought the stop to the front, where the editor's default gives the paused file the keyboard; `false` for a stop the editor kept in the background, which reaches the front by its pass of the focus or the learner's click in the Call Stack view.
+   * @example this.openedByStopsOwnHandling('learner-node') // => false for a click on the frame of a stop read behind a paused Codebook run's frame
+   */
+  private openedByStopsOwnHandling(sessionId: string): boolean {
+    const note = this.announcedStops.get(sessionId)
+    return isOpenedByStopsOwnHandling({
+      stopSessionId: sessionId,
+      unreportedStopShown: note && this.wasShownByItsStop(note),
+      activeStackItem: vscode.debug.activeStackItem,
+      frameCameWithStop: this.frameCameWithStop,
     })
   }
 

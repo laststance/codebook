@@ -1311,6 +1311,19 @@ export async function workspaceHarness(
     return made
   }
   /**
+   * Reports a new frame of a session as Run and Debug's active stack item and tells the reader's listeners; the frame step of `showStopKeepingFocus` and `passFocusToStoppedSession`, which send it before or after the file's opening.
+   * @param sessionId - The session whose frame the editor focuses.
+   * @example reportFrameOf('live-next-browser')
+   */
+  function reportFrameOf(sessionId: string): void {
+    activeStackItem = {
+      session: { id: sessionId },
+      threadId: 1,
+      frameId: nextStackFrameId++,
+    }
+    for (const listener of [...activeStackItemListeners]) listener()
+  }
+  /**
    * Opens a learner-owned text document as the tab in front of a group, with its text editor visible there, and gives nothing the keyboard; the shared first step of `focusMutableDraft`, which then gives that editor the keyboard, and of `selectStackFrame`, which does not.
    * @param filename - The document's file name in the harness's folder.
    * @param column - The view column of the group.
@@ -4547,6 +4560,7 @@ export async function workspaceHarness(
      * @param sessionId - The session that stopped.
      * @param filename - The paused file.
      * @param column - The group the editor opens it in.
+     * @param order - `file-then-frame` (left out) is the order both editors send the two reports in; `frame-then-file` reports the frame before the file's opening, an order no trace showed, for the reader's keyboard hand-over, which must not depend on the order (Cycle 0046 finding 602).
      * @example
      * harness.pauseDebugger({ session: 'live-next-browser', reason: 'step', staysInBackground: true })
      * harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
@@ -4555,8 +4569,10 @@ export async function workspaceHarness(
       sessionId: string,
       filename: string,
       column: number,
+      order: 'file-then-frame' | 'frame-then-file' = 'file-then-frame',
     ): void {
       const pausedColumn = nativeDebugColumn(column)
+      if (order === 'frame-then-file') reportFrameOf(sessionId)
       // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
       const hidesFocusedEditor =
         activeTabGroup.viewColumn === pausedColumn &&
@@ -4569,12 +4585,7 @@ export async function workspaceHarness(
       openDraftTab(filename, pausedColumn, true)
       if (hidesFocusedEditor) keyboardOnBody = true
       activeTextEditorChanged(focusedSourceEditor())
-      activeStackItem = {
-        session: { id: sessionId },
-        threadId: 1,
-        frameId: nextStackFrameId++,
-      }
-      for (const listener of [...activeStackItemListeners]) listener()
+      if (order === 'file-then-frame') reportFrameOf(sessionId)
     },
     /**
      * Reports another frame of the stop the editor shows, with no new stop and no new file: the editor's stop handling focuses the frame again once the rest of the stack is loaded, which reveals the paused file it already shows (Cycle 0046 finding 589, frames 1313, 1314 and 1372 of one stop in the C54 9f round).
@@ -4678,10 +4689,11 @@ export async function workspaceHarness(
         })
     },
     /**
-     * Brings a stopped session to the front as the editor does 800 ms after the session it showed went on (`passFocusScheduler` of VS Code 1.140 and Cursor 3.23, which focuses the frame preserving the focus): it opens the frame's file in front of a group without giving it the keyboard, and reports the frame of that session. No `stopped` event comes with it: the adapter sent that one when the session stopped (`pauseDebugger` with `staysInBackground`).
+     * Brings a stopped session to the front as the editor does 800 ms after the session it showed went on (`passFocusScheduler` of VS Code 1.140 and Cursor 3.23, which focuses the frame preserving the focus): it opens the frame's file in front of a group without giving it the keyboard, and reports the frame of that session. A single click on that session's frame in the Call Stack view is reported the same way, and the keyboard stays in the view. No `stopped` event comes with it: the adapter sent that one when the session stopped (`pauseDebugger` with `staysInBackground`).
      * @param sessionId - The stopped session.
      * @param filename - The frame's file.
      * @param column - The view column of the group the editor opens it in.
+     * @param order - `file-then-frame` (left out) is the order both editors send the two reports in; `frame-then-file` reports the frame first, as in `showStopKeepingFocus`.
      * @example
      * harness.pauseDebugger({ staysInBackground: true })
      * harness.passFocusToStoppedSession('live-next-server', 'actions.ts', 1)
@@ -4690,16 +4702,13 @@ export async function workspaceHarness(
       sessionId: string,
       filename: string,
       column: number,
+      order: 'file-then-frame' | 'frame-then-file' = 'file-then-frame',
     ): void {
+      if (order === 'frame-then-file') reportFrameOf(sessionId)
       openDraftTab(filename, nativeDebugColumn(column))
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
       activeTextEditorChanged(focusedSourceEditor())
-      activeStackItem = {
-        session: { id: sessionId },
-        threadId: 1,
-        frameId: nextStackFrameId++,
-      }
-      for (const listener of [...activeStackItemListeners]) listener()
+      if (order === 'file-then-frame') reportFrameOf(sessionId)
     },
     /**
      * Gives a view that is no editor the keyboard, as a learner's click into the Call Stack view of Run and Debug does. The editor reports nothing of it to an extension: the active tab group, its tab and the active text editor stay as they are; only the chat's own part loses the keyboard.
