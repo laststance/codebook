@@ -431,6 +431,109 @@ test('a Restore that cannot confirm its layout leaves the learner’s groups as 
   }
 })
 
+// Value: protects=the way back to the live run after Developer: Reload Window when the learner resized the grid, so the earlier window's record no longer proves its empty locked Application group at column 1, and a cold Study select placed the Application pane in that leftover; fails_when=the agent's Return Current moves the Application into its own new group, the editor removes the leftover the move left empty (workbench.editor.closeEmptyGroups, on by default in both hosts), and the reservation, still expecting that group, refuses with "The dedicated Application layout could not be confirmed." and leaves the Study unconfirmed, so Restore refuses too and nothing names the leftover; why_new=Cycle 0046 row 626 (native C56 round 1d in VS Code 1.140.0: layout 229/349/109 against the record's 229×3, cold select confirmed with the Application in the leftover at column 1, then codebook_return_current RUNTIME_FAILED and Restore PRESENTATION_UNAVAILABLE); seam=applicationGroupMarkers (a record the resized grid no longer equals), leaveEmptyLockedGroup, closeEmptyGroupsAfterPanelMove, addSeparateEditorPart (Cursor's chat part) and returnToCurrent as the agent
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`in ${host}, an agent's Return Current after a reload whose record no longer proves the leftover reaches the live run in a group of the Application's own`, async () => {
+    // Arrange: the earlier window recorded its Application group at column 1 of three equal rows; after the reload that group stands empty and locked, and the learner grew the second row twice, so the record proves nothing. The learner's files stand in columns 2 and 3; in Cursor its chat part stands beside the main editor.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+    })
+    const chat = host === 'Cursor' ? harness.addSeparateEditorPart() : undefined
+    harness.closeEmptyGroupsAfterPanelMove()
+    try {
+      harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+        version: 1,
+        writer: 'the window before the reload',
+        column: 1,
+        groupCount: 3,
+        layout: {
+          orientation: 1,
+          groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+        },
+      })
+      harness.leaveEmptyLockedGroup(1)
+      const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+      const learnerAuth = harness.focusMutableDraft('auth.ts', 3)
+      const learnerActions = harness.focusMutableDraft('actions.ts', 2)
+      chat?.focusTab()
+      const selection = harness.reader.presentationState()
+      await harness.reader.changePresentation(
+        {
+          presentationId: selection.presentationId,
+          expectedRevision: selection.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      // The cold select placed the Application pane in the unproven leftover at column 1, which keeps its lock.
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(leftover.tabs.length, 1)
+      assert.equal(leftover.locked, true)
+      const selected = harness.reader.presentationState(),
+        commandsBefore = harness.commands.length
+
+      // Act
+      const answer = await harness.reader
+        .returnToCurrent(
+          {
+            presentationId: selected.presentationId,
+            expectedRevision: selected.reader.contentRevision,
+          },
+          'agent',
+        )
+        .then(
+          () => 'returned',
+          (error: unknown) => String(error),
+        )
+
+      // Assert: the Return reached the live run with its layout confirmed; the Application stands in column 1 in a new locked group, the editor removed the leftover the pane's move left empty at column 2, Codebook unlocked nothing, and the learner's files keep their groups.
+      assert.equal(answer, 'returned')
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+      assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(harness.groups.includes(leftover), false)
+      assert.deepEqual(harness.automaticallyClosedColumns(), [2])
+      assert.equal(
+        harness.groups.find((group) => group.viewColumn === 1)?.locked,
+        true,
+      )
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .includes('workbench.action.unlockEditorGroup'),
+        false,
+      )
+      assert.equal(
+        harness.groups.find((group) => group.tabs.includes(learnerActions.tab))
+          ?.viewColumn,
+        2,
+      )
+      assert.equal(
+        harness.groups.find((group) => group.tabs.includes(learnerAuth.tab))
+          ?.viewColumn,
+        3,
+      )
+      // The earlier window's record, which proved nothing, gave way to this window's record of the Application's own group.
+      const marker = harness.applicationGroupMarkers.get(
+        'codebook.applicationGroup.v1',
+      ) as { writer?: unknown; column?: unknown; groupCount?: unknown }
+      assert.deepEqual(
+        {
+          writtenByThisWindow:
+            marker.writer === harness.reader['applicationGroupMarkerWriter'],
+          column: marker.column,
+          groupCount: marker.groupCount,
+        },
+        { writtenByThisWindow: true, column: 1, groupCount: 3 },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=a cold Study select after a window reload retiring the empty Application group the earlier window recorded, before the Application is placed; fails_when=the cold entry leaves that unproven leftover group and places the Application in it, so the window keeps an empty locked group beside the learner's groups; why_new=Cycle 0046 finding 590 (C54 in both hosts: Developer: Reload Window kept the earlier window's owned group empty at column 1); seam=applicationGroupMarkers (the earlier window's record) and leaveEmptyLockedGroup
 test('a cold Study select after a window reload retires the empty Application group the earlier window recorded', async () => {
   // Arrange: the earlier window recorded its Application group at column 1 of this three-group grid; after the reload that group stands empty and locked, the learner's files stand in columns 2 and 3, and the chat part has the keyboard.

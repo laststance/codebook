@@ -12577,6 +12577,7 @@ export class StudyWorkspace {
       this.claimApplicationAllocation(identity, grid.groups.length + 1)
       const panel = this.ensureApp()
       if (!existingPanel) createdPanel = panel
+      const groupsRemovedByMove = this.watchGroupLeftByApplication(panel)
       // Move only the owned panel; none of the original groups or their lock states is modified.
       if (panel.viewColumn !== vscode.ViewColumn.One) {
         panel.reveal(vscode.ViewColumn.One, true)
@@ -12597,7 +12598,6 @@ export class StudyWorkspace {
         ),
         assertCurrent,
       )
-      const expectedCount = grid.groups.length + (retiredSource ? 0 : 1)
       const assertPlaced = this.retainPresentationPlacement()
       const layout = await vscode.commands.executeCommand<unknown>(
         'vscode.getEditorLayout',
@@ -12605,6 +12605,9 @@ export class StudyWorkspace {
       // Retain accepted native placement for a later Return even when this entry was cancelled; Close and newer input still revoke its proof.
       this.assertLifetime(lifetime)
       assertPlaced()
+      // Read after the layout reply, which the editor sends after the removal of the group the pane's move emptied (row 626).
+      const expectedCount =
+        grid.groups.length + (retiredSource ? 0 : 1) - groupsRemovedByMove()
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
       // The record never rejects and is not awaited, so the preparation keeps its timing.
       this.rememberApplicationGroupMarker(identity)
@@ -12973,6 +12976,31 @@ export class StudyWorkspace {
   }
 
   /**
+   * Remembers the group the Application pane stands alone in before {@link reserveApplicationGroup} moves it into its new group, because the editor removes the group the move leaves empty: it closes a moved webview's editor in its old group (VS Code 1.140.0 `workbench.desktop.main.js` 4037:7120, Cursor 3.23.12 19764:8061), and that close removes a group whose last editor it was, a locked one too, under `workbench.editor.closeEmptyGroups`, on by default (1106:79878 and 1106:80531, 857:4736; Cursor 17501:42289 and 17501:43016, 17351:4267). Such a group is an earlier window's leftover that no record proved after Developer: Reload Window, which a cold Study select gave the pane (row 626); Codebook itself never unlocks, closes or merges it (row 591).
+   * @param panel - The Application pane, before its move.
+   * @returns A count read after the placement's layout reply: `1` when that group is gone, `0` when it stands (`closeEmptyGroups` off), the pane shared its group or did not move.
+   * @example const groupsRemovedByMove = this.watchGroupLeftByApplication(panel) // groupsRemovedByMove() => 1 once the editor removed the leftover at column 2
+   */
+  private watchGroupLeftByApplication(
+    panel: vscode.WebviewPanel,
+  ): () => number {
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === panel.viewColumn,
+    )
+    const identity =
+      group?.tabs.length === 1
+        ? this.editorGroupIdentities.get(group)
+        : undefined
+    return () =>
+      identity !== undefined &&
+      !vscode.window.tabGroups.all.some(
+        (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+      )
+        ? 1
+        : 0
+  }
+
+  /**
    * Identifies the newly created empty allocation for {@link reserveApplicationGroup} before cleanup authority is recorded.
    * @param originals - Group identities and columns captured before the issued insertion.
    * @returns The new first group and its existing observed identity.
@@ -13183,7 +13211,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in an unproven leftover. A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. A proof whose focus command took the keyboard is reported; a caller that captures focus afterwards gives the chat its keyboard back first.
+   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in a proven leftover. An unproven leftover at column 1 can receive the pane of a cold Study select; the next reservation moves the pane into a group of its own ({@link watchGroupLeftByApplication}, row 626). A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. A proof whose focus command took the keyboard is reported; a caller that captures focus afterwards gives the chat its keyboard back first.
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
    * @param signal - The entry's cancellation.
    * @returns `true` when a proof focused a leftover group and so took the keyboard; `false` when nothing was issued, and when every proof acted on the group the only editor part named as its active one ({@link retireProvenLeftoverGroups}).
