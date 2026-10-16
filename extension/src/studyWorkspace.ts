@@ -204,6 +204,7 @@ import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
+import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
@@ -901,6 +902,8 @@ export class StudyWorkspace {
   private readerSelectionRevision = 0
   /** Who asked for the Live Return that is running ({@link returnCurrentSelection}): `'agent'` for codebook_return_current, `'learner'` for the Study pane's control; `undefined` while none runs. */
   private returningCurrent: PresentationRequester | undefined
+  /** The sentence an agent's Live Return owes when its end gives the remembered tab nothing back ({@link owePreparationNotice}): `true` for {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}, `false` for {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, `undefined` when none is owed. */
+  private preparationNoticeOwed: boolean | undefined
   private presentationMode: PresentationMode = 'study-workspace'
   private requestedPresentation?: PresentationMode
   private presentationConfirmed = false
@@ -4869,7 +4872,12 @@ export class StudyWorkspace {
       assertCurrent()
       this.errors.delete('presentation')
       // Last, because the editor answers a layout read for the focused editor part: a tab that is no text editor (an agent chat) gets the focus back.
-      await returnForeignFocus?.().catch(() => undefined)
+      const returnedToForeignTab = await returnForeignFocus?.().catch(
+        () => false,
+      )
+      // An agent's selection whose remembered tab got nothing back (its group stands behind a Study pane) says where the keyboard is (row 625).
+      if (agentSelection?.returnsToForeignTab && !returnedToForeignTab)
+        this.tellKeyboardLeftOnSource()
       return {
         ...this.presentationState(),
         state: this.opened ? 'open' : 'closed',
@@ -7935,9 +7943,13 @@ export class StudyWorkspace {
       if (!stillCurrent()) return
       // A chat of another editor part that had the keyboard gets it back first; the learner's own place is settled only otherwise.
       if (await returnForeignFocus?.(false, stillCurrent)) return
-      if (stillCurrent()) await this.settleLearnersReturnKeyboard(learnersPlace)
+      if (!stillCurrent()) return
+      // An agent's Return whose remembered tab got nothing back tells what its preparation left (row 625).
+      this.tellOwedPreparationNotice()
+      await this.settleLearnersReturnKeyboard(learnersPlace)
     } finally {
       this.returningCurrent = undefined
+      this.preparationNoticeOwed = undefined
     }
   }
 
@@ -12749,6 +12761,11 @@ export class StudyWorkspace {
           ? undefined
           : this.capturePresentationFocus(undefined),
       knowsLearnersPlace: this.knowsLearnersPlace(focusedPanel),
+      // VS Code's chat opened as an editor tab is a chat, whose group's focus gives its input the keyboard (row 625).
+      toChatEditorTab: isChatEditorTabInput(
+        vscode.window.tabGroups.activeTabGroup.activeTab?.input,
+        Reflect.get(vscode, 'TabInputChat'),
+      ),
     }
     return async (
       signal,
@@ -12767,8 +12784,8 @@ export class StudyWorkspace {
   /**
    * Gives the keyboard back once an Application preparation is placed, from what {@link captureApplicationPreparationReturn} captured before any of its effects; the focus return that method answers calls it, after {@link reserveApplicationGroup}'s guard.
    * A chat of another editor part that had the keyboard gets it back first. Otherwise the focus goes to the Codebook pane or the native place that had it, unless {@link settleKeyboardBesideChatView} settles it for an agent's run beside a chat view.
-   * A Live Return ({@link returnCurrentSelection}) gives a chat of another editor part its keyboard back itself at its end: a learner's Return adds nothing here, an agent's (codebook_return_current) only the rest of this return.
-   * @param captured - The foreign tab's give-back ({@link retainForeignTabFocus}), the Codebook panel that was active, the captured native focus ({@link capturePresentationFocus}), and whether the learner is known to work there.
+   * A Live Return ({@link returnCurrentSelection}) gives a chat of another editor part its keyboard back itself at its end: a learner's Return adds nothing here, an agent's (codebook_return_current) only the rest of this return, and where a remembered tab waits for the Return's end, only the sentence that end tells if the tab gets nothing ({@link owePreparationNotice}, row 625).
+   * @param captured - The foreign tab's give-back ({@link retainForeignTabFocus}), the Codebook panel that was active, the captured native focus ({@link capturePresentationFocus}), whether the learner is known to work there, and whether the foreign tab is VS Code's chat editor tab ({@link isChatEditorTabInput}), which gets its keyboard back like a chat of another editor part (row 625).
    * @param placed - The preparation's cancellation, its guards for the current input and the placement, and what it knows of the editor parts and of its own focus.
    * @example
    * await this.returnPreparationFocus(captured, { signal, stillCurrent, assertPlaced, preparation: { onlyEditorPart: false, forAgentRun: true, tookKeyboard: true, ownedByReturn: false } }) // Cursor's chat tab gets the keyboard back
@@ -12780,6 +12797,7 @@ export class StudyWorkspace {
       restoreFocus:
         ReturnType<StudyWorkspace['capturePresentationFocus']> | undefined
       knowsLearnersPlace: boolean
+      toChatEditorTab: boolean
     },
     placed: {
       signal: AbortSignal | undefined
@@ -12792,13 +12810,18 @@ export class StudyWorkspace {
       { ownedByReturn, forAgentRun } = placed.preparation
     // A learner's Live Return adds no return before its own final handoff; an agent's still settles the keyboard beside a chat view (codebook_return_current).
     if (ownedByReturn && !forAgentRun) return
-    // A chat that held the keyboard beside the main editor gets it back, from a Live Return only at its end; nothing else is focused after that return.
+    // A chat that held the keyboard beside the main editor, or VS Code's chat editor tab of a main group (row 625), gets it back, from a Live Return only at its end; nothing else is focused after that return.
     if (
       giveBack &&
       !ownedByReturn &&
-      (await giveBack(true, placed.stillCurrent))
+      (await giveBack(!captured.toChatEditorTab, placed.stillCurrent))
     )
       return
+    // The Return's end tells the sentence only when the remembered tab gets nothing back (row 625).
+    if (giveBack && ownedByReturn) {
+      this.owePreparationNotice(placed.preparation, captured.knowsLearnersPlace)
+      return
+    }
     if (
       this.settleKeyboardBesideChatView(
         placed.preparation,
@@ -12859,6 +12882,32 @@ export class StudyWorkspace {
   }
 
   /**
+   * Keeps for the end of an agent's Live Return the sentence {@link settleKeyboardBesideChatView} would tell now: that end gives the remembered tab (VS Code's chat editor tab, a chat of another editor part) its keyboard back, and tells it only when the tab gets nothing ({@link tellOwedPreparationNotice}, row 625). Asked by {@link returnPreparationFocus}.
+   * @param preparation - What the Return's Application preparation knows of the editor parts and of its own focus.
+   * @param knowsLearnersPlace - Whether the learner was known to work where the keyboard was.
+   * @example this.owePreparationNotice({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true, ownedByReturn: true }, false) // preparationNoticeOwed => true
+   */
+  private owePreparationNotice(
+    preparation: PreparedApplicationFocus,
+    knowsLearnersPlace: boolean,
+  ): void {
+    this.preparationNoticeOwed =
+      preparation.onlyEditorPart && !knowsLearnersPlace
+        ? preparation.tookKeyboard
+        : undefined
+  }
+
+  /**
+   * Tells the sentence an agent's Live Return owes when its end gave the remembered tab nothing back ({@link owePreparationNotice}); called by {@link finishCurrentReturn}.
+   * @example this.tellOwedPreparationNotice() // the Application's group has the keyboard, told once
+   */
+  private tellOwedPreparationNotice(): void {
+    const owed = this.preparationNoticeOwed
+    this.preparationNoticeOwed = undefined
+    if (owed !== undefined) this.tellPreparedApplicationKeyboard(owed)
+  }
+
+  /**
    * Says whether the learner is known to work where the keyboard is; asked by {@link captureApplicationPreparationReturn} and {@link performPresentation} before any native effect of an agent's request.
    * Beside a chat view the active text editor stays the active one and a pane stays `active`, so only the learner's own sign tells: a click or a key press in the active text editor a moment ago ({@link learnerWorksInActiveEditor}), or the Study pane's own report that it has the keyboard ({@link reportsKeyboard}).
    * @param focusedPanel - The Codebook pane that is the active editor, if any.
@@ -12900,6 +12949,18 @@ export class StudyWorkspace {
     if (count !== vscode.window.tabGroups.all.length) return false
     this.tellAgentSelectionKeyboard()
     return true
+  }
+
+  /**
+   * Tells the learner once that the captured source has the keyboard, when an agent's Study selection could not give a remembered tab its keyboard back: the selection's panes stand in front of the group of VS Code's chat editor tab, which a Study selection always covers, since it takes every group of at most three (row 625). Called by {@link performPresentation}; a newer choice of the learner, anywhere but the captured source, is told nothing.
+   * @example this.tellKeyboardLeftOnSource() // after codebook_presentation select covered the chat tab's group
+   */
+  private tellKeyboardLeftOnSource(): void {
+    if (
+      vscode.window.activeTextEditor?.document.uri.toString() ===
+      this.sourceUri?.toString()
+    )
+      this.tellAgentSelectionKeyboard()
   }
 
   /**

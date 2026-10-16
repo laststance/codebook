@@ -2358,6 +2358,95 @@ test('an agent’s run that must focus the first editor group to place the Appli
   }
 })
 
+// Value: protects=the keyboard of VS Code's chat opened as an editor tab of a main editor group (Chat: Open Chat in Editor), where the learner typed the request: an agent's run places its Application in a new group above the first one, and the chat tab, still in front of its group, gets its keyboard back through that group's focus command, which gives the chat editor's input the keyboard (1.140.0 workbench.desktop.main.js 1106:74902, 3129:7546); nothing is told; fails_when=the preparation gives back only another editor part's chat and leaves the keyboard in the new Application group with row 612's sentence; why_new=Cycle 0046 row 625 (the row-612 fixer's report: the preparation never gave the keyboard back to a foreign tab in the main editor); seam=useNativeLayout, focusMutableDraft, focusChatEditorTab (VS Code's TabInputChat without an active text editor), presentation.createViewport (the MCP-first preparation), the command log, the active tab group and the information messages
+test('an agent’s run that prepares the Application while VS Code’s chat editor tab has the keyboard gives that chat tab its keyboard back and tells nothing', async () => {
+  // Arrange: actions.ts is in the first group, and the learner typed the request into the chat, opened as an editor tab of the second group in front of auth.ts.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('auth.ts', 2)
+    const chat = harness.focusChatEditorTab(2)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: the Application stands in its own group at column 1; the chat's group, now column 3, got the keyboard back through its focus command with the chat tab in front, no text editor is active, and nothing was told.
+      const active = harness.editor.window.tabGroups.activeTabGroup
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusThirdEditorGroup',
+        ],
+      )
+      assert.equal(active.viewColumn, 3)
+      assert.equal(active.activeTab, chat)
+      assert.equal(harness.focusedSource(), undefined)
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=row 612's bound beside row 625: a page of the main editor that is no chat (the editor's Settings, Cursor's composer tab, whose input the extension API gives no kind) reads the same whether the keyboard was in it or in a view beside it, so an agent's run gives it nothing back after placing its Application and says once that the new group has the keyboard; fails_when=row 625's return to VS Code's chat editor tab also focuses a group for a tab that cannot be proven a chat; why_new=Cycle 0046 row 625 guard; seam=useNativeLayout, focusMutableDraft, addOpaqueTab and focusOpaqueTab, presentation.createViewport, the command log and the information messages
+test('an agent’s run that prepares the Application while a Settings tab is the active tab gives that tab nothing back and says once that the Application’s group has the keyboard', async () => {
+  // Arrange: actions.ts is in the first group, and the editor's Settings is the active tab of the second group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.focusOpaqueTab(harness.addOpaqueTab('Settings', 2))
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        ['workbench.action.focusFirstEditorGroup'],
+      )
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+        ],
+      )
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner in VS Code when an agent's first run after Developer: Reload Window must focus the earlier window's leftover group for its proof (another group is the active one): the removal of that focused group gives the editor's next group the keyboard, so the editor cannot tell whether the chat view had it; no file gets the keyboard after the Application is placed, and the learner is told once that the Application's group has it; fails_when=the preparation's focus return shows the learner's active file with the keyboard after row 609's proof took it from the chat view, or the keyboard stays in the new group without a word; why_new=Cycle 0046 row 612 (the proof's focus that cannot be avoided: the editor unlocks only the active group); seam=applicationGroupMarkers, leaveEmptyGroup, focusMutableDraft, focusView (the chat view's input), presentation.createViewport (the MCP-first preparation), textDocumentShows and the information messages
 test('an agent’s first run after a reload that must focus the earlier window’s leftover group for its proof gives no file the keyboard and says once that the Application’s group has it', async () => {
   // Arrange: the earlier window recorded its Application group at column 3; after the reload it stands empty beside the learner's actions.ts, the active editor of column 1, and auth.ts in column 2, and the learner typed the request into the chat view.

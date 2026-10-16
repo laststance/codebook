@@ -267,6 +267,8 @@ export async function workspaceHarness(
     constructor(readonly viewType: string) {}
   }
   class TabInputUnknown {}
+  /** VS Code's input of a chat editor tab (Chat: Open Chat in Editor): a class without properties, which the extension host exports as `vscode.TabInputChat` while the API's typings do not name it (1.140.0 `extensionHostProcess.js` 173:38462, 163:116170, 295:178349). */
+  class TabInputChat {}
   /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
   class Position {
     constructor(
@@ -2625,6 +2627,7 @@ export async function workspaceHarness(
       Uri,
       TabInputText,
       TabInputWebview,
+      TabInputChat,
       TreeItem: class {},
       TreeItemCollapsibleState: { None: 0 },
       TreeItemCheckboxState: { Unchecked: 0, Checked: 1 },
@@ -5291,6 +5294,32 @@ export async function workspaceHarness(
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
       return tab
     },
+    /**
+     * Opens VS Code's chat as an editor tab of a main editor group (Chat: Open Chat in Editor) and gives its input the keyboard the way that editor reports it: the chat's group is the active tab group, the chat tab is its active tab, and no text editor is active, since the chat input is a simple widget the extension host does not list (1.140.0 `workbench.desktop.main.js` 705:2504, 705:3225, 699:43439).
+     * @param column - The view column of the group the chat tab opens in.
+     * @param label - The tab's label: the chat session's title, `Chat` for a new one (705:42742).
+     * @returns The chat tab.
+     * @example const chat = harness.focusChatEditorTab(2)
+     */
+    focusChatEditorTab(column: number, label = 'Chat') {
+      const group = groups.find((candidate) => candidate.viewColumn === column)!
+      const tab = {
+        input: new TabInputChat(),
+        label,
+        isPreview: false,
+        isDirty: false,
+      }
+      group.tabs.push(tab)
+      group.activeTab = tab
+      activeTabGroup = group
+      if (separateEditorPart) separateEditorPart.focused = false
+      keyboardOnBody = false
+      keyboardInView = false
+      innerFocusedPanel = undefined
+      for (const listener of tabChangeListeners) listener()
+      activeTextEditorChanged(undefined)
+      return tab
+    },
     addOpaqueTab(label: string, column: number) {
       const tab = {
         input: new TabInputUnknown(),
@@ -5363,6 +5392,7 @@ export async function workspaceHarness(
         if (input instanceof TabInputText) return new TabInputText(input.uri)
         if (input instanceof TabInputWebview)
           return new TabInputWebview(input.viewType)
+        if (input instanceof TabInputChat) return new TabInputChat()
         return new TabInputUnknown()
       }
       groups.splice(
