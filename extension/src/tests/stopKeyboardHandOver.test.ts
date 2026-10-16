@@ -13,8 +13,11 @@ test('a reported stop waits for its hand-over', () => {
 
   // Assert
   assert.deepEqual(
-    [handOver.isArmedFor('live-next-browser'), handOver.heldSessionId()],
-    [true, 'live-next-browser'],
+    [
+      handOver.isArmedFor('live-next-browser'),
+      handOver.isHeldFor('live-next-browser'),
+    ],
+    [true, true],
   )
 })
 
@@ -25,16 +28,16 @@ test('a handed-over stop is done and still held', () => {
   handOver.arm('live-next-browser')
 
   // Act
-  handOver.markDone()
+  handOver.markDone('live-next-browser')
 
   // Assert
   assert.deepEqual(
     [
       handOver.isArmedFor('live-next-browser'),
-      handOver.heldSessionId(),
+      handOver.isHeldFor('live-next-browser'),
       handOver.isDoneFor('live-next-browser'),
     ],
-    [false, 'live-next-browser', true],
+    [false, true, true],
   )
 })
 
@@ -43,7 +46,7 @@ test('the same session stopping again without going on stays done', () => {
   // Arrange
   const handOver = new StopKeyboardHandOver()
   handOver.arm('live-next-browser')
-  handOver.markDone()
+  handOver.markDone('live-next-browser')
 
   // Act
   handOver.arm('live-next-browser')
@@ -56,14 +59,51 @@ test('the same session stopping again without going on stays done', () => {
 test('another session’s stop after a handed-over one waits for its own hand-over', () => {
   // Arrange
   const handOver = new StopKeyboardHandOver()
-  handOver.arm('live-next-browser')
-  handOver.markDone()
+  handOver.arm('learner-node')
+  handOver.markDone('learner-node')
 
   // Act
-  handOver.arm('live-next-server')
+  handOver.arm('live-next-browser')
 
   // Assert
-  assert.equal(handOver.isArmedFor('live-next-server'), true)
+  assert.equal(handOver.isArmedFor('live-next-browser'), true)
+})
+
+// Value: protects=the keyboard of a learner's handed-over file while a Codebook run's stop of another session is read; fails_when=the record keeps one stop for the reader, so the other session's stop replaces the handed-over one and the keyboard model forgets that the learner's file holds the keyboard; why_new=Cycle 0046 finding 605
+test('another session’s stop leaves a handed-over stop done', () => {
+  // Arrange
+  const handOver = new StopKeyboardHandOver()
+  handOver.arm('learner-node')
+  handOver.markDone('learner-node')
+
+  // Act
+  handOver.arm('live-next-browser')
+
+  // Assert
+  assert.deepEqual(
+    [handOver.isDoneFor('learner-node'), handOver.isHeldFor('learner-node')],
+    [true, true],
+  )
+})
+
+// Value: protects=the hand-over of a stop that waits while another session's stop is read and handed over; fails_when=handing over one session's stop ends the waiting of another session's stop, so the editor's later report of that stop's frame gives its paused file no keyboard; why_new=Cycle 0046 finding 605
+test('a stop waits for its own hand-over while another session’s stop is handed over', () => {
+  // Arrange
+  const handOver = new StopKeyboardHandOver()
+  handOver.arm('learner-node')
+  handOver.arm('live-next-browser')
+
+  // Act
+  handOver.markDone('live-next-browser')
+
+  // Assert
+  assert.deepEqual(
+    [
+      handOver.isArmedFor('learner-node'),
+      handOver.isDoneFor('live-next-browser'),
+    ],
+    [true, true],
+  )
 })
 
 // Value: protects=the next stop's hand-over after the session went on; fails_when=a resumed session keeps its done stop, so a refresh or a learner's next step never gets the keyboard; why_new=Cycle 0046 finding 589, C54 round 9f (continued, then stopped)
@@ -71,15 +111,18 @@ test('a session that goes on ends its stop', () => {
   // Arrange
   const handOver = new StopKeyboardHandOver()
   handOver.arm('live-next-browser')
-  handOver.markDone()
+  handOver.markDone('live-next-browser')
 
   // Act
   handOver.disarm('live-next-browser')
 
   // Assert
   assert.deepEqual(
-    [handOver.heldSessionId(), handOver.isDoneFor('live-next-browser')],
-    [undefined, false],
+    [
+      handOver.isHeldFor('live-next-browser'),
+      handOver.isDoneFor('live-next-browser'),
+    ],
+    [false, false],
   )
 })
 
@@ -106,8 +149,8 @@ test('a stop whose adapter asked to keep the focus does not wait for a hand-over
 
   // Assert
   assert.deepEqual(
-    [handOver.isArmedFor('learner-node'), handOver.heldSessionId()],
-    [false, undefined],
+    [handOver.isArmedFor('learner-node'), handOver.isHeldFor('learner-node')],
+    [false, false],
   )
 })
 
@@ -116,7 +159,7 @@ test('a stop whose adapter asked to keep the focus leaves the session’s handed
   // Arrange
   const handOver = new StopKeyboardHandOver()
   handOver.arm('learner-node')
-  handOver.markDone()
+  handOver.markDone('learner-node')
 
   // Act
   handOver.arm('learner-node', true)
@@ -143,11 +186,14 @@ test('marking with no stop armed hands nothing over', () => {
   const handOver = new StopKeyboardHandOver()
 
   // Act
-  handOver.markDone()
+  handOver.markDone('live-next-browser')
 
   // Assert
   assert.deepEqual(
-    [handOver.heldSessionId(), handOver.isDoneFor('live-next-browser')],
-    [undefined, false],
+    [
+      handOver.isHeldFor('live-next-browser'),
+      handOver.isDoneFor('live-next-browser'),
+    ],
+    [false, false],
   )
 })

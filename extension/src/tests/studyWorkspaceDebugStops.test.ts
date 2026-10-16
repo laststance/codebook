@@ -3818,3 +3818,56 @@ test("the editor's focus pass 200 ms after a stop whose adapter asked to keep th
     await harness.close()
   }
 })
+
+// Value: protects=the keyboard of the file Codebook handed it to at a stop of the learner's own debug session, when a Codebook run's stop of another session is read meanwhile and the run's capture is shown over that file; fails_when=the hand-over record keeps one stop for the whole reader, so the other session's stop replaces the learner's handed-over stop, the reader's keyboard model forgets that the learner's file holds the keyboard, and the captured source covers it preserving the focus, which leaves the keyboard on the window body; why_new=Cycle 0046 finding 605 (StopKeyboardHandOver keeps the state of every session's stop); seam=pauseDebugger with staysInBackground for two sessions, showStopKeepingFocus, codebookStopLedger's verdict as the configured run writes it, the run's capture and readerSeams.refresh
+test("a Codebook run's stop read while the learner's handed-over stop is shown does not undo that hand-over: its captured source takes the keyboard from the learner's file", async () => {
+  // Arrange: a live run under Codebook's contributed default; the learner works in a file in column 2, their own debug session stopped at a breakpoint the editor showed preserving the focus, and Codebook gave the paused file the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.pauseDebugger({ session: 'learner-node', staysInBackground: true })
+    harness.showStopKeepingFocus('learner-node', 'actions.ts', 2)
+    const showsAfterHandOver = harness.textDocumentShows().length
+
+    // Act: the run's browser session stops at a stop of its own while the editor shows the learner's frame, so the editor keeps that stop in the background; then the run's capture is rendered.
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      staysInBackground: true,
+    })
+    codebookStopLedger.recordStop('live-next-browser', true)
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+
+    // Assert: the captured source shown over the handed-over file takes the keyboard with it, and the window body has none.
+    assert.deepEqual(harness.textDocumentShows().slice(showsAfterHandOver), [
+      { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false },
+    ])
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})

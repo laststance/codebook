@@ -33,7 +33,7 @@ test('the frame of a stop that waits for its hand-over names the active text edi
   })
 
   // Assert
-  assert.equal(paused, actionsEditor)
+  assert.deepEqual(paused, { sessionId: 'learner-node', editor: actionsEditor })
 })
 
 // Value: protects=one hand-over per stop; fails_when=a later frame of a stop that was handed over already names the active text editor again and takes the keyboard from wherever the learner moved it; why_new=Cycle 0046 finding 603 (decision R7: once per stop); seam=none
@@ -41,7 +41,7 @@ test('the frame of a stop that was handed over already names no paused file', ()
   // Arrange
   const handOver = new StopKeyboardHandOver()
   handOver.arm('learner-node')
-  handOver.markDone()
+  handOver.markDone('learner-node')
 
   // Act
   const paused = pausedEditorOfStop({

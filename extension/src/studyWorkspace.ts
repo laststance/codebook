@@ -137,6 +137,7 @@ import {
 import { StopKeyboardHandOver } from './runtimeSupport/stopKeyboardHandOver'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
+import { heldStopSessionOf } from './runtimeSupport/utils/heldStopSessionOf'
 import { isDebugResumeMessage } from './runtimeSupport/utils/isDebugResumeMessage'
 import { isDebugStopsInvalidation } from './runtimeSupport/utils/isDebugStopsInvalidation'
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
@@ -681,7 +682,7 @@ export class StudyWorkspace {
     leftAtMs?: number
     pause?: KeyboardPauseOfRecord
   }
-  /** The keyboard hand-over of the stop the reader is showing: armed by {@link noteStopOf}, done once {@link handOverStopKeyboard} gave the paused file the keyboard, idle when the session goes on. */
+  /** The keyboard hand-over of every debug session's current stop: armed by {@link noteStopOf}, done once {@link handOverStopKeyboard} gave the paused file the keyboard, idle when the session goes on. */
   private readonly stopHandOver = new StopKeyboardHandOver()
   /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet, each with what {@link noteStopOf} noted of that stop; {@link cameWithStop} takes a session out again, and so does {@link forgetSession}. */
   private readonly announcedStops = new Map<string, StopNote>()
@@ -11783,19 +11784,19 @@ export class StudyWorkspace {
    * @example this.handOverStopKeyboard()
    */
   private handOverStopKeyboard(): void {
-    const editor = pausedEditorOfStop({
+    const paused = pausedEditorOfStop({
       activeStackItem: vscode.debug.activeStackItem,
       activeTextEditor: vscode.window.activeTextEditor,
       handOver: this.stopHandOver,
     })
-    if (!editor) return
-    this.stopHandOver.markDone()
+    if (!paused) return
+    this.stopHandOver.markDone(paused.sessionId)
     // A keyboard courtesy: an editor that refuses the show leaves the focus where it was.
     void vscode.window
-      .showTextDocument(editor.document, {
-        viewColumn: editor.viewColumn,
+      .showTextDocument(paused.editor.document, {
+        viewColumn: paused.editor.viewColumn,
         preserveFocus: false,
-        selection: editor.selection,
+        selection: paused.editor.selection,
       })
       .then(undefined, () => undefined)
   }
@@ -11819,12 +11820,15 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the stop the reader holds is one whose keyboard Codebook hands, or handed, to the paused file; asked by {@link judgeKeyboardAtPauseBegin}, which owes the chat nothing for it.
-   * @returns `true` while a stop is armed or handed over ({@link StopKeyboardHandOver}) and its hand-over is due; `false` otherwise.
+   * Says whether the stop of the frame the editor shows is one whose keyboard Codebook hands, or handed, to the paused file; asked by {@link judgeKeyboardAtPauseBegin}, which owes the chat nothing for it.
+   * @returns `true` while that frame's session holds a stop that is armed or handed over ({@link heldStopSessionOf}) and its hand-over is due; `false` otherwise, also when another session's stop is held.
    * @example if (this.holdsStopKeyboard()) this.leavePauseToLearner()
    */
   private holdsStopKeyboard(): boolean {
-    const sessionId = this.stopHandOver.heldSessionId()
+    const sessionId = heldStopSessionOf(
+      vscode.debug.activeStackItem,
+      this.stopHandOver,
+    )
     return sessionId !== undefined && this.isStopHandOverDue(sessionId)
   }
 
