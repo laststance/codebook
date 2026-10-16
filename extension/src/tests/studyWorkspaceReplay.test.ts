@@ -4701,16 +4701,16 @@ test('an agent opening the same recording after the reader closed opens the read
   }
 })
 
-// Value: protects=the chat input's keyboard when an agent opens a recording through codebook_playback while the Study workspace is closed and VS Code's chat view (or Cursor's chat in the side bar) has the keyboard: the replay's Application group is placed without a focus, no file gets the keyboard and the Learning summary is shown without taking it; fails_when=the replay's preparation shows the learner's active file with the keyboard, or the summary's reveal takes the keyboard, so the chat input loses it without a word; why_new=Cycle 0046 row 613 (an agent's replay open: loadPlayback -> open); seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's playback (the codebook_playback tool's handler), textDocumentShows, viewFocusCommands, keyboardInView and the information messages
-test('an agent’s replay open while the chat view has the keyboard leaves the keyboard in the chat and shows the Learning summary without it', async () => {
-  // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner typed the request into the chat view.
+// Value: protects=the chat input's keyboard when an agent opens a recording through codebook_playback while the Study workspace is closed and VS Code's chat view, in front of the secondary side bar, has the keyboard: the replay's Application group is placed without a focus, no file gets the keyboard, the Learning summary's container is not brought in front of the chat (VS Code would remove the chat's element with the keyboard inside, even with the focus kept), and the learner is told once where the summary waits; fails_when=the replay's preparation shows the learner's active file with the keyboard, or the summary's reveal replaces the chat in the secondary side bar, so the chat input loses the keyboard and the agent's answer is hidden without a word; why_new=Cycle 0046 row 613 (an agent's replay open: loadPlayback -> open) and the finding on the summary's reveal beside VS Code's chat (1.140.0 workbench.desktop.main.js 1639:157175, 1106:186495, 1106:190002); seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusChatInSecondarySideBar (VS Code's chat view), the service's playback (the codebook_playback tool's handler), textDocumentShows, viewFocusCommands, keyboardInView and the information messages
+test('an agent’s replay open while the chat view has the keyboard leaves the keyboard in the chat and keeps the Learning summary behind the chat with a word', async () => {
+  // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner typed the request into VS Code's chat in the secondary side bar.
   const harness = await recordedReaderHarness(true, true)
   try {
     await harness.reader.close()
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
     harness.leaveEmptyGroup(1)
     harness.focusMutableDraft('actions.ts', 1)
-    harness.focusView()
+    harness.focusChatInSecondarySideBar()
     const showsBefore = harness.textDocumentShows().length,
       viewFocusBefore = harness.viewFocusCommands.length
 
@@ -4723,7 +4723,7 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
     })
     await harness.controller.settle()
 
-    // Assert: no document was shown with the keyboard, the summary's views were shown without it, and the chat view still has it; the one sentence the editor's ambiguity calls for (row 614) says that a view keeps it.
+    // Assert: no document was shown with the keyboard, only the moments' view in the panel was shown (without it), and the chat view still has it; the sentence the editor's ambiguity calls for (row 614) says that a view keeps it, and the next one says where the summary waits.
     assert.deepEqual(
       harness
         .textDocumentShows()
@@ -4733,7 +4733,6 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
     )
     assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [
       { command: 'codebook.observedMoments.focus', preserveFocus: true },
-      { command: 'codebook.learningSummary.focus', preserveFocus: true },
     ])
     assert.equal(harness.keyboardInView(), true)
     assert.equal(harness.controller.state().readiness, 'ready')
@@ -4741,6 +4740,60 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
       harness.informationMessages.map((message) => message.message),
       [
         'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+        'Codebook showed the replay an agent asked for without bringing its Learning summary to the front of the secondary side bar, so a chat there keeps its place and your keyboard. To read the summary, click Learning summary at the top of that bar (View: Toggle Secondary Side Bar Visibility shows the bar).',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat input's keyboard when an agent selects the Study workspace through codebook_presentation while a replay stays loaded behind the closed workspace and VS Code's chat view, in front of the secondary side bar, has the keyboard: the entry is an agent's (open with forAgent), so its Application preparation gives no file the keyboard and the Learning summary is not brought in front of the chat, and the learner is told where each is; fails_when=the selection's entry prepares as the learner's and gives the active file the keyboard, or the summary's reveal replaces the chat and its keyboard without a word; why_new=Cycle 0046 coverage of an agent's select into a replay (no test reached open's forAgent through a selection with a recording loaded); seam=recordedReaderHarness, openRecording and the reader's close, hideSummary (the learner brought the chat to the front again), useNativeLayout, focusMutableDraft, focusChatInSecondarySideBar (VS Code's chat view), the service's selectPresentation (the codebook_presentation handler), textDocumentShows, viewFocusCommands, keyboardInView and the information messages
+test('an agent’s Study selection while a replay stays loaded and the chat view has the keyboard gives no file the keyboard and keeps the Learning summary behind the chat with a word', async () => {
+  // Arrange: the learner opened a saved recording and closed the Study workspace, brought the chat to the front of the secondary side bar again, and typed the request there; actions.ts is the active editor of the first group.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.close()
+    harness.hideSummary()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusChatInSecondarySideBar()
+    const state = harness.reader.presentationState(),
+      showsBefore = harness.textDocumentShows().length,
+      viewFocusBefore = harness.viewFocusCommands.length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: no document was shown with the keyboard, only the moments' view was shown (without it), the chat view still has the keyboard, and the two sentences say where the Application group and the summary are.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [
+      { command: 'codebook.observedMoments.focus', preserveFocus: true },
+    ])
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+        'Codebook showed the replay an agent asked for without bringing its Learning summary to the front of the secondary side bar, so a chat there keeps its place and your keyboard. To read the summary, click Learning summary at the top of that bar (View: Toggle Secondary Side Bar Visibility shows the bar).',
       ],
     )
   } finally {

@@ -21,6 +21,7 @@ import {
   LEARNER_SELECTION_KINDS,
   LEARNER_SIGN_FRESH_MS,
   LEARNER_STARTED_STOP_REASONS,
+  LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
   CONTROL_RETIRING_MESSAGE_TYPES,
@@ -490,14 +491,20 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
  * keyboardNoticesTold.add('close')
  */
 const keyboardNoticesTold = new Set<
-  'close' | 'pause' | 'chosen' | 'runEnd' | 'preparation' | 'agentSelection'
+  | 'close'
+  | 'pause'
+  | 'chosen'
+  | 'runEnd'
+  | 'preparation'
+  | 'agentSelection'
+  | 'summaryBehindChat'
 >()
 
 /**
@@ -6823,7 +6830,7 @@ export class StudyWorkspace {
    * @param signal - Cancels an obsolete reader entry.
    * @param origin - Identifies the existing navigation/placement contract for this entry.
    * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
-   * @param forAgent - `true` for an entry an agent asked for (a selection through codebook_presentation, a recording's open through codebook_playback, a source reveal through codebook_reveal, a Live Return through codebook_return_current): its Application preparation gives the keyboard to no place it cannot prove beside a chat view, and the Learning summary is shown without it (row 613).
+   * @param forAgent - `true` for an entry an agent asked for (a selection through codebook_presentation, a recording's open through codebook_playback, a source reveal through codebook_reveal, a Live Return through codebook_return_current, the reader's own Live entry of a run codebook_start started): its Application preparation gives the keyboard to no place it cannot prove beside a chat view (row 613), and in VS Code a Learning summary that is not shown yet stays behind the chat in the secondary side bar ({@link showLearningSummary}).
    * @example await workspace.open(signal, 'study', true)
    */
   async open(
@@ -7291,6 +7298,7 @@ export class StudyWorkspace {
           signal,
           origin !== 'repository' && (firstOpen || compositionChanged),
           preserveRecordingKeyboard || forAgent,
+          forAgent,
         )
       }
       if (request === this.readerOpenNumber)
@@ -15131,12 +15139,14 @@ export class StudyWorkspace {
    * @param signal - Cancels an obsolete Summary entry.
    * @param revealPlayback - Reveals the bottom controls for explicit recording entry only.
    * @param preserveFocus - Reveals both native views without taking the current keyboard; an explicit Summary command keeps its default focus behavior.
+   * @param keepsSideBarFront - `true` for an entry an agent asked for ({@link open} with `forAgent`): in VS Code a summary that is not shown yet stays behind the view in front of the secondary side bar, where VS Code puts its chat, because opening the summary's container there removes that view's element with the keyboard inside even when the focus is kept; its document is made ready, and the learner is told once where it waits ({@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}).
    * @example await workspace.showLearningSummary(signal, true, true)
    */
   async showLearningSummary(
     signal?: AbortSignal,
     revealPlayback = false,
     preserveFocus = false,
+    keepsSideBarFront = false,
   ): Promise<void> {
     if (!this.recordingActive || !this.summaryComposition || this.closing)
       throw new StudyError(
@@ -15184,31 +15194,65 @@ export class StudyWorkspace {
         )
         assertCurrent()
       }
-      await vscode.commands.executeCommand(
-        'codebook.learningSummary.focus',
-        focusOptions,
-      )
-      assertCurrent()
-      await waitUntil(
-        () => {
-          assertCurrent()
-          return Boolean(this.summaryView?.visible)
-        },
-        'learning summary sidebar',
-        PRESENTATION_READY_TIMEOUT_MS,
-        signal,
-      )
-      assertCurrent()
+      const keptBehind = this.keepsSummaryBehindSideBarFront(keepsSideBarFront)
+      // Only a summary that may come in front of the chat's bar stays where it is; any other is brought to the front and awaited.
+      if (!keptBehind) {
+        await vscode.commands.executeCommand(
+          'codebook.learningSummary.focus',
+          focusOptions,
+        )
+        assertCurrent()
+        await waitUntil(
+          () => {
+            assertCurrent()
+            return Boolean(this.summaryView?.visible)
+          },
+          'learning summary sidebar',
+          PRESENTATION_READY_TIMEOUT_MS,
+          signal,
+        )
+        assertCurrent()
+      }
+      // A summary view resolved earlier holds the closed replay's placeholder; it gets the reader's document even while it waits behind the chat.
       if (this.summaryView && !this.summaryDocumentActive) {
         this.summaryDocumentActive = true
         this.summaryView.webview.html = studyHtml('context')
       }
       this.lastPublished = undefined
       this.publish()
-      this.offerSummaryPlacement('summary-shown')
+      if (keptBehind) this.tellSummaryKeptBehindChat()
+      else this.offerSummaryPlacement('summary-shown')
     } finally {
       focusSubscription.dispose()
     }
+  }
+
+  /**
+   * Decides whether {@link showLearningSummary} leaves the Learning summary behind the view in front of the secondary side bar: VS Code's view focus command opens the summary's container there even with `preserveFocus` (1.140.0 `workbench.desktop.main.js` 1639:157175), which hides the container in front and removes its element (1106:186495, 1106:190002). That is VS Code's chat by default (3507:75273), so an agent's entry would hide the agent's answer and drop the learner's keyboard.
+   * @param keepsSideBarFront - Whether the entry is an agent's ({@link open} with `forAgent`).
+   * @returns
+   * - `true` for an agent's entry in VS Code while the summary is not shown: nothing is brought to the front.
+   * - `false` for the learner's entry, in Cursor (which puts the summary in the primary side bar), and for a summary already shown, whose focus command changes no container.
+   * @example this.keepsSummaryBehindSideBarFront(true) // => true in VS Code while the chat is in front of the secondary side bar
+   */
+  private keepsSummaryBehindSideBarFront(keepsSideBarFront: boolean): boolean {
+    return (
+      keepsSideBarFront && !this.isCursorHost() && !this.summaryView?.visible
+    )
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the Learning summary of the replay an agent asked for waits behind the view in front of the secondary side bar ({@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}); called by {@link showLearningSummary} in place of bringing it to the front.
+   * @example this.tellSummaryKeptBehindChat() // after an agent's codebook_playback open in VS Code
+   */
+  private tellSummaryKeptBehindChat(): void {
+    if (keyboardNoticesTold.has('summaryBehindChat')) return
+    keyboardNoticesTold.add('summaryBehindChat')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE,
+    )
   }
 
   /**

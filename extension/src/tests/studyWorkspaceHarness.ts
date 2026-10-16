@@ -666,6 +666,8 @@ export async function workspaceHarness(
   let keyboardInSideBar = false
   /** Says that a view that is no editor has the keyboard (the Call Stack view of Run and Debug): the learner clicked into it, see `focusView`. Whatever gives an editor group, a text editor, a pane or the chat the keyboard ends that. */
   let keyboardInView = false
+  /** Says that the view with the keyboard is VS Code's chat in front of the secondary side bar, where the Learning summary's container also stands; see `focusChatInSecondarySideBar`. */
+  let viewInSecondarySideBar = false
   /** The reader's debug adapter tracker factories; `pauseDebugger` sends each of them the adapter's `stopped` event, as the editor does before it opens the paused file. */
   const debugAdapterTrackerFactories = new Set<{
     createDebugAdapterTracker(session: {
@@ -2691,6 +2693,16 @@ export async function workspaceHarness(
           }
           if (name === 'codebook.learningSummary.focus') {
             assert.ok(summaryProvider)
+            // VS Code opens the summary's container in place of the chat in front of the secondary side bar and removes the chat's element, even when the focus is kept (1.140.0 workbench.desktop.main.js 1106:186495, 1106:190002): its keyboard falls to the page body. Cursor puts the summary in the primary side bar.
+            if (
+              !summary.visible &&
+              keyboardInView &&
+              viewInSecondarySideBar &&
+              !hostAppName.toLowerCase().includes('cursor')
+            ) {
+              keyboardInView = false
+              keyboardOnBody = true
+            }
             summary.visible = true
             if (!summaryResolved) {
               summaryResolved = true
@@ -4836,6 +4848,19 @@ export async function workspaceHarness(
      */
     focusView(): void {
       keyboardInView = true
+      viewInSecondarySideBar = false
+      keyboardOnBody = false
+      // The native active tab stays, but its inner document loses the actual keyboard.
+      innerFocusedPanel = undefined
+      if (separateEditorPart) separateEditorPart.focused = false
+    },
+    /**
+     * Gives VS Code's chat view the keyboard where that editor puts it by default: in front of the secondary side bar, the bar the Learning summary's container stands in too. The editor reports it as `focusView` does; showing the summary's container in that bar then removes the chat's element with the keyboard inside.
+     * @example harness.focusChatInSecondarySideBar()
+     */
+    focusChatInSecondarySideBar(): void {
+      keyboardInView = true
+      viewInSecondarySideBar = true
       keyboardOnBody = false
       // The native active tab stays, but its inner document loses the actual keyboard.
       innerFocusedPanel = undefined
