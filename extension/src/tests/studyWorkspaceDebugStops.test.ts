@@ -3215,7 +3215,7 @@ test('a hand-over to the paused file is not undone by a later chat return', asyn
   }
 })
 
-// Value: protects=the keyboard of the paused file Codebook handed it to when the learner's Retry shows the stop's capture again; fails_when=Retry shows the captured source over that file preserving the focus because the reader's keyboard model forgets the hand-over, so the keyboard falls on the window body again; why_new=Cycle 0046 finding 589, C54 round 9f ("Retry kept BODY") and decision R7 (the reader treats the handed-over file as holding the keyboard for its stop; the active-editor restore R7 names never runs, since runtimeSourcePaths is never filled); seam=the reader's Retry and the fake editor's showStopKeepingFocus
+// Value: protects=the keyboard of the paused file Codebook handed it to when the learner's Retry shows the stop's capture again; fails_when=Retry shows the captured source over that file preserving the focus because the reader's keyboard model forgets the hand-over, so the keyboard falls on the window body again; why_new=Cycle 0046 finding 589, C54 round 9f ("Retry kept BODY") and decision R7 (the reader treats the handed-over file as holding the keyboard for its stop; the active-editor restore R7 names was unreachable and is removed, finding 594); seam=the reader's Retry and the fake editor's showStopKeepingFocus
 test('Retry at a stop handed to the paused file gives the captured source the keyboard instead of leaving it on the window body', async () => {
   // Arrange: a live run paused at a stop of its own with the captured source shown with the keyboard (Focus Captured Source), under Codebook's contributed default; the learner's Step Into handed the stepped-into file the keyboard.
   const harness = await workspaceHarness()

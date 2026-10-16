@@ -614,7 +614,6 @@ export class StudyWorkspace {
   /** Opaque native display, separate from every canonical captured hash URI; pinned copies stay frozen before a successor is allocated. */
   private sourceView?: { uri: vscode.Uri; studyId: string }
   private sourceIdentity?: vscode.TextEditorDecorationType
-  private readonly runtimeSourcePaths = new Set<string>()
   private app?: vscode.WebviewPanel
   /** First-group source retained across initial pane registration; preparation uses it only to prove native main-part focus, never to infer keyboard ownership. */
   private applicationPreparationSource?: vscode.TextEditor
@@ -823,8 +822,6 @@ export class StudyWorkspace {
   private editorAreaLook?: { sentAtMs: number; answer?: Promise<boolean> }
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
-  private lastActiveRegion: 'app' | 'context' | 'source' = 'context'
-  private restoringSource = false
   private lastRendered?: {
     revision: number
     itemId: RetainedStudySelection['itemId']
@@ -1742,10 +1739,7 @@ export class StudyWorkspace {
       panel,
       transition.cancellation.signal,
     )
-      .then(() => {
-        this.lastActiveRegion = 'context'
-        return this.presentationState()
-      })
+      .then(() => this.presentationState())
       .catch((error: unknown) => {
         throw new StudyError(
           'PRESENTATION_UNAVAILABLE',
@@ -5238,7 +5232,6 @@ export class StudyWorkspace {
         this.enlargedLayoutReceipt = undefined
         this.presentationConfirmed = false
         this.presentationReason = `Focused ${region === 'app' ? 'application' : region === 'source' ? 'source' : 'explanation'}. The ${this.liveComposition || this.summaryComposition ? 'app/source' : 'three-pane Study'} split is not confirmed. Use the pane controls or Restore layout.`
-        this.lastActiveRegion = region
         this.errors.delete('reading')
         this.publish()
       } finally {
@@ -5476,14 +5469,12 @@ export class StudyWorkspace {
    * Enlarges an owned pane while retaining the measured grid that {@link tryConfirmEnlargedLayout} restores; called by both Study Enlarge actions ("Enlarge application", "Enlarge explanation").
    * It ends a reading that is on (the side bars the Read hid are shown again), runs the editor's Expand and then its maximize toggle. The Expand resizes every group, so the layout of before is kept ({@link expandKeepingGroupSizes}, {@link groupSizesBeforeEnlarge}). An Enlarge ends in one of these ways: its own way back, a Restore of a confirmed three-pane arrangement, applies the measured layout again ({@link tryConfirmEnlargedLayout}); any other Restore ends the maximization with Expand and arranges, or gives the kept sizes back where it arranges nothing; a Close ends the maximization and gives the kept sizes back ({@link endEnlargementAtClose}); a Read or another Enlarge goes on from it and keeps the sizes of before the first; the learner's own maximize toggle leaves the expanded sizes until one of the others.
    * @param panel - The pane to enlarge, one of the reader's two.
-   * @param region - Which pane that is, for the region the reader takes as the active one afterwards.
    * @returns Once the editor answered the maximize toggle and the state is published.
    * @throws When the pane cannot take the focus, when the learner changed the focus or the panes meanwhile, and a rejection of an editor command; after the Expand the groups then get their sizes back, unless the learner's change stops that ({@link maximizeAfterExpand}).
-   * @example await this.enlargePresentationPanel(this.app!, 'app')
+   * @example await this.enlargePresentationPanel(this.app!)
    */
   private async enlargePresentationPanel(
     panel: vscode.WebviewPanel,
-    region: 'app' | 'context',
   ): Promise<void> {
     const previous = this.enlargedLayoutReceipt,
       confirmed = this.presentationState().layoutConfirmed
@@ -5536,7 +5527,6 @@ export class StudyWorkspace {
           expandedSignature: JSON.stringify(expanded),
         }
       }
-      this.lastActiveRegion = region
     } finally {
       this.publish()
     }
@@ -7499,18 +7489,11 @@ export class StudyWorkspace {
       return
     }
     if (action === 'return-current') await this.returnCurrentSelection()
-    if (action === 'source') {
-      await this.renderSelection(false)
-      this.lastActiveRegion = 'source'
-    }
-    if (action === 'focus-app') {
-      this.app?.reveal(undefined, false)
-      this.lastActiveRegion = 'app'
-    }
+    if (action === 'source') await this.renderSelection(false)
+    if (action === 'focus-app') this.app?.reveal(undefined, false)
     if (action === 'focus-context') {
       if (this.summaryComposition) await this.showLearningSummary()
       else this.contextPanel?.reveal(undefined, false)
-      this.lastActiveRegion = 'context'
     }
     if (action === 'read-app') await this.readStudyPane('app')
     if (action === 'read-source') await this.readStudyPane('source')
@@ -7518,12 +7501,12 @@ export class StudyWorkspace {
     if (action === 'enlarge-app') {
       if (!this.app)
         throw new Error('Open an application observation before enlarging it.')
-      await this.enlargePresentationPanel(this.app, 'app')
+      await this.enlargePresentationPanel(this.app)
     }
     if (action === 'enlarge-context') {
       if (!this.contextPanel)
         throw new Error('Open a study explanation before enlarging it.')
-      await this.enlargePresentationPanel(this.contextPanel, 'context')
+      await this.enlargePresentationPanel(this.contextPanel)
     }
     if (action === 'outline')
       await vscode.commands.executeCommand('codebook.learningOutline.focus')
@@ -14298,7 +14281,6 @@ export class StudyWorkspace {
       // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
       this.sampleKeyboardOutsideEditors()
       this.confirmInitialAppRegistration()
-      if (panel.active) this.lastActiveRegion = 'app'
       if (visible === panel.visible) return
       visible = panel.visible
       this.followReplaySurfaceVisibility(panel, visible)
@@ -14483,7 +14465,6 @@ export class StudyWorkspace {
       // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
       this.sampleKeyboardOutsideEditors()
       if (!panel.active) return
-      this.lastActiveRegion = 'context'
       void this.refreshProgress().then(() => {
         if (this.contextPanel === panel) this.publish()
       })
@@ -14573,7 +14554,6 @@ export class StudyWorkspace {
         this.summaryDocumentActive = true
         this.summaryView.webview.html = studyHtml('context')
       }
-      this.lastActiveRegion = 'context'
       this.lastPublished = undefined
       this.publish()
       this.offerSummaryPlacement('summary-shown')
@@ -14773,33 +14753,6 @@ export class StudyWorkspace {
     isVisible: boolean,
   ): boolean {
     return this.summaryView === view && Boolean(view.visible) === isVisible
-  }
-
-  /**
-   * Says whether the text editor that became active shows a file of the running application while the reader is open: the editor's debugger opened it over the captured source. Asked by the active-editor listener of {@link installReaders}.
-   * @param editor - The editor that became active, if any.
-   * @returns `true` only for an open reader and an editor whose file is one of the runtime's source paths.
-   * @example this.showsRuntimeSourceInOpenReader(vscode.window.activeTextEditor)
-   */
-  private showsRuntimeSourceInOpenReader(
-    editor: vscode.TextEditor | undefined,
-  ): boolean {
-    return Boolean(
-      this.opened &&
-      editor &&
-      this.runtimeSourcePaths.has(editor.document.uri.fsPath),
-    )
-  }
-
-  /**
-   * Says whether the captured source is not shown again over a runtime file right now; asked by the active-editor listener of {@link installReaders} after {@link showsRuntimeSourceInOpenReader}.
-   * @returns `true` while such a restore is already running, a presentation is being placed, or no captured source is selected.
-   * @example if (this.isSourceRestoreHeldBack()) return
-   */
-  private isSourceRestoreHeldBack(): boolean {
-    return Boolean(
-      this.restoringSource || this.presentationTransition || !this.sourceUri,
-    )
   }
 
   /**
@@ -15034,24 +14987,6 @@ export class StudyWorkspace {
         this.confirmInitialAppRegistration()
         // The paused file the editor opened preserving the focus at a stop Codebook did not cause gets the keyboard, once per stop.
         this.handOverStopKeyboard(editor)
-        if (editor?.document.uri.scheme === STUDY_SOURCE_SCHEME)
-          this.lastActiveRegion = 'source'
-        if (
-          !this.showsRuntimeSourceInOpenReader(editor) ||
-          this.isSourceRestoreHeldBack()
-        )
-          return
-        const region = this.lastActiveRegion
-        this.restoringSource = true
-        void this.renderSelection(true, true)
-          .then(() => {
-            if (region === 'context')
-              this.contextPanel?.reveal(undefined, false)
-            if (region === 'app') this.app?.reveal(undefined, false)
-          })
-          .finally(() => {
-            this.restoringSource = false
-          })
       }),
     )
     this.disposables.push(
