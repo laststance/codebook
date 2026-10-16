@@ -6347,6 +6347,168 @@ test('an agent’s Restore right after its own Return Current from VS Code’s c
   }
 })
 
+// Value: protects=the learner's own Restore from the command palette or its shortcut (Codebook: Arrange Study Workspace) right after an agent's Return Current from Cursor's chat: the Return gave the chat input its keyboard back with Cursor's Focus Agent, which changes no tab or group, so the editor names the Application pane's tab while that pane is not active; the command arranges the live panes again, answers confirmed and gives the chat its keyboard back; fails_when=the command's Restore takes the named Application pane for the learner's focus, its measurement moves the keyboard into the main editor, and it is refused with "The Study pane did not regain native focus after layout measurement." although no Study pane was pressed, leaving the chat without the keyboard (row 628 fixed only the agent's Restore); why_new=Cycle 0046 row 638; seam=useNativeLayout, addSeparateEditorPart (Cursor's chat part and its Focus Agent command), the service's selectPresentation and returnToCurrent, the reader's action('arrange') as the command runs it, the reader's error lines, focusedPanel and the command log
+test('a learner’s Arrange Study Workspace command right after an agent’s Return Current from Cursor’s chat reaches the confirmed live arrangement and gives the chat its keyboard back', async () => {
+  // Arrange: the agent selected the Study workspace from Cursor's chat and returned it to the current run; the Return gave the chat input the keyboard back, and the editor still names the Application pane's tab. The learner then runs Codebook: Arrange Study Workspace from the command palette, which gives the keyboard back to the chat input when it closes.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    const selection = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    chat.focusTab()
+    const beforeReturn = harness.reader.presentationState()
+    await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: beforeReturn.presentationId,
+      expectedRevision: beforeReturn.reader.contentRevision,
+    })
+    const afterReturn = harness.reader.presentationState()
+    const stateBefore = {
+      contentTab: afterReturn.reader.contentTab,
+      layoutConfirmed: afterReturn.layoutConfirmed,
+      namedTab: harness.focusedPanel(),
+      chatHasKeyboard: chat.focused(),
+    }
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert: the live arrangement is confirmed again with no error line, and Cursor's own command gave the chat input its keyboard back.
+    const restored = harness.reader.presentationState()
+    assert.deepEqual(stateBefore, {
+      contentTab: 'live',
+      layoutConfirmed: true,
+      namedTab: 'codebook.scopedBrowser',
+      chatHasKeyboard: true,
+    })
+    assert.deepEqual(
+      {
+        errorLines: readerSeams(harness).errorLines(),
+        layoutConfirmed: restored.layoutConfirmed,
+        reason: restored.reason,
+        appColumn: restored.panes.appColumn,
+        sourceColumn: restored.panes.sourceColumn,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter(isKeyboardCommand),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        errorLines: [],
+        layoutConfirmed: true,
+        reason: undefined,
+        appColumn: 1,
+        sourceColumn: 2,
+        keyboardCommands: ['composer.focusComposer'],
+        chatHasKeyboard: true,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const situation of [
+  {
+    where:
+      'the learner’s Arrange Study Workspace command run from VS Code’s chat view',
+    keeper: 'that view',
+    host: 'vscode',
+    learnerMovesTo: 'chat view',
+    pressedInStudyView: false,
+  },
+  {
+    where: 'the learner’s Restore pressed in a Study view after Cursor’s chat',
+    keeper: 'that view',
+    host: 'cursor',
+    learnerMovesTo: 'view',
+    pressedInStudyView: true,
+  },
+] as const)
+  // Value: protects=the learner's own Restore after an agent's Return Current where the keyboard is in a view: VS Code's command run from its chat view, and a press in a Study view beside Cursor's chat part, which keeps the learner's focus rule; the Restore arranges the live panes, answers confirmed and leaves the keyboard in that view; fails_when=the change for the command's Restore from Cursor's chat (row 638) runs Cursor's Focus Agent or another focus command for a press in a Study view, or refuses the command's Restore in VS Code; why_new=Cycle 0046 row 638 (VS Code's chat-view model, and a press in a Study view); seam=useNativeLayout, addSeparateEditorPart, focusChatInSecondarySideBar, focusView, the service's selectPresentation and returnToCurrent, the reader's action('arrange') with and without a pane's press, keyboardInView, the reader's error lines and the command log
+  test(`${situation.where} right after an agent’s Return Current reaches the confirmed live arrangement and leaves the keyboard in ${situation.keeper}`, async () => {
+    // Arrange: the agent selected the Study workspace from its chat and returned it to the current run; the learner then went to ${situation.keeper}.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat =
+      situation.host === 'cursor' ? harness.addSeparateEditorPart() : undefined
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      if (chat) chat.focusTab()
+      else harness.focusChatInSecondarySideBar()
+      const selection = harness.reader.presentationState()
+      await harness.service.selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      if (chat) chat.focusTab()
+      else harness.focusChatInSecondarySideBar()
+      const beforeReturn = harness.reader.presentationState()
+      await harness.service.returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: beforeReturn.presentationId,
+        expectedRevision: beforeReturn.reader.contentRevision,
+      })
+      if (situation.learnerMovesTo === 'chat view')
+        harness.focusChatInSecondarySideBar()
+      if (situation.learnerMovesTo === 'view') harness.focusView()
+      const commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
+
+      // Act
+      await harness.reader.action('arrange', situation.pressedInStudyView)
+
+      // Assert: the live arrangement is confirmed again with no error line; no focus command ran, the view keeps the keyboard, and nothing is told.
+      const restored = harness.reader.presentationState()
+      assert.deepEqual(
+        {
+          errorLines: readerSeams(harness).errorLines(),
+          contentTab: restored.reader.contentTab,
+          layoutConfirmed: restored.layoutConfirmed,
+          reason: restored.reason,
+          keyboardCommands: harness.commands
+            .slice(commandsBefore)
+            .filter(isKeyboardCommand),
+          viewHasKeyboard: harness.keyboardInView(),
+          chatHasKeyboard: chat?.focused(),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          errorLines: [],
+          contentTab: 'live',
+          layoutConfirmed: true,
+          reason: undefined,
+          keyboardCommands: [],
+          viewHasKeyboard: true,
+          chatHasKeyboard: situation.host === 'cursor' ? false : undefined,
+          messages: [],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=an agent's selection after the learner watched a replay and closed the Study workspace: the reader still holds that recording, and the selection arranges its panes and answers confirmed once the recorded source is shown; fails_when=the selection is answered while the recorded source is still opening, with "The live Study layout could not be confirmed after Restore." and the panes it opened left behind, again at every repeat; why_new=Cycle 0045 cause 12 (e) (obs15 P4: two selects refused after 473 ms and 446 ms with the cause "The recorded source is opening in its native pane."); seam=the recorded reader harness, focusMutableDraft
 test("a selection made on a closed reader that holds a recording arranges the recording's panes and answers confirmed once the recorded source is shown", async () => {
   // Arrange: a recording was opened and the Study workspace closed; the learner types in a file.
