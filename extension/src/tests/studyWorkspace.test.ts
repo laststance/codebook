@@ -4552,7 +4552,7 @@ for (const chatState of [
   "the editor named the chat's group",
   "the editor named the learner's file without an active text editor",
 ] as const)
-  // Value: protects=the keyboard of a learner who was typing in Cursor's Agent chat (a tab of another editor part) when a live run paused: the chat has it again right after the captured source is shown at that pause, at the first pause and at the next one, and nothing is told; fails_when=the debugger opens the paused file with the keyboard, the reader's pane takes it from that file, and it stays in the editor until the run ends, as in the focus log of Cycle 0045's N14-d from the first pause on; why_new=Cycle 0046 row 5, Cursor half (the return of an arrangement happened after an arrangement only; a pause has none); seam=workspace harness with the controlled runtime, addSeparateEditorPart, focusMutableDraft, pauseDebugger, holdNextCommand on Cursor's Focus Agent command
+  // Value: protects=the keyboard of a learner who was typing in Cursor's Agent chat (a tab of another editor part) when a live run paused: the chat has it again right after the captured source is shown at that pause, at the first pause and at the next one, and the learner is told once where it went (row 635); fails_when=the debugger opens the paused file with the keyboard, the reader's pane takes it from that file, and it stays in the editor until the run ends, as in the focus log of Cycle 0045's N14-d from the first pause on; why_new=Cycle 0046 row 5, Cursor half (the return of an arrangement happened after an arrangement only; a pause has none); seam=workspace harness with the controlled runtime, addSeparateEditorPart, focusMutableDraft, pauseDebugger, holdNextCommand on Cursor's Focus Agent command
   test(`the chat that had the keyboard before a pause of a live run has it again after the captured source is shown, at that pause and at the next, when ${chatState}`, async () => {
     // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader follows a live run and the learner types in the chat.
     const harness = await workspaceHarness()
@@ -4655,7 +4655,13 @@ for (const chatState of [
         ).length,
         2,
       )
-      assert.deepEqual(harness.informationMessages, [])
+      // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      )
     } finally {
       release()
       live?.close()
@@ -4720,7 +4726,13 @@ test("the chat that took the keyboard from the Application pane has it again at 
       ),
       ['composer.focusComposer'],
     )
-    assert.deepEqual(harness.informationMessages, [])
+    // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -4873,6 +4885,77 @@ test("VS Code's chat editor tab in a floating window that had the keyboard befor
   }
 })
 
+for (const learnerPlace of ['the chat', 'the terminal'] as const)
+  // Value: protects=the learner's knowledge of where the keyboard went at a pause of a live run in Cursor with the Agent chat as a tab of another editor part: Focus Agent gives the chat input the keyboard back once the captured source is shown, and, because the extension API reads the same whether the chat input or the terminal or a view had the keyboard (Cursor 3.23.12 workbench.desktop.main.js 17269:31242 and 17501:84373 the active group follows editor parts only, 17264:2840 and 17264:3411 the active text editor, 17281:14030 the window focus), the learner is told once where it went, as VS Code's learner is for its chat editor tab (row 632); a learner who had gone to the terminal learns why the keyboard is in the chat; fails_when=Focus Agent moves the keyboard from the terminal to the chat silently while VS Code tells the same give-back; why_new=Cycle 0046 row 635; seam=workspace harness with the controlled runtime, addSeparateEditorPart and its focusTab, focusTerminalInBottomPanel (no event reaches the extension), pauseDebugger with opensWithKeyboard, the chat's keyboard, keyboardInView, the command log and the information messages
+  test(`Cursor's chat that the editor still names at a pause of a live run gets the keyboard back once the captured source is shown, and the learner is told once that a view cannot be told from it, while the learner typed in ${learnerPlace}`, async () => {
+    // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader follows a live run, the learner typed in the chat and, in the terminal case, then clicked into the terminal, which the editor reports to no extension.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = await harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      chat.focusTab()
+      if (learnerPlace === 'the terminal') harness.focusTerminalInBottomPanel()
+      const commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
+      // The pause: the debugger opens the paused file in front of the source group with the keyboard, then selects the stack item.
+      harness.pauseDebugger({
+        focusesEditorOnBreak: true,
+        opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+      })
+
+      // Act: the run reaches its stop and the reader shows the stop's captured source over the paused file.
+      harness.service.action({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        key: randomUUID(),
+        action: 'repository-click',
+      })
+      await readerSeams(harness).refresh()
+
+      // Assert: Focus Agent gave the chat input the keyboard, the terminal has it no more, and the sentence is told once.
+      assert.deepEqual(
+        {
+          chatHasKeyboard: chat.focused(),
+          terminalOrViewHasKeyboard: harness.keyboardInView(),
+          chatCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) => command === 'composer.focusComposer'),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          chatHasKeyboard: true,
+          terminalOrViewHasKeyboard: false,
+          chatCommands: ['composer.focusComposer'],
+          messages: [
+            'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+          ],
+        },
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
 // Value: protects=the keyboard of a learner who clicked from the Study pane into Cursor's Agent chat (a tab of another editor part) beside a live run: the chat's record is made although the editor reports the pane's view state after the tab events of that click, so a stop that ends unsettled gives the chat the keyboard back; fails_when=the Study pane's view state is not a reading of the chat's record, the last reading still sees an active pane, and no record is made; why_new=Cycle 0046 row 140, item 7 (the Study pane's half; the Application pane's is the test above); seam=workspace harness in the three-pane Study layout, a live run's viewport made through the reader's presentation, addSeparateEditorPart, holdPaneDeactivation, focusMutableDraft, pauseDebugger
 test("the chat that took the keyboard from the Study pane has it again when a stop of a live run ends, also when the editor reports the pane's view state after the tab events of that click", async () => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part; the Study workspace is open in its three panes, a live run has its Application pane, and the Study pane has the keyboard.
@@ -4913,7 +4996,13 @@ test("the chat that took the keyboard from the Study pane has it again when a st
       ),
       ['composer.focusComposer'],
     )
-    assert.deepEqual(harness.informationMessages, [])
+    // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -4976,7 +5065,13 @@ test('the chat that had the keyboard before a pause of a live run has it again w
         .length,
       2,
     )
-    assert.deepEqual(harness.informationMessages, [])
+    // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -5201,7 +5296,13 @@ test('the chat keeps the keyboard after native source capture without a delayed 
     assert.equal(chatFocusedAfterReveal, true)
     assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     assert.equal(chat.focused(), true)
-    assert.deepEqual(harness.informationMessages, [])
+    // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -5277,7 +5378,7 @@ test("a learner in Cursor who left the chat for a file between two pauses of a l
 
     assert.equal(harness.keyboardOnBody(), false)
     assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
-    // Assert: one return, at the first pause only; at the second the keyboard stays and the learner is told where it is.
+    // Assert: one return, at the first pause only, told once (row 635); at the second the keyboard stays and the learner is told where it is.
     assert.equal(chatFocusedAfterFirstPause, true)
     assert.equal(chat.focused(), false)
     assert.equal(
@@ -5288,6 +5389,7 @@ test("a learner in Cursor who left the chat for a file between two pauses of a l
     assert.deepEqual(
       harness.informationMessages.map((message) => message.message),
       [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
         'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
       ],
     )
@@ -5370,7 +5472,13 @@ test('the chat that had the keyboard before a pause of a live run has it again a
         .length,
       2,
     )
-    assert.deepEqual(harness.informationMessages, [])
+    // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -5457,7 +5565,14 @@ test('a learner in Cursor who went from a file to the chat between two pauses of
         .length,
       1,
     )
-    assert.equal(harness.informationMessages.length, 1)
+    // The return to the chat is told once (row 635), after the first pause's sentence.
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -5543,7 +5658,14 @@ test('a learner in Cursor who went from a file to the chat during a pause of a l
         .length,
       1,
     )
-    assert.equal(harness.informationMessages.length, 1)
+    // The return to the chat is told once (row 635), after the first pause's sentence.
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -5880,7 +6002,13 @@ for (const moment of [
         ),
         ['composer.focusComposer'],
       )
-      assert.deepEqual(harness.informationMessages, [])
+      // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      )
     } finally {
       release()
       harness.reader['settleKeyboardAtPause'] = settleKeyboard
@@ -6163,7 +6291,7 @@ test("the chat that had the keyboard gets it back at a pause of a live run when 
     })
     await readerSeams(harness).refresh()
 
-    // Assert: the chat has the keyboard again through Cursor's own command, and nothing is told.
+    // Assert: the chat has the keyboard again through Cursor's own command, and the learner is told once where it went (row 635).
     assert.equal(chat.focused(), true)
     assert.deepEqual(
       harness.commands.filter(
@@ -6171,7 +6299,13 @@ test("the chat that had the keyboard gets it back at a pause of a live run when 
       ),
       ['composer.focusComposer'],
     )
-    assert.deepEqual(harness.informationMessages, [])
+    // The chat's return at a pause is told once: the editor reads the same whether the chat input or a view had the keyboard (row 635).
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    )
   } finally {
     live?.close()
     await harness.close()
@@ -6293,7 +6427,7 @@ test("a learner in Cursor who went from the chat to a file during a pause of a l
 
     assert.equal(harness.keyboardOnBody(), false)
     assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
-    // Assert: one return, at the first pause only; at the second the keyboard stays and the learner is told where it is.
+    // Assert: one return, at the first pause only, told once (row 635); at the second the keyboard stays and the learner is told where it is.
     assert.equal(chatFocusedAfterFirstPause, true)
     assert.equal(chat.focused(), false)
     assert.deepEqual(
@@ -6305,6 +6439,7 @@ test("a learner in Cursor who went from the chat to a file during a pause of a l
     assert.deepEqual(
       harness.informationMessages.map((message) => message.message),
       [
+        'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
         'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
       ],
     )
@@ -6613,6 +6748,7 @@ test("a frame selected at a pause while the learner types in Cursor's chat tab l
       chatFocused: chat.focused(),
       shows: harness.textDocumentShows().length,
       commands: harness.commands.length,
+      messages: harness.informationMessages.length,
     }
 
     // Act: another frame is selected, whose file the editor opens over the captured source without the keyboard; the reader's timer runs.
@@ -6637,7 +6773,8 @@ test("a frame selected at a pause while the learner types in Cursor's chat tab l
         ),
       [],
     )
-    assert.deepEqual(harness.informationMessages, [])
+    // Only the pause's return to the chat was told (row 635); the selected frame tells nothing.
+    assert.deepEqual(harness.informationMessages.slice(before.messages), [])
   } finally {
     live?.close()
     await harness.close()

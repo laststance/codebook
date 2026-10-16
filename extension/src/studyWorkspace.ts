@@ -2974,7 +2974,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells the learner, once in an editor session, that VS Code's chat editor tab has the keyboard again and that the editor cannot tell its input from a view ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); called by {@link runFocusReturnCommand}.
+   * Tells the learner, once in an editor session, that the chat editor tab has the keyboard again and that the editor cannot tell its input from a view ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); called by {@link runFocusReturnCommand} for VS Code's chat editor tab and by {@link giveKeyboardBackAtPause} for every chat that got its keyboard back at a pause, Cursor's too.
    * @example this.tellChatEditorTabKeyboard()
    */
   private tellChatEditorTabKeyboard(): void {
@@ -3741,8 +3741,26 @@ export class StudyWorkspace {
     remembered.pause = undefined
     if (this.leavesRecordAfterPause(pause)) return false
     // A return the editor refuses leaves the keyboard where it is.
-    void remembered.giveBack(true).catch(() => false)
+    void this.giveKeyboardBackAtPause(remembered).catch(() => false)
     return true
+  }
+
+  /**
+   * Gives the chat of the record its keyboard back at a pause, and tells the learner once where it went ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); the return of {@link returnKeyboardOfPause} and {@link endsPauseOfRecord}.
+   * Neither editor tells an extension whether its chat input or a view (the terminal, the Call Stack) had the keyboard while the chat is the active editor: Cursor names the chat's group as the active one until another editor part takes the focus, and no text editor is active in either case (Cursor 3.23.12 `workbench.desktop.main.js` 17269:31242, 17501:84373, 17264:2840, 17264:3411; VS Code 1.140.0 705:2504). So a return to Cursor's chat with Focus Agent is told once, as the return to VS Code's chat editor tab is (row 632, told by {@link runFocusReturnCommand}); the mark is the same, so either is told once (row 635).
+   * @param remembered - The chat's record.
+   * @param stillCurrent - Revokes the return while native command discovery waits; left out for a pause that is over.
+   * @returns `true` when the chat's focus command ran.
+   * @throws What the editor's layout read, its command list or the chat's focus command rejected with.
+   * @example await this.giveKeyboardBackAtPause(remembered, stillCurrent) // => true in Cursor, and the sentence is told once
+   */
+  private async giveKeyboardBackAtPause(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+    stillCurrent?: () => boolean,
+  ): Promise<boolean> {
+    const returned = await remembered.giveBack(true, stillCurrent)
+    if (returned) this.tellChatEditorTabKeyboard()
+    return returned
   }
 
   /**
@@ -3839,7 +3857,7 @@ export class StudyWorkspace {
 
   /**
    * Settles the keyboard at a pause of a live run, right after the reader showed the captured source there without being asked for the keyboard; called by {@link renderSelection}.
-   * At a pause with native source focus enabled the editor's debugger opens the paused file with the keyboard, and the captured source that takes that file's place takes the keyboard with it. Where the chat had the keyboard just before the pause (Cursor's Agent chat as a tab of another editor part), it gets the keyboard back and nothing is told ({@link returnsKeyboardToChatAtPause}). Where the reader knows of no such chat (a learner in a file or on another tab of the main editor, and every side-view chat: VS Code's, and Cursor's Agent pane in the secondary side bar), the keyboard stays and the learner is told once ({@link tellPaneTookPausedFocus}) when the source took it. The Application pane settles the same question through its viewport's lease, before its reveal ({@link presentation}).
+   * At a pause with native source focus enabled the editor's debugger opens the paused file with the keyboard, and the captured source that takes that file's place takes the keyboard with it. Where the chat had the keyboard just before the pause (Cursor's Agent chat as a tab of another editor part), it gets the keyboard back and the learner is told once where it went, since the editor reads the same while the terminal or a view has it ({@link returnsKeyboardToChatAtPause}, {@link giveKeyboardBackAtPause}, row 635). Where the reader knows of no such chat (a learner in a file or on another tab of the main editor, and every side-view chat: VS Code's, and Cursor's Agent pane in the secondary side bar), the keyboard stays and the learner is told once ({@link tellPaneTookPausedFocus}) when the source took it. The Application pane settles the same question through its viewport's lease, before its reveal ({@link presentation}).
    * A return the editor refuses (its layout read, its command list or the chat's focus command rejects) leaves the keyboard where it is and is treated as no return: a keyboard courtesy never fails the render that called it.
    * @param tookKeyboard - Whether the captured source took the keyboard from the paused file.
    * @returns Once the keyboard is given back, found where it was, or left with the sentence told.
@@ -3890,7 +3908,7 @@ export class StudyWorkspace {
     try {
       returned =
         vscode.window.activeTextEditor !== undefined &&
-        (await remembered.giveBack(true, stillCurrent))
+        (await this.giveKeyboardBackAtPause(remembered, stillCurrent))
       return returned
     } finally {
       // From here an editor that becomes active is the learner's choice or the next stop's paused file; one that became active while the return ran was the captured source.
