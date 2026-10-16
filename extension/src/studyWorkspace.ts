@@ -497,7 +497,7 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailedApplication'` and `'agentSelectionFailedStudy'` are the two sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailed:application'`, `'agentSelectionFailed:study'` and `'agentSelectionFailed:source'` are the three sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -514,8 +514,7 @@ const keyboardNoticesTold = new Set<
   | 'learnerReturn'
   | 'readEnded'
   | 'chatEditorTab'
-  | 'agentSelectionFailedApplication'
-  | 'agentSelectionFailedStudy'
+  | `agentSelectionFailed:${keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}`
 >()
 
 /**
@@ -13145,7 +13144,7 @@ export class StudyWorkspace {
    * Tells the learner, once in an editor session for each place, where the keyboard is after an agent's Study selection failed once its placement had focused the captured source; passed by the failure path of {@link performPresentation} to {@link keepsKeyboardAfterAgentSelection} (row 634).
    * The placement's guarantee that the captured source holds the keyboard ends with the failure: the editor may have given the Application pane or the Study pane the keyboard meanwhile, so the active one is read now.
    * - The Application pane or the Study pane that is active: its own sentence ({@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}).
-   * - The captured source that is the active text editor: the selection's sentence ({@link tellKeyboardLeftOnSource}).
+   * - The captured source that is the active text editor: the failure's sentence for the source, which says that the arrangement could not be finished; never the sentence of a placement that holds ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}), which says that it was arranged (row 637).
    * - Any other place, which the learner chose or the editor does not tell: nothing.
    * @example this.tellKeyboardPlaceAfterFailedSelection() // the Application pane's sentence while that pane is active
    */
@@ -13154,21 +13153,19 @@ export class StudyWorkspace {
       return this.tellFailedSelectionPaneKeyboard('application')
     if (this.contextPanel?.active)
       return this.tellFailedSelectionPaneKeyboard('study')
-    this.tellKeyboardLeftOnSource()
+    if (this.isCapturedSourceActiveEditor())
+      this.tellFailedSelectionPaneKeyboard('source')
   }
 
   /**
-   * Tells the learner, once in an editor session, that one of the reader's panes has the keyboard after an agent's Study selection failed; called by {@link tellKeyboardPlaceAfterFailedSelection}.
-   * @param pane - `'application'` for the Application pane, `'study'` for the Study pane.
-   * @example this.tellFailedSelectionPaneKeyboard('study')
+   * Tells the learner, once in an editor session for each place, that one of the reader's panes or its captured source has the keyboard after an agent's Study selection failed; called by {@link tellKeyboardPlaceAfterFailedSelection}.
+   * @param pane - `'application'` for the Application pane, `'study'` for the Study pane, `'source'` for the captured source.
+   * @example this.tellFailedSelectionPaneKeyboard('source') // "Codebook could not finish the Study arrangement an agent asked for, and the captured source has the keyboard now. …"
    */
   private tellFailedSelectionPaneKeyboard(
     pane: keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
   ): void {
-    const notice =
-      pane === 'application'
-        ? 'agentSelectionFailedApplication'
-        : 'agentSelectionFailedStudy'
+    const notice: `agentSelectionFailed:${typeof pane}` = `agentSelectionFailed:${pane}`
     if (keyboardNoticesTold.has(notice)) return
     keyboardNoticesTold.add(notice)
     void showPlainNotice(
@@ -13183,11 +13180,19 @@ export class StudyWorkspace {
    * @example this.tellKeyboardLeftOnSource() // after codebook_presentation select covered the chat tab's group
    */
   private tellKeyboardLeftOnSource(): void {
-    if (
+    if (this.isCapturedSourceActiveEditor()) this.tellAgentSelectionKeyboard()
+  }
+
+  /**
+   * Says whether the captured source is the active text editor, which has the keyboard where no view does; asked by {@link tellKeyboardLeftOnSource} and {@link tellKeyboardPlaceAfterFailedSelection} before they tell the learner that the source has it.
+   * @returns `true` while the editor names the captured source's document as the active text editor; `false` for any other text editor.
+   * @example this.isCapturedSourceActiveEditor() // => true right after a Study selection placed its panes
+   */
+  private isCapturedSourceActiveEditor(): boolean {
+    return (
       vscode.window.activeTextEditor?.document.uri.toString() ===
       this.sourceUri?.toString()
     )
-      this.tellAgentSelectionKeyboard()
   }
 
   /**

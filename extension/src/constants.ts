@@ -344,7 +344,7 @@ export const APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE =
 export const AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE =
   'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
 /**
- * What the reader tells the learner, once in an editor session for each pane, when a Study selection an agent asked for through codebook_presentation failed after its placement focused the captured source and the editor named one of the reader's two panes as the active one by then (Cycle 0046 row 634). As after a placement that holds ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613), no file the learner is not known to work in gets the keyboard back; the sentence names the pane that has it instead of the captured source. A failure that leaves the captured source with the keyboard tells that sentence.
+ * What the reader tells the learner, once in an editor session for each place, when a Study selection an agent asked for through codebook_presentation failed after its placement focused the captured source: the sentence names the place the editor names as the active one by then, one of the reader's two panes (Cycle 0046 row 634) or the captured source. As after a placement that holds ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613), no file the learner is not known to work in gets the keyboard back. Each sentence says that the arrangement could not be finished: the sentence of a placement that holds says that Codebook arranged it, which a refused selection did not (row 637).
  * @example void showPlainNotice(vscode.window, 'information', AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES.application)
  */
 export const AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES = {
@@ -352,6 +352,8 @@ export const AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES = {
     'Codebook could not finish the Study arrangement an agent asked for, and the Application pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
   study:
     'Codebook could not finish the Study arrangement an agent asked for, and the Study pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+  source:
+    'Codebook could not finish the Study arrangement an agent asked for, and the captured source has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
 } as const
 /**
  * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki had to measure the main editor beside another editor part (Cursor's chat editor part) by focusing its first group, and the keyboard could not be given back: the chat tab moved or closed, or the host has no command for its chat. The keyboard then goes to the Wiki, no file the learner might type into unknowingly, and the sentence says so (Cycle 0046 row 620). Where the chat tab can be found again it gets its keyboard back and nothing is told.
