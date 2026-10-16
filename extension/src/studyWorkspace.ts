@@ -199,6 +199,7 @@ import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
 import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { editorSelectionState } from './utils/editorSelectionState'
+import { editorShowsDocument } from './utils/editorShowsDocument'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
@@ -13342,15 +13343,12 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the captured source is the active text editor, which has the keyboard where no view does; asked by {@link tellKeyboardLeftOnSource} and {@link tellKeyboardPlaceAfterFailedSelection} before they tell the learner that the source has it.
-   * @returns `true` while the editor names the captured source's document as the active text editor; `false` for any other text editor.
+   * Says whether the captured source is the active text editor, which has the keyboard where no view does; asked by {@link tellKeyboardLeftOnSource} and {@link tellKeyboardPlaceAfterFailedSelection} before they tell the learner that the source has it, and by {@link noteSourceKeyboardPlacement} before it notes Codebook's placement.
+   * @returns `true` while the editor names the captured source's document as the active text editor; `false` for any other text editor, while no text editor is active, and without a captured source ({@link editorShowsDocument}, row 651).
    * @example this.isCapturedSourceActiveEditor() // => true right after a Study selection placed its panes
    */
   private isCapturedSourceActiveEditor(): boolean {
-    return (
-      vscode.window.activeTextEditor?.document.uri.toString() ===
-      this.sourceUri?.toString()
-    )
+    return editorShowsDocument(vscode.window.activeTextEditor, this.sourceUri)
   }
 
   /**
