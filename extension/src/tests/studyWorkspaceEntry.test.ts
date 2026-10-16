@@ -1112,7 +1112,7 @@ test('an Open Study waiting for an abandoned first entry is refused when a prese
     await new Promise<void>((resolve) => setImmediate(resolve))
 
     // Act: a presentation change starts while the second entry waits, then the abandoned entry finishes.
-    harness.reader['returningCurrent'] = true
+    harness.reader['returningCurrent'] = 'learner'
     entry.release()
     const outcome = await second
 
@@ -1120,7 +1120,7 @@ test('an Open Study waiting for an abandoned first entry is refused when a prese
     assert.ok(outcome instanceof Error && 'code' in outcome)
     assert.equal(outcome.code, 'PRESENTATION_UNAVAILABLE')
   } finally {
-    harness.reader['returningCurrent'] = false
+    harness.reader['returningCurrent'] = undefined
     entry.release()
     await Promise.allSettled([first, second])
     await harness.close()

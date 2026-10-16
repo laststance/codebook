@@ -889,7 +889,8 @@ export class StudyWorkspace {
   private presentationId = randomUUID()
   private presentationControlRevision = 0
   private readerSelectionRevision = 0
-  private returningCurrent = false
+  /** Who asked for the Live Return that is running ({@link returnCurrentSelection}): `'agent'` for codebook_return_current, `'learner'` for the Study pane's control; `undefined` while none runs. */
+  private returningCurrent: PresentationRequester | undefined
   private presentationMode: PresentationMode = 'study-workspace'
   private requestedPresentation?: PresentationMode
   private presentationConfirmed = false
@@ -7819,7 +7820,7 @@ export class StudyWorkspace {
     this.assertPresentationIdle()
     const lifetime = this.lifetime,
       returnForeignFocus = this.retainForeignTabFocus(undefined)
-    this.returningCurrent = true
+    this.returningCurrent = requester
     try {
       this.historyRequest++
       this.leavePlayback()
@@ -7871,7 +7872,7 @@ export class StudyWorkspace {
     try {
       if (stillCurrent()) await returnForeignFocus?.(false, stillCurrent)
     } finally {
-      this.returningCurrent = false
+      this.returningCurrent = undefined
     }
   }
 
@@ -9364,7 +9365,13 @@ export class StudyWorkspace {
       // Failed placement needs explicit recovery, not a background loop that repeatedly changes the learner's layout.
       this.liveEntryRunId = current.id
       // Return-current already owns its navigation gate; finish that same intent without admitting another control.
-      await this.open(signal, this.returningCurrent ? 'presentation' : 'study')
+      // Only codebook_start starts a run, so a run's own entry is an agent's, as an agent's Return is: neither gives an unproven file the keyboard beside a chat view (row 612's rule).
+      await this.open(
+        signal,
+        this.returningCurrent ? 'presentation' : 'study',
+        false,
+        this.returningCurrent !== 'learner',
+      )
     }
   }
 
@@ -12556,7 +12563,7 @@ export class StudyWorkspace {
         const selections = JSON.stringify(
             vscode.window.activeTextEditor?.selections,
           ),
-          ownedByReturn = this.returningCurrent
+          ownedByReturn = this.returningCurrent !== undefined
         const stillCurrent = (): boolean => {
           try {
             assertCurrent()
