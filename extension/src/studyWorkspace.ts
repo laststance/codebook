@@ -192,6 +192,7 @@ import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
+import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
@@ -8005,9 +8006,10 @@ export class StudyWorkspace {
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .filter((tab) => this.ownsCapturedSourceTab(tab))
-      // Native tab closes dispose panels before their answer; retain cleanup references and keyboard-notice eligibility first.
+      // Native tab closes dispose panels before their answer; retain cleanup references (also the groups Codebook created) and keyboard-notice eligibility first.
       const contextPanel = this.contextPanel,
-        applicationPanel = this.app
+        applicationPanel = this.app,
+        createdGroups = this.createdStudyGroups()
       const leavesKeyboardNowhere =
         settlesKeyboard &&
         this.closesPaneOrSource(tabs.length) &&
@@ -8024,7 +8026,7 @@ export class StudyWorkspace {
       this.initialAppPlacement = undefined
       await this.releaseApplicationGroup()
       // An editor that keeps emptied groups leaves the other groups Codebook created empty: they go too, before the layout of before the Open is given back (finding 597).
-      await this.retireEmptyCreatedGroups()
+      await this.retireEmptyCreatedGroups(createdGroups)
       // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
       await this.giveLayoutOfBeforeOpenBack()
       // A recorded group this Close removed takes its record along, also one no App owner was left to release (finding 596).
@@ -11212,6 +11214,7 @@ export class StudyWorkspace {
                   visible.viewColumn === targetColumn,
               )
             : undefined
+        const groupsBeforeShow = this.identifiedEditorGroups()
         // Updating an existing input neither replaces its DOM editor nor guesses whether source, chat or a view owns the keyboard.
         const editor =
           existingView ??
@@ -11221,6 +11224,8 @@ export class StudyWorkspace {
             preview: false,
             selection: new vscode.Range(position, position),
           }))
+        // A column beyond the main grid makes the editor create a group for the source: that group is Codebook's (finding 597).
+        this.noteGroupCreatedForSource(groupsBeforeShow, targetColumn)
         if (isLiveSourceViewUri(uri)) {
           signal?.throwIfAborted()
           if (this.isRenderSuperseded(revision)) return
@@ -12958,6 +12963,40 @@ export class StudyWorkspace {
   }
 
   /**
+   * Keeps, as the created Source group, the group the editor created for the captured source {@link renderSelection} showed at a column beyond the main grid: `vscode.window.showTextDocument` with such a `viewColumn` adds the missing group (a Living book Open beside no chat part shows the source at column 3 before any arrangement), so {@link close} retires that group and the Application group record names it (findings 597 and 599).
+   * @param groupsBeforeShow - The editor's groups just before the source was shown ({@link identifiedEditorGroups}).
+   * @param column - The column the source was shown at.
+   * @example this.noteGroupCreatedForSource(groupsBeforeShow, 3) // the group the editor added at column 3 becomes the created Source group
+   */
+  private noteGroupCreatedForSource(
+    groupsBeforeShow: ReturnType<StudyWorkspace['identifiedEditorGroups']>,
+    column: vscode.ViewColumn,
+  ): void {
+    const identity = groupCreatedAtColumn(
+      groupsBeforeShow,
+      this.identifiedEditorGroups(),
+      column,
+    )
+    // A group that stood there before the show keeps whatever receipt it had.
+    if (identity) this.sourceDerivedGroup = { identity, column }
+  }
+
+  /**
+   * Lists the editor's groups with their columns and the identities this reader gave them, for {@link groupCreatedAtColumn}; {@link renderSelection} reads it before the source is shown and {@link noteGroupCreatedForSource} after.
+   * @returns Each group's column and identity (`undefined` for a group not yet named), in the editor's order.
+   * @example this.identifiedEditorGroups() // => [{ viewColumn: 1, identity: Symbol() }, { viewColumn: 2, identity: Symbol() }]
+   */
+  private identifiedEditorGroups(): {
+    viewColumn: number
+    identity: symbol | undefined
+  }[] {
+    return vscode.window.tabGroups.all.map((group) => ({
+      viewColumn: group.viewColumn,
+      identity: this.editorGroupIdentities.get(group),
+    }))
+  }
+
+  /**
    * Removes the reader-created Source split after {@link prepareApplicationGroup} moves App, retaining the current document in the original first group.
    * @param groups - Freshly measured main groups; only an unchanged clean owned source group may close.
    * @param assertCurrent - Preparation lifetime/cancellation check after each accepted native effect.
@@ -13744,16 +13783,27 @@ export class StudyWorkspace {
   }
 
   /**
-   * Retires every empty group Codebook created for this Study, whatever pane it last held: the groups the Application record names (also the one a Living book Open gave the Study Context, finding 596), the Study Context's created group and the created Source group; {@link close} calls it once {@link releaseApplicationGroup} released the App owner's group, because an editor with `workbench.editor.closeEmptyGroups` off keeps a group its last tab left and no owner is left to retire these (finding 597).
-   * Each group is found by its identity, so a learner's group is never retired; a group that holds a tab stays, and so does one the editor refuses to retire, without ending the Close.
-   * @example await this.retireEmptyCreatedGroups() // the donated group and the empty Source group go; the learner's group stays
+   * Names every group Codebook created for this Study, whatever pane it holds: the groups the Application record names (also the one a Living book Open gave the Study Context, finding 596), the Study Context's created group and the created Source group; {@link close} reads it before it closes any tab, because the editor's removal of an emptied group shifts the later columns and ends the created Source group's receipt, and {@link releaseApplicationGroup} clears the record's identities (finding 597).
+   * @returns The identities, `undefined` for a kind of group this Study did not create.
+   * @example const createdGroups = this.createdStudyGroups() // => Set { donatedGroup, sourceGroup, undefined }
    */
-  private async retireEmptyCreatedGroups(): Promise<void> {
-    const created = new Set([
+  private createdStudyGroups(): ReadonlySet<symbol | undefined> {
+    return new Set([
       ...this.recordedStudyGroups,
       this.readerCreatedContextGroup,
       this.sourceDerivedGroup?.identity,
     ])
+  }
+
+  /**
+   * Retires every empty group Codebook created for this Study, whatever pane it last held ({@link createdStudyGroups}); {@link close} calls it once {@link releaseApplicationGroup} released the App owner's group, because an editor with `workbench.editor.closeEmptyGroups` off keeps a group its last tab left and no owner is left to retire these (finding 597).
+   * Each group is found by its identity, so a learner's group is never retired; a group that holds a tab stays, and so does one the editor refuses to retire, without ending the Close.
+   * @param created - The groups Codebook created, as {@link createdStudyGroups} named them before the Close closed any tab.
+   * @example await this.retireEmptyCreatedGroups(createdGroups) // the donated group and the empty Source group go; the learner's group stays
+   */
+  private async retireEmptyCreatedGroups(
+    created: ReadonlySet<symbol | undefined>,
+  ): Promise<void> {
     // A group that now holds a tab stays, and a refused retirement keeps its group: neither ends the Close.
     for (const identity of created)
       if (identity)

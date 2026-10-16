@@ -644,6 +644,8 @@ export async function workspaceHarness(
   let maximizedColumn: number | undefined
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  /** See `createGroupForTextBeyondGrid`. */
+  let createsGroupForTextBeyondGrid = false
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard; the next tab or group change rebuilds the tab model and corrects the name.
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
@@ -3346,10 +3348,14 @@ export async function workspaceHarness(
             )
           )
             replaceGroupObjects([], undefined, false)
+          // In the model of `createGroupForTextBeyondGrid`, a column beyond the last main group gets a new group, as both editors give one; otherwise the text lands in the first group.
           const group =
               groups.find(
                 (candidate) => candidate.viewColumn === sourceColumn,
-              ) ?? groups[0]!,
+              ) ??
+              (createsGroupForTextBeyondGrid
+                ? nativeGroup(sourceColumn)
+                : groups[0]!),
             tab = group.tabs.find(
               (tab) =>
                 tab.input instanceof TabInputText &&
@@ -4334,6 +4340,13 @@ export async function workspaceHarness(
     isPanelMaximized: (): boolean => panelMaximized,
     /** The height of one editor group in a fake editor area of 840 px, by view column. @example harness.groupHeightPx(1) // 420 */
     groupHeightPx,
+    /**
+     * Makes the fake editor give a text document shown in a column beyond the last main group a new group of its own, as both editors do: `showTextDocument` with such a `viewColumn` resolves it through VS Code's `columnToEditorGroup`, which adds the missing group (the fake already does so for a webview panel). Without it the fake shows the document in the first group.
+     * @example harness.createGroupForTextBeyondGrid()
+     */
+    createGroupForTextBeyondGrid(): void {
+      createsGroupForTextBeyondGrid = true
+    },
     /**
      * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
      * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
