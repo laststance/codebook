@@ -670,6 +670,8 @@ export async function workspaceHarness(
   let keyboardInView = false
   /** Says that the view with the keyboard is VS Code's chat in front of the secondary side bar, where the Learning summary's container also stands; see `focusChatInSecondarySideBar`. */
   let viewInSecondarySideBar = false
+  /** Says that the learner's terminal stands in front of the bottom panel, where the Observed moments' container also stands; see `focusTerminalInBottomPanel`. */
+  let terminalInFrontOfPanel = false
   /** The reader's debug adapter tracker factories; `pauseDebugger` sends each of them the adapter's `stopped` event, as the editor does before it opens the paused file. */
   const debugAdapterTrackerFactories = new Set<{
     createDebugAdapterTracker(session: {
@@ -2687,6 +2689,14 @@ export async function workspaceHarness(
             })
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
+            // Both editors open the moments' container in place of the terminal in front of the bottom panel and remove the terminal's element, even when the focus is kept (VS Code 1.140.0 workbench.desktop.main.js 1639:157156, 1106:186495, 1106:190002; Cursor 18332:33062, 17501:98812): its keyboard falls to the page body.
+            if (!playbackPanel.visible && terminalInFrontOfPanel) {
+              terminalInFrontOfPanel = false
+              if (keyboardInView && !viewInSecondarySideBar) {
+                keyboardInView = false
+                keyboardOnBody = true
+              }
+            }
             playbackPanel.visible = true
             if (!playbackPanelResolved) {
               playbackPanelResolved = true
@@ -4869,6 +4879,20 @@ export async function workspaceHarness(
       innerFocusedPanel = undefined
       if (separateEditorPart) separateEditorPart.focused = false
     },
+    /**
+     * Gives the learner's terminal the keyboard in front of the bottom panel, the panel the Observed moments' container stands in too. The editor reports it as `focusView` does; showing the moments' container in that panel then hides the terminal and removes its element with the keyboard inside.
+     * @example harness.focusTerminalInBottomPanel()
+     */
+    focusTerminalInBottomPanel(): void {
+      keyboardInView = true
+      viewInSecondarySideBar = false
+      terminalInFrontOfPanel = true
+      keyboardOnBody = false
+      innerFocusedPanel = undefined
+      if (separateEditorPart) separateEditorPart.focused = false
+    },
+    /** Says whether the learner's terminal still stands in front of the bottom panel; see `focusTerminalInBottomPanel`. @example harness.terminalInFrontOfPanel() // => false after the moments' container replaced it */
+    terminalInFrontOfPanel: () => terminalInFrontOfPanel,
     /** Says whether a view that is no editor still has the keyboard; see `focusView`. @example harness.keyboardInView() // => false after the reader showed a document with the focus */
     keyboardInView: () => keyboardInView,
     /**

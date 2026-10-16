@@ -4723,7 +4723,7 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
     })
     await harness.controller.settle()
 
-    // Assert: no document was shown with the keyboard, only the moments' view in the panel was shown (without it), and the chat view still has it; the sentence the editor's ambiguity calls for (row 614) says that a view keeps it, and the next one says where the summary waits.
+    // Assert: no document was shown with the keyboard, no view was brought to the front (the moments' view was not shown, row 621), and the chat view still has it; the sentence the editor's ambiguity calls for (row 614) says that a view keeps it, and the next one says where the replay's controls wait.
     assert.deepEqual(
       harness
         .textDocumentShows()
@@ -4731,16 +4731,14 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
         .filter((shown) => !shown.preserveFocus),
       [],
     )
-    assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [
-      { command: 'codebook.observedMoments.focus', preserveFocus: true },
-    ])
+    assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [])
     assert.equal(harness.keyboardInView(), true)
     assert.equal(harness.controller.state().readiness, 'ready')
     assert.deepEqual(
       harness.informationMessages.map((message) => message.message),
       [
         'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
-        'Codebook showed the replay an agent asked for without bringing its Learning summary to the front of the secondary side bar, so a chat there keeps its place and your keyboard. To read the summary, click Learning summary at the top of that bar (View: Toggle Secondary Side Bar Visibility shows the bar).',
+        'Codebook showed the replay an agent asked for without bringing its controls to the front, so a chat or a terminal there keeps its place and your keyboard. To play it, click Learning summary at the top of the secondary side bar (View: Toggle Secondary Side Bar Visibility shows the bar) or the codebook tab of the bottom panel (View: Toggle Panel Visibility shows the panel).',
       ],
     )
   } finally {
@@ -4775,7 +4773,7 @@ test('an agent’s Study selection while a replay stays loaded and the chat view
       action: 'select',
     })
 
-    // Assert: no document was shown with the keyboard, only the moments' view was shown (without it), the chat view still has the keyboard, and the two sentences say where the Application group and the summary are.
+    // Assert: no document was shown with the keyboard, only the moments' view, which the learner's own open had shown already, was focused again (without the keyboard, no container switch), the chat view still has the keyboard, and the two sentences say where the Application group and the replay's controls are.
     assert.deepEqual(
       harness
         .textDocumentShows()
@@ -4793,9 +4791,81 @@ test('an agent’s Study selection while a replay stays loaded and the chat view
         .map((message) => message.message),
       [
         'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
-        'Codebook showed the replay an agent asked for without bringing its Learning summary to the front of the secondary side bar, so a chat there keeps its place and your keyboard. To read the summary, click Learning summary at the top of that bar (View: Toggle Secondary Side Bar Visibility shows the bar).',
+        'Codebook showed the replay an agent asked for without bringing its controls to the front, so a chat or a terminal there keeps its place and your keyboard. To play it, click Learning summary at the top of the secondary side bar (View: Toggle Secondary Side Bar Visibility shows the bar) or the codebook tab of the bottom panel (View: Toggle Panel Visibility shows the panel).',
       ],
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's terminal and its keyboard in the bottom panel when an agent opens a recording through codebook_playback in VS Code: the Observed moments view's focus command opens its container in place of the terminal even with the focus kept (1.140.0 workbench.desktop.main.js 1639:157156 -> openView 1639:152215 -> doOpenComposite 1106:186495, hideActiveComposite 1106:190002), which hides the terminal and drops its keyboard; the agent's entry leaves the panel as it is, and the one sentence told once names both places where the replay's controls wait; fails_when=the agent's replay open still focuses the moments view while it is not shown, or tells nothing about where the controls wait; why_new=Cycle 0046 row 621; seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusTerminalInBottomPanel (the panel's terminal with the keyboard), the service's playback (the codebook_playback handler), viewFocusCommands, keyboardInView, terminalInFrontOfPanel and the information messages
+test('an agent’s replay open in VS Code while the learner types in the bottom panel’s terminal keeps the terminal in front with its keyboard and says where the replay controls wait', async () => {
+  // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner types in the terminal of the bottom panel.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusTerminalInBottomPanel()
+    const viewFocusBefore = harness.viewFocusCommands.length
+
+    // Act
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+
+    // Assert: neither view was brought to the front, the terminal still stands in front of the panel with the keyboard, and the learner is told where the Application group and the replay's controls are.
+    assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [])
+    assert.equal(harness.terminalInFrontOfPanel(), true)
+    assert.equal(harness.keyboardInView(), true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+        'Codebook showed the replay an agent asked for without bringing its controls to the front, so a chat or a terminal there keeps its place and your keyboard. To play it, click Learning summary at the top of the secondary side bar (View: Toggle Secondary Side Bar Visibility shows the bar) or the codebook tab of the bottom panel (View: Toggle Panel Visibility shows the panel).',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's terminal and its keyboard in the bottom panel when an agent opens a recording through codebook_playback in Cursor: the Observed moments view's focus command switches the bottom panel's container there too (Cursor 3.23.12 18332:33062 -> 17501:95332, 17501:98812), while the Learning summary, which Cursor puts in the primary side bar, brings the replay's controls to the front without touching the panel; fails_when=the agent's replay open still focuses the moments view while it is not shown, so the terminal is hidden and its keyboard dropped; why_new=Cycle 0046 row 621; seam=recordedReaderHarness, useHostAppName('Cursor'), the reader's close, useNativeLayout, focusMutableDraft, focusTerminalInBottomPanel, the service's playback, viewFocusCommands, keyboardInView and terminalInFrontOfPanel
+test('an agent’s replay open in Cursor while the learner types in the bottom panel’s terminal shows the Learning summary and keeps the terminal in front with its keyboard', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.useHostAppName('Cursor')
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusTerminalInBottomPanel()
+    const viewFocusBefore = harness.viewFocusCommands.length
+
+    // Act
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+
+    // Assert: only the summary, with its transport, was brought to the front without the keyboard; the terminal keeps the panel and the keyboard.
+    assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [
+      { command: 'codebook.learningSummary.focus', preserveFocus: true },
+    ])
+    assert.equal(harness.terminalInFrontOfPanel(), true)
+    assert.equal(harness.keyboardInView(), true)
+    assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
     await harness.close()
   }

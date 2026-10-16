@@ -15378,14 +15378,14 @@ export class StudyWorkspace {
    * @param signal - Cancels an obsolete Summary entry.
    * @param revealPlayback - Reveals the bottom controls for explicit recording entry only.
    * @param preserveFocus - Reveals both native views without taking the current keyboard; an explicit Summary command keeps its default focus behavior.
-   * @param keepsSideBarFront - `true` for an entry an agent asked for ({@link open} with `forAgent`): in VS Code a summary that is not shown yet stays behind the view in front of the secondary side bar, where VS Code puts its chat, because opening the summary's container there removes that view's element with the keyboard inside even when the focus is kept; its document is made ready, and the learner is told once where it waits ({@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}).
+   * @param keepsViewsInFront - `true` for an entry an agent asked for ({@link open} with `forAgent`): Observed moments comes to the front of the bottom panel only where it is shown already ({@link revealsObservedMoments}, row 621), and in VS Code a summary that is not shown yet stays behind the view in front of the secondary side bar, where VS Code puts its chat, because opening either container removes the element in front with the keyboard inside even when the focus is kept; the summary's document is made ready, and the learner is told once where the replay's controls wait ({@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}).
    * @example await workspace.showLearningSummary(signal, true, true)
    */
   async showLearningSummary(
     signal?: AbortSignal,
     revealPlayback = false,
     preserveFocus = false,
-    keepsSideBarFront = false,
+    keepsViewsInFront = false,
   ): Promise<void> {
     if (!this.recordingActive || !this.summaryComposition || this.closing)
       throw new StudyError(
@@ -15425,15 +15425,15 @@ export class StudyWorkspace {
     try {
       assertCurrent()
       const focusOptions = preserveFocus ? { preserveFocus: true } : undefined
-      // Only explicit replay entry reveals the bottom controls; passive ticks never reopen a closed panel.
-      if (revealPlayback) {
+      // Only explicit replay entry reveals the bottom controls; passive ticks never reopen a closed panel, and an agent's entry switches no panel container.
+      if (this.revealsObservedMoments(revealPlayback, keepsViewsInFront)) {
         await vscode.commands.executeCommand(
           'codebook.observedMoments.focus',
           focusOptions,
         )
         assertCurrent()
       }
-      const keptBehind = this.keepsSummaryBehindSideBarFront(keepsSideBarFront)
+      const keptBehind = this.keepsSummaryBehindSideBarFront(keepsViewsInFront)
       // Only a summary that may come in front of the chat's bar stays where it is; any other is brought to the front and awaited.
       if (!keptBehind) {
         await vscode.commands.executeCommand(
@@ -15481,7 +15481,23 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells the learner, once in an editor session, that the Learning summary of the replay an agent asked for waits behind the view in front of the secondary side bar ({@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}); called by {@link showLearningSummary} in place of bringing it to the front.
+   * Decides whether {@link showLearningSummary} brings Observed moments to the front of the bottom panel: its focus command opens the view's container there even with `preserveFocus` (VS Code 1.140.0 `workbench.desktop.main.js` 1639:157156 -> 1639:152215; Cursor 3.23.12 18332:33062), which hides the container in front, the learner's terminal or a chat moved into the panel, and removes its element with the keyboard inside (1106:186495, 1106:190002; Cursor 17501:98812). No API tells what the panel shows, and the replay's transport is also in the Learning summary.
+   * @param revealPlayback - Whether the entry reveals the bottom controls at all (an explicit replay entry).
+   * @param forAgent - Whether the entry is an agent's ({@link open} with `forAgent`).
+   * @returns
+   * - `true` for the learner's replay entry, and for an agent's while Observed moments is shown already, whose focus command changes no container.
+   * - `false` without a replay entry, and for an agent's entry while the panel shows something else or nothing (row 621).
+   * @example this.revealsObservedMoments(true, true) // => false while the terminal stands in front of the bottom panel
+   */
+  private revealsObservedMoments(
+    revealPlayback: boolean,
+    forAgent: boolean,
+  ): boolean {
+    return revealPlayback && (!forAgent || Boolean(this.moments?.visible))
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the Learning summary of the replay an agent asked for waits behind the view in front of the secondary side bar, and its controls in the bottom panel's codebook tab ({@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}); called by {@link showLearningSummary} in place of bringing it to the front.
    * @example this.tellSummaryKeptBehindChat() // after an agent's codebook_playback open in VS Code
    */
   private tellSummaryKeptBehindChat(): void {
