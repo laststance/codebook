@@ -11253,7 +11253,7 @@ export class StudyWorkspace {
    * @param preserveFocus - Whether the keyboard focus stays where it is; `false` moves it into the source.
    * @param forceSource - Renders also when the selection did not change.
    * @param signal - The caller's cancellation; an aborted render ends its loading state without an error line.
-   * @param placement - The column an arrangement gives the source, or the layout receipt a reentry may restore it into.
+   * @param placement - The layout receipt an explicit reentry may restore the source into ({@link open}); without it the source stays in the group that shows it. No arrangement passes a column of its own (row 630): the Arrange control is a Restore, which shows no source.
    * @param restoreRecordedSource - The controller is re-presenting its committed moment after a recorded-surface return; permits source visibility recovery, never a new seek over a learner-hidden input.
    * @returns Once the source is shown, the render was superseded, or its failure was reported as the reader's `reader` line with the loading state ended.
    * @throws The signal's reason when it aborted before the render was queued, or the lifetime error when the reader closed meanwhile.
@@ -11263,12 +11263,10 @@ export class StudyWorkspace {
     preserveFocus = true,
     forceSource = false,
     signal?: AbortSignal,
-    placement?:
-      | { kind: 'arrange'; column: vscode.ViewColumn }
-      | {
-          kind: 'reentry'
-          receipt: NonNullable<StudyWorkspace['layoutReceipt']>
-        },
+    placement?: {
+      kind: 'reentry'
+      receipt: NonNullable<StudyWorkspace['layoutReceipt']>
+    },
     restoreRecordedSource = false,
   ): Promise<void> {
     signal?.throwIfAborted()
@@ -11440,9 +11438,8 @@ export class StudyWorkspace {
         recheckHistoricalInput(
           restoreRecordedSource && this.recordedSourceCanReturn(uri),
         )
-        let sourceColumn =
-          placement?.kind === 'arrange' ? placement.column : undefined
-        // Reentry cannot overwrite a learner move during source I/O; only explicit Arrange retains an unconditional target.
+        let sourceColumn: vscode.ViewColumn | undefined
+        // Reentry cannot overwrite a learner move during source I/O: it shows the source at the receipt's column only while the receipt still holds.
         if (placement?.kind === 'reentry') {
           const receipt = placement.receipt
           let layout: unknown
