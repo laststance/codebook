@@ -11118,7 +11118,7 @@ export class StudyWorkspace {
           throw new Error(
             'The native source editor was kept open. Choose Focus Captured Source to show the capture.',
           )
-        // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
+        // Over the file that holds the keyboard (the debugger's at a live pause, or the learner's sign) the source takes that focus: hiding that editor while preserving the focus would leave it nowhere.
         const takesPausedFocus =
           preserveFocus &&
           this.replacesEditorFocusedByPause(targetColumn, document.uri)
@@ -11682,13 +11682,15 @@ export class StudyWorkspace {
    * pane's reveal follows the same rule for its own group ({@link BrowserViewport}).
    *
    * Where the learner went back to Cursor's chat after the pause and that chat is a tab of another editor part, the focus is not
-   * taken: the editor then names the chat's group, or reports no active text editor. Where the chat is a side view (VS Code, and
-   * Cursor while its Agent chat is a pane of the secondary side bar), the editor reports the paused file as the active text editor
-   * in both cases, and the source takes the focus; {@link settleKeyboardAtPause} then says so once.
+   * taken: the editor then reports no active text editor, although it names the chat's group as the active group. Where the chat is
+   * a side view (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar), the editor keeps reporting the paused
+   * file as the active text editor, and the source takes the focus; {@link settleKeyboardAtPause} then says so once. Neither the
+   * active group's name nor the window's focus decides this, since the editor reported both unreliably (Cycle 0046 findings 586 and
+   * 588): the active text editor is judged against the tab in front of the group.
    *
    * @param column - The group the captured source is shown in.
    * @param source - The captured source; a group that shows it already loses no editor.
-   * @returns `true` only while {@link holdsKeyboardInActiveEditor} holds (the frame of a stop is shown with `debug.focusEditorOnBreak` not turned off, or the learner gave a sign), the window is focused, and the group is the active group showing another text tab whose editor is the active text editor.
+   * @returns `true` only while {@link holdsKeyboardInActiveEditor} holds (the frame of a stop is shown with `debug.focusEditorOnBreak` not turned off, or the learner gave a sign) and {@link isActiveEditorInFrontAt} holds for the group at `column`.
    * @example
    * ```ts
    * preserveFocus: preserveFocus && !this.replacesEditorFocusedByPause(targetColumn, document.uri)
@@ -11700,8 +11702,7 @@ export class StudyWorkspace {
   ): boolean {
     return (
       this.holdsKeyboardInActiveEditor() &&
-      this.isFocusedGroupShowingOtherText(column, source) &&
-      vscode.window.activeTextEditor?.viewColumn === column
+      this.isActiveEditorInFrontAt(column, source)
     )
   }
 
@@ -11748,11 +11749,11 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a tab input is a text tab of another document than the captured source; asked by {@link isFocusedGroupShowingOtherText} about the active group's tab.
+   * Says whether a tab input is a text tab of another document than the captured source; asked by {@link isActiveEditorInFrontAt} about the tab in front of the group.
    * @param shown - The input of the group's active tab, `undefined` for an empty group.
    * @param source - The captured source.
    * @returns `true` for a text tab of another document; `false` for the source itself, another kind of tab, or no tab.
-   * @example this.isTextInputOtherThan(vscode.window.tabGroups.activeTabGroup.activeTab?.input, document.uri)
+   * @example this.isTextInputOtherThan(shown, document.uri) // => false when `shown` is the captured source's own tab
    */
   private isTextInputOtherThan(shown: unknown, source: vscode.Uri): boolean {
     return (
@@ -11762,22 +11763,29 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the focused window's active group is the one the captured source is shown in and shows another text tab there; the first half of {@link replacesEditorFocusedByPause}.
+   * Says whether the active text editor is the text tab in front of the group at a column and shows another document than the captured source; the active-editor half of {@link replacesEditorFocusedByPause}.
+   * The group is found by its column and its front tab decides, not the active group's name nor the window's focus: Cursor 3.23.12 names its chat part as the active group while the learner works in a file, and VS Code under WSLg reports its window unfocused while its page has the keyboard (Cycle 0046 findings 586 and 588).
    * @param column - The group the captured source is shown in.
    * @param source - The captured source.
-   * @returns `true` when the window is focused, the active group is at `column` and {@link isTextInputOtherThan} holds for its active tab.
-   * @example this.isFocusedGroupShowingOtherText(targetColumn, document.uri)
+   * @returns `true` when the active text editor is in `column` and the tab in front of that column is a text tab accepted by {@link isTextInputOtherThan} whose document is that editor's; `false` without an active text editor, in another column, or for the captured source.
+   * @example this.isActiveEditorInFrontAt(targetColumn, document.uri) // => true after the learner's click into the frame's file in column 2
    */
-  private isFocusedGroupShowingOtherText(
+  private isActiveEditorInFrontAt(
     column: vscode.ViewColumn,
     source: vscode.Uri,
   ): boolean {
-    const group = vscode.window.tabGroups.activeTabGroup,
-      shown = group.activeTab?.input
+    const editor = vscode.window.activeTextEditor,
+      shown = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === column,
+      )?.activeTab?.input
+    if (
+      editor?.viewColumn !== column ||
+      !(shown instanceof vscode.TabInputText)
+    )
+      return false
     return (
-      vscode.window.state.focused &&
-      group.viewColumn === column &&
-      this.isTextInputOtherThan(shown, source)
+      this.isTextInputOtherThan(shown, source) &&
+      shown.uri.toString() === editor.document.uri.toString()
     )
   }
 

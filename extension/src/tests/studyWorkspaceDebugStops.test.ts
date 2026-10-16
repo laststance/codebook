@@ -1193,6 +1193,163 @@ test("Retry after a Call Stack click keeps the frame's file in front while Curso
   }
 })
 
+// Value: protects=the captured source's keyboard after the learner's click into the file of a frame selected without a stop while the editor names another group; fails_when=Retry shows the captured source over that file with preserveFocus true, so the keyboard falls on the window body; why_new=Cycle 0046 original 273 9a on C54 in Cursor 3.23.12 (one click into the frame's file moved the caret, then Retry showed the captured source with preserveFocus true: 80 of 131 page samples BODY); seam=the fake editor's keepNamingGroupAfterFrameNavigation and workInActiveTextEditor
+test("Retry after a click into the selected frame's file gives the captured source the keyboard while Cursor names another group", async () => {
+  // Arrange: a live run paused with the stop's file in column 2; Navigate Down Call Stack selected the frame without a stop, Cursor keeps naming the Application group, and the learner clicked into the frame's file.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    await readerSeams(harness).refresh()
+    const applicationPane = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(applicationPane)
+    harness.focusExistingWebviewTab(applicationPane.nativeTab)
+    harness.keepNamingGroupAfterFrameNavigation()
+    harness.selectStackFrame('actions.ts', 2, 'navigation-command')
+    harness.workInActiveTextEditor('mouse')
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert: the captured source is shown with the keyboard, and the window body has none.
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .map((show) => show.preserveFocus),
+      [false],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the captured source's keyboard after the learner's click into the file of a frame selected without a stop while VS Code reports its window unfocused although the page has the keyboard; fails_when=Retry shows the captured source with preserveFocus true because the source's keyboard decision also asks for the window's focus, so the keyboard falls on the window body; why_new=Cycle 0046 original 273 H1 on C52 in VS Code 1.140.0 for Linux under WSLg (finding 586: `vscode.window.state.focused` was false while the page had the keyboard); seam=the fake editor's changeWindowFocus and workInActiveTextEditor
+test("Retry after a click into the selected frame's file gives the captured source the keyboard while VS Code reports its window unfocused", async () => {
+  // Arrange: a live run paused with the stop's file in column 2; Navigate Down Call Stack selected the frame without a stop, the learner clicked into the frame's file, and the editor reports its window unfocused.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    await readerSeams(harness).refresh()
+    harness.selectStackFrame('actions.ts', 2, 'navigation-command')
+    harness.workInActiveTextEditor('mouse')
+    harness.changeWindowFocus(false)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert: the captured source is shown with the keyboard, and the window body has none.
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .map((show) => show.preserveFocus),
+      [false],
+    )
+  } finally {
+    harness.changeWindowFocus(true)
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard in Cursor's chat input after the learner's earlier click into the frame's file, while the editor reports no active text editor; fails_when=Retry takes the keyboard from the chat input and shows the captured source with the focus, because the source's keyboard decision ignores that no text editor is active; why_new=Cycle 0046 finding 588 (the fix must not take the keyboard from the chat: Cursor reports no active text editor while its chat input has the keyboard, the probe `c54/cursor/probe-chat-vs-file/result.json`); seam=the fake editor's addSeparateEditorPart, focusTab and workInActiveTextEditor
+test("Retry after a click into the selected frame's file leaves the keyboard in the chat input when no text editor is active", async () => {
+  // Arrange: a live run paused with the stop's file in column 2; Navigate Down Call Stack selected the frame without a stop, the learner clicked into the frame's file, and then the keyboard moved to Cursor's chat input, which leaves no active text editor.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    await readerSeams(harness).refresh()
+    harness.selectStackFrame('actions.ts', 2, 'navigation-command')
+    harness.workInActiveTextEditor('mouse')
+    const chat = harness.addSeparateEditorPart()
+    chat.focusTab()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert: the chat keeps the keyboard and the captured source is shown without taking it.
+    assert.equal(chat.focused(), true)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .map((show) => show.preserveFocus),
+      [true],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 for (const arrival of [
   {
     afterStoppedMs: 468,
