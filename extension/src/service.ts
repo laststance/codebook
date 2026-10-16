@@ -741,7 +741,8 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
       )
-    await this.presentationController.returnToCurrent(input)
+    // The codebook_return_current tool's request is an agent's: its Live arrangement gives no file it cannot prove the keyboard beside a chat view, and says once where it is.
+    await this.presentationController.returnToCurrent(input, 'agent')
     return this.presentationState(input.instanceId)
   }
 

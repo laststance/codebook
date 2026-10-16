@@ -5302,6 +5302,56 @@ test('a learner’s own Study selection gives the keyboard back to the learner�
   }
 })
 
+// Value: protects=the chat input's keyboard in an agent's cold order (select, Return Current, start) in VS Code: the Return Current that enters the live arrangement prepares its Application group as an agent's, and where that preparation had to focus an editor group the learner is told once that the new group has the keyboard; fails_when=the Return's preparation takes the chat view's keyboard with the first group's focus command and nothing tells the learner, because a Live Return keeps the final handoff for itself; why_new=Cycle 0046 finding on codebook_return_current; seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and returnToCurrent (the codebook_presentation and codebook_return_current handlers), textDocumentShows and the information messages
+test('an agent’s Return Current after its own Study selection, made while the chat view has the keyboard, gives no file the keyboard and says once that the Application’s group has it', async () => {
+  // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusView()
+    const selection = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    harness.focusView()
+    const state = harness.reader.presentationState(),
+      showsBefore = harness.textDocumentShows().length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.reader.contentRevision,
+    })
+
+    // Assert: no document was shown with the keyboard, and the sentence says that the new Application group has it.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.deepEqual(
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the main editor's grid when the chat cannot be given the keyboard back: in an editor without Cursor's "Focus Agent" command the focus stays where the arrangement ended and no group is opened; fails_when=the focus command of the other editor part's column is run, which opens a new empty group in the main editor; why_new=Cycle 0045 cause 12 (d) (the numbered focus commands count the main editor's groups only); seam=workspace harness with a separate editor part, removeHostCommands
 test('a selection made while another editor part holds the keyboard, in an editor without a command that focuses that part, leaves the focus where the arrangement ended and opens no editor group', async () => {
   // Arrange

@@ -463,6 +463,8 @@ interface PreparedApplicationFocus {
   forAgentRun: boolean
   /** `true` when the preparation focused an editor group itself: the first group, or a leftover's for its proof, whose removal left the keyboard in the main editor. */
   tookKeyboard: boolean
+  /** `true` when a Live Return prepares the group ({@link StudyWorkspace.returnCurrentSelection}): that Return gives a chat of another editor part its keyboard back itself, after its last effect ({@link StudyWorkspace.finishCurrentReturn}). */
+  ownedByReturn: boolean
 }
 
 /**
@@ -1110,9 +1112,17 @@ export class StudyWorkspace {
     }
   }
 
-  /** Returns an explicitly named historical reader to the current run after checking its visible content revision; MCP calls it before new input. @example await workspace.returnToCurrent({presentationId,expectedRevision:4}) */
+  /**
+   * Returns an explicitly named historical reader to the current run after checking its visible content revision; MCP calls it before new input.
+   * @param input - The named reader and the content revision the caller read.
+   * @param requester - `'agent'` for the codebook_return_current tool's handler ({@link StudyService.returnToCurrent}), whose caller may have the learner typing in a chat view: the Live arrangement it prepares gives the keyboard to no place it cannot prove (row 612's rule for {@link returnCurrentSelection}).
+   * @returns The reader's state, following the current run in Live.
+   * @throws When the reader lifetime or its content revision changed, or the current source is not displayed afterwards.
+   * @example await workspace.returnToCurrent({presentationId,expectedRevision:4}, 'agent')
+   */
   async returnToCurrent(
     input: ReturnCurrentIntent,
+    requester: PresentationRequester = 'learner',
   ): Promise<PresentationState> {
     this.assertPresentationIdle()
     const lifetime = this.lifetime
@@ -1140,7 +1150,7 @@ export class StudyWorkspace {
       !this.liveComposition ||
       !this.sourceReady()
     )
-      await this.returnCurrentSelection()
+      await this.returnCurrentSelection(requester)
     const state = this.presentationState()
     if (
       !this.sourceReady() ||
@@ -6812,7 +6822,7 @@ export class StudyWorkspace {
    * @param signal - Cancels an obsolete reader entry.
    * @param origin - Identifies the existing navigation/placement contract for this entry.
    * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
-   * @param forAgent - `true` for an entry an agent asked for (a selection through codebook_presentation, a recording's open through codebook_playback): its Application preparation gives the keyboard to no place it cannot prove beside a chat view, and the Learning summary is shown without it (row 613).
+   * @param forAgent - `true` for an entry an agent asked for (a selection through codebook_presentation, a recording's open through codebook_playback, a source reveal through codebook_reveal, a Live Return through codebook_return_current): its Application preparation gives the keyboard to no place it cannot prove beside a chat view, and the Learning summary is shown without it (row 613).
    * @example await workspace.open(signal, 'study', true)
    */
   async open(
@@ -7798,8 +7808,14 @@ export class StudyWorkspace {
     }
   }
 
-  /** Prepares the native Live composition and releases historical rendering when a learner or MCP control explicitly returns, before a later run starts. @example await this.returnCurrentSelection() */
-  private async returnCurrentSelection(): Promise<void> {
+  /**
+   * Prepares the native Live composition and releases historical rendering when a learner or MCP control explicitly returns, before a later run starts.
+   * @param requester - `'agent'` for codebook_return_current ({@link returnToCurrent}): the Application preparation is an agent's ({@link open} with `forAgent`), so beside a chat view it gives the keyboard to no place it cannot prove and tells once where it is. The Study pane's Return Current is the learner's.
+   * @example await this.returnCurrentSelection('agent')
+   */
+  private async returnCurrentSelection(
+    requester: PresentationRequester = 'learner',
+  ): Promise<void> {
     this.assertPresentationIdle()
     const lifetime = this.lifetime,
       returnForeignFocus = this.retainForeignTabFocus(undefined)
@@ -7819,7 +7835,7 @@ export class StudyWorkspace {
       await this.renderSelection(true, true)
       // The explicit selection owns arrangement; a subsequent background start must not borrow the chat keyboard to retire Context.
       if (this.opened && !this.liveComposition)
-        await this.open(undefined, 'presentation')
+        await this.open(undefined, 'presentation', false, requester === 'agent')
     } finally {
       await this.finishCurrentReturn(lifetime, returnForeignFocus)
     }
@@ -12535,11 +12551,12 @@ export class StudyWorkspace {
       // The record never rejects and is not awaited, so the preparation keeps its timing.
       this.rememberApplicationGroupMarker(identity)
       assertCurrent()
-      // Live Return already owns its final chat handoff; preparation must not add an earlier, unguarded one.
-      if (!this.returningCurrent && !cancelEntryFocusReturn) {
+      // An entry's own final handoff replaces this return; a Live Return keeps its chat handoff too ({@link returnPreparationFocus}).
+      if (!cancelEntryFocusReturn) {
         const selections = JSON.stringify(
-          vscode.window.activeTextEditor?.selections,
-        )
+            vscode.window.activeTextEditor?.selections,
+          ),
+          ownedByReturn = this.returningCurrent
         const stillCurrent = (): boolean => {
           try {
             assertCurrent()
@@ -12562,6 +12579,7 @@ export class StudyWorkspace {
             onlyEditorPart,
             forAgentRun,
             tookKeyboard: sourceFocusTookKeyboard || proofKeptKeyboard,
+            ownedByReturn,
           })
           assertCurrent()
         }
@@ -12583,7 +12601,7 @@ export class StudyWorkspace {
    * @returns The focus return ({@link returnPreparationFocus}): it gives focus back to a foreign tab when one held it, otherwise to a focused Codebook panel, otherwise to the captured native focus, except beside a chat view (row 612). The caller still validates current input after placement.
    * @example
    * const returnFocus = this.captureApplicationPreparationReturn(existingPanel, cancelEntryFocusReturn)
-   * await returnFocus(signal, stillCurrent, assertPlaced, { onlyEditorPart: true, forAgentRun: true, tookKeyboard: false }) // after the guarded placement in VS Code beside the chat view: nothing is focused, nothing is told
+   * await returnFocus(signal, stillCurrent, assertPlaced, { onlyEditorPart: true, forAgentRun: true, tookKeyboard: false, ownedByReturn: false }) // after the guarded placement in VS Code beside the chat view: nothing is focused, and the learner is told once that the new group may have the keyboard
    */
   private captureApplicationPreparationReturn(
     existingPanel: vscode.WebviewPanel | undefined,
@@ -12623,10 +12641,11 @@ export class StudyWorkspace {
   /**
    * Gives the keyboard back once an Application preparation is placed, from what {@link captureApplicationPreparationReturn} captured before any of its effects; the focus return that method answers calls it, after {@link reserveApplicationGroup}'s guard.
    * A chat of another editor part that had the keyboard gets it back first. Otherwise the focus goes to the Codebook pane or the native place that had it, unless {@link settleKeyboardBesideChatView} settles it for an agent's run beside a chat view.
+   * A Live Return ({@link returnCurrentSelection}) gives a chat of another editor part its keyboard back itself at its end: a learner's Return adds nothing here, an agent's (codebook_return_current) only the rest of this return.
    * @param captured - The foreign tab's give-back ({@link retainForeignTabFocus}), the Codebook panel that was active, the captured native focus ({@link capturePresentationFocus}), and whether the learner is known to work there.
    * @param placed - The preparation's cancellation, its guards for the current input and the placement, and what it knows of the editor parts and of its own focus.
    * @example
-   * await this.returnPreparationFocus(captured, { signal, stillCurrent, assertPlaced, preparation: { onlyEditorPart: false, forAgentRun: true, tookKeyboard: true } }) // Cursor's chat tab gets the keyboard back
+   * await this.returnPreparationFocus(captured, { signal, stillCurrent, assertPlaced, preparation: { onlyEditorPart: false, forAgentRun: true, tookKeyboard: true, ownedByReturn: false } }) // Cursor's chat tab gets the keyboard back
    */
   private async returnPreparationFocus(
     captured: {
@@ -12643,9 +12662,17 @@ export class StudyWorkspace {
       preparation: PreparedApplicationFocus
     },
   ): Promise<void> {
-    const { focusedPanel, giveBack, restoreFocus } = captured
-    // A chat that held the keyboard beside the main editor gets it back; nothing else is focused after that return.
-    if (giveBack && (await giveBack(true, placed.stillCurrent))) return
+    const { focusedPanel, giveBack, restoreFocus } = captured,
+      { ownedByReturn, forAgentRun } = placed.preparation
+    // A learner's Live Return adds no return before its own final handoff; an agent's still settles the keyboard beside a chat view (codebook_return_current).
+    if (ownedByReturn && !forAgentRun) return
+    // A chat that held the keyboard beside the main editor gets it back, from a Live Return only at its end; nothing else is focused after that return.
+    if (
+      giveBack &&
+      !ownedByReturn &&
+      (await giveBack(true, placed.stillCurrent))
+    )
+      return
     if (
       this.settleKeyboardBesideChatView(
         placed.preparation,
@@ -12668,7 +12695,7 @@ export class StudyWorkspace {
    * @returns
    * - `true` when the keyboard stays where the preparation left it, and the learner was told once.
    * - `false` for another editor part, a preparation that is not an agent's run, and a place the learner is known to work in: the ordinary return goes on.
-   * @example this.settleKeyboardBesideChatView({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true }, false, stillCurrent) // => true, after the notice
+   * @example this.settleKeyboardBesideChatView({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true, ownedByReturn: false }, false, stillCurrent) // => true, after the notice
    */
   private settleKeyboardBesideChatView(
     preparation: PreparedApplicationFocus,
