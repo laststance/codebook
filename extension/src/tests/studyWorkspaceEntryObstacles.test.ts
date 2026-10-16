@@ -2089,6 +2089,54 @@ test('an agent’s first run after a reload whose record no longer proves the le
   }
 })
 
+// Value: protects=the captured source at the Study's own column when an agent's run reacquires the Application while the learner's file covers that source: the next entry from the repository brings the source to the front again; fails_when=the Application group is remembered as an ordinary Study layout because the source already stands at column 2, so no reentry fronts it and the learner's file stays over the captured source; why_new=Cycle 0046 control 'source-reentry' (the guard `|| !this.sourceReady()` of rememberApplicationGroup lost its only test when the fake editor began to give a text shown beyond the grid a group of its own, commit 7cc9499a); seam=closeTabByHand (the learner closes the Application pane), focusMutableDraft (the learner's file over the source), presentation.createViewport (the agent's run) and open with the repository origin, as the Repository Wiki's evidence link enters
+test('an entry from the repository fronts the captured source again after an agent’s run reacquired the Application while the learner’s file covered that source', async () => {
+  // Arrange: a Return claimed the Application group; the learner closed the Application pane and opened a file over the captured source in column 2, and an agent's run then prepared the Application again.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let viewport: Awaited<
+    ReturnType<typeof harness.reader.presentation.createViewport>
+  >
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    harness.closeTabByHand(
+      harness.groups.find((group) => group.viewColumn === 1)!.tabs[0]!,
+    )
+    const learnersFile = harness.focusMutableDraft('learner-work.ts', 2)
+    viewport = await harness.reader.presentation.createViewport(
+      'agent-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const sourceGroup = harness.groups.find((group) => group.viewColumn === 2)!
+    assert.equal(sourceGroup.activeTab, learnersFile.tab)
+
+    // Act
+    await harness.reader.open(undefined, 'repository')
+
+    // Assert: column 2 shows the captured source again (the reader finds its source in front), and the learner's file stays in that group.
+    const shown = harness.groups.find((group) => group.viewColumn === 2)!
+    assert.deepEqual(
+      {
+        learnersFileInFront: shown.activeTab === learnersFile.tab,
+        sourceInFront: harness.reader['sourceReady'](),
+        learnersFileKept: shown.tabs.includes(learnersFile.tab),
+      },
+      {
+        learnersFileInFront: false,
+        sourceInFront: true,
+        learnersFileKept: true,
+      },
+    )
+  } finally {
+    viewport!?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
   // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.
