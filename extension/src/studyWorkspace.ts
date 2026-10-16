@@ -12617,45 +12617,58 @@ export class StudyWorkspace {
     signal?.throwIfAborted()
     this.assertLifetime(this.lifetime)
     // A closed reader's first preparation, as an agent's run right after Developer: Reload Window, retires the earlier window's proven leftovers before it allocates (row 609).
-    const proofKeptKeyboard =
+    const { proofKeptKeyboard, chatReturn } =
       await this.retireLeftoversBeforePreparation(signal)
-    // A first acquisition cannot register beside an earlier host's leftover pane.
-    if (!this.app && this.deadPaneTabs().length)
-      await this.retirePreviousApplicationPanes(signal)
-    const existing = this.existingApplicationForPreparation(
-      manualEntry,
-      retiredContextGroup,
-    )
-    if (existing) return existing
-    const preparation = await this.withLayout(
-      signal,
-      async (lifetime, assertCurrent) =>
-        await this.prepareApplicationLayout(signal, {
-          lifetime,
-          assertCurrent,
-          retiredContextGroup,
-          cancelEntryFocusReturn,
-        }),
-    )
-    // Native command discovery remains outside the queue so Close can drain accepted placement.
-    await preparation.restoreFocus?.({ proofKeptKeyboard, forAgentRun })
-    return preparation.panel
+    // The preparation's own focus return gives the tab a leftover proof took the keyboard from its keyboard back, and so does the caller that owns the final return; any other end gives it back here (row 646).
+    let owedChatReturn = cancelEntryFocusReturn ? undefined : chatReturn
+    try {
+      // A first acquisition cannot register beside an earlier host's leftover pane.
+      if (!this.app && this.deadPaneTabs().length)
+        await this.retirePreviousApplicationPanes(signal)
+      const existing = this.existingApplicationForPreparation(
+        manualEntry,
+        retiredContextGroup,
+      )
+      if (existing) return existing
+      const preparation = await this.withLayout(
+        signal,
+        async (lifetime, assertCurrent) =>
+          await this.prepareApplicationLayout(signal, {
+            lifetime,
+            assertCurrent,
+            retiredContextGroup,
+            cancelEntryFocusReturn,
+            chatReturn,
+          }),
+      )
+      if (preparation.restoreFocus) owedChatReturn = undefined
+      // Native command discovery remains outside the queue so Close can drain accepted placement.
+      await preparation.restoreFocus?.({ proofKeptKeyboard, forAgentRun })
+      return preparation.panel
+    } finally {
+      await owedChatReturn?.(true).catch(() => false)
+    }
   }
 
   /**
-   * Retires the earlier window's proven leftover groups before {@link prepareApplicationGroup} allocates, when a closed reader prepares its first Application (an agent's run right after Developer: Reload Window, before any Study select): the allocation would otherwise stand beside them and its record would replace the earlier one, so they were never proved again (row 609). A proof that focused a group took the keyboard; a chat of another editor part that had it gets it back here, so the preparation's own focus return captures it where it was. Nothing happens for an open reader, without an earlier window's record, or when no recorded group is a leftover ({@link retireLeftoverApplicationGroup}).
+   * Retires the earlier window's proven leftover groups before {@link prepareApplicationGroup} allocates, when a closed reader prepares its first Application (an agent's run right after Developer: Reload Window, before any Study select): the allocation would otherwise stand beside them and its record would replace the earlier one, so they were never proved again (row 609). Nothing happens for an open reader, without an earlier window's record, or when no recorded group is a leftover ({@link retireLeftoverApplicationGroup}).
+   * A proof that focused a group took the keyboard. The tab that had it before (a chat of another editor part) gets it back at the preparation's end, through the return the preparation captures ({@link captureApplicationPreparationReturn}), and not here: Cursor's Focus Agent answers before its chat input has the keyboard (Cursor 3.23.12 `workbench.desktop.main.js` 17914:19364, 18566:8949, 18566:8198), so a return run here gave the chat's part the focus again while the allocation that follows read its layout, and the preparation failed (C57 c57-cursor-1f and 1f2, row 646).
    * @param signal - The preparation's cancellation.
-   * @returns `true` when the proof took the keyboard and nothing gave it back: the main editor has it (the group the removal activated), which the preparation's notice then names ({@link tellPreparedApplicationKeyboard}); `false` otherwise.
+   * @returns `proofKeptKeyboard`: `true` when the proof took the keyboard and no tab is known to get it back, so the main editor keeps it (the group the removal activated), which the preparation's notice then names ({@link tellPreparedApplicationKeyboard}); `chatReturn`: the return of the tab that had the keyboard before the proof, when the proof took it.
    * @throws When the editor refuses a proved group's close, or the grid does not lose exactly that group.
-   * @example await this.retireLeftoversBeforePreparation(signal) // => false: the earlier window's empty groups go, and the chat keeps its keyboard
+   * @example const { proofKeptKeyboard, chatReturn } = await this.retireLeftoversBeforePreparation(signal) // => { proofKeptKeyboard: false, chatReturn } beside Cursor's chat
    */
   private async retireLeftoversBeforePreparation(
     signal?: AbortSignal,
-  ): Promise<boolean> {
-    const giveKeyboardBack = this.retainForeignTabFocus(undefined)
+  ): Promise<{
+    proofKeptKeyboard: boolean
+    chatReturn: ReturnType<StudyWorkspace['retainForeignTabFocus']>
+  }> {
+    const chatReturn = this.retainForeignTabFocus(undefined)
     // Only a proof that focused a group moved the keyboard.
-    if (!(await this.retireLeftoverApplicationGroup(signal))) return false
-    return !(await giveKeyboardBack?.(true).catch(() => false))
+    if (!(await this.retireLeftoverApplicationGroup(signal)))
+      return { proofKeptKeyboard: false, chatReturn: undefined }
+    return { proofKeptKeyboard: chatReturn === undefined, chatReturn }
   }
 
   /**
@@ -12710,7 +12723,7 @@ export class StudyWorkspace {
   /**
    * Reconciles existing owners or selects the single fresh allocation path for {@link prepareApplicationGroup} inside its layout queue.
    * @param signal - The existing preparation cancellation.
-   * @param input - Current queue lifetime/guard and the caller's Context retirement and focus-return authority.
+   * @param input - Current queue lifetime/guard and the caller's Context retirement and focus-return authority; `chatReturn` is the return of the tab a leftover proof before the queue took the keyboard from ({@link retireLeftoversBeforePreparation}, row 646).
    * @returns The retained panel and any focus return that must run after the queue releases; its argument says whether a leftover proof before the queue took the keyboard ({@link retireLeftoversBeforePreparation}) and whether the preparation is a live run's ({@link prepareApplicationGroup}).
    * @throws When native scope, ownership or accepted-effect recovery cannot be retained.
    * @example const prepared = await this.prepareApplicationLayout(signal, input)
@@ -12722,6 +12735,7 @@ export class StudyWorkspace {
       assertCurrent: () => void
       retiredContextGroup?: vscode.TabGroup
       cancelEntryFocusReturn?: () => void
+      chatReturn?: ReturnType<StudyWorkspace['retainForeignTabFocus']>
     },
   ): Promise<{
     panel: vscode.WebviewPanel
@@ -12775,7 +12789,7 @@ export class StudyWorkspace {
     signal: AbortSignal | undefined,
     input: Pick<
       Parameters<StudyWorkspace['prepareApplicationLayout']>[1],
-      'lifetime' | 'assertCurrent' | 'cancelEntryFocusReturn'
+      'lifetime' | 'assertCurrent' | 'cancelEntryFocusReturn' | 'chatReturn'
     >,
     retiredIdentity: symbol | undefined,
   ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
@@ -12788,6 +12802,7 @@ export class StudyWorkspace {
         lifetime,
         assertCurrent,
         cancelEntryFocusReturn,
+        input.chatReturn,
       )
     }
     // A completed retained layout needs no native work unless its Context was retired.
@@ -12843,6 +12858,7 @@ export class StudyWorkspace {
    * @param lifetime - The queue's captured reader lifetime.
    * @param assertCurrent - Rejects later intent after accepted native effects drain.
    * @param cancelEntryFocusReturn - The caller owns the final handoff when this callback is present.
+   * @param chatReturn - The return of the tab a leftover proof took the keyboard from before this reservation ({@link retireLeftoversBeforePreparation}); the reservation's focus return gives that tab the keyboard back (row 646).
    * @returns The prepared App and its guarded focus return, still deferred outside the native queue.
    * @throws The original preparation or cleanup error without adopting a foreign group.
    * @example const prepared = await this.reserveApplicationGroup(signal, lifetime, assertCurrent)
@@ -12852,6 +12868,7 @@ export class StudyWorkspace {
     lifetime: number,
     assertCurrent: () => void,
     cancelEntryFocusReturn?: () => void,
+    chatReturn?: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
   ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
     let restorePreparationFocus: Awaited<
       ReturnType<StudyWorkspace['prepareApplicationLayout']>
@@ -12860,6 +12877,7 @@ export class StudyWorkspace {
       returnFocus = this.captureApplicationPreparationReturn(
         existingPanel,
         cancelEntryFocusReturn,
+        chatReturn,
       )
     if (existingPanel) await this.settleInitialApp(signal, lifetime)
     const grid = await this.readMainEditorGrid(signal, assertCurrent)
@@ -13004,6 +13022,7 @@ export class StudyWorkspace {
   private captureApplicationPreparationReturn(
     existingPanel: vscode.WebviewPanel | undefined,
     cancelEntryFocusReturn?: () => void,
+    chatReturn?: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
   ): (
     signal: AbortSignal | undefined,
     stillCurrent: () => boolean,
@@ -13015,9 +13034,10 @@ export class StudyWorkspace {
     )
     const captured = {
       focusedPanel,
-      giveBack: this.retainForeignTabFocus(undefined),
+      // The tab a leftover proof took the keyboard from is the place to return to; the group the proof left with the keyboard is none (row 646).
+      giveBack: chatReturn ?? this.retainForeignTabFocus(undefined),
       restoreFocus:
-        focusedPanel || cancelEntryFocusReturn
+        focusedPanel || cancelEntryFocusReturn || chatReturn
           ? undefined
           : this.capturePresentationFocus(undefined),
       knowsLearnersPlace: this.knowsLearnersPlace(focusedPanel),

@@ -2162,6 +2162,101 @@ test('the first Application preparation of a reloaded window retires the earlier
   }
 })
 
+// Value: protects=an agent's first run in Cursor right after Developer: Reload Window, before any Study select: the earlier window's proven leftover is retired, the Application stands alone in its own locked group, the run's preparation answers, and the chat gets its keyboard back; fails_when=the reader gives the chat its keyboard back with Focus Agent between the leftover's retirement and the Application's allocation, Cursor's chat input takes the keyboard only after that command answered (workbench.desktop.main.js 17914:19364, 18566:8949, 18566:8198), so the chat's part has the focus again while the allocation reads its layout and the preparation fails ("The dedicated Application layout could not be confirmed.", C57 c57-cursor-1f2; "Native pane, group or focus changed while presentation waited; …", c57-cursor-1f); why_new=Cycle 0046 row 646; seam=useNativeLayout (three stacked rows), applicationGroupMarkers (a record the grid still equals), leaveEmptyLockedGroup, focusMutableDraft, addSeparateEditorPart with focusTab, leavePaneFocusUnreportedBesideChat, focusAgentLater, presentation.createViewport (the MCP-first preparation)
+for (const landing of [
+  // Before the reservation's first command: C57 c57-cursor-1f failed with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."
+  { commandsBeforeFocus: 1, nativeRound: 'c57-cursor-1f' },
+  // Amid the allocation: C57 c57-cursor-1f2 failed with "The dedicated Application layout could not be confirmed."
+  { commandsBeforeFocus: 4, nativeRound: 'c57-cursor-1f2' },
+] as const)
+  test(`in Cursor, the first Application preparation of a reloaded window whose chat takes its keyboard late (as in ${landing.nativeRound}) retires the leftover, stands alone in its own group, and gives the chat its keyboard back`, async () => {
+    // Arrange: three stacked rows: the earlier window's empty locked Application group, the Repository Wiki's tab with login-form.tsx, and auth.ts; the record still describes this grid. Cursor's chat tab has the keyboard, and Cursor gives the chat input the keyboard only after Focus Agent answered.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 219 }, { size: 219 }, { size: 219 }],
+    })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusAgentLater(landing.commandsBeforeFocus)
+    try {
+      harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+        version: 1,
+        writer: 'the window before the reload',
+        column: 1,
+        groupCount: 3,
+        layout: {
+          orientation: 1,
+          groups: [{ size: 219 }, { size: 219 }, { size: 219 }],
+        },
+      })
+      harness.leaveEmptyLockedGroup(1)
+      const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+      const learnerAuth = harness.focusMutableDraft('auth.ts', 3)
+      const learnerLogin = harness.focusMutableDraft('login-form.tsx', 2)
+      chat.focusTab()
+
+      // Act
+      let viewport: { close(): void } | undefined
+      const prepared = await Promise.resolve()
+        .then(() =>
+          harness.reader.presentation.createViewport(
+            'mcp-first-run',
+            () => {},
+            () => {},
+            'normal',
+          ),
+        )
+        .then(
+          (created) => {
+            viewport = created
+            return 'prepared'
+          },
+          (error: unknown) => String(error),
+        )
+      // Cursor's chat takes the keyboard of the last Focus Agent a moment after it answered.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+      // Assert: the preparation answered; the leftover is gone, the Application's group stands alone and locked at column 1 above the learner's two groups, and the chat has the keyboard.
+      const mainGroups = harness.groups
+        .filter((group) => !group.tabs.includes(chat.tab))
+        .toSorted((left, right) => left.viewColumn - right.viewColumn)
+      assert.deepEqual(
+        {
+          prepared,
+          leftoverStands: harness.groups.includes(leftover),
+          mainGroups: mainGroups.map((group) => ({
+            column: group.viewColumn,
+            locked: Boolean(group.locked),
+            tabs: group.tabs.length,
+          })),
+          loginColumn: mainGroups.find((group) =>
+            group.tabs.includes(learnerLogin.tab),
+          )?.viewColumn,
+          authColumn: mainGroups.find((group) =>
+            group.tabs.includes(learnerAuth.tab),
+          )?.viewColumn,
+          chatHasKeyboard: chat.focused(),
+        },
+        {
+          prepared: 'prepared',
+          leftoverStands: false,
+          mainGroups: [
+            { column: 1, locked: true, tabs: 1 },
+            { column: 2, locked: false, tabs: 2 },
+            { column: 3, locked: false, tabs: 1 },
+          ],
+          loginColumn: 2,
+          authColumn: 3,
+          chatHasKeyboard: true,
+        },
+      )
+      viewport?.close()
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=an agent's first run right after a reload whose record no longer proves the earlier window's leftovers (the learner resized a group), beside Cursor's chat: the preparation is refused at once with a sentence that names the empty first group and its remedy, nothing is unlocked or closed, the record stays and the chat keeps its keyboard; fails_when=the preparation waits 5 s for a focus report the empty first group never gives and refuses with a sentence that names no group, or a failed proof unlocks, closes or forgets anything; why_new=Cycle 0046 row 610 (and the guard of row 609's path when the proof fails); seam=applicationGroupMarkers (a record the resized grid no longer equals), leaveEmptyLockedGroup, leaveEmptyGroup, presentation.createViewport (the MCP-first preparation) and addSeparateEditorPart with the chat's focusTab
 test('an agent’s first run after a reload whose record no longer proves the empty first group is refused at once with that group named, touching nothing', async () => {
   // Arrange: the earlier window recorded its Application group at column 1 and its Context group at column 3 in a grid the learner has since resized; both stand empty beside the learner's notes in column 2, and the chat has the keyboard.

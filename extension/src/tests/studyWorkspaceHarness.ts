@@ -747,6 +747,9 @@ export async function workspaceHarness(
   let movesPanelsLater = false
   // Cursor names the group that held the keyboard before a new group was inserted again one editor change later; see `reactivatePreviousGroupAfterInsertion`.
   let reactivatesPreviousGroupLater = false
+  // Cursor gives the chat input the keyboard only after Focus Agent answered, here just before the editor runs a later command of the reader; see `focusAgentLater`.
+  let commandsBeforeAgentFocus = 0,
+    commandsUntilAgentFocus = 0
   // Cursor activated that group again before the next lock reached the editor, so the lock locked it; see `reactivatePreviousGroupBeforeLock`.
   let reactivatesPreviousGroupBeforeLock = false
   let reactivatesPreviousGroupAtLayoutRead = false
@@ -1642,6 +1645,27 @@ export async function workspaceHarness(
       requested,
       groups.filter((group) => group !== separateEditorPart?.group).length + 1,
     )
+  }
+  /**
+   * Gives Cursor's chat input the keyboard as its Focus Agent does: the chat's part has the keyboard, no tab or group changes, and no text editor is active any more; run by the fake editor for `composer.focusComposer`, at once or, with `focusAgentLater`, after the command answered.
+   * @example focusChatInput()
+   */
+  function focusChatInput(): void {
+    if (!separateEditorPart) return
+    separateEditorPart.focused = true
+    keyboardOnBody = false
+    keyboardInView = false
+    innerFocusedPanel = undefined
+    activeTextEditorChanged(undefined)
+  }
+  /**
+   * Gives Cursor's chat input the keyboard of an earlier Focus Agent that has not reached it yet; see `focusAgentLater`.
+   * @example setTimeout(focusChatInputOwed, 0)
+   */
+  function focusChatInputOwed(): void {
+    if (commandsUntilAgentFocus === 0) return
+    commandsUntilAgentFocus = 0
+    focusChatInput()
   }
   /**
    * Gives the separate part's chat the keyboard the way both editors report it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. The learner's click into Cursor's Agent chat tab (`chat.focusTab()`), and VS Code's numbered focus command for a floating window's group, both end so.
@@ -2707,6 +2731,9 @@ export async function workspaceHarness(
           layout?: unknown,
           contextValue?: unknown,
         ): Promise<unknown> {
+          // Cursor's chat input takes the keyboard of an earlier Focus Agent now, before this command reaches the editor.
+          if (commandsUntilAgentFocus > 0 && --commandsUntilAgentFocus === 0)
+            focusChatInput()
           // Both native hosts reject a command they do not register, in these words.
           if (absentHostCommands.has(name))
             throw new Error(`command '${name}' not found`)
@@ -2972,9 +2999,12 @@ export async function workspaceHarness(
           }
           // Cursor's "Focus Agent": the selected chat's input gets the keyboard; no tab or group changes, and the editor keeps naming the tab group it named.
           if (name === CURSOR_FOCUS_AGENT_COMMAND && separateEditorPart) {
-            separateEditorPart.focused = true
-            innerFocusedPanel = undefined
-            activeTextEditorChanged(undefined)
+            // Cursor answers Focus Agent before its chat input has the keyboard; see `focusAgentLater`.
+            if (commandsBeforeAgentFocus > 0) {
+              commandsUntilAgentFocus = commandsBeforeAgentFocus
+              // Without further commands the chat input takes the keyboard a moment later all the same.
+              setTimeout(focusChatInputOwed, 0)
+            } else focusChatInput()
           }
           if (name === 'workbench.action.focusFirstEditorGroup') {
             const previousEditor = focusedSourceEditor(),
@@ -5058,6 +5088,14 @@ export async function workspaceHarness(
      */
     reactivatePreviousGroupBeforeLock(): void {
       reactivatesPreviousGroupBeforeLock = true
+    },
+    /**
+     * Makes the fake editor answer Cursor's Focus Agent (`composer.focusComposer`) before its chat input has the keyboard, which the chat takes a moment later, just before the editor runs the given one of the reader's following commands: Cursor 3.23.12 runs the command without awaiting the chat's opening (`workbench.desktop.main.js` 17914:19364 `n.handleOpenComposer(…)` in an `async run` that returns nothing; 18566:8949 dispatches to `handleOpenComposerEditor` without awaiting it, which awaits `openComposer` before the input is focused, 18566:8204). In C57 rounds c57-cursor-1f and 1f2 an agent's first run after a reload failed right after its Application stood in its new group (Cycle 0046 row 646).
+     * @param commandsBeforeFocus - How many of the reader's commands the editor answers after Focus Agent before the chat input has the keyboard; the chat takes it just before the last of them, or at the next turn of the event loop when fewer commands come.
+     * @example harness.focusAgentLater(6) // the chat takes the keyboard just before the sixth command after Focus Agent
+     */
+    focusAgentLater(commandsBeforeFocus: number): void {
+      commandsBeforeAgentFocus = commandsBeforeFocus
     },
     /**
      * Makes the fake editor name the group that held the keyboard before a native group insertion as active again at the next layout read after it, as {@link reactivatePreviousGroupAfterInsertion} does at the lock; the read that follows Codebook's own App move sees the editor's late focus.
