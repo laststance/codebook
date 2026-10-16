@@ -5404,6 +5404,110 @@ test('an agent’s run started right after its own Study selection, while the ch
   }
 })
 
+// Value: protects=the chat view's keyboard in VS Code when an agent's Return Current (codebook_return_current) meets a run the reader has not entered yet: the Return's own refresh enters the Live arrangement of that run, and that entry follows the Return's requester, so it is the agent's: no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=the reader's Live entry inside a running Return ignores who asked for the Return and prepares the Application as the learner's, whose preparation adds no focus return of its own, so nothing tells the learner where the keyboard went; why_new=Cycle 0046 row 623 (commit 60bf03d8 made that entry follow the Return's requester without a test reaching it); seam=readerSeams stopOwnTimer (only the Return's own refresh runs), useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation, start and returnToCurrent (the codebook_presentation, codebook_start and codebook_return_current handlers), textDocumentShows and the information messages
+test('an agent’s Return Current that meets a run the reader has not entered yet enters it as the agent’s, giving no file the chat view’s keyboard and saying once that the Application’s group has it', async () => {
+  // Arrange: the agent selected the Study workspace from the chat view and started a run; the reader's own refresh has not entered it.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  readerSeams(harness).stopOwnTimer()
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusView()
+    const selection = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    harness.focusView()
+    const state = harness.reader.presentationState(),
+      showsBefore = harness.textDocumentShows().length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.reader.contentRevision,
+    })
+
+    // Assert: the run is the one the reader follows now, no document was shown with the keyboard, and the agent's sentence was told once.
+    assert.equal(harness.reader['liveEntryRunId'], receipt.runId)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.deepEqual(
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own Return to current pause, run while the Study pane has the keyboard, when it meets a run the reader has not entered yet (the learner reads the Overview tab while following, so an agent's run is accepted and the reader's refresh does not enter it): the Return's own refresh enters the Live arrangement of that run as the learner's, so the agent's rule beside a chat view is not applied to the learner's own request and only the learner's sentence is told; fails_when=the reader's Live entry inside a running Return ignores who asked for the Return and treats every such entry as the agent's run, so the learner is also told the agent's sentence that this editor does not say where they were typing; why_new=Cycle 0046 row 623 (the other requester of the same entry); seam=readerSeams stopOwnTimer (only the Return's own refresh runs), the Study pane's tab message, the service's start (codebook_start), the Study pane's pane-focus report, the return-current action (the command Codebook: Return to Current Pause) and the information messages
+test('the learner’s Return to current pause from the Study pane that meets a run the reader has not entered yet enters it as the learner’s and tells only the learner’s sentence', async () => {
+  // Arrange: the learner follows the current run on the Overview tab of the Study pane when the agent starts a run, and the Study pane has the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  readerSeams(harness).stopOwnTimer()
+  try {
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'tab',
+      tab: 'overview',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(
+      () => harness.reader.presentationState().reader.contentTab === 'overview',
+      'the Overview tab the learner chose',
+    )
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    harness.receiveContext({ type: 'pane-focus', focused: true })
+    const messagesBefore = harness.informationMessages.length
+
+    // Act: the learner runs Return to Current Pause while the Study pane has the keyboard.
+    await harness.reader.action('return-current')
+
+    // Assert: the run is the one the reader follows now, and only the learner's sentence was told.
+    assert.equal(harness.reader['liveEntryRunId'], receipt.runId)
+    assert.deepEqual(
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
+      [
+        'Return to current pause closed the Study pane, which had the keyboard, to arrange the live run. The active editor group has the keyboard now (the Application pane’s, once it is placed). Click where you want to type.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner who presses Return to current pause in the Study pane while it has the keyboard: the live arrangement closes that pane, so its keyboard would be on no element (a key pressed then goes nowhere) with the new Application group named as the active one; the keyboard is given to that group and the learner is told once where it is; fails_when=a learner's Live Return adds no focus return of its own (returnPreparationFocus returns at once for it, finishCurrentReturn gives the keyboard back only to a foreign tab), so the keyboard stays on the page body and nothing is told; why_new=Cycle 0046 row 624; seam=the workspace harness in VS Code's model (one editor part) and in Cursor's (addSeparateEditorPart), the Study pane's pane-focus report, the pane's return-current action, keyboardOnBody, focusedPanel and the information messages
 for (const host of ['VS Code', 'Cursor'] as const)
   test(`Return to current pause pressed in the Study pane in ${host} gives the Application's group the keyboard the closed Study pane had and says so once`, async () => {
