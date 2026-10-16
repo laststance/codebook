@@ -2463,6 +2463,84 @@ test('an agent’s source reveal that opens the closed Study workspace gives no 
   }
 })
 
+// Value: protects=the chat input's keyboard when an agent selects the Study workspace through codebook_presentation during a live run whose Application pane the learner closed: the selection's entry is an agent's (open with forAgent), so the new Application group's preparation, which has to focus the first editor group, gives no file the keyboard and says once that the new group has it; fails_when=the entry prepares as the learner's and its focus return shows the learner's actions.ts with the keyboard, or the new group keeps the keyboard without a word; why_new=Cycle 0046 coverage of an agent's select during a live run (no test reached open's forAgent through a selection into a new Application preparation); seam=workInActiveTextEditor (the learner's sign before the run, so the run's own preparation tells nothing), presentation.createViewport (the agent's run), closeTabByHand (the learner closes the Application pane), focusView (the chat view's input), the faked clock (the sign is old by the selection), the service's selectPresentation (the codebook_presentation handler), textDocumentShows and the information messages
+test('an agent’s Study selection during a live run whose Application pane the learner closed gives no file the keyboard and says once that the new Application group has it', async (context) => {
+  // Arrange: the learner typed in actions.ts (second group) when the agent's run placed its Application, then closed the Application pane and typed the next request into the chat view; more than three seconds pass.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  let live: { close(): void } | undefined
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.workInActiveTextEditor('keyboard')
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    harness.closeTabByHand(application.nativeTab)
+    harness.focusView()
+    const state = harness.reader.presentationState(),
+      showsBefore = harness.textDocumentShows().length,
+      messagesBefore = harness.informationMessages.length
+    enableFakeClock(context)
+    await advanceClock(context, 3_001)
+
+    // Act
+    const selecting = harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    await advanceClockUntilSettled(context, selecting, 40_000)
+    resetFakeClock(context)
+    await selecting
+
+    // Assert: no document was shown with the keyboard, the Application stands in column 1 again, and the one sentence says that its new group has the keyboard.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.deepEqual(
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+      ],
+    )
+  } finally {
+    resetFakeClock(context)
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the captured source at the Study's own column when an agent's run reacquires the Application while the learner's file covers that source: the next entry from the repository brings the source to the front again; fails_when=the Application group is remembered as an ordinary Study layout because the source already stands at column 2, so no reentry fronts it and the learner's file stays over the captured source; why_new=Cycle 0046 control 'source-reentry' (the guard `|| !this.sourceReady()` of rememberApplicationGroup lost its only test when the fake editor began to give a text shown beyond the grid a group of its own, commit 7cc9499a); seam=closeTabByHand (the learner closes the Application pane), focusMutableDraft (the learner's file over the source), presentation.createViewport (the agent's run) and open with the repository origin, as the Repository Wiki's evidence link enters
 test('an entry from the repository fronts the captured source again after an agent’s run reacquired the Application while the learner’s file covered that source', async () => {
   // Arrange: a Return claimed the Application group; the learner closed the Application pane and opened a file over the captured source in column 2, and an agent's run then prepared the Application again.
