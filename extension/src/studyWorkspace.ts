@@ -713,6 +713,8 @@ export class StudyWorkspace {
   private learnerChoseEditorAtFrame = false
   /** The moment the learner last clicked or pressed a key in the active text editor ({@link noteLearnersSelection}); read while no frame is shown, where it counts for {@link LEARNER_SIGN_FRESH_MS} ({@link workedInEditorJustNow}). */
   private learnerWorkedInEditorAtMs?: number
+  /** The moment a confirmed presentation change last ended with the captured source as the active text editor ({@link noteSourceKeyboardPlacement}): Codebook's own placement, not the learner, gave it the keyboard then. {@link isCodebooksSourceKeyboard} compares it with the learner's last sign (row 642). */
+  private sourceKeyboardPlacedAtMs?: number
   /** The file and the editor group of the preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. The tab is known by its document and view column, never by its object: Cursor's extension host builds every tab object anew whenever the editor sends its whole tab model, and an object taken before then keeps answering what it answered last. */
   private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
@@ -5036,6 +5038,7 @@ export class StudyWorkspace {
       // An agent's selection whose remembered tab got nothing back (its group stands behind a Study pane) says where the keyboard is (row 625).
       if (agentSelection?.returnsToForeignTab && !returnedToForeignTab)
         this.tellKeyboardLeftOnSource()
+      this.noteSourceKeyboardPlacement()
       return {
         ...this.presentationState(),
         state: this.opened ? 'open' : 'closed',
@@ -11864,29 +11867,78 @@ export class StudyWorkspace {
   ): Promise<void> {
     const shown = uri.toString(),
       focused = vscode.window.activeTextEditor,
-      // The copy that has the keyboard stays.
+      // The copy that has the keyboard stays, unless Codebook's own placement gave it the keyboard (row 642).
       focusedCopyColumn =
-        focused?.document.uri.toString() === shown
+        focused?.document.uri.toString() === shown &&
+        !this.isCodebooksSourceKeyboard()
           ? focused.viewColumn
           : undefined
-    const copies = vscode.window.tabGroups.all
-      .filter(
-        (group) =>
-          group.viewColumn !== column &&
-          group.viewColumn !== focusedCopyColumn &&
-          group.tabs.length > 1,
+    const groups = vscode.window.tabGroups.all.filter(
+      (group) =>
+        group.viewColumn !== column &&
+        group.viewColumn !== focusedCopyColumn &&
+        group.tabs.length > 1,
+    )
+    const copiesOf = (group: vscode.TabGroup): vscode.Tab[] =>
+      group.tabs.filter(
+        (tab) =>
+          !tab.isPinned &&
+          this.textTabUri(tab) === shown &&
+          this.ownsCapturedSourceTab(tab),
       )
-      .flatMap((group) =>
-        group.tabs.filter(
-          (tab) =>
-            !tab.isPinned &&
-            this.textTabUri(tab) === shown &&
-            this.ownsCapturedSourceTab(tab),
-        ),
-      )
+    const copies = groups.flatMap(copiesOf)
+    // The source below the Application takes the keyboard from a copy that goes, before the close could give it to the learner's tab behind that copy.
+    const closesFocusedCopy = groups.some(
+      (group) =>
+        group.viewColumn === focused?.viewColumn &&
+        focused.document.uri.toString() === shown &&
+        copiesOf(group).length > 0,
+    )
+    if (focused && closesFocusedCopy)
+      await this.focusLiveSource(focused.document, column)
     // A copy the editor does not close only stays in view; the live arrangement goes on.
     if (copies.length)
       await vscode.window.tabGroups.close(copies, true).then(
+        () => undefined,
+        () => undefined,
+      )
+  }
+
+  /**
+   * Notes that a confirmed presentation change ended with the captured source as the active text editor, which Codebook's placement gave the keyboard; called by {@link performPresentation} at the end of a confirmed change (row 642).
+   * @example this.noteSourceKeyboardPlacement() // sourceKeyboardPlacedAtMs is now when an agent's selection left the keyboard on the captured source
+   */
+  private noteSourceKeyboardPlacement(): void {
+    if (this.isCapturedSourceActiveEditor())
+      this.sourceKeyboardPlacedAtMs = performance.now()
+  }
+
+  /**
+   * Says whether the captured source has the keyboard by Codebook's own placement: a confirmed presentation change left it there ({@link noteSourceKeyboardPlacement}) and the learner has not clicked or typed in the active text editor since ({@link noteLearnersSelection}); asked by {@link retireMovedSourceCopies}, which keeps a copy the learner works in (row 642).
+   * @returns `true` after such a placement with no sign of the learner's since; `false` without a placement, and once the learner gave a sign after it.
+   * @example this.isCodebooksSourceKeyboard() // => true right after an agent's selection left the keyboard on the captured source
+   */
+  private isCodebooksSourceKeyboard(): boolean {
+    return (
+      this.sourceKeyboardPlacedAtMs !== undefined &&
+      (this.learnerWorkedInEditorAtMs ?? -Infinity) <
+        this.sourceKeyboardPlacedAtMs
+    )
+  }
+
+  /**
+   * Gives the captured source below the Application the keyboard, in place of a copy {@link retireMovedSourceCopies} is about to close: the close of the active editor would give the keyboard to the learner's tab the editor activates behind it, which no learner chose (row 613's rule).
+   * @param document - The captured source's document.
+   * @param column - The column the reentry showed it in, below the Application.
+   * @example await this.focusLiveSource(copy.document, vscode.ViewColumn.Two)
+   */
+  private async focusLiveSource(
+    document: vscode.TextDocument,
+    column: vscode.ViewColumn,
+  ): Promise<void> {
+    await vscode.window
+      .showTextDocument(document, { viewColumn: column, preserveFocus: false })
+      .then(
         () => undefined,
         () => undefined,
       )
