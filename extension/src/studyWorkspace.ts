@@ -12376,6 +12376,7 @@ export class StudyWorkspace {
 
   /**
    * Drains only failed preparation's owned cleanup for {@link reserveApplicationGroup} before its placement flag is restored and its error escapes.
+   * The empty allocation leaves through {@link retireEmptyOwnedGroup}, so a record the preparation already wrote for it goes with it, as it does when the editor removed the group with the disposed pane's tab ({@link forgetRecordOfRemovedApplicationGroup}, finding 598).
    * @param allocated - The actually observed new allocation identity; absence supplies no cleanup authority.
    * @param createdPanel - The panel created by this transaction, never a retained or replacement panel.
    * @throws The existing native cleanup failure; no subsequent native effect follows this helper's return.
@@ -12390,10 +12391,12 @@ export class StudyWorkspace {
       createdPanel.dispose()
       await this.closedPanesGone('codebook.scopedBrowser')
     }
-    // No allocation means no cleanup authority; two unknown identities never prove ownership.
+    // No allocation means no cleanup authority; two unknown identities never prove ownership. The owned retirement takes the record of a group this preparation already recorded along (finding 598).
     const empty = this.emptyNativeGroup(allocated)
-    if (empty) await vscode.window.tabGroups.close(empty, true)
+    if (empty && allocated) await this.retireEmptyOwnedGroup(allocated)
     this.releaseFailedApplicationOwner(allocated, empty)
+    // The editor may have removed the claimed group with the disposed pane's tab itself: its record goes too.
+    this.forgetRecordOfRemovedApplicationGroup()
   }
 
   /**
@@ -12621,7 +12624,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Forgets the Application group record once the group it describes is gone from this window; {@link close} calls it after its panes and the groups they left are gone, because the group a Living book Open gave the Study Context leaves with the Context's last tab and no App owner is left for {@link releaseApplicationGroup} to retire it (finding 596).
+   * Forgets the Application group record once the group it describes is gone from this window; {@link close} calls it after its panes and the groups they left are gone, because the group a Living book Open gave the Study Context leaves with the Context's last tab and no App owner is left for {@link releaseApplicationGroup} to retire it (finding 596), and {@link retireFailedApplicationPreparation} calls it once a failed preparation's pane left, because the editor can remove the claimed group with that pane's tab (finding 598).
    * A group that still stands keeps its record, so the window after a reload can still retire that group's empty leftover on proof.
    * @example this.forgetRecordOfRemovedApplicationGroup() // forgets the record once the editor removed the group the Context's tab left empty
    */

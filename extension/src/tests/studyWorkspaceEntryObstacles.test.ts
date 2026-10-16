@@ -932,6 +932,115 @@ test('Close of a Study whose Context holds a group Codebook created gives back e
   }
 })
 
+// Value: protects=a record that never outlives, in the same window, the Application group it describes once a preparation that already recorded its group is cancelled; fails_when=the cancellation that arrives during the preparation's final layout read closes the empty group the preparation claimed but keeps that group's record, so after a later reload a learner's empty group at column 1 in the same grid passes for Codebook's leftover; why_new=Cycle 0046 finding 598 (found by reading: the record is written before the preparation's last check of current intent, and the failure cleanup closed the group with tabGroups.close directly); seam=presentation.createViewport with its cancellation (the MCP-first preparation a newer run replaces), holdNextCommand('vscode.getEditorLayout') and applicationGroupMarkers
+test('a cancelled Application preparation that already recorded its group forgets that record as it retires the group', async () => {
+  // Arrange: an MCP run prepares the Application in a group of its own; the run is replaced while the preparation reads the confirmed layout.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.addSeparateEditorPart()
+  harness.focusMutableDraft()
+  const reader = harness.createReader(),
+    preparation = new AbortController()
+  const gridRead = harness.holdNextCommand('vscode.getEditorLayout')
+  const viewport = Promise.resolve(
+    reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+      preparation.signal,
+    ),
+  ).catch((error: unknown) => error)
+  let finalRead: ReturnType<typeof harness.holdNextCommand> | undefined
+  try {
+    // The first read measures the grid before the allocation; the next one confirms the Application in its claimed group.
+    await gridRead.started
+    finalRead = harness.holdNextCommand('vscode.getEditorLayout')
+    gridRead.release()
+    await finalRead.started
+    const claimedGroup = harness.groups.find((group) => group.viewColumn === 1)!
+    assert.equal(claimedGroup.locked, true)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+
+    // Act: a newer run replaces this one during the final layout read.
+    preparation.abort(new Error('A newer run replaced this preparation.'))
+    finalRead.release()
+    const outcome = await viewport
+
+    // Assert: the preparation was refused, its claimed group is gone, and so is that group's record.
+    assert.equal(
+      String(outcome),
+      'Error: A newer run replaced this preparation.',
+    )
+    assert.equal(harness.groups.includes(claimedGroup), false)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+  } finally {
+    gridRead.release()
+    finalRead?.release()
+    await viewport
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a record that never outlives, in the same window, the Application group it describes once a cancelled preparation's pane leaves and the editor removes the group with the pane's tab (workbench.editor.closeEmptyGroups on, the default); fails_when=the failure cleanup finds no empty group of its own to close and keeps the record of the group the editor removed; why_new=Cycle 0046 finding 598 (the editor, not Codebook, retires the claimed group in the default configuration); seam=presentation.createViewport with its cancellation, holdNextCommand('vscode.getEditorLayout'), closeDisposedPanelTabsLater and applicationGroupMarkers
+test('a cancelled Application preparation that already recorded its group forgets that record when the editor removes the group with the pane’s tab', async () => {
+  // Arrange: an MCP run prepares the Application in a group of its own in an editor that removes a group its last tab left; the run is replaced while the preparation reads the confirmed layout.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.addSeparateEditorPart()
+  harness.focusMutableDraft()
+  harness.closeDisposedPanelTabsLater()
+  const reader = harness.createReader(),
+    preparation = new AbortController()
+  const gridRead = harness.holdNextCommand('vscode.getEditorLayout')
+  const viewport = Promise.resolve(
+    reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+      preparation.signal,
+    ),
+  ).catch((error: unknown) => error)
+  let finalRead: ReturnType<typeof harness.holdNextCommand> | undefined
+  try {
+    // The first read measures the grid before the allocation; the next one confirms the Application in its claimed group.
+    await gridRead.started
+    finalRead = harness.holdNextCommand('vscode.getEditorLayout')
+    gridRead.release()
+    await finalRead.started
+    const claimedGroup = harness.groups.find((group) => group.viewColumn === 1)!
+    assert.equal(claimedGroup.locked, true)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+
+    // Act: a newer run replaces this one during the final layout read.
+    preparation.abort(new Error('A newer run replaced this preparation.'))
+    finalRead.release()
+    const outcome = await viewport
+
+    // Assert: the preparation was refused, the editor removed its claimed group, and that group's record is gone too.
+    assert.equal(
+      String(outcome),
+      'Error: A newer run replaced this preparation.',
+    )
+    assert.equal(harness.groups.includes(claimedGroup), false)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+  } finally {
+    gridRead.release()
+    finalRead?.release()
+    await viewport
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
   // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.
