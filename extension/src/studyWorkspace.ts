@@ -12458,7 +12458,7 @@ export class StudyWorkspace {
 
   /**
    * Drains only failed preparation's owned cleanup for {@link reserveApplicationGroup} before its placement flag is restored and its error escapes.
-   * The empty allocation leaves through {@link retireEmptyOwnedGroup}, so a record the preparation already wrote for it goes with it, as it does when the editor removed the group with the disposed pane's tab ({@link forgetRecordOfRemovedApplicationGroup}, finding 598).
+   * The editor's answer to the close decides nothing here: a refused close leaves the preparation's own error to escape. A record the preparation already wrote goes once its group is gone, whether this close or the editor, with the disposed pane's tab, removed it, and stays with a group that still stands ({@link forgetRecordOfRemovedApplicationGroup}, finding 598).
    * @param allocated - The actually observed new allocation identity; absence supplies no cleanup authority.
    * @param createdPanel - The panel created by this transaction, never a retained or replacement panel.
    * @throws The existing native cleanup failure; no subsequent native effect follows this helper's return.
@@ -12473,11 +12473,11 @@ export class StudyWorkspace {
       createdPanel.dispose()
       await this.closedPanesGone('codebook.scopedBrowser')
     }
-    // No allocation means no cleanup authority; two unknown identities never prove ownership. The owned retirement takes the record of a group this preparation already recorded along (finding 598).
+    // No allocation means no cleanup authority; two unknown identities never prove ownership.
     const empty = this.emptyNativeGroup(allocated)
-    if (empty && allocated) await this.retireEmptyOwnedGroup(allocated)
+    if (empty) await vscode.window.tabGroups.close(empty, true)
     this.releaseFailedApplicationOwner(allocated, empty)
-    // The editor may have removed the claimed group with the disposed pane's tab itself: its record goes too.
+    // The record of a group this preparation already recorded follows that group: it goes once the group is gone, and stays while a refused close keeps it (finding 598).
     this.forgetRecordOfRemovedApplicationGroup()
   }
 

@@ -355,6 +355,8 @@ export async function workspaceHarness(
   // Tabs the editor will not release. A close request is answered group by group, as the editor closes: such a tab keeps the requested tabs of its own group only.
   const closeRefusingTabs = new Set<Tab>()
   let rejectNextTabClose = false
+  /** See `refuseNextGroupClose`. */
+  let refusesNextGroupClose = false
   const tabCloseRequests: Tab[][] = []
   const tabCloseFocusRequests: boolean[] = []
   /** The main editor's layout as the fake editor held it when each request to close a whole group arrived; see `layoutsAtGroupCloses`. */
@@ -3489,6 +3491,11 @@ export async function workspaceHarness(
             // The public group overload closes its tabs too; production must establish ownership before calling it.
             if (!Array.isArray(tabs)) {
               layoutsAtGroupCloses.push(structuredClone(editorLayout))
+              // In the model of `refuseNextGroupClose`, the editor answers `false` once and the group stays as it was.
+              if (refusesNextGroupClose) {
+                refusesNextGroupClose = false
+                return false
+              }
               const column = tabs.viewColumn,
                 count = groups.length
               if (tabs.tabs.length && !closeTabs([...tabs.tabs], preserveFocus))
@@ -5226,6 +5233,10 @@ export async function workspaceHarness(
     /** Makes the editor reject the next close request instead of answering it, as it does when the request is cancelled; no tab closes. @example harness.rejectNextTabClose() */
     rejectNextTabClose(): void {
       rejectNextTabClose = true
+    },
+    /** Makes the editor answer the next request to close a whole group with `false` and keep that group, empty or not, as it does when it refuses the close (finding 598). @example harness.refuseNextGroupClose() */
+    refuseNextGroupClose(): void {
+      refusesNextGroupClose = true
     },
     /** Gives focus to a non-text page of the editor that is already open, as a learner's click on its tab does. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
     focusOpaqueTab(tab: Tab): void {

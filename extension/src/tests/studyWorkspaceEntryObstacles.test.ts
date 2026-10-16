@@ -1121,6 +1121,70 @@ test('a cancelled Application preparation that already recorded its group forget
   }
 })
 
+// Value: protects=the cancellation a refused Application preparation reports, and the record of its claimed group, when the editor refuses to close that empty group during the cleanup; fails_when=the cleanup's refused close throws its own error in place of the preparation's, or the record of a group that still stands is forgotten; why_new=Cycle 0046 finding 598 (the first repair routed the cleanup through the owned retirement, which throws on a refusal); seam=presentation.createViewport with its cancellation, holdNextCommand('vscode.getEditorLayout'), refuseNextGroupClose and applicationGroupMarkers
+test('a cancelled Application preparation whose claimed group the editor refuses to close reports its cancellation and keeps the record of that group', async () => {
+  // Arrange: an MCP run prepares the Application in a group of its own; the run is replaced while the preparation reads the confirmed layout, and the editor will refuse to close the claimed group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.addSeparateEditorPart()
+  harness.focusMutableDraft()
+  const reader = harness.createReader(),
+    preparation = new AbortController()
+  const gridRead = harness.holdNextCommand('vscode.getEditorLayout')
+  const viewport = Promise.resolve(
+    reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+      preparation.signal,
+    ),
+  ).catch((error: unknown) => error)
+  let finalRead: ReturnType<typeof harness.holdNextCommand> | undefined
+  try {
+    // The first read measures the grid before the allocation; the next one confirms the Application in its claimed group.
+    await gridRead.started
+    finalRead = harness.holdNextCommand('vscode.getEditorLayout')
+    gridRead.release()
+    await finalRead.started
+    const claimedGroup = harness.groups.find((group) => group.viewColumn === 1)!
+    assert.equal(claimedGroup.locked, true)
+    harness.refuseNextGroupClose()
+
+    // Act: a newer run replaces this one during the final layout read.
+    preparation.abort(new Error('A newer run replaced this preparation.'))
+    finalRead.release()
+    const outcome = await viewport
+
+    // Assert: the preparation reports its own cancellation; the claimed group stands empty, and its record stays with it.
+    assert.equal(
+      String(outcome),
+      'Error: A newer run replaced this preparation.',
+    )
+    assert.equal(harness.groups.includes(claimedGroup), true)
+    assert.equal(claimedGroup.tabs.length, 0)
+    const marker = harness.applicationGroupMarkers.get(
+      'codebook.applicationGroup.v1',
+    ) as { writer?: unknown } | undefined
+    assert.deepEqual(
+      { ...marker, writer: typeof marker?.writer },
+      {
+        version: 1,
+        writer: 'string',
+        column: 1,
+        groupCount: 2,
+        layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+      },
+    )
+  } finally {
+    gridRead.release()
+    finalRead?.release()
+    await viewport
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=a record that never outlives, in the same window, the Application group it describes once a cancelled preparation's pane leaves and the editor removes the group with the pane's tab (workbench.editor.closeEmptyGroups on, the default); fails_when=the failure cleanup finds no empty group of its own to close and keeps the record of the group the editor removed; why_new=Cycle 0046 finding 598 (the editor, not Codebook, retires the claimed group in the default configuration); seam=presentation.createViewport with its cancellation, holdNextCommand('vscode.getEditorLayout'), closeDisposedPanelTabsLater and applicationGroupMarkers
 test('a cancelled Application preparation that already recorded its group forgets that record when the editor removes the group with the pane’s tab', async () => {
   // Arrange: an MCP run prepares the Application in a group of its own in an editor that removes a group its last tab left; the run is replaced while the preparation reads the confirmed layout.
