@@ -650,6 +650,73 @@ test('a run its runtime ends during preparation gives its resource the runtimeâ€
   })
 })
 
+// Value: protects=the cause an agent and the learner read for a run whose preparation failed with an error that is no StudyError (the reader's "The dedicated Application layout could not be confirmed." in Cursor after a reload, C57 rounds 1f and 1f2): the run resource's terminalReason and error.message, and the reason the runtime journals as run.failed, name that cause; fails_when=they say only "The study operation failed." while the cause stays in error.cause alone, so the journal and the saved study's reason tell nobody why the start failed; why_new=Cycle 0046 row 645; seam=environment.createRuntime, runtime.prepare and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, configuredBrowserRun.ts fail)
+test('a run whose preparation fails with an error that is no StudyError names that error in its terminal reason and in the reason it journals as run.failed', async (context) => {
+  // Arrange
+  const { service, configuration, environment } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  const journaledReasons: string[] = []
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    const failRuntime = runtime.fail.bind(runtime)
+    runtime.fail = (reason): void => {
+      journaledReasons.push(reason)
+      failRuntime(reason)
+    }
+    runtime.prepare = async () => {
+      throw new Error(
+        'The dedicated Application layout could not be confirmed.',
+      )
+    }
+    return runtime
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'failed-application-layout',
+    configuration,
+  })
+  await service.record(receipt).preparation
+
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+    },
+    {
+      terminalReason:
+        'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+      error: {
+        code: 'RUNTIME_FAILED',
+        message:
+          'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+        cause:
+          'Error: The dedicated Application layout could not be confirmed.',
+      },
+      journaledReasons: [
+        'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+      ],
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange

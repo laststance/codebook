@@ -107,6 +107,7 @@ import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import { isStudyRemovalExclusion } from './utils/isStudyRemovalExclusion'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { messageNamingCause } from './utils/messageNamingCause'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
@@ -2709,18 +2710,28 @@ export class StudyService {
    * A runtime that ends itself during preparation (a pause it did not declare, such as a learner's breakpoint on a line the page load runs) closes its own transport, and the preparation then rejects with that closure ("CDP disconnected"). The reason the runtime recorded first is the one an agent can act on, so it becomes the message and the cause.
    * @param record - The run whose preparation rejected.
    * @param error - What the preparation rejected with.
-   * @returns The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, or {@link domainError} of `error` when the runtime recorded none or `error` already is a {@link StudyError}.
+   * Whatever the failure, its message names its cause ({@link messageNamingCause}): the message becomes the run's terminal reason and the reason its runtime journals as `run.failed`, and an error that is no {@link StudyError} would otherwise say only "The study operation failed." there, its own words staying in the cause alone (Cycle 0046 row 645).
+   * @returns
+   * - The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, when `error` is no {@link StudyError}.
+   * - Otherwise {@link domainError} of `error`, whose message names its cause where it did not.
    * @example
    * this.preparationError(record, new Error('CDP disconnected')).message
    * // => 'Unexpected or additional server stop invalidated the declared operation'
+   * this.preparationError(record, new Error('The dedicated Application layout could not be confirmed.')).message
+   * // => 'The study operation failed. Cause: The dedicated Application layout could not be confirmed.' (a runtime that recorded no failure)
    */
   private preparationError(record: StudyRecord, error: unknown): StudyError {
     const runtimeFailure = record.runtime
       ?.view()
       .failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
-    return runtimeFailure && !(error instanceof StudyError)
-      ? new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
-      : domainError(error)
+    if (runtimeFailure && !(error instanceof StudyError))
+      return new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
+    const failure = domainError(error)
+    const message = messageNamingCause(failure.message, failure.causeDetail)
+    // A message that names its cause already keeps its own error, its class among it.
+    return message === failure.message
+      ? failure
+      : new StudyError(failure.code, message, failure.causeDetail)
   }
 
   /**
