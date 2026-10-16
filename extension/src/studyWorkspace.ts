@@ -11114,8 +11114,7 @@ export class StudyWorkspace {
           isStackFrameItem(vscode.debug.activeStackItem) &&
           !this.learnerWorksInActiveEditor() &&
           this.isLearnersEditor(vscode.window.activeTextEditor) &&
-          vscode.window.activeTextEditor?.viewColumn === targetColumn &&
-          this.isFocusedGroupShowingOtherText(targetColumn, document.uri)
+          this.isActiveEditorInFrontAt(targetColumn, document.uri)
         )
           throw new Error(
             'The native source editor was kept open. Choose Focus Captured Source to show the capture.',
@@ -11780,6 +11779,31 @@ export class StudyWorkspace {
       vscode.window.state.focused &&
       group.viewColumn === column &&
       this.isTextInputOtherThan(shown, source)
+    )
+  }
+
+  /**
+   * Says whether the active text editor is the tab in front of the group at a column and shows another text than the captured source; asked by {@link renderSelection} before it would show the source over a file a native frame command opened.
+   * The group is found by its column: after "Navigate Down Call Stack" gave the frame's file the keyboard, Cursor 3.23.12 can keep naming an earlier group (the Application's) as the active tab group.
+   * @param column - The group the captured source would be shown in.
+   * @param source - The captured source.
+   * @returns `true` when the window is focused and the active text editor is in front at `column` with another document; `false` otherwise.
+   * @example this.isActiveEditorInFrontAt(targetColumn, document.uri) // => true for the frame's file in front of column 2
+   */
+  private isActiveEditorInFrontAt(
+    column: vscode.ViewColumn,
+    source: vscode.Uri,
+  ): boolean {
+    const editor = vscode.window.activeTextEditor,
+      shown = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === column,
+      )?.activeTab?.input
+    return (
+      vscode.window.state.focused &&
+      editor?.viewColumn === column &&
+      shown instanceof vscode.TabInputText &&
+      shown.uri.toString() === editor.document.uri.toString() &&
+      shown.uri.toString() !== source.toString()
     )
   }
 

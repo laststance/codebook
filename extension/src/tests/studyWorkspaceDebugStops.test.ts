@@ -1019,6 +1019,70 @@ test('a server stop that the editor shows 800 ms after the browser session went 
   }
 })
 
+// Value: protects=the learner's file after "Navigate Down Call Stack" at a live pause in Cursor, while a capture is still being saved; fails_when=the capture's later presentation shows the captured source over that file because the editor still names the Application group as the active group, so the keyboard falls on the window body; why_new=Cycle 0046 original 273 H3 on C51 in Cursor 3.23.12 (after the capture completed, 25 of 45 page samples were BODY; the frame's file in column 2 had the TEXTAREA while tabGroups.activeTabGroup stayed the Application group in column 1); seam=the fake editor's keepNamingGroupAfterFrameNavigation
+test("a capture presented after Navigate Down Call Stack keeps the frame's file and its keyboard while Cursor still names the Application group", async () => {
+  // Arrange: a live run paused with the stop's file in column 2; the learner put the Application group in front and ran Navigate Down Call Stack, and Cursor kept naming the Application group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    await readerSeams(harness).refresh()
+    const applicationPane = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(applicationPane)
+    harness.focusExistingWebviewTab(applicationPane.nativeTab)
+    harness.keepNamingGroupAfterFrameNavigation()
+    harness.selectStackFrame('actions.ts', 2, 'navigation-command')
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the paused capture completes and the reader presents the stop again.
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+
+    // Assert: the frame's file keeps the keyboard, nothing is shown over it, and the capture offers explicit recovery.
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+        '/actions.ts',
+      ),
+      true,
+    )
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /The native source editor was kept open\. Choose Focus Captured Source to show the capture\./,
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 for (const arrival of [
   {
     afterStoppedMs: 468,

@@ -781,6 +781,8 @@ export async function workspaceHarness(
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
   // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
   let leavesPaneFocusUnreportedBesideChat = false
+  // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
+  let keepsNamingGroupAfterFrameNavigation = false
   let deferMovedFocusEcho = false,
     pendingMovedFocusEcho: typeof activeTabGroup | undefined
   let deferKeptFocusEcho = false,
@@ -3947,6 +3949,13 @@ export async function workspaceHarness(
       return wiki
     },
     /** Emits a tab-only learner change so registration tests cannot rely on a text-editor notification. @example harness.focusExistingWebviewTab(wiki.nativeTab); */
+    /**
+     * Makes the editor's "Navigate Up/Down Call Stack" (`selectStackFrame(…, 'navigation-command')`) keep naming the group it named before as the active tab group, while the frame's file in its own group has the keyboard and is the active text editor; a group event clears the stale name. Cursor 3.23.12 for Linux was seen to do this on C51 with the owned Application group in front: the frame's file opened in column 2 with the keyboard in its TEXTAREA, and `tabGroups.activeTabGroup` stayed the Application group in column 1 (Cycle 0046, original 273 H3).
+     * @example harness.keepNamingGroupAfterFrameNavigation()
+     */
+    keepNamingGroupAfterFrameNavigation(): void {
+      keepsNamingGroupAfterFrameNavigation = true
+    },
     focusExistingWebviewTab(tab: Tab): void {
       const group = groups.find((group) => group.tabs.includes(tab))
       assert.ok(group)
@@ -4323,7 +4332,12 @@ export async function workspaceHarness(
         nativeDebugColumn(column),
         opensPreview,
       )
-      if (gesture === 'navigation-command') giveDraftKeyboard(opened)
+      if (gesture === 'navigation-command') {
+        // The group named before keeps its name; the frame's file has the keyboard and is the active text editor.
+        if (keepsNamingGroupAfterFrameNavigation)
+          staleNamedGroup = staleNamedGroup ?? activeTabGroup
+        giveDraftKeyboard(opened)
+      }
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
       else activeTextEditorChanged(focusedSourceEditor())
       activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
