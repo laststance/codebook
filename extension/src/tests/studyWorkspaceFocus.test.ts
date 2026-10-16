@@ -2161,3 +2161,338 @@ test('Arrange Study Workspace run from the Application pane says in one sentence
     await harness.close()
   }
 })
+
+// Value: protects=the Repository Wiki opened right after a completed Study Close beside Cursor's chat, whose cold arrangement gives the first group's text editor the keyboard to measure the main grid; fails_when=the editor's own late return to the recreated Wiki's group (only the active group changes, to the Wiki's column, while the borrowed text editor stays the active text editor and no learner input arrives) is refused by that measurement as a learner's change; why_new=Cycle 0046 finding 606, the row 444 follow-up (C24 capture 223 met this transition after the reader's own source acquisition, which adoptWikiGroupReturn accepts; the same transition can land while the arrangement measures the grid); seam=the workspace harness's addSeparateEditorPart, closeDisposedPanelTabsLater, removeEmptiedGroupsLater, holdNextCommand and reportGroupWithRetainedEditor
+test("opening the Repository Wiki right after Study Close beside Cursor's chat arranges without a refusal when the editor returns to the Wiki's group beside the unchanged text editor while the main grid is measured", async () => {
+  // Arrange: Cursor's chat is an editor part of its own beside the learner's file (column 1) and the Repository Wiki (column 2); the editor closes a disposed pane's tab and its emptied group a moment after the disposal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.closeDisposedPanelTabsLater()
+  harness.removeEmptiedGroupsLater()
+  const chat = harness.addSeparateEditorPart(),
+    draft = harness.focusMutableDraft('actions.ts', 1),
+    wiki = harness.openWiki(2)
+  let firstMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
+    borrowedMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
+    arranging: Promise<void> | undefined,
+    releaseRetainedEditor = (): void => {}
+  try {
+    // The Study workspace is opened over the Wiki and closed with the keyboard in its Study pane; longer than the fake editor takes to remove an emptied group.
+    await harness.reader.open()
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    // Close left the Wiki tab selected in the active group and gave that group the keyboard last.
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab,
+      wiki.nativeTab,
+    )
+    assert.equal(
+      harness.commands.at(-1),
+      'workbench.action.focusActiveEditorGroup',
+    )
+    const commandsBeforeArrangement = harness.commands.length
+    firstMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+    // The Wiki command's arrangement of a closed Study reader; the reader's own focus receipt accepts this return since adoptWikiGroupReturn, so only the arrangement's guards are under test.
+    arranging = harness.reader.arrangeRepository(
+      new AbortController().signal,
+      undefined,
+      { begin(): void {} },
+    )
+    const result = arranging.then(
+      () => ({ arranged: true, error: '' }),
+      (error: unknown) => ({ arranged: false, error: String(error) }),
+    )
+    await firstMeasurement.started
+    borrowedMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+    firstMeasurement.release()
+    await borrowedMeasurement.started
+    // The measurement gave the first group's text editor the keyboard and waits for the layout it reads there.
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 1)
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      draft.document.uri.toString(),
+    )
+
+    // Act: the editor names the Wiki's group as the active group while the active text editor stays the borrowed one; no learner input arrives.
+    releaseRetainedEditor = harness.reportGroupWithRetainedEditor(2)
+    borrowedMeasurement.release()
+
+    // Assert
+    assert.deepEqual(await result, { arranged: true, error: '' })
+    assert.equal(
+      harness.commands
+        .slice(commandsBeforeArrangement)
+        .includes('vscode.setEditorLayout'),
+      false,
+    )
+    assert.deepEqual(
+      harness.groups.map((group) => group.viewColumn),
+      [1, 2, 3],
+    )
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+    assert.equal(harness.groups[1]!.tabs.includes(wiki.nativeTab), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
+  } finally {
+    releaseRetainedEditor()
+    firstMeasurement?.release()
+    borrowedMeasurement?.release()
+    await arranging?.catch(() => undefined)
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's selection of the Study workspace right after a completed Study Close beside Cursor's chat, whose Open gives the first group's text editor the keyboard to measure the main grid before any pane exists; fails_when=the editor's own late return to the recreated Wiki's group beside that borrowed text editor refuses the selection with "The presentation was not confirmed." (its cause: "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."); why_new=Cycle 0046 finding 606 (the select variant has the same root: the borrow receipt of readMainEditorGrid, reached from StudyWorkspace.open); seam=the workspace harness's addSeparateEditorPart, closeDisposedPanelTabsLater, removeEmptiedGroupsLater, holdNextCommand and reportGroupWithRetainedEditor
+test("selecting the Study workspace right after Study Close beside Cursor's chat opens it when the editor returns to the Wiki's group beside the unchanged text editor while the main grid is measured", async () => {
+  // Arrange: Cursor's chat is an editor part of its own beside the learner's file (column 1) and the Repository Wiki (column 2); the editor closes a disposed pane's tab and its emptied group a moment after the disposal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.closeDisposedPanelTabsLater()
+  harness.removeEmptiedGroupsLater()
+  const chat = harness.addSeparateEditorPart(),
+    draft = harness.focusMutableDraft('actions.ts', 1),
+    wiki = harness.openWiki(2)
+  let firstMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
+    borrowedMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
+    selecting: Promise<unknown> | undefined,
+    releaseRetainedEditor = (): void => {}
+  try {
+    // The Study workspace is opened over the Wiki and closed with the keyboard in its Study pane; longer than the fake editor takes to remove an emptied group.
+    await harness.reader.open()
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab,
+      wiki.nativeTab,
+    )
+    const state = harness.reader.presentationState()
+    firstMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+    const selection = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    selecting = selection
+    const result = selection.then(
+      (presentation) => ({
+        state: presentation.state,
+        mode: presentation.mode,
+        layoutConfirmed: presentation.layoutConfirmed,
+        error: '',
+      }),
+      (error: unknown) => ({
+        state: 'refused',
+        mode: '',
+        layoutConfirmed: false,
+        error: String(error),
+      }),
+    )
+    await firstMeasurement.started
+    borrowedMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+    firstMeasurement.release()
+    await borrowedMeasurement.started
+    // Before any pane exists, the Open's measurement gave the first group's text editor the keyboard and waits for the layout it reads there.
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 1)
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      draft.document.uri.toString(),
+    )
+
+    // Act: the editor names the Wiki's group as the active group while the active text editor stays the borrowed one; no learner input arrives.
+    releaseRetainedEditor = harness.reportGroupWithRetainedEditor(2)
+    borrowedMeasurement.release()
+
+    // Assert
+    assert.deepEqual(await result, {
+      state: 'open',
+      mode: 'study-workspace',
+      layoutConfirmed: true,
+      error: '',
+    })
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.deepEqual([...harness.reader.inspect().view!.errors], [])
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+    assert.equal(harness.groups[1]!.tabs.includes(wiki.nativeTab), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
+  } finally {
+    releaseRetainedEditor()
+    firstMeasurement?.release()
+    borrowedMeasurement?.release()
+    await selecting?.catch(() => undefined)
+    await harness.close()
+  }
+})
+
+for (const input of [
+  'keyboard moved into the Wiki',
+  'a source selection after the Wiki-group return',
+  'a source edit after the Wiki-group return',
+  'another editor before the Wiki-group return',
+  "the chat's group beside the unchanged text editor",
+  "another webview selected in the Wiki's group beside the unchanged text editor",
+] as const)
+  // Value: protects=newer learner input while the Repository Wiki's cold arrangement measures the main grid right after Study Close beside Cursor's chat; fails_when=the accepted return to the Wiki's group also forgives the learner's click into the Wiki, a selection or an edit in the borrowed text editor, another editor, the chat's group or a group that selects another webview than the Wiki; why_new=Cycle 0046 finding 606 (the bound of the accepted return, as row 444 bounds the reader's); seam=the workspace harness's addSeparateEditorPart, closeDisposedPanelTabsLater, removeEmptiedGroupsLater, holdNextCommand, reportGroupWithRetainedEditor, focusExistingWebviewTab, focusMutableDraft and the fake editor's createWebviewPanel
+  test(`${input} still refuses the Repository Wiki's arrangement right after Study Close beside Cursor's chat`, async () => {
+    // Arrange: the Study workspace is opened over the Wiki in column 2 and closed with the keyboard in its Study pane; the Wiki command's arrangement has given the first group's text editor the keyboard and waits for the layout it reads there.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.closeDisposedPanelTabsLater()
+    harness.removeEmptiedGroupsLater()
+    const chat = harness.addSeparateEditorPart(),
+      draft = harness.focusMutableDraft('actions.ts', 1),
+      wiki = harness.openWiki(2)
+    let firstMeasurement:
+        ReturnType<typeof harness.holdNextCommand> | undefined,
+      borrowedMeasurement:
+        ReturnType<typeof harness.holdNextCommand> | undefined,
+      arranging: Promise<void> | undefined,
+      releaseRetainedEditor = (): void => {}
+    try {
+      await harness.reader.open()
+      await harness.reader.close()
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const commandsBeforeArrangement = harness.commands.length
+      firstMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+      arranging = harness.reader.arrangeRepository(
+        new AbortController().signal,
+        undefined,
+        { begin(): void {} },
+      )
+      const result = arranging.then(
+        () => ({ arranged: true, error: '' }),
+        (error: unknown) => ({ arranged: false, error: String(error) }),
+      )
+      await firstMeasurement.started
+      borrowedMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+      firstMeasurement.release()
+      await borrowedMeasurement.started
+
+      // Act
+      if (input === 'keyboard moved into the Wiki')
+        harness.focusExistingWebviewTab(wiki.nativeTab)
+      if (input === 'another editor before the Wiki-group return')
+        harness.focusMutableDraft('notes.ts', 1)
+      if (input.endsWith('after the Wiki-group return'))
+        releaseRetainedEditor = harness.reportGroupWithRetainedEditor(2)
+      if (input === "the chat's group beside the unchanged text editor")
+        releaseRetainedEditor = harness.reportGroupWithRetainedEditor(3)
+      if (
+        input ===
+        "another webview selected in the Wiki's group beside the unchanged text editor"
+      ) {
+        harness.editor.window.createWebviewPanel(
+          'markdown.preview',
+          'Preview README.md',
+          { viewColumn: 2, preserveFocus: true },
+        )
+        releaseRetainedEditor = harness.reportGroupWithRetainedEditor(2)
+      }
+      if (input === 'a source selection after the Wiki-group return')
+        draft.editor.selections = draft.editor.selections.map((selection) => ({
+          anchor: selection.anchor.with(6, 0),
+          active: selection.active.with(6, 0),
+        }))
+      if (input === 'a source edit after the Wiki-group return')
+        draft.replaceContent('My newer unsaved text.\n')
+      borrowedMeasurement.release()
+
+      // Assert
+      assert.deepEqual(await result, {
+        arranged: false,
+        error:
+          'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+      })
+      assert.equal(
+        harness.commands
+          .slice(commandsBeforeArrangement)
+          .includes('vscode.setEditorLayout'),
+        false,
+      )
+      assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+      assert.equal(harness.groups[1]!.tabs.includes(wiki.nativeTab), true)
+      assert.equal(
+        draft.document.getText(),
+        input === 'a source edit after the Wiki-group return'
+          ? 'My newer unsaved text.\n'
+          : 'Original learner draft.\n',
+      )
+      assert.deepEqual(chat.layout(), {
+        orientation: 1,
+        groups: [{ size: 743 }],
+      })
+    } finally {
+      releaseRetainedEditor()
+      firstMeasurement?.release()
+      borrowedMeasurement?.release()
+      await arranging?.catch(() => undefined)
+      await harness.close()
+    }
+  })
+
+// Value: protects=the arrangement's guard against a Repository Wiki pane an earlier extension host left behind; fails_when=the accepted return to the Wiki's group also takes the selection of such a leftover pane, which no Wiki reader of this host owns (repositoryWikiOpen() is false), as the editor's own return; why_new=Cycle 0046 finding 606 (only this host's live Wiki pane bounds the accepted return); seam=the workspace harness's closeTabByHand, leaveDeadCodebookPane, addSeparateEditorPart, holdNextCommand and reportGroupWithRetainedEditor
+test("a leftover Repository Wiki pane of an earlier extension host selected beside the unchanged text editor still refuses the Wiki's arrangement beside Cursor's chat", async () => {
+  // Arrange: an earlier extension host left a Repository Wiki pane in column 2, and no Wiki reader of this host owns a pane; Cursor's chat is an editor part of its own and the leftover pane's group is the active one.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.closeTabByHand(harness.groups[1]!.tabs[0]!)
+  const chat = harness.addSeparateEditorPart(),
+    draft = harness.focusMutableDraft('actions.ts', 1),
+    leftoverWiki = harness.leaveDeadCodebookPane('codebook.repositoryWiki', 2, {
+      focused: true,
+    })
+  let firstMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
+    borrowedMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
+    arranging: Promise<void> | undefined,
+    releaseRetainedEditor = (): void => {}
+  try {
+    const commandsBeforeArrangement = harness.commands.length
+    firstMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+    arranging = harness.reader.arrangeRepository(
+      new AbortController().signal,
+      undefined,
+      { begin(): void {} },
+    )
+    const result = arranging.then(
+      () => ({ arranged: true, error: '' }),
+      (error: unknown) => ({ arranged: false, error: String(error) }),
+    )
+    await firstMeasurement.started
+    borrowedMeasurement = harness.holdNextCommand('vscode.getEditorLayout')
+    firstMeasurement.release()
+    await borrowedMeasurement.started
+    // The measurement gave the first group's text editor the keyboard and waits for the layout it reads there.
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      draft.document.uri.toString(),
+    )
+
+    // Act: the editor names the leftover pane's group as the active group while the active text editor stays the borrowed one.
+    releaseRetainedEditor = harness.reportGroupWithRetainedEditor(2)
+    borrowedMeasurement.release()
+
+    // Assert
+    assert.deepEqual(await result, {
+      arranged: false,
+      error:
+        'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    })
+    assert.equal(
+      harness.commands
+        .slice(commandsBeforeArrangement)
+        .includes('vscode.setEditorLayout'),
+      false,
+    )
+    assert.equal(harness.groups[1]!.tabs.includes(leftoverWiki), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
+  } finally {
+    releaseRetainedEditor()
+    firstMeasurement?.release()
+    borrowedMeasurement?.release()
+    await arranging?.catch(() => undefined)
+    await harness.close()
+  }
+})

@@ -168,6 +168,7 @@ import {
   type StudyRemovalView,
   type StudyViewMessage,
 } from './ui/studyHtml'
+import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { capturedAppHtml } from './utils/capturedAppHtml'
 import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
@@ -202,6 +203,7 @@ import {
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
 import { isSameEditorLayoutShape } from './utils/isSameEditorLayoutShape'
+import { isWikiGroupBesideTextEditor } from './utils/isWikiGroupBesideTextEditor'
 import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
@@ -233,6 +235,7 @@ import { showPlainNotice } from './utils/showPlainNotice'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
+import { textEditorFocusState } from './utils/textEditorFocusState'
 import { thrownMessage } from './utils/thrownMessage'
 import {
   type ApplicationGroupMarkerToWrite,
@@ -1206,7 +1209,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells whether this host owns its Repository Wiki pane; asked once by every {@link rememberInheritedPanes}, before it reads the window's tabs.
+   * Tells whether this host owns its Repository Wiki pane; asked once by every {@link rememberInheritedPanes}, before it reads the window's tabs, and by a receipt of {@link retainPresentationPlacement} that accepts the editor's own return to the Wiki's group, when that group shows a Wiki pane.
    * @returns What the embedder's `repositoryWikiOpen` answers, and `true` for an embedder that has no such control.
    * @example
    * ```ts
@@ -5552,8 +5555,11 @@ export class StudyWorkspace {
     }
   }
 
-  /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @example const assertRetained = this.retainPresentationPlacement(); */
-  private retainPresentationPlacement(retainFocus = true): () => void {
+  /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @param retainFocus - Compares the focused group, tab and text editor too. @param acceptWikiGroupReturn - Takes the editor's own selection of the Repository Wiki's group beside the identical text editor as no change ({@link isWikiGroupBesideTextEditor}); only the borrow receipt of {@link readMainEditorGrid} asks for it (finding 606). @example const assertRetained = this.retainPresentationPlacement(); */
+  private retainPresentationPlacement(
+    retainFocus = true,
+    acceptWikiGroupReturn = false,
+  ): () => void {
     const transition = this.presentationTransition,
       lifetime = this.lifetime
     const panes = this.studyPanePositions(),
@@ -5590,8 +5596,26 @@ export class StudyWorkspace {
     const source = focusedSource(),
       appActive = this.app?.active,
       contextActive = this.contextPanel?.active
+    // The focused group this receipt compares; only a receipt that accepts it follows the editor's own return to the Wiki's group (finding 606).
+    let retainedFocus = {
+      editor: textEditorFocusState(vscode.window.activeTextEditor),
+      group: focusedGroup,
+    }
     return (): void => {
       const active = vscode.window.tabGroups.activeTabGroup
+      retainedFocus = adoptWikiGroupReturn(
+        retainedFocus,
+        {
+          editor: textEditorFocusState(vscode.window.activeTextEditor),
+          group: this.editorGroupIdentities.get(active),
+        },
+        isWikiGroupBesideTextEditor(
+          acceptWikiGroupReturn,
+          vscode.window.activeTextEditor,
+          active,
+          () => this.ownsRepositoryWikiPane(),
+        ),
+      )
       const sameWebviewTab =
         active.activeTab === focusedTab ||
         Boolean(
@@ -5619,7 +5643,7 @@ export class StudyWorkspace {
           focusedSource() === undefined)
       const sameFocus =
         !retainFocus ||
-        (focusedGroup ===
+        (retainedFocus.group ===
           this.editorGroupIdentities.get(
             vscode.window.tabGroups.activeTabGroup,
           ) &&
@@ -15608,7 +15632,8 @@ export class StudyWorkspace {
       })
       assertCurrent()
       assertGroups()
-      const assertFocused = this.retainPresentationPlacement()
+      // The editor's own late return to the Repository Wiki's group beside the borrowed text editor is no learner change (finding 606: right after Study Close).
+      const assertFocused = this.retainPresentationPlacement(true, true)
       layout = await vscode.commands.executeCommand<unknown>(
         'vscode.getEditorLayout',
       )
