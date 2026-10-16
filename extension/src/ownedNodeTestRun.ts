@@ -21,6 +21,7 @@ import {
   OwnedRepositoryBreakpoint,
 } from './ownedRepositoryBreakpoint'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
@@ -100,6 +101,8 @@ export class OwnedNodeTestRun {
       createDebugAdapterTracker: (session) => {
         if (!this.owner(session)) return
         this.active.set(session.id, session)
+        // Every stop of an owned Node test session belongs to the run, so the keyboard stays where Codebook left it.
+        codebookStopLedger.ownSession(session.id)
         this.record('node-test.session-started', {
           sessionId: session.id,
           parentId: session.parentSession?.id,
@@ -161,6 +164,7 @@ export class OwnedNodeTestRun {
     this.termination = vscode.debug.onDidTerminateDebugSession((session) => {
       this.pausedSessions.delete(session.id)
       this.clientResumes.delete(session.id)
+      codebookStopLedger.forget(session.id)
       if (this.active.delete(session.id))
         this.record('node-test.session-terminated', { sessionId: session.id })
     })

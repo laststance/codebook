@@ -61,6 +61,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import { Cdp } from './runtimeSupport/cdp'
+import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { CAPTURE_TIMEOUT_MS, RESUME_COMMANDS } from './runtimeSupport/constants'
 import { Evidence } from './runtimeSupport/evidence'
 import {
@@ -69,6 +70,7 @@ import {
 } from './runtimeSupport/hostBrowser'
 import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
@@ -2744,6 +2746,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journaled,
       }
       this.transientBrowserPause = transient
+      // The run resumes this page pause itself, so the stop the adapter reports for it is the run's.
+      this.openCausalWindow('browser')
       this.ownPagePauseUnderResume()
       if (journaled)
         this.evidence.record('cdp.browser-pause-awaiting-adapter', {
@@ -3486,6 +3490,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       afterVerified: false,
     }
     this.status = 'acting'
+    // The input's first stop is the run's, so its causal window opens with the input.
+    this.openCausalWindowOfStop(this.stopIndex)
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
       this.unreachedFirstStopReason(),
     )
@@ -3648,6 +3654,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     for (const stop of this.stops) stop.breakpoint?.onRequest(session, request)
     const name = this.participantName(session)
+    this.closeWindowAtLearnerPause(session, request)
     if (this.cleaning || !name || !RESUME_COMMANDS.has(request.command)) return
     const participant = this.participants[name]
     this.evidence.record('dap.resume-request', {
@@ -3709,6 +3716,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         name === 'browser'
           ? this.serverStopOfBrowserPause(session, body)
           : undefined
+      this.recordStopVerdict(session, participant, serverStop !== undefined)
       if (serverStop) {
         this.track(
           this.resumeServerBreakpointInBrowser(session, body, serverStop),
@@ -3792,6 +3800,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return
       }
       this.acceptedStop = true
+      // The accepted stop ends its causal window: the session's next stop needs an input, a continuation or a resume of the run's own.
+      codebookStopLedger.closeWindow([session.id])
       const pause = participant.gate.stop(session.id, body.threadId!)
       // The run's status stays what it was until inspect has committed the observation: a read in between must not answer a pause it can neither read nor continue.
       this.holdPauseDeadline()
@@ -3975,6 +3985,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): Promise<void> {
     this.participants.browser.expectedResumeRequests++
+    // The run's own resume of a server stop's page pause: the stop the adapter reports next for this session is the run's.
+    codebookStopLedger.openWindow([session.id])
     // From here on the page's pause is the run's own to resume, also when its runtime event is read only later.
     this.pageResumesUnderWay.push(stop)
     this.ownPagePauseUnderResume()
@@ -5057,6 +5069,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         afterStarted: false,
       })
       participant.expectedResumeRequests++
+      // The continuation's next declared stop is the run's, so its window opens with the continuation.
+      this.openCausalWindowOfStop(this.stopIndex + 1)
       this.evidence.record('continue.accepted', pause)
       this.progressDeadline(
         ACTIVE_TIMEOUT_MS,
@@ -5637,12 +5651,84 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined
+    codebookStopLedger.closeWindow(this.participantSessionIds())
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate(true)
     this.evidence.record('run.failed', { reason })
     queueMicrotask(() => {
       void this.stop().catch((error) => this.failures.push(String(error)))
     })
+  }
+  /**
+   * Lists the debug sessions the run's participants are attached to, for the causal window and for the ledger's cleanup.
+   * @returns The session ids of the attached participants; an unattached participant contributes nothing.
+   * @example this.participantSessionIds() // => ['live-next-browser', 'live-next-server']
+   */
+  private participantSessionIds(): string[] {
+    return Object.values(this.participants).flatMap((participant) =>
+      participant.selected ? [participant.selected.id] : [],
+    )
+  }
+  /**
+   * Opens the causal window of a participant's debug session, so the stop it reports next is judged as the run's; the window is read by {@link CodebookStopLedger}.
+   * @param name - The participant whose next stop the run expects; `undefined` when no stop is declared next.
+   * @example this.openCausalWindow('browser') // the page pause the run resumes itself
+   */
+  private openCausalWindow(name: Participant | undefined): void {
+    const sessionId = name ? this.participants[name].selected?.id : undefined
+    if (sessionId) codebookStopLedger.openWindow([sessionId])
+  }
+  /**
+   * Opens the causal window of the participant of a declared stop; called by {@link action} for the input's first stop and by {@link continue} for the continuation's next stop.
+   * @param stopIndex - The index of the declared stop the run expects next; past the last stop, nothing opens.
+   * @example this.openCausalWindowOfStop(this.stopIndex + 1)
+   */
+  private openCausalWindowOfStop(stopIndex: number): void {
+    this.openCausalWindow(this.stops[stopIndex]?.participant)
+  }
+  /**
+   * Ends the causal window of a session whose program the learner pauses, so the stop the pause makes is the learner's; called by {@link onRequest} for every request, before it looks at resumes only. A resume the run did not make ends the window through {@link fail}.
+   * @param session - The session the request goes to.
+   * @param request - The editor's request.
+   * @example this.closeWindowAtLearnerPause(session, { type: 'request', seq: 4, command: 'pause', arguments: { threadId: 1 } })
+   */
+  private closeWindowAtLearnerPause(
+    session: vscode.DebugSession,
+    request: DebugProtocol.Request,
+  ): void {
+    if (request.command === 'pause')
+      codebookStopLedger.closeWindow([session.id])
+  }
+  /**
+   * Records in {@link CodebookStopLedger} whether a stop the adapter reported is the run's own ({@link isStopCausedByCodebook}); called by {@link onEvent} for every `stopped` event of a participant, also for a queued one it reads again once its continuation completes.
+   * @param session - The session that stopped.
+   * @param participant - Its participant, whose pending refresh marks an adapter refresh of a pause the run holds.
+   * @param isRunResumedPageStop - Whether the stop is a page pause at a server stop's breakpoint that the run resumes itself.
+   * @example this.recordStopVerdict(session, participant, serverStop !== undefined)
+   */
+  private recordStopVerdict(
+    session: vscode.DebugSession,
+    participant: DebugParticipant,
+    isRunResumedPageStop: boolean,
+  ): void {
+    codebookStopLedger.recordStop(
+      session.id,
+      isStopCausedByCodebook({
+        windowOpen: codebookStopLedger.isWindowOpen(session.id),
+        isAdapterRefresh: Boolean(
+          participant.refresh || participant.deferredRefresh,
+        ),
+        isRunResumedPageStop,
+      }),
+    )
+  }
+  /**
+   * Drops the ledger's windows and verdicts of the run's sessions, so a stop held after the run ended is no longer Codebook's; called by {@link cleanupOwned}.
+   * @example this.forgetCausalSessions()
+   */
+  private forgetCausalSessions(): void {
+    for (const sessionId of this.participantSessionIds())
+      codebookStopLedger.forget(sessionId)
   }
   /** Shares owned cleanup and permits explicit retry only after an incomplete release. @example await run.stop() */
   async stop(): Promise<void> {
@@ -5662,6 +5748,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journalLimit: REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT,
       })
     this.evidence.record('cleanup.started')
+    this.forgetCausalSessions()
     if (this.transientBrowserPause) {
       clearTimeout(this.transientBrowserPause.timer)
       this.transientBrowserPause = undefined

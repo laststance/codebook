@@ -125,16 +125,20 @@ import {
 } from './retainedStudySchemas'
 import type { RuntimeParticipant, RuntimeView, StudyRuntime } from './runtime'
 import { BrowserViewport } from './runtimeSupport/browserViewport'
+import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import {
   CAPTURE_TIMEOUT_MS,
   KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
+import { StopKeyboardHandOver } from './runtimeSupport/stopKeyboardHandOver'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
 import { isDebugResumeMessage } from './runtimeSupport/utils/isDebugResumeMessage'
 import { isDebugStopsInvalidation } from './runtimeSupport/utils/isDebugStopsInvalidation'
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
+import { isStopKeyboardHandOverDue } from './runtimeSupport/utils/isStopKeyboardHandOverDue'
+import { readsExplicitFocusEditorOnBreak } from './runtimeSupport/utils/readsExplicitFocusEditorOnBreak'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
@@ -656,6 +660,8 @@ export class StudyWorkspace {
     leftAtMs?: number
     pause?: KeyboardPauseOfRecord
   }
+  /** The keyboard hand-over of the stop the reader is showing: armed by {@link noteStopOf}, done once {@link handOverStopKeyboard} gave the paused file the keyboard, idle when the session goes on. */
+  private readonly stopHandOver = new StopKeyboardHandOver()
   /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet, each with what {@link noteStopOf} noted of that stop; {@link cameWithStop} takes a session out again, and so does {@link forgetSession}. */
   private readonly announcedStops = new Map<string, StopNote>()
   /** The moment each followed debug session was last seen to go on (the editor's resume or step request, or the adapter's `continued` event), kept while it runs: {@link noteSessionWentOn} sets it, the session's next stop and its end take it out. {@link cameBeforeFocusPass} reads from it how soon the editor can pass the focus on from that session. */
@@ -3020,6 +3026,8 @@ export class StudyWorkspace {
   private noteSessionWentOn(sessionId: string): void {
     this.sessionsWentOnAtMs.set(sessionId, performance.now())
     this.doubtStopOf(sessionId)
+    // A session that goes on ends its stop, so its next stop gets a keyboard hand-over of its own.
+    this.stopHandOver.disarm(sessionId)
   }
 
   /**
@@ -3032,6 +3040,8 @@ export class StudyWorkspace {
     this.followedSessions.delete(sessionId)
     this.announcedStops.delete(sessionId)
     this.sessionsWentOnAtMs.delete(sessionId)
+    this.stopHandOver.disarm(sessionId)
+    codebookStopLedger.forget(sessionId)
   }
 
   /**
@@ -3053,6 +3063,8 @@ export class StudyWorkspace {
     })
     if (this.isLearnersStopFromEditor(stop.reason))
       this.keyboardOutsideEditors = undefined
+    // The stop waits for the keyboard hand-over: the next text editor that becomes active after this read is the paused file.
+    this.stopHandOver.arm(sessionId)
   }
 
   /**
@@ -3301,10 +3313,12 @@ export class StudyWorkspace {
 
   /**
    * Says whether the editor's debugger gave the file of the frame it shows the keyboard; asked by {@link showsFrameOpenedWithoutKeyboard}, {@link keepsKeyboardFromPane}, {@link holdsKeyboardInActiveEditor} and {@link tellPaneTookKeyboard}.
-   * @returns `true` while the frame of a stop is shown ({@link frameCameWithStop}) and `debug.focusEditorOnBreak` is not turned off; `false` for a frame without a stop, with that setting off, for a thread and without an item.
+   * @returns `true` while a frame of a stop whose keyboard Codebook handed to the paused file is shown ({@link stopIsHandedOver}), and while the frame of a stop is shown ({@link frameCameWithStop}) with `debug.focusEditorOnBreak` not turned off; `false` for a frame without a stop, with that setting off and no hand-over, for a thread and without an item.
    * @example this.debuggerGaveEditorKeyboard() // => false at a stop of a learner who turned "debug.focusEditorOnBreak" off
    */
   private debuggerGaveEditorKeyboard(): boolean {
+    // A stop whose keyboard Codebook handed to the paused file keeps it there, whatever the setting says.
+    if (this.stopIsHandedOver()) return true
     return (
       this.frameCameWithStop &&
       vscode.workspace
@@ -3432,6 +3446,11 @@ export class StudyWorkspace {
    * @example this.judgeKeyboardAtPauseBegin()
    */
   private judgeKeyboardAtPauseBegin(): void {
+    // A stop Codebook does not own is the learner's: its file gets the keyboard, and no return to the chat is owed for it.
+    if (this.holdsStopKeyboard()) {
+      this.leavePauseToLearner()
+      return
+    }
     const remembered = this.keyboardOutsideEditors
     if (!remembered) return
     if (this.leftChatBeforePause(remembered.leftAtMs)) {
@@ -11707,6 +11726,74 @@ export class StudyWorkspace {
   }
 
   /**
+   * Gives the keyboard to the file the editor's debugger opened at a stop Codebook did not cause, once per stop; called first by the active-editor listener of {@link installReaders}.
+   * Under Codebook's contributed `debug.focusEditorOnBreak: false`, VS Code and Cursor open the paused file in the active group preserving the focus, which hides the editor that had the keyboard and leaves it on no element (Cycle 0046 finding 589: a learner's Step Into, an adapter refresh after a palette command). At a stop the run caused the chat keeps the keyboard ({@link returnsKeyboardToChatAtPause}); at any other stop the paused file gets it, as the editor's own default would give it. The pause is then settled to the learner ({@link leavePauseToLearner}), so no later reveal returns the keyboard to the chat.
+   * @param editor - The text editor that became active; the captured source and no editor are skipped.
+   * @example this.handOverStopKeyboard(editor)
+   */
+  private handOverStopKeyboard(editor: vscode.TextEditor | undefined): void {
+    const sessionId = this.stopHandOver.armedSessionId()
+    // Only a text editor other than the captured source that becomes active after the stop was read is the paused file.
+    if (
+      sessionId === undefined ||
+      !editor ||
+      editor.document.uri.scheme === STUDY_SOURCE_SCHEME ||
+      !this.isStopHandOverDue(sessionId)
+    )
+      return
+    this.stopHandOver.markDone()
+    this.leavePauseToLearner()
+    // A keyboard courtesy: an editor that refuses the show leaves the focus where it was.
+    void vscode.window
+      .showTextDocument(editor.document, {
+        viewColumn: editor.viewColumn,
+        preserveFocus: false,
+        selection: editor.selection,
+      })
+      .then(undefined, () => undefined)
+  }
+
+  /**
+   * Says whether the keyboard of a session's stop goes to the paused file ({@link isStopKeyboardHandOverDue}), from the recording state, the learner's `debug.focusEditorOnBreak` and the run's verdict in {@link CodebookStopLedger}; asked by {@link handOverStopKeyboard} and {@link holdsStopKeyboard}.
+   * @param sessionId - The debug session of the stop.
+   * @returns `true` when Codebook hands that stop's keyboard to the paused file; `false` at a stop Codebook caused, while a recording is open, and when the editor or the learner's own setting decides the focus.
+   * @example this.isStopHandOverDue('live-next-browser') // => false at a stop the run's continue caused
+   */
+  private isStopHandOverDue(sessionId: string): boolean {
+    const debugSettings = vscode.workspace.getConfiguration('debug')
+    return isStopKeyboardHandOverDue({
+      recordingActive: this.recordingActive,
+      focusEditorOnBreak: debugSettings.get<boolean>('focusEditorOnBreak'),
+      hasExplicitFocusEditorOnBreak: readsExplicitFocusEditorOnBreak(
+        debugSettings.inspect<boolean>('focusEditorOnBreak'),
+      ),
+      isCodebookCausedStop: codebookStopLedger.isCodebookCausedStop(sessionId),
+    })
+  }
+
+  /**
+   * Says whether the stop the reader holds is one whose keyboard Codebook hands, or handed, to the paused file; asked by {@link judgeKeyboardAtPauseBegin}, which owes the chat nothing for it.
+   * @returns `true` while a stop is armed or handed over ({@link StopKeyboardHandOver}) and its hand-over is due; `false` otherwise.
+   * @example if (this.holdsStopKeyboard()) this.leavePauseToLearner()
+   */
+  private holdsStopKeyboard(): boolean {
+    const sessionId = this.stopHandOver.heldSessionId()
+    return sessionId !== undefined && this.isStopHandOverDue(sessionId)
+  }
+
+  /**
+   * Says whether the frame the editor shows belongs to a stop whose keyboard Codebook handed to the paused file; asked by {@link debuggerGaveEditorKeyboard}, so the reader's keyboard model treats that file as holding the keyboard for the stop.
+   * @returns `true` when Run and Debug shows a frame of the session whose stop is handed over; `false` otherwise.
+   * @example this.stopIsHandedOver() // => true after the learner's Step Into gave the stepped-into file the keyboard
+   */
+  private stopIsHandedOver(): boolean {
+    const item = vscode.debug.activeStackItem
+    return (
+      isStackFrameItem(item) && this.stopHandOver.isDoneFor(item.session.id)
+    )
+  }
+
+  /**
    * Tells the learner that one of the reader's panes took the keyboard from a text editor, with the sentence that fits why that editor had it; called by {@link settleKeyboardAtPause} when the captured source took it, and through the viewport's lease ({@link presentation}) when the Application pane did.
    * @example tookKeyboardFromEditor: () => this.tellPaneTookKeyboard()
    */
@@ -14786,6 +14873,8 @@ export class StudyWorkspace {
     this.disposables.push(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         this.confirmInitialAppRegistration()
+        // The paused file the editor opened preserving the focus at a stop Codebook did not cause gets the keyboard, once per stop.
+        this.handOverStopKeyboard(editor)
         if (editor?.document.uri.scheme === STUDY_SOURCE_SCHEME)
           this.lastActiveRegion = 'source'
         if (

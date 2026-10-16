@@ -24,6 +24,7 @@ import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
 import type { ConfiguredRuntimeView } from '../runtime'
+import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -93,6 +94,8 @@ export async function workspaceHarness(
   deterministicClock = false,
   remoteName?: string,
 ) {
+  // The ledger is shared by the module's every reader: a verdict of an earlier test's stop must not decide this one's.
+  codebookStopLedger.reset()
   let clock = 0
   let savedStudyCapacity: unknown
   const warningDialogs: {
@@ -670,17 +673,34 @@ export async function workspaceHarness(
   /** Run and Debug's active stack item as the fake editor reports it: a frame while a session is paused, its thread once it runs again, none before a first stop; see `pauseDebugger`. */
   let activeStackItem: FakeStackFrame | FakeStackThread | undefined,
     focusEditorOnBreak: boolean | undefined
+  /** Codebook's `configurationDefaults` value of `debug.focusEditorOnBreak`, which `inspect` reports as the default and no explicit layer; unset until a test calls `contributeFocusEditorOnBreakDefault`. */
+  let contributedFocusEditorOnBreak: boolean | undefined
   let nextStackFrameId = 1
   /**
    * The settings the fake editor answers, by their full key; every other setting is unset. Read at each `get`, so a test that changes one of the values is answered with the new one.
-   * @returns The values of `codebook.savedStudyLimit`, `debug.focusEditorOnBreak` (unset: the editor's default, on) and `workbench.editor.closeEmptyGroups` (the fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`).
+   * @returns The values of `codebook.savedStudyLimit`, `debug.focusEditorOnBreak` (the learner's own value, else Codebook's contributed default, else unset: the editor's default, on) and `workbench.editor.closeEmptyGroups` (the fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`).
    * @example configuredValues()['debug.focusEditorOnBreak'] // => false after harness.pauseDebugger({ focusesEditorOnBreak: false })
    */
   const configuredValues = (): Record<string, unknown> => ({
     'codebook.savedStudyLimit': savedStudyCapacity,
-    'debug.focusEditorOnBreak': focusEditorOnBreak,
+    'debug.focusEditorOnBreak':
+      focusEditorOnBreak ?? contributedFocusEditorOnBreak,
     'workbench.editor.closeEmptyGroups': closeDisposedPanelTabsLater,
   })
+  /**
+   * What the fake editor's `inspect` answers for a setting: the learner's value of `debug.focusEditorOnBreak` (set by `pauseDebugger`) in the user layer and Codebook's contributed value as the default; every other setting is reported in the user layer.
+   * @param fullKey - The setting's full key.
+   * @returns The inspection, with `globalValue` for an explicit value and `defaultValue` for the contributed default.
+   * @example inspectedValues('debug.focusEditorOnBreak') // => { key: 'debug.focusEditorOnBreak', defaultValue: false, globalValue: undefined } after contributeFocusEditorOnBreakDefault(false)
+   */
+  const inspectedValues = (fullKey: string) =>
+    fullKey === 'debug.focusEditorOnBreak'
+      ? {
+          key: fullKey,
+          defaultValue: contributedFocusEditorOnBreak,
+          globalValue: focusEditorOnBreak,
+        }
+      : { key: fullKey, globalValue: configuredValues()[fullKey] }
   /** The reader's listeners for a change of the selected stack item of Run and Debug; `pauseDebugger` and `resumeDebugger` call them. */
   const activeStackItemListeners = new Set<() => void>()
   /** Whether the fake editor lets the keyboard fall to the page body when it removes an emptied editor group while a text editor has the keyboard; see `loseKeyboardWhenGroupCloses`. */
@@ -3423,6 +3443,7 @@ export async function workspaceHarness(
       workspace: {
         getConfiguration: (section: string) => ({
           get: (key: string) => configuredValues()[`${section}.${key}`],
+          inspect: (key: string) => inspectedValues(`${section}.${key}`),
         }),
         onDidChangeConfiguration: (
           listener: (event: {
@@ -4250,6 +4271,14 @@ export async function workspaceHarness(
       windowWidthPx = widthPx
     },
     /**
+     * Gives `debug.focusEditorOnBreak` the value Codebook contributes through `configurationDefaults`, as the installed extension does: `get` answers it while the learner sets no value of their own (`pauseDebugger`'s `focusesEditorOnBreak`), and `inspect` reports it as the default, in no explicit layer.
+     * @param value - The contributed value; Codebook contributes `false`.
+     * @example harness.contributeFocusEditorOnBreakDefault(false)
+     */
+    contributeFocusEditorOnBreakDefault(value: boolean): void {
+      contributedFocusEditorOnBreak = value
+    },
+    /**
      * Pauses the fake debugger: Run and Debug's active stack item is a stack frame, and the reader's listeners are told. Both editors report three states of that item, and this method with `resumeDebugger` is the only way to set them: none before a session's first stop (the state every harness starts in), a frame while the focused thread is stopped (this method), and that thread without a frame once the session runs again (`resumeDebugger`). Called again while a frame is active, it reports the next frame with no thread between the two, as an editor does for a thread that stops again within the 200 ms it waits before it reports a running session, and for a frame the learner selects in the Call Stack view. The editor has opened the paused file with the keyboard before it reports the frame (see `focusMutableDraft`; Cursor's and VS Code's debugger await that opening and select the frame after it), so a test focuses that file first.
      * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent); `staysInBackground` sends that event and nothing more, for a stop the editor does not bring to the front itself (both editors skip a stop while a frame of another session has the focus, which a session that went on keeps for about 200 ms; see `passFocusToStoppedSession` for what follows); `keepsFocus` is the adapter's `preserveFocusHint` in that event, its wish that the editor leave the focus where it is, which a test gives together with `staysInBackground`.
      * @example
@@ -4461,6 +4490,77 @@ export async function workspaceHarness(
     openFileWithoutKeyboard(filename: string, column: number): void {
       openDraftTab(filename, column, true)
       activeTextEditorChanged(focusedSourceEditor())
+    },
+    /**
+     * Shows a stop the way both editors' own stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23): the paused file comes to the front of its group preserving the focus, and then the stop's frame is reported. When the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). A test sends the adapter's `stopped` event first (`pauseDebugger` with `staysInBackground`).
+     * @param sessionId - The session that stopped.
+     * @param filename - The paused file.
+     * @param column - The group the editor opens it in.
+     * @example
+     * harness.pauseDebugger({ session: 'live-next-browser', reason: 'step', staysInBackground: true })
+     * harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
+     */
+    showStopKeepingFocus(
+      sessionId: string,
+      filename: string,
+      column: number,
+    ): void {
+      const pausedColumn = nativeDebugColumn(column)
+      // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
+      const hidesFocusedEditor =
+        activeTabGroup.viewColumn === pausedColumn &&
+        windowState.focused &&
+        !keyboardOnBody &&
+        !keyboardInView &&
+        !keyboardInSideBar &&
+        !separateEditorPart?.focused &&
+        focusedSourceEditor() !== undefined
+      openDraftTab(filename, pausedColumn, true)
+      if (hidesFocusedEditor) keyboardOnBody = true
+      activeTextEditorChanged(focusedSourceEditor())
+      activeStackItem = {
+        session: { id: sessionId },
+        threadId: 1,
+        frameId: nextStackFrameId++,
+      }
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Reports another frame of the stop the editor shows, with no new stop and no new file: the editor's stop handling focuses the frame again once the rest of the stack is loaded, which reveals the paused file it already shows (Cycle 0046 finding 589, frames 1313, 1314 and 1372 of one stop in the C54 9f round).
+     * @example
+     * harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
+     * harness.reportFrameOfSameStop()
+     */
+    reportFrameOfSameStop(): void {
+      assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
+      activeTextEditorChanged(focusedSourceEditor())
+      activeStackItem = {
+        session: activeStackItem.session,
+        threadId: activeStackItem.threadId,
+        frameId: nextStackFrameId++,
+      }
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Makes the adapter refresh the stack of a paused session as js-debug does after "Debug: Toggle Skipping this File": its `continued` event and then a `stopped` event with the reason `breakpoint`, with no request of the editor's or the run's (Cycle 0046 finding 589, C54 round 9f: 27 ms after the Enter). The editor then shows the stop again (`showStopKeepingFocus`).
+     * @param sessionId - The paused session.
+     * @example
+     * harness.refreshPausedStack('live-next-browser')
+     * harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
+     */
+    refreshPausedStack(sessionId: string): void {
+      for (const tracker of trackersOf({ id: sessionId })) {
+        tracker?.onDidSendMessage?.({
+          type: 'event',
+          event: 'continued',
+          body: { threadId: 1 },
+        })
+        tracker?.onDidSendMessage?.({
+          type: 'event',
+          event: 'stopped',
+          body: { reason: 'breakpoint', threadId: 1 },
+        })
+      }
     },
     /**
      * Moves the selection of the text editor in front of the active group as a command does: the editor's own jump to a line (Go to Line, a frame of the same file selected again) or a selection an extension sets. The editor reports the change with the kind of a command, and the keyboard stays where it is.
