@@ -925,6 +925,30 @@ for (const input of ['chat', 'file'] as const)
     assert.equal((await harness.library.readProgress()).decisions.length, 0)
   })
 
+// Value: protects=the learner's keyboard when an agent opens an article through codebook_open_book while no Wiki is open: in VS Code the chat view's input keeps it (the learner's file stays the active text editor there, which is why Codebook cannot tell the chat from the file), and the Wiki is created and shown beside it without the keyboard; fails_when=the cold entry creates the Wiki with the keyboard and its ready handoff reveals it with the focus, so the keyboard leaves the chat without a word; why_new=Cycle 0046 finding on codebook_open_book (the cold agent entry, beside row 612's rule); seam=readerHarness with focusChat (a view's input) and focusUnrelatedDraft (the active text editor while the chat view types), openFromAgent, the created panels' focus and the reveals' preserveFocus
+for (const input of ['chat', 'file'] as const)
+  test(`an agent opening an article while no Wiki is open shows the Wiki without taking the learner's ${input} input`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    if (input === 'chat') harness.focusChat()
+    else harness.focusUnrelatedDraft()
+    const originalInput = harness.focusedSource()
+
+    // Act
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+
+    // Assert: the Wiki was created in column 2 and shown there by its creation, no reveal gave it the focus, and the learner's input is the one before.
+    assert.equal(harness.focusedSource(), originalInput)
+    assert.deepEqual(harness.panelColumns, [2])
+    assert.deepEqual(harness.revealFocus, [])
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+    assert.equal(harness.reader.inspect().view.loading, false)
+  })
+
 // Regression: Cycle0046 native423 — a Return command must preserve input until the learner selects the Wiki.
 // Found by /qa on 2026-10-10; private native-final/n331-n332-c17/vscode/return-reproduction.json.
 for (const input of ['chat', 'file'] as const)

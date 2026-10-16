@@ -204,6 +204,7 @@ export class RepositoryReader {
    * Opens an exact article; {@link openFromAgent} keeps existing native input while learner navigation activates the Wiki.
    * @param restoreReadingLayout - Restore the actual Study Return's saved native arrangement.
    * @param preserveNativeInput - Existing-Wiki agent reads and external Return commands keep native input; cold entry still activates its reader.
+   * @param forAgent - `true` for codebook_open_book ({@link openFromAgent}): a cold entry that borrowed no editor focus for its layout creates and shows the Wiki without the keyboard, which stays where the learner had it (the chat view's input in VS Code). An external Return command's cold entry still activates the Wiki.
    * @example await reader.open(selection)
    */
   async open(
@@ -211,6 +212,7 @@ export class RepositoryReader {
     signal?: AbortSignal,
     restoreReadingLayout = false,
     preserveNativeInput = false,
+    forAgent = false,
   ): Promise<void> {
     signal?.throwIfAborted()
     this.navigation.abort()
@@ -221,6 +223,7 @@ export class RepositoryReader {
     const generation = ++this.generation
     this.openingGeneration = generation
     const background = preserveNativeInput && Boolean(this.panel),
+      coldAgentEntry = forAgent && !this.panel,
       initiatingEditor = vscode.window.activeTextEditor
     this.sourceDeferred = false
     this.deferredReturn = undefined
@@ -379,7 +382,9 @@ export class RepositoryReader {
         coldFocus?.assertRetained()
         coldFocus?.dispose()
       }
-      this.ensurePanel(Boolean(anchoredSource))
+      // An agent's cold entry that moved no keyboard for its layout shows the Wiki without taking it from the learner (codebook_open_book).
+      const keepsLearnersKeyboard = coldAgentEntry && !anchoredSource
+      this.ensurePanel(Boolean(anchoredSource) || keepsLearnersKeyboard)
       this.publish()
       if (selection && book) {
         await this.load(selection, book, generation, anchoredSource)
@@ -398,7 +403,12 @@ export class RepositoryReader {
       sourceFocus?.dispose()
       if (!background) {
         // Native reveal can recreate a hidden document; keep input ownership until that exact article acknowledges rendering.
-        await this.revealReadyPanel(generation, navigation.signal)
+        await this.revealReadyPanel(
+          generation,
+          navigation.signal,
+          undefined,
+          !keepsLearnersKeyboard,
+        )
       } else {
         await this.completeDeferredReturn(signal, initialFocus)
       }
@@ -425,6 +435,7 @@ export class RepositoryReader {
    * @param generation - Rejects a Close or newer navigation instead of activating its old panel.
    * @param signal - Cancels the current navigation's bounded renderer wait.
    * @param assertSelectedInput - Retains an already-selected Wiki during deferred citation work without another quiet selection.
+   * @param activate - `false` for an agent's cold entry ({@link open} with `forAgent`): the Wiki is shown and rendered without the keyboard, and no activating reveal follows.
    * @returns Completion of the current article's render acknowledgement and native handoff, not a pixel-paint guarantee.
    * @throws A renderer timeout, cancellation or newer native-input error; no activating reveal follows a failed wait.
    * @example await this.revealReadyPanel(generation, navigation.signal)
@@ -433,6 +444,7 @@ export class RepositoryReader {
     generation: number,
     signal: AbortSignal,
     assertSelectedInput?: () => void,
+    activate = true,
   ): Promise<void> {
     this.assertCurrent(generation)
     const panel = this.panel
@@ -480,11 +492,13 @@ export class RepositoryReader {
       focus.dispose()
       windowFocus.dispose()
       revealState.dispose()
-      this.activateReadyPanel(
-        panel,
-        quietSelectionAccepted,
-        quietRevealAcknowledged,
-      )
+      // An agent's cold entry leaves the keyboard where the learner had it; the learner selects the Wiki when ready.
+      if (activate)
+        this.activateReadyPanel(
+          panel,
+          quietSelectionAccepted,
+          quietRevealAcknowledged,
+        )
     } finally {
       focus.dispose()
       windowFocus.dispose()
@@ -553,7 +567,7 @@ export class RepositoryReader {
     this.revealPanel(panel, false)
   }
 
-  /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection. @example await reader.openFromAgent(input) */
+  /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection, and a cold Wiki is shown without the keyboard. @example await reader.openFromAgent(input) */
   async openFromAgent(input: OpenBookInput, signal?: AbortSignal) {
     await this.open(
       {
@@ -564,6 +578,7 @@ export class RepositoryReader {
       },
       signal,
       false,
+      true,
       true,
     )
     signal?.throwIfAborted()
