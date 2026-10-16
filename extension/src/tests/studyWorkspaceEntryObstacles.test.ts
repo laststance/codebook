@@ -327,6 +327,236 @@ test('Return to the current pause from a saved item puts the Application in its 
   }
 })
 
+// Value: protects=Return to the current pause after a window reload that left the old Application group empty and locked at column 1, beside the learner's groups; fails_when=the cold Study select puts the Application into that leftover group and Return Current refuses it as adopted before registration (RUNTIME_FAILED, with the layout unconfirmed) instead of placing it in its own group; why_new=Cycle 0046 finding 590 (C54 in Cursor 3.23.12: after Developer: Reload Window the Study's Return Current failed with "The new Application group was adopted before registration."); seam=leaveEmptyLockedGroup and reactivatePreviousGroupAfterInsertion
+test("a reloaded window's leftover empty Application group does not refuse Return to the current pause", async () => {
+  // Arrange: the window reloaded while the Study was open; the old owned group stays empty and locked at column 1, the learner's files stand in columns 2 and 3, and the chat part has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    // The earlier window recorded the Application group it claimed at column 1 of this three-group grid.
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const learnerNotes = harness.focusMutableDraft('learner-notes.ts', 2)
+    const learnerReadme = harness.focusMutableDraft('learner-readme.md', 3)
+    chat.focusTab()
+    // Cursor names the group that held the keyboard again as the new group is locked, before the Application's group is claimed.
+    harness.reactivatePreviousGroupAfterInsertion()
+    const state = harness.reader.presentationState()
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert: no refusal; the Application stands in column 1 with the layout confirmed, and both learner files keep their groups.
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(harness.reader['app']!.viewColumn, 1)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerNotes.tab)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerReadme.tab)),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold Study select after a window reload retiring the empty Application group the earlier window recorded, before the Application is placed; fails_when=the cold entry leaves that unproven leftover group and places the Application in it, so the window keeps an empty locked group beside the learner's groups; why_new=Cycle 0046 finding 590 (C54 in both hosts: Developer: Reload Window kept the earlier window's owned group empty at column 1); seam=applicationGroupMarkers (the earlier window's record) and leaveEmptyLockedGroup
+test('a cold Study select after a window reload retires the empty Application group the earlier window recorded', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of this three-group grid; after the reload that group stands empty and locked, the learner's files stand in columns 2 and 3, and the chat part has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    const learnerNotes = harness.focusMutableDraft('learner-notes.ts', 2)
+    const learnerReadme = harness.focusMutableDraft('learner-readme.md', 3)
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the leftover group is gone and its record forgotten; both learner files keep their tabs, and the Application stands in column 1.
+    assert.equal(harness.groups.includes(leftover), false)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerNotes.tab)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerReadme.tab)),
+      true,
+    )
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's own empty locked group at column 1 when no record proves it is Codebook's; fails_when=a cold Study select focuses, unlocks or closes an empty group without the earlier window's record; why_new=Cycle 0046 finding 590's repair retires a leftover group only on proof; seam=leaveEmptyLockedGroup
+test('an empty locked group at column 1 that no record proves stays as it is at a cold Study select', async () => {
+  // Arrange: the learner's own empty group is locked at column 1; no window recorded an Application group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.leaveEmptyLockedGroup(1)
+    const learnersGroup = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    chat.focusTab()
+    const commandsBefore = harness.commands.length
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the group was neither unlocked nor closed.
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.unlockEditorGroup'),
+      false,
+    )
+    assert.equal(harness.groups.includes(learnersGroup), true)
+    assert.equal(learnersGroup.locked, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the record of the Application group a Return claimed, which alone lets the window after a reload retire that group's empty leftover; fails_when=a confirmed Application group is not recorded, or is recorded with another column, group count or layout than the grid it was confirmed in; why_new=Cycle 0046 finding 590; seam=applicationGroupMarkers
+test('a Return records the Application group it claimed for the window after a reload', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert: column 1 of the confirmed three-group grid, written by this reader (a random name).
+    const marker = harness.applicationGroupMarkers.get(
+      'codebook.applicationGroup.v1',
+    ) as { writer?: unknown } | undefined
+    assert.deepEqual(
+      { ...marker, writer: typeof marker?.writer },
+      {
+        version: 1,
+        writer: 'string',
+        column: 1,
+        groupCount: 3,
+        layout: {
+          orientation: 1,
+          groups: [{ size: 0.25 }, { size: 0.25 }, { size: 0.5 }],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's later empty group at column 1 after Close retired the Study's own Application group; fails_when=Close keeps the record of the group it retired, so the next window's cold Study select takes the learner's empty group in the same grid for Codebook's leftover and closes it; why_new=Cycle 0046 finding 590's record is forgotten when Codebook retires its group; seam=createReader (the next window over the same workspace state) and the learner's own native group commands
+test('Close forgets the recorded Application group, so a later empty group at column 1 stays at the next window’s cold select', async () => {
+  // Arrange: a Return claims the Application group and Close retires it; the learner then splits the window into the very grid the record described and locks its empty first group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const nextWindow = harness.createReader()
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.close()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    await harness.editor.commands.executeCommand(
+      'workbench.action.lockEditorGroup',
+    )
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [{ size: 0.25 }, { size: 0.25 }, { size: 0.5 }],
+    })
+    const learnersGroup = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    assert.equal(learnersGroup.tabs.length, 0)
+    const commandsBefore = harness.commands.length
+    const state = nextWindow.presentationState()
+
+    // Act
+    await nextWindow.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the learner's group was neither unlocked nor closed.
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.unlockEditorGroup'),
+      false,
+    )
+    assert.equal(harness.groups.includes(learnersGroup), true)
+    assert.equal(learnersGroup.locked, true)
+  } finally {
+    await nextWindow.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=Open replay opening the recording at the first click while the learner's file is the tab in front of the live Application pane; fails_when=the entry reveals the Application pane and starts its arrangement before the editor has reported that reveal, so its own reveal reads as a change the learner made and the click ends with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0045 NF-20 (Cursor: the first click failed whenever a preview or kept tab was in front of the pane, the second opened it); seam=the recorded reader harness, focusMutableDraft, the fake editor reporting a pane's reveal later, and the fake clock, which alone lets the fake editor's own timer pass (local review tests-1 #3: no real delay decides whether the report arrives during the arrangement)
 test("Open replay with the learner's file in front of the live Application pane opens the recording at the first click", async (context) => {
   // Arrange: the reader is open, and the file the learner (or the debugger) opened in the Application's group is in front of the pane with the keyboard focus.

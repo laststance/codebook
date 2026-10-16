@@ -240,6 +240,9 @@ export const REPOSITORY_MIN_EDITOR_GROUP_COUNT = 2
 export const HORIZONTAL_EDITOR_ORIENTATION = 0
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
+/** The workspace-state key of the record {@link StudyWorkspace} keeps of the Application group it claimed and locked; after Developer: Reload Window the editor keeps that group empty, and only this record proves it is Codebook's own. */
+export const APPLICATION_GROUP_MARKER_KEY = 'codebook.applicationGroup.v1'
+export const APPLICATION_GROUP_MARKER_VERSION = 1
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
 /**
  * How much wider the editor area must have become, in pixels, for {@link StudyWorkspace} to conclude that a side bar was open before it was hidden: the editor's side bars are at least 170 px wide, and a sash or a rounded size moves the width by a few pixels at most.

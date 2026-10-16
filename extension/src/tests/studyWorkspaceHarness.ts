@@ -7,7 +7,11 @@ import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import { CURSOR_FOCUS_AGENT_COMMAND, type ReaderErrorKind } from '../constants'
+import {
+  APPLICATION_GROUP_MARKER_KEY,
+  CURSOR_FOCUS_AGENT_COMMAND,
+  type ReaderErrorKind,
+} from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -725,6 +729,11 @@ export async function workspaceHarness(
     applyingLaterReveal = false
   // Both editors report a pane revealed into another column during the next layout read; see `movePanelsLater`.
   let movesPanelsLater = false
+  // Cursor names the group that held the keyboard before a new group was inserted again one editor change later; see `reactivatePreviousGroupAfterInsertion`.
+  let reactivatesPreviousGroupLater = false
+  let reactivatesPreviousGroupAtLayoutRead = false
+  let layoutReadsUntilReactivation = 0
+  let groupFocusedBeforeInsertion: (typeof groups)[number] | undefined
   // Cursor 3.23.12 closes a disposed panel's tab, and a moment later the group it left empty, while a layout read is pending.
   let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
@@ -977,6 +986,7 @@ export async function workspaceHarness(
       current.viewColumn = groups.find((group) =>
         group.tabs.includes(current.nativeTab),
       )?.viewColumn
+    const previouslyFocusedGroup = activeTabGroup
     activeTabGroup = created
     innerFocusedPanel = undefined
     keyboardInView = false
@@ -989,6 +999,22 @@ export async function workspaceHarness(
         changed: groups.filter((group) => group !== created),
       })
     activeTextEditorChanged(undefined)
+    groupFocusedBeforeInsertion = previouslyFocusedGroup
+  }
+  /** Names the group that held the keyboard before the last native group insertion as active again while the inserted group still holds no tab; see `reactivatePreviousGroupAfterInsertion`. @example reactivatePreviousGroup() */
+  function reactivatePreviousGroup(): void {
+    if (
+      !groupFocusedBeforeInsertion ||
+      !groups.includes(groupFocusedBeforeInsertion)
+    )
+      return
+    const inserted = activeTabGroup
+    activeTabGroup = groupFocusedBeforeInsertion
+    changedGroups({
+      opened: [],
+      closed: [],
+      changed: [groupFocusedBeforeInsertion, inserted],
+    })
   }
   /** Counts native layout leaves so shrinking a grid merges only its removed groups in these tests. @example nativeGroupCount({ groups: [{}, {}] }) // 2 */
   function nativeGroupCount(value: unknown): number {
@@ -2642,6 +2668,13 @@ export async function workspaceHarness(
           }
           if (name === 'workbench.action.lockEditorGroup') {
             activeTabGroup.locked = true
+            // The editor names the group that held the keyboard before the insertion again as the lock settles, while the new group is still empty.
+            if (reactivatesPreviousGroupLater) reactivatePreviousGroup()
+            return
+          }
+          // The editor unlocks only the group it names as active.
+          if (name === 'workbench.action.unlockEditorGroup') {
+            activeTabGroup.locked = false
             return
           }
           if (
@@ -2839,6 +2872,13 @@ export async function workspaceHarness(
           if (name === 'workbench.action.toggleMaximizedPanel')
             returnHiddenEditorArea()
           if (name === 'vscode.getEditorLayout') {
+            if (reactivatesPreviousGroupAtLayoutRead) {
+              layoutReadsUntilReactivation -= 1
+              if (layoutReadsUntilReactivation <= 0) {
+                reactivatesPreviousGroupAtLayoutRead = false
+                reactivatePreviousGroup()
+              }
+            }
             if (asynchronousLayoutReads)
               await new Promise<void>((resolve) => setImmediate(resolve))
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
@@ -3564,12 +3604,20 @@ export async function workspaceHarness(
       ),
   }
   const presentationPreferences = new Map<string, unknown>()
+  /** The workspace state's Application group record (finding 590), kept apart from the presentation preferences: a test that asserts no preference was saved counts only those, and the injected preference holds and failures do not reach this record. */
+  const applicationGroupMarkers = new Map<string, unknown>()
   let preferenceFailure = false
   let nextPreference: { wait: Promise<void>; entered(): void } | undefined
   const workspaceState = {
     get: <Value>(key: string) =>
-      presentationPreferences.get(key) as Value | undefined,
+      (key === APPLICATION_GROUP_MARKER_KEY
+        ? applicationGroupMarkers.get(key)
+        : presentationPreferences.get(key)) as Value | undefined,
     update: async (key: string, value: unknown): Promise<void> => {
+      if (key === APPLICATION_GROUP_MARKER_KEY) {
+        applicationGroupMarkers.set(key, structuredClone(value))
+        return
+      }
       const held = nextPreference
       nextPreference = undefined
       held?.entered()
@@ -3819,6 +3867,7 @@ export async function workspaceHarness(
     ): StudyViewMessage | undefined =>
       playbackPanelMessagesAtReply.get(openRequest),
     presentationPreferences,
+    applicationGroupMarkers,
     watchedPatterns,
     viewportEvents,
     viewportInstances,
@@ -4766,6 +4815,21 @@ export async function workspaceHarness(
       movesPanelsLater = true
     },
     /**
+     * Makes the fake editor name the group that held the keyboard before a native group insertion as active again one editor change after the insertion, while the new group is still empty, as Cursor 3.23.12 did for the Application's group after a reload (trace `c54/cursor/reload-2/sdk-events.json`, events 3997 to 4009).
+     * @example harness.reactivatePreviousGroupAfterInsertion()
+     */
+    reactivatePreviousGroupAfterInsertion(): void {
+      reactivatesPreviousGroupLater = true
+    },
+    /**
+     * Makes the fake editor name the group that held the keyboard before a native group insertion as active again at the next layout read after it, as {@link reactivatePreviousGroupAfterInsertion} does at the lock; the read that follows Codebook's own App move sees the editor's late focus.
+     * @example harness.reactivatePreviousGroupAtNextLayoutRead()
+     */
+    reactivatePreviousGroupAtNextLayoutRead(readNumber = 1): void {
+      reactivatesPreviousGroupAtLayoutRead = true
+      layoutReadsUntilReactivation = readNumber
+    },
+    /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while the chat has the keyboard, whether it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2) or a group of the main editor (obs15 R: a recording opened from the chat input while the editor named the captured source's group): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the named group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
      * @example
      * const chat = harness.addSeparateEditorPart()
@@ -4989,6 +5053,19 @@ export async function workspaceHarness(
         activeTextEditorChanged(focusedSourceEditor())
       }
       return tab
+    },
+    /**
+     * Leaves a main column's editor group empty and locked with no pane, as Cursor keeps the old owned Application group after an extension-host reload whose panel is not restored; the new reader has no identity or proof for it.
+     * @param column - The main column whose tabs close while its group keeps its lock.
+     * @example harness.leaveEmptyLockedGroup(1)
+     */
+    leaveEmptyLockedGroup(column: number): void {
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      assert.ok(group)
+      group.tabs.splice(0)
+      group.activeTab = undefined
+      group.locked = true
+      changedGroups({ opened: [], closed: [], changed: [group] })
     },
     /** Lets the editor close leftover captured-source tabs again after a refusal test, so the harness can shut its reader down. @example harness.acceptLeftoverClose() */
     acceptLeftoverClose(): void {

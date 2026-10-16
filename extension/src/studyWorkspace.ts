@@ -5,8 +5,11 @@ import { basename, dirname, join } from 'node:path'
 import * as vscode from 'vscode'
 import { z } from 'zod'
 
+import type { ApplicationGroupMarker } from './applicationGroupMarkerSchemas'
 import {
   AGENT_STORAGE_DIRECTORY,
+  APPLICATION_GROUP_MARKER_KEY,
+  APPLICATION_GROUP_MARKER_VERSION,
   APPLICATION_PANE_CLOSED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
   CLOSE_GROUP_SETTLE_MS,
@@ -187,6 +190,7 @@ import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
+import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
@@ -203,6 +207,7 @@ import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackContro
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
+import { parseApplicationGroupMarker } from './utils/parseApplicationGroupMarker'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
@@ -623,6 +628,8 @@ export class StudyWorkspace {
     /** An accepted move may still owe retirement of its former, newly allocated empty group. */
     retiringIdentity?: symbol
   }
+  /** Names this reader in the Application group record it writes; at a cold entry, only a record another reader wrote (the window before a reload) can prove a leftover group, since this reader still knows its own. */
+  private readonly applicationGroupMarkerWriter = randomUUID()
   /** Restricts native identity shifts to the exact issued allocation or allocated-group removal. */
   private applicationGroupChange?:
     { kind: 'insert' } | { kind: 'remove'; identity: symbol }
@@ -6737,6 +6744,8 @@ export class StudyWorkspace {
       // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them, with the captured-source tabs of that session, before it creates any. A tab the editor keeps does not stop the entry; the next selection names a kept pane.
       if (firstOpen) {
         await this.closeLeftoverTabs()
+        // The empty Application group an earlier window left after a reload is retired, on its record's proof only, before any pane is placed (finding 590).
+        await this.retireLeftoverApplicationGroup(signal)
         this.assertLifetime(lifetime)
         signal?.throwIfAborted()
         const firstInput = vscode.window.tabGroups.all.find(
@@ -12279,6 +12288,8 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       assertPlaced()
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
+      // The record never rejects and is not awaited, so the preparation keeps its timing.
+      void this.rememberApplicationGroupMarker(layout, expectedCount)
       assertCurrent()
       // Live Return already owns its final chat handoff; preparation must not add an earlier, unguarded one.
       if (!this.returningCurrent && !cancelEntryFocusReturn) {
@@ -12373,17 +12384,15 @@ export class StudyWorkspace {
    * Claims only the newly locked empty group for {@link reserveApplicationGroup} before panel registration can wait.
    * @param identity - The new group's observed identity, already retained for failure cleanup.
    * @param count - Main groups after the issued insertion, before source retirement.
-   * @throws When native focus or contents changed while the lock command was pending.
+   * @throws When the new group is gone or holds a tab once the lock command answered.
    * @example this.claimApplicationAllocation(identity, grid.groups.length + 1)
    */
   private claimApplicationAllocation(identity: symbol, count: number): void {
     const currentGroup = vscode.window.tabGroups.all.find(
       (candidate) => this.editorGroupIdentities.get(candidate) === identity,
     )
-    if (
-      currentGroup !== vscode.window.tabGroups.activeTabGroup ||
-      currentGroup.tabs.length
-    )
+    // The lock went to this group, which assertApplicationLockTarget saw active when the command was issued; the editor's later active-group name proves nothing (Cursor names the group that held the keyboard again as the lock settles, finding 590), so the group is read by its identity and contents.
+    if (!currentGroup || currentGroup.tabs.length)
       throw new Error(
         'The new Application group was adopted before registration.',
       )
@@ -12562,6 +12571,121 @@ export class StudyWorkspace {
     // Preparation's verified move is still our initial placement; only a later manual move releases that receipt at Open.
     if (this.initialAppPlacement?.panel === panel)
       this.initialAppPlacement.column = panel.viewColumn
+  }
+
+  /**
+   * Keeps, in the workspace state, the proof that this window claimed and locked its Application group at column 1; {@link reserveApplicationGroup} calls it once {@link rememberPreparedApplication} confirmed the group's layout, so the next window after Developer: Reload Window can retire that group's empty leftover ({@link retireLeftoverApplicationGroup}).
+   * @param layout - The confirmed main grid, with the Application in its claimed group.
+   * @param groupCount - The main groups of that grid.
+   * @example await this.rememberApplicationGroupMarker(layout, expectedCount)
+   */
+  private async rememberApplicationGroupMarker(
+    layout: unknown,
+    groupCount: number,
+  ): Promise<void> {
+    await this.writeApplicationGroupMarker({
+      version: APPLICATION_GROUP_MARKER_VERSION,
+      writer: this.applicationGroupMarkerWriter,
+      column: vscode.ViewColumn.One,
+      groupCount,
+      layout,
+    })
+  }
+
+  /**
+   * Forgets the Application group proof once Codebook itself retired or released that group (Close, Return's retirement, another teardown, or {@link retireLeftoverApplicationGroup}), so a later empty group at column 1 is never taken for Codebook's own.
+   * @example await this.clearApplicationGroupMarker()
+   */
+  private async clearApplicationGroupMarker(): Promise<void> {
+    await this.writeApplicationGroupMarker(undefined)
+  }
+
+  /**
+   * Writes or removes the Application group record for {@link rememberApplicationGroupMarker} and {@link clearApplicationGroupMarker}. The record only lets a later window recover after a reload, so a storage failure costs that recovery and never fails the Return or Close that writes it.
+   * @param marker - The record to keep, its layout the native reply {@link rememberPreparedApplication} already counted; or `undefined` to remove it.
+   * @example await this.writeApplicationGroupMarker(undefined)
+   */
+  private async writeApplicationGroupMarker(
+    marker:
+      | (Omit<ApplicationGroupMarker, 'layout'> & { layout: unknown })
+      | undefined,
+  ): Promise<void> {
+    await this.context.workspaceState
+      .update(APPLICATION_GROUP_MARKER_KEY, marker)
+      .then(undefined, () => undefined)
+  }
+
+  /**
+   * Retires the empty Application group an earlier window of this workspace claimed and left behind after Developer: Reload Window (finding 590); {@link open} calls it at a cold entry before {@link ensureApp} places the Application, which would otherwise stand in that unproven group.
+   * Only {@link isApplicationGroupMarkerProven} authorizes the retirement; without that proof no group is focused, unlocked or closed, and the record is kept.
+   * @param signal - The entry's cancellation.
+   * @throws When the editor refuses the close, or the grid does not lose exactly that group.
+   * @example await this.retireLeftoverApplicationGroup(signal)
+   */
+  private async retireLeftoverApplicationGroup(
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const marker = parseApplicationGroupMarker(
+      this.context.workspaceState.get<unknown>(APPLICATION_GROUP_MARKER_KEY),
+    )
+    const focusCommand = marker && focusEditorGroupCommand(marker.column)
+    // No record, this reader's own record (its group is still known to it), a column the editor cannot focus, or no empty group there: nothing proves a leftover, and no native effect is issued.
+    if (
+      !marker ||
+      marker.writer === this.applicationGroupMarkerWriter ||
+      !focusCommand ||
+      !vscode.window.tabGroups.all.some(
+        (group) => group.viewColumn === marker.column && !group.tabs.length,
+      )
+    )
+      return
+    await this.withLayout(signal, async (_lifetime, assertCurrent) => {
+      const groupsBefore = vscode.window.tabGroups.all.length
+      // Layout reads answer for the part that has the keyboard (a focused chat part answers for itself), and the editor unlocks only that group: the group at the record's column takes the keyboard before the proof.
+      await vscode.commands.executeCommand(focusCommand)
+      assertCurrent()
+      if (!(await this.provenLeftoverGroup(marker))) return
+      await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
+      const group = await this.provenLeftoverGroup(marker)
+      if (!group || !(await vscode.window.tabGroups.close(group, true)))
+        throw new Error(
+          'The editor refused to retire the empty Application group an earlier window left.',
+        )
+      await waitUntil(
+        () => vscode.window.tabGroups.all.length === groupsBefore - 1,
+        'leftover Application group removal',
+        PRESENTATION_READY_TIMEOUT_MS,
+        signal,
+      )
+      const layout = await vscode.commands.executeCommand<unknown>(
+        'vscode.getEditorLayout',
+      )
+      if (editorLayoutGroupCount(layout) !== marker.groupCount - 1)
+        throw new Error(
+          'The removal of the Application group an earlier window left could not be confirmed.',
+        )
+      await this.clearApplicationGroupMarker()
+    })
+  }
+
+  /**
+   * Finds the group at the marker's column when {@link isApplicationGroupMarkerProven} proves it is the empty Application group Codebook claimed; {@link retireLeftoverApplicationGroup} asks once that group has the keyboard, and again after the unlock, before the close.
+   * @param marker - The record of the claimed group.
+   * @returns The proven group, or `undefined` when the group at that column is missing or holds a tab, or the layout read differs from the record (also a read the chat part answered).
+   * @example const group = await this.provenLeftoverGroup(marker)
+   */
+  private async provenLeftoverGroup(
+    marker: ApplicationGroupMarker,
+  ): Promise<vscode.TabGroup | undefined> {
+    const layout = await vscode.commands.executeCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === marker.column,
+    )
+    return group && isApplicationGroupMarkerProven(marker, group, layout)
+      ? group
+      : undefined
   }
 
   /**
@@ -13394,6 +13518,8 @@ export class StudyWorkspace {
     const empty = this.emptyNativeGroup(owned.identity)
     if (empty) await this.retireEmptyOwnedGroup(owned.identity)
     if (owned === this.applicationGroup) this.applicationGroup = undefined
+    // A released group is no longer Codebook's to retire after a reload, even when the learner adopted it; the removal never rejects and is not awaited.
+    void this.clearApplicationGroupMarker()
   }
 
   /**
@@ -13420,6 +13546,8 @@ export class StudyWorkspace {
         refusal: 'The editor refused to retire an empty Codebook group.',
         pending: 'owned Codebook group removal',
       })
+      // The retired group's record goes with it; the removal never rejects and is not awaited, so the identity boundary below is released at once.
+      void this.clearApplicationGroupMarker()
       return true
     } finally {
       if (this.applicationGroupChange === removal)
