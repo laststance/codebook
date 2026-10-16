@@ -6592,7 +6592,7 @@ async function check(page, options, collected) {
 /**
  * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
  * @param shell - The text of `skills/codebook/reader-shell.html`.
- * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control as the publisher prints it: the link with its label alone and, beside it, the file and line it opens.
+ * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control as the publisher prints it: the link with its label alone and, beside it, the file and line it opens, shown and, as written, as the link's description.
  * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
  * @example
  * wikiShellPage('<title>{{TITLE}}</title>') // => '<title>Overview</title>'
@@ -6618,7 +6618,7 @@ function wikiShellPage(shell) {
     OUTLINE:
       '<li><a href="#rendering">Rendering</a></li><li><a href="#preparation">createConfiguredBrowserRunPreparationForReplay</a></li>',
     OPEN_SOURCE:
-      '<p class="open-in-editor"><a href="#source" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a.ts<wbr>:12</span></p>',
+      '<p class="open-in-editor"><a href="#source" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a.ts:12</span></p>',
     SETTINGS: '#settings',
   }
   return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {

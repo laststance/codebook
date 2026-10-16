@@ -57,6 +57,18 @@ const LONG_SOURCE = {
 const LONG_SOURCE_PAGE = 'pages/long-source.html'
 /** The sample page that is printed into the shell of 0.2.29.0 after the publish: the overview's content under the stylesheet a site of that build carries, with the rail's entry as that build printed it. */
 const PAGE_IN_THE_SHELL_OF_02290 = 'pages/shell-of-0.2.29.0.html'
+/** A source whose path has no folder, and the line three sample pages cite first: the entry for which Chrome for Testing on C55 described the link as "package.json :31" (Cycle 0046 finding 600). */
+const PACKAGE_MANIFEST = { path: 'package.json', line: 31 }
+/** The three sample pages whose rail entry opens {@link PACKAGE_MANIFEST}: as this publisher prints it, printed into the shell of 0.2.29.0 after the publish (the entry its link alone), and put back after the publish into the entry of the builds of Cycle 0046 before finding 600 (the link described by the target shown beside it, with its wrap points). */
+const PACKAGE_MANIFEST_PAGES = {
+  asPublished: 'pages/package-manifest.html',
+  inTheShellOf02290: 'pages/package-manifest-in-the-shell-of-0.2.29.0.html',
+  describedByItsShownTarget:
+    'pages/package-manifest-described-by-its-shown-target.html',
+}
+/** The rail entry of a page after its link, as this publisher prints it and as the earlier builds printed it: what {@link withEntryAfterItsLink} replaces. */
+const ENTRY_AFTER_ITS_LINK =
+  / aria-describedby="codebook-open-target">Open in VS Code<\/a> .*?<\/p>/
 
 /** The question the check asks in the composer, and what the reader answers it: twelve lines, so the composer reaches its height limit and scrolls, and one cited line. */
 const QUESTION = 'How is a page rendered?'
@@ -75,7 +87,7 @@ const ANSWER = {
   sourceChanged: false,
 }
 
-/** The ids the reader gives its own elements in a served page: those of the shell's template, the target of the rail's entry, the region of the update status, and the heading and the tooltip of the keyboard help. Two sample pages carry each of them on a heading of their article. */
+/** The ids the reader gives its own elements in a served page: those of the shell's template, the description of the rail entry's link, the region of the update status, and the heading and the tooltip of the keyboard help. Two sample pages carry each of them on a heading of their article. */
 const READER_IDS = [
   'theme-toggle',
   'article-title',
@@ -242,6 +254,16 @@ function sampleManifest(projectRoot, sources) {
         sources: [LONG_SOURCE],
         outline: [{ id: 'where', label: 'Where it lives' }],
       },
+      // Three pages whose rail entry opens package.json line 31; two of them are put into the shape of an earlier build after the publish.
+      ...Object.values(PACKAGE_MANIFEST_PAGES).map((path) => ({
+        path,
+        title: 'The package manifest',
+        section: 'Guide',
+        contentHtml:
+          '<h2 id="scripts">Its scripts</h2><p>Explained from source.</p>',
+        sources: [PACKAGE_MANIFEST, { path: 'src/a.ts', line: 1 }],
+        outline: [{ id: 'scripts', label: 'Its scripts' }],
+      })),
       ...chapterTitles.map((title, index) => ({
         path: `pages/chapter-${index + 1}.html`,
         title,
@@ -300,6 +322,20 @@ function fieldValuesOf(page, shell) {
 }
 
 /**
+ * Puts the rail entry of a published page into the shape an earlier build printed: everything from the link's description to the end of the entry is replaced; called after the publish for the sample pages of an earlier build.
+ * @param page - The page, or its entry, as this publisher printed it.
+ * @param entryEnd - What the earlier build printed from there on, starting with the end of the link's start tag.
+ * @returns The page with that entry.
+ * @throws When the page holds no entry as this publisher prints it, so a sample page cannot keep today's entry unseen.
+ * @example
+ * withEntryAfterItsLink(published, '>Open in VS Code</a></p>').includes('<a href="vscode://…">Open in VS Code</a></p>') // => true
+ */
+function withEntryAfterItsLink(page, entryEnd) {
+  assert.match(page, ENTRY_AFTER_ITS_LINK)
+  return page.replace(ENTRY_AFTER_ITS_LINK, entryEnd)
+}
+
+/**
  * Prints a page this publisher published into the shell of 0.2.29.0, as a site of that build carries it: the same content under that build's stylesheet and script, and the rail's entry as its link alone.
  *
  * The shell is the file `skills/codebook/reader-shell.html` of the tag v0.2.29.0 (`ae9c1f2`), kept beside this script because a CI checkout holds no tag; both shells have the same fields.
@@ -315,8 +351,8 @@ function fieldValuesOf(page, shell) {
 function pageInTheShellOf02290(page, shell, shellOf02290) {
   const values = fieldValuesOf(page, shell)
   // 0.2.29.0 printed the entry as its link alone: no description and nothing beside the link.
-  values.OPEN_SOURCE = values.OPEN_SOURCE.replace(
-    / aria-describedby="codebook-open-target">Open in VS Code<\/a> <span class="open-target" id="codebook-open-target">.*?<\/span><\/p>/,
+  values.OPEN_SOURCE = withEntryAfterItsLink(
+    values.OPEN_SOURCE,
     '>Open in VS Code</a></p>',
   )
   return shellOf02290.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
@@ -349,6 +385,10 @@ async function publishSampleWiki() {
       { length: 130 },
       (_unused, index) => `export const row${index + 1} = ${index + 1}`,
     ).join('\n'),
+    [PACKAGE_MANIFEST.path]: Array.from(
+      { length: 40 },
+      (_unused, index) => `  "field${index + 1}": ${index + 1},`,
+    ).join('\n'),
     'src/a.ts': 'export const value = 1\n',
   }
   try {
@@ -374,28 +414,46 @@ async function publishSampleWiki() {
     )
     await writeFile(
       publishedBefore,
-      (await readFile(publishedBefore, 'utf8'))
-        .replaceAll('"page-', '"')
-        .replaceAll('#page-', '#')
-        .replace(
-          / aria-describedby="codebook-open-target">Open in VS Code<\/a> <span class="open-target" id="codebook-open-target">.*?<\/span><\/p>/,
-          '>Open in VS Code</a></p>',
-        ),
+      withEntryAfterItsLink(
+        (await readFile(publishedBefore, 'utf8'))
+          .replaceAll('"page-', '"')
+          .replaceAll('#page-', '#'),
+        '>Open in VS Code</a></p>',
+      ),
     )
-    // One page is printed into the shell of 0.2.29.0, so the rules the reader injects are laid out against the stylesheet a site of that build carries.
-    const inTheShellOf02290 = join(outputDirectory, PAGE_IN_THE_SHELL_OF_02290)
+    // The overview and one page of the package manifest are printed into the shell of 0.2.29.0, so the rules the reader injects are laid out against the stylesheet a site of that build carries, and the entry it adds is read there.
+    const shell = await readFile(
+      new URL('../skills/codebook/reader-shell.html', import.meta.url),
+      'utf8',
+    )
+    const shellOf02290 = await readFile(
+      new URL('./fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
+      'utf8',
+    )
+    for (const pagePath of [
+      PAGE_IN_THE_SHELL_OF_02290,
+      PACKAGE_MANIFEST_PAGES.inTheShellOf02290,
+    ]) {
+      const inTheShellOf02290 = join(outputDirectory, pagePath)
+      await writeFile(
+        inTheShellOf02290,
+        pageInTheShellOf02290(
+          await readFile(inTheShellOf02290, 'utf8'),
+          shell,
+          shellOf02290,
+        ),
+      )
+    }
+    // One page of the package manifest gets the entry of the builds of Cycle 0046 before finding 600, as C55 printed it: the target shown beside the link, with its wrap point, is the link's description.
+    const describedByItsShownTarget = join(
+      outputDirectory,
+      PACKAGE_MANIFEST_PAGES.describedByItsShownTarget,
+    )
     await writeFile(
-      inTheShellOf02290,
-      pageInTheShellOf02290(
-        await readFile(inTheShellOf02290, 'utf8'),
-        await readFile(
-          new URL('../skills/codebook/reader-shell.html', import.meta.url),
-          'utf8',
-        ),
-        await readFile(
-          new URL('./fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
-          'utf8',
-        ),
+      describedByItsShownTarget,
+      withEntryAfterItsLink(
+        await readFile(describedByItsShownTarget, 'utf8'),
+        ' aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">package.json<wbr>:31</span></p>',
       ),
     )
     await appendFile(
@@ -409,7 +467,7 @@ async function publishSampleWiki() {
   return { projectRoot, outputDirectory, remove }
 }
 
-/** Lays out pages of a served Wiki in real Chrome and measures the right rail, the chapter list, the reading column with its composer and the missing-page line. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. It runs in the browser CLI as text, so it uses only its arguments and what it defines itself. @example await check(page, options, { cases: [], errors: [] }) */
+/** Lays out pages of a served Wiki in real Chrome and measures the right rail, the chapter list, the reading column with its composer and the missing-page line, and reads the rail entry's link in Chrome's accessibility tree. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. It runs in the browser CLI as text, so it uses only its arguments and what it defines itself. @example await check(page, options, { cases: [], errors: [] }) */
 async function check(page, options, collected) {
   const { cases } = collected
   const { errors } = collected
@@ -541,7 +599,7 @@ async function check(page, options, collected) {
         ),
       }
     }, selector)
-  /** Reads the open control of the right rail and the row around it: the entry's text, its link and what describes the link, the lines and widths of its label, its target and the line number that ends the target, and the widths of the update panel, the outline and the output block. @example (await measureEntry()).labelLines // => 1 */
+  /** Reads the open control of the right rail and the row around it: the text the entry shows, its link and the text of what describes the link, the lines and widths of its label, its shown target and the line number that ends the target, and the widths of the update panel, the outline and the output block. @example (await measureEntry()).labelLines // => 1 */
   const measureEntry = () =>
     page.evaluate(() => {
       const textOf = (node) => {
@@ -568,7 +626,14 @@ async function check(page, options, collected) {
       const chapters = document.querySelector('.chapters')
       return {
         railDisplay: getComputedStyle(rail).display,
-        entryText: entry.textContent,
+        // The copy of the file and line that only describes the link is no text the entry shows.
+        entryText: [...entry.childNodes]
+          .filter(
+            (node) =>
+              !(node instanceof Element && node.classList.contains('sr-only')),
+          )
+          .map((node) => node.textContent)
+          .join(''),
         linkText: link.textContent,
         linkDescription:
           document.getElementById(link.getAttribute('aria-describedby'))
@@ -1444,6 +1509,96 @@ async function check(page, options, collected) {
       },
     )
   }
+  /** Reads the rail entry of the open page as Chrome's accessibility tree gives it to assistive technology, through the browser's debugging protocol: the role, the name and the description Chrome computed for its link, and, in the entry's order, every text of the entry the tree does not ignore. @example (await entryInAccessibilityTree()).description // => 'package.json:31' */
+  const entryInAccessibilityTree = async () => {
+    const accessibility = await page.context().newCDPSession(page)
+    try {
+      const { root } = await accessibility.send('DOM.getDocument')
+      const nodeIdOf = async (selector) =>
+        (
+          await accessibility.send('DOM.querySelector', {
+            nodeId: root.nodeId,
+            selector,
+          })
+        ).nodeId
+      const {
+        nodes: [link],
+      } = await accessibility.send('Accessibility.getPartialAXTree', {
+        nodeId: await nodeIdOf('p.open-in-editor a'),
+        fetchRelatives: false,
+      })
+      // The query answers the texts the tree ignores too, flagged; such a text reaches no assistive technology.
+      const { nodes: texts } = await accessibility.send(
+        'Accessibility.queryAXTree',
+        { nodeId: await nodeIdOf('p.open-in-editor'), role: 'StaticText' },
+      )
+      return {
+        role: link.role.value,
+        name: link.name.value,
+        // A link without a description has no such property.
+        description: link.description?.value ?? null,
+        texts: texts
+          .filter((text) => !text.ignored)
+          .map((text) => text.name.value),
+      }
+    } finally {
+      await accessibility.detach()
+    }
+  }
+  /** The checks of a rail entry read by {@link entryInAccessibilityTree}: a link named after the editor and described by the file and line it opens exactly as written, without a space at a point where the shown target may wrap, and no other text of the entry for assistive technology than that label and that file and line. @example entryAccessibilityChecks(read, 'package.json:31').isDescribedByTheFileAndLineAsWritten // => true */
+  const entryAccessibilityChecks = (read, fileAndLine) => ({
+    isLink: read.role === 'link',
+    isNamedOpenInVsCode: read.name === 'Open in VS Code',
+    isDescribedByTheFileAndLineAsWritten: read.description === fileAndLine,
+    doesEntryGiveTheLabelAndTheFileAndLineAlone:
+      JSON.stringify(read.texts) ===
+      JSON.stringify(['Open in VS Code', fileAndLine]),
+  })
+  const readEntryFromAccessibilityTree = async () => {
+    // Arrange: the page of the pass at 1200 px, whose entry opens a path of four folders; the shown target may wrap after each slash and before the colon.
+    await openWiki(1200, 720)
+    // Act
+    const read = await entryInAccessibilityTree()
+    // Assert
+    record(
+      'Chrome’s accessibility tree gives the open control of the right rail as a link named Open in VS Code and described by the file and line it opens as written, extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts:95, with no space where the shown path may wrap, and the entry gives assistive technology no other text than the label and that file and line',
+      read,
+      entryAccessibilityChecks(
+        read,
+        'extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts:95',
+      ),
+    )
+  }
+  const readPackageManifestEntriesFromAccessibilityTree = async () => {
+    // Arrange: the three pages whose entry opens package.json line 31, in the shapes of this publisher, of 0.2.29.0 and of the builds of Cycle 0046 before finding 600, each at 1200 px. Act: the entry of each is read.
+    const readOn = async (pagePath) => {
+      await openWiki(1200, 720, pagePath)
+      return entryInAccessibilityTree()
+    }
+    const asPublished = await readOn(options.packageManifestPages.asPublished)
+    const inTheShellOf02290 = await readOn(
+      options.packageManifestPages.inTheShellOf02290,
+    )
+    const describedByItsShownTarget = await readOn(
+      options.packageManifestPages.describedByItsShownTarget,
+    )
+    // Assert
+    record(
+      'Chrome’s accessibility tree gives the open control of a page whose first source is package.json line 31, as this publisher prints it, as a link named Open in VS Code and described by package.json:31 with no space before the colon, and the entry gives assistive technology no other text than the label and that file and line',
+      asPublished,
+      entryAccessibilityChecks(asPublished, 'package.json:31'),
+    )
+    record(
+      'Chrome’s accessibility tree gives the open control the reader completes on a page in the shell of 0.2.29.0 whose first source is package.json line 31 as a link named Open in VS Code and described by package.json:31 with no space before the colon, and the entry gives assistive technology no other text than the label and that file and line',
+      inTheShellOf02290,
+      entryAccessibilityChecks(inTheShellOf02290, 'package.json:31'),
+    )
+    record(
+      'Chrome’s accessibility tree gives the open control of a page published by a build of Cycle 0046 before finding 600, whose link was described by the target shown beside it with its wrap point, as a link named Open in VS Code and described by package.json:31 with no space before the colon once the reader serves it, and the entry gives assistive technology no other text than the label and that file and line',
+      describedByItsShownTarget,
+      entryAccessibilityChecks(describedByItsShownTarget, 'package.json:31'),
+    )
+  }
   const measureSingleColumn = async () => {
     // Arrange: the check's reader answers no update result again; the overview at 640 px, the single column, with an open detail in its panel. Act: the rail's rules are read.
     await answerUpdateStatus('idle')
@@ -1569,7 +1724,7 @@ async function check(page, options, collected) {
       },
     )
   }
-  /** Uses one of the two pages whose headings carry the reader's ids as a learner does (an outline entry, the theme button, a question) and reads what the reader's own elements are then: how often each id stands in the page, where the outline entry led, whether the answer shows, what labels the question field, what describes the rail entry's link, and the ids the reader gave its status region and its entry's target. @example (await useReaderOn('pages/reader-ids.html')).idCounts['qa-form'] // => 1 */
+  /** Uses one of the two pages whose headings carry the reader's ids as a learner does (an outline entry, the theme button, a question) and reads what the reader's own elements are then: how often each id stands in the page, where the outline entry led, whether the answer shows, what labels the question field, what describes the rail entry's link, and the ids the reader gave its status region and that description. @example (await useReaderOn('pages/reader-ids.html')).idCounts['qa-form'] // => 1 */
   const useReaderOn = async (pagePath) => {
     await page.setViewportSize({ width: 1200, height: 720 })
     await page.goto(`${options.url}${pagePath}`)
@@ -1605,7 +1760,6 @@ async function check(page, options, collected) {
       const answer = document.querySelector('.qa-answer')
       const field = document.querySelector('.composer textarea')
       const entry = document.querySelector('.open-in-editor')
-      const target = entry.querySelector('.open-target')
       const described = document.getElementById(
         entry.querySelector('a').getAttribute('aria-describedby'),
       )
@@ -1629,9 +1783,11 @@ async function check(page, options, collected) {
         fieldLabel: field.labels.length
           ? field.labels[0].textContent
           : field.getAttribute('aria-label'),
-        entryTargetId: idOf(target),
+        // The id the reader gives the entry's target is the id of what describes the entry's link, an element of the entry itself.
+        entryTargetId: idOf(described),
         entryDescription: textOf(described),
-        isEntryDescribedByItsTarget: target !== null && described === target,
+        isEntryDescribedByItsTarget:
+          described !== null && described.parentElement === entry,
         statusRegionId: status.id,
         statusRegionIdCount: countOf(status.id),
         helpTitle: textOf(helpTitle),
@@ -1724,6 +1880,7 @@ async function check(page, options, collected) {
     measureDetailSummaryRingInRow,
     measureOutlineRingInRow,
     measureSingleColumn,
+    readEntryFromAccessibilityTree,
   ]
   for (const step of stepsOfAPage) await step()
   // The same steps once more on the same content in the shell of 0.2.29.0: there the article, the composer, the rail and the entry get their rules from the sheet the reader injects, laid over the stylesheet of that build.
@@ -1736,6 +1893,7 @@ async function check(page, options, collected) {
   options.output = outputOfTheOverview
   for (const step of [
     measureLongTargetInRow,
+    readPackageManifestEntriesFromAccessibilityTree,
     measureMissingPage,
     usePageWithReaderIds,
     usePagePublishedWithReaderIdsTwice,
@@ -1832,6 +1990,7 @@ try {
       longSourcePage: LONG_SOURCE_PAGE,
       expectedLongTargetText: `${LONG_SOURCE.path}:${LONG_SOURCE.line}`,
       pageInTheShellOf02290: PAGE_IN_THE_SHELL_OF_02290,
+      packageManifestPages: PACKAGE_MANIFEST_PAGES,
       readerIds: READER_IDS,
       readerIdsPage: READER_IDS_PAGE,
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,

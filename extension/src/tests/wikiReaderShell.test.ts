@@ -246,7 +246,7 @@ test('the reader’s rail offers to open the page’s source in the editor that 
     const servedByCursor = await (await fetch(cursorReader.url)).text()
     const servedByCode = await (await fetch(codeReader.url)).text()
 
-    // Assert: the control sits between the outline and the output box. Its link carries the address of the page's first citation and holds the editor's name alone; the file and line it opens stand beside the link and describe it.
+    // Assert: the control sits between the outline and the output box. Its link carries the address of the page's first citation and holds the editor's name alone; the file and line it opens are shown beside the link, and a hidden copy of them as written describes it.
     const firstCitation =
       /<details class="source-files">.*?<a href="([^"]+)">/.exec(
         publishedPage,
@@ -257,17 +257,17 @@ test('the reader’s rail offers to open the page’s source in the editor that 
     )
     assert.ok(
       publishedPage.includes(
-        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p><div class="output">`,
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p><div class="output">`,
       ),
     )
     assert.ok(
       servedByCode.includes(
-        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p><div class="output">`,
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p><div class="output">`,
       ),
     )
     assert.ok(
       servedByCursor.includes(
-        `</ul></nav><p class="open-in-editor"><a href="${firstCitation.replace('vscode://', 'cursor://')}" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p><div class="output">`,
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation.replace('vscode://', 'cursor://')}" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p><div class="output">`,
       ),
     )
   } finally {
@@ -283,7 +283,7 @@ test('a page published by 0.2.29.0 is served by both editors with the entry name
   const indexPath = join(wiki.outputDirectory, 'index.html')
   const publishedToday = await readFile(indexPath, 'utf8')
   const publishedBy02290 = publishedToday.replace(
-    ' aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>',
+    ' aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p>',
     '>Open in VS Code</a></p>',
   )
   await writeFile(indexPath, publishedBy02290)
@@ -318,12 +318,12 @@ test('a page published by 0.2.29.0 is served by both editors with the entry name
     )
     assert.ok(
       servedByCode.includes(
-        `<p class="open-in-editor"><a href="${address}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>`,
+        `<p class="open-in-editor"><a href="${address}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p>`,
       ),
     )
     assert.ok(
       servedByCursor.includes(
-        `<p class="open-in-editor"><a href="${address.replace('vscode://', 'cursor://')}" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>`,
+        `<p class="open-in-editor"><a href="${address.replace('vscode://', 'cursor://')}" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p>`,
       ),
     )
   } finally {
@@ -381,7 +381,7 @@ test('a page published by this build is served by the reader of 0.2.29.0 in Curs
       entry
         .replace(/root=[^&]+&amp;/, 'root=…&amp;')
         .replace(/sha256=[a-f0-9]{64}/, 'sha256=…'),
-      '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=…&amp;path=source.ts&amp;line=1&amp;sha256=…" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>',
+      '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=…&amp;path=source.ts&amp;line=1&amp;sha256=…" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">source.ts<wbr>:1</span><span class="sr-only" id="codebook-open-target">source.ts:1</span></p>',
     )
     assert.equal(
       servedByCursor.includes('Open in VS Code'),
@@ -409,7 +409,7 @@ test('the target added to an entry of 0.2.29.0 breaks after each slash and befor
 
   // Assert
   assert.deepEqual(served, [
-    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span></p>',
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a&amp;b.ts:12</span></p>',
     '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa.ts">Open in Cursor</a></p>',
   ])
 })
@@ -428,7 +428,65 @@ test('the target added to an entry of 0.2.29.0 takes an id of its own on a page 
   assert.equal(
     served,
     "<h2 id='codebook-open-target'>Targets</h2><h2 ID=codebook-open-target-2>More</h2>" +
-      '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target-3">Open in VS Code</a> <span class="open-target" id="codebook-open-target-3">src/<wbr>a.ts<wbr>:12</span></p>',
+      '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target-3">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target-3">src/a.ts:12</span></p>',
+  )
+})
+
+// Value: protects=what assistive technology is told the rail entry opens on a page published by 0.2.29.0; fails_when=the reader adds the shown target with its wrap points as the link's description again, so Chrome describes the link as "src/ utils/ a.ts :12" and "package.json :31", a path that is not the file's, or the shown target stays in the accessibility tree beside its description; why_new=Cycle 0046 finding 600 (observed natively in Chrome for Testing on C55: the description "package.json :31"); seam=none, the served page is compared as text and the description is read in Chrome by the Wiki reader DOM check
+test('the entry of a page of 0.2.29.0 is served with the file and line shown with wrap points but hidden from assistive technology, and described by the file and line as written', () => {
+  // Arrange: two entries in the shape of 0.2.29.0, for src/utils/a.ts line 12 and for package.json line 31.
+  const withFolders =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa.ts&amp;line=12&amp;sha256=0f">Open in VS Code</a></p>'
+  const withoutFolders =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f">Open in VS Code</a></p>'
+
+  // Act
+  const served = [
+    rebindDeepWikiEditorLinks(withFolders, 'vscode'),
+    rebindDeepWikiEditorLinks(withoutFolders, 'cursor'),
+  ]
+
+  // Assert
+  assert.deepEqual(served, [
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a.ts:12</span></p>',
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
+  ])
+})
+
+// Value: protects=a Wiki published by a build of Cycle 0046 before finding 600 (the candidates up to C55), whose entry's link is described by the shown target with its wrap points; fails_when=the reader serves such a page as published, so Chrome describes its link as "package.json :31" or "src/ utils/ a.ts :12" until the learner publishes the Wiki again, or gives the rebuilt description another id than the publisher's; why_new=Cycle 0046 finding 600 (observed natively in Chrome for Testing on C55, on a page that build published); seam=none, the served page is compared as text and the description is read in Chrome by the Wiki reader DOM check
+test('an entry published with its shown target as the link’s description is served with that target hidden from assistive technology and the link described by the file and line as written, under the publisher’s id', () => {
+  // Arrange: two entries as the builds of Cycle 0046 before finding 600 printed them, for package.json line 31 and for src/utils/a&b.ts line 12.
+  const forTheManifest =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">package.json<wbr>:31</span></p>'
+  const withFolders =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span></p>'
+
+  // Act
+  const served = [
+    rebindDeepWikiEditorLinks(forTheManifest, 'cursor'),
+    rebindDeepWikiEditorLinks(withFolders, 'vscode'),
+  ]
+
+  // Assert: the same entry the publisher prints today, named after the serving editor.
+  assert.deepEqual(served, [
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a&amp;b.ts:12</span></p>',
+  ])
+})
+
+// Value: protects=the entry of a page this build publishes when this reader serves it; fails_when=the reader takes the entry the publisher prints today for one of an earlier build and rebuilds or doubles its target, so the description or the shown target stands twice; why_new=Cycle 0046 finding 600 (the reader now rebuilds the entries of two earlier shapes); seam=none
+test('an entry as this build publishes it is served with its shown target and its description once, named after the serving editor', () => {
+  // Arrange: the entry for package.json line 31 as the publisher prints it today.
+  const publishedToday =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(publishedToday, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
   )
 })
 

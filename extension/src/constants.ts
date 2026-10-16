@@ -700,7 +700,7 @@ export const WIKI_SOURCE_CHANGE_DEBOUNCE_MS = 1_000
 export const WIKI_FRESHNESS_MIN_INTERVAL_MS = 5_000
 /** How many failed status reads in a row the reader page lets a running update survive before it says it lost contact with the editor. */
 export const WIKI_UPDATE_STATUS_RETRY_LIMIT = 3
-/** The id of the element that names the file and line the rail's entry of a Wiki page opens. The entry's link refers to it as its description; the publisher prints the same id (a page has one entry), and the reader gives it to the target it adds to a site published without one. */
+/** The id of the visually hidden element that names, as written, the file and line the rail's entry of a Wiki page opens. The entry's link refers to it as its description; the target shown beside the link carries no id and is hidden from assistive technology, because Chrome reads its wrap points as spaces. The publisher prints the same id (a page has one entry), and the reader gives it to the description it adds to a site published without one. */
 export const WIKI_OPEN_TARGET_ELEMENT_ID = 'codebook-open-target'
 /** How long after the window's `load` event the reader page writes the sentence into the line that says the overview stands in for a missing page. The line is in the page, empty, before that, so its text is a change of a status region that already exists; a screen reader speaks the page itself while it loads. */
 export const WIKI_MISSING_PAGE_TEXT_DELAY_MS = 150

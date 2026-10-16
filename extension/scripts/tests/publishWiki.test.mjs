@@ -1230,14 +1230,14 @@ test('the rail entry of a published page is a link that holds the label alone an
       outputDirectory: join(root, '.codebook/wiki'),
     })
 
-    // Assert: the link's content is its accessible name, "Open in VS Code", exactly as 0.2.29.0 published it; the target beside it is the link's description, "src/utils/a&b.ts:12".
+    // Assert: the link's content is its accessible name, "Open in VS Code", exactly as 0.2.29.0 published it; the target shown beside it has the break points, and the hidden copy after it, "src/utils/a&b.ts:12", is the link's description.
     const entry = pages
       .get('index.html')
       .match(/<p class="open-in-editor">.*?<\/p>/)?.[0]
     assert.ok(entry)
     assert.equal(
       entry.replace(/href="[^"]+"/, 'href="…"'),
-      '<p class="open-in-editor"><a href="…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span></p>',
+      '<p class="open-in-editor"><a href="…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a&amp;b.ts:12</span></p>',
     )
     const address = new URL(
       entry.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&'),
@@ -1245,6 +1245,44 @@ test('the rail entry of a published page is a link that holds the label alone an
     assert.deepEqual(
       [address.searchParams.get('path'), address.searchParams.get('line')],
       ['src/utils/a&b.ts', '12'],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=what assistive technology is told the rail entry of a published page opens; fails_when=the publisher describes the link by the shown target with its wrap points again, so Chrome describes it as "package.json :31", a path that is not the file's, or leaves the shown target in the accessibility tree beside the description, or the description loses the publisher's id; why_new=Cycle 0046 finding 600 (observed natively in Chrome for Testing on C55: the description "package.json :31"); seam=none, the description is read in Chrome by the Wiki reader DOM check
+test('the rail entry of a published page for package.json line 31 shows the file and line with a break point before the colon, hidden from assistive technology, and is described by package.json:31 as written', async () => {
+  // Arrange: a page whose first source is package.json at line 31.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-open-description-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const source = Array.from(
+      { length: 31 },
+      (_unused, index) => `  "line${index + 1}": ${index + 1},`,
+    ).join('\n')
+    await writeFile(join(root, 'package.json'), source)
+    manifest.includedSources.push({
+      path: 'package.json',
+      sha256: createHash('sha256').update(source).digest('hex'),
+    })
+    manifest.pages[0].sources.unshift({ path: 'package.json', line: 31 })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert
+    const entry = pages
+      .get('index.html')
+      .match(/<p class="open-in-editor">.*?<\/p>/)?.[0]
+    assert.equal(
+      entry?.replace(/href="[^"]+"/, 'href="…"'),
+      '<p class="open-in-editor"><a href="…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
     )
   } finally {
     await rm(root, { recursive: true, force: true })
