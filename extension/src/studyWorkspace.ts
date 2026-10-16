@@ -20,6 +20,7 @@ import {
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
+  VERTICAL_EDITOR_ORIENTATION,
   LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE,
   LEARNER_SELECTION_KINDS,
   LEARNER_SIGN_FRESH_MS,
@@ -198,6 +199,7 @@ import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { editorSelectionState } from './utils/editorSelectionState'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
+import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
@@ -263,6 +265,7 @@ import {
 } from './utils/unconfirmedLayoutReason'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
 import { untilAborted } from './utils/untilAborted'
+import { withoutEditorLayoutLeaves } from './utils/withoutEditorLayoutLeaves'
 import { withoutErrorName } from './utils/withoutErrorName'
 import { withoutStudy } from './utils/withoutStudy'
 import { webviewFocusReceiptSchema } from './webviewFocusSchemas'
@@ -516,31 +519,6 @@ const keyboardNoticesTold = new Set<
   | 'chatEditorTab'
   | `agentSelectionFailed:${keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}`
 >()
-
-/**
- * Drops the empty groups at the end of a list of groups' tabs, for {@link StudyWorkspace}'s comparison of the learner's groups before an Open and after a Close: an editor that removes emptied groups takes those away with the panes, and the layout makes them again.
- * @param groups - The tabs of each group, in the layout's order.
- * @returns The list up to its last group that has a tab.
- * @example withoutTrailingEmpty([['a.ts'], [], ['b.ts'], []]) // => [['a.ts'], [], ['b.ts']]
- */
-function withoutTrailingEmpty(groups: string[][]): string[][] {
-  let end = groups.length
-  while (end > 0 && groups[end - 1]!.length === 0) end--
-  return groups.slice(0, end)
-}
-
-/**
- * Says whether a group still is the learner's group of before, by its tabs; the step of {@link StudyWorkspace}'s comparison for one group.
- * @param before - The learner's tabs the group held before the Open.
- * @param now - The learner's tabs it holds now.
- * @returns `true` when every tab of before is still there, and when the group was empty before and is empty now; `false` when a tab of before is gone, and for a group that was empty and has tabs now.
- * @example holdsTabsOfBefore(['a.ts'], ['a.ts', 'b.ts']) // => true
- */
-function holdsTabsOfBefore(before: string[], now: string[]): boolean {
-  return before.length === 0
-    ? now.length === 0
-    : before.every((key) => now.includes(key))
-}
 
 /**
  * A study archive a Study reader captured and could not save, with the run it was captured from and the checkpoint it answers.
@@ -9122,9 +9100,9 @@ export class StudyWorkspace {
 
   /**
    * Gives the main editor the layout it had before the Open, at the end of {@link close}, once the panes and the groups they left empty are gone; the note is forgotten either way.
-   * The layout is applied only when the main editor answers ({@link isMainEditorLayout}) and the learner's groups are still the same ones ({@link hasLearnersGroupsOf}). A learner who opened, closed or moved a group during the session, or closed one of their tabs of before, keeps what they made, and so does a layout that is as before already. A reader that closes with its disposal applies nothing: no learner asked for that close.
+   * The layout is applied only when the main editor answers ({@link isMainEditorLayout}) and the learner's groups are still the same ones ({@link layoutOfBeforeOpenOwed}). A learner who opened, closed or moved a group during the session, or closed one of their tabs of before, keeps what they made, and so does a layout that is as before already. A reader that closes with its disposal applies nothing: no learner asked for that close.
    * Group identity and columns must also stay unchanged across the layout read ({@link sameEditorGroups}): an old reply's group count cannot hide a group the learner opened while it waited.
-   * What cannot be given back: the width of a side bar the editor narrowed to make room for the panes' groups (no command reads or sets it), and a learner's group that stood empty in front of one with tabs and that the editor removed when the pane left it (an empty group can be made again only behind the groups that stay).
+   * What cannot be given back: the width of a side bar the editor narrowed to make room for the panes' groups (no command reads or sets it), and a group that stood empty in front of one with tabs and that the editor removed when the pane left it (an empty group can be made again only behind the groups that stay): the layout is given back without it ({@link emptyGroupsGoneSince}, {@link withoutEditorLayoutLeaves}), as for the earlier window's leftover Application group a cold Study select gave the pane after Developer: Reload Window (row 639).
    * @returns Once the editor answered the layout command, or at once when nothing is noted or nothing may be applied.
    * @example await this.giveLayoutOfBeforeOpenBack()
    */
@@ -9140,9 +9118,10 @@ export class StudyWorkspace {
     }))
     const now = await this.readEditorLayout()
     // Keep the final group/layout decision and its command in the same continuation.
-    if (!this.mayRestoreLayoutOfBeforeOpen(before, now, groups)) return
+    const layout = this.layoutOfBeforeOpenToRestore(before, now, groups)
+    if (layout === undefined) return
     await vscode.commands
-      .executeCommand('vscode.setEditorLayout', before.layout)
+      .executeCommand('vscode.setEditorLayout', layout)
       .then(undefined, () => undefined)
   }
 
@@ -9152,66 +9131,45 @@ export class StudyWorkspace {
    * @param before - The original learner layout and tabs retained before Open.
    * @param layout - The completed native layout reply.
    * @param groups - Every group and column captured before that read.
-   * @returns `true` only when the complete group model is unchanged and the existing original-layout guards allow restoration.
-   * @example if (!this.mayRestoreLayoutOfBeforeOpen(before, layout, groups)) return
+   * @returns The layout to apply ({@link layoutOfBeforeOpenOwed}) only when the complete group model is unchanged; `undefined` otherwise.
+   * @example const layout = this.layoutOfBeforeOpenToRestore(before, now, groups) // => the learner's layout of before, or undefined
    */
-  private mayRestoreLayoutOfBeforeOpen(
+  private layoutOfBeforeOpenToRestore(
     before: NonNullable<StudyWorkspace['layoutBeforeOpen']>,
     layout: unknown,
     groups: Parameters<StudyWorkspace['sameEditorGroups']>[0],
-  ): boolean {
-    return (
-      this.sameEditorGroups(groups, vscode.window.tabGroups.all) &&
-      this.owesLayoutOfBeforeOpen(before, layout)
-    )
+  ): unknown {
+    return this.sameEditorGroups(groups, vscode.window.tabGroups.all)
+      ? this.layoutOfBeforeOpenOwed(before, layout)
+      : undefined
   }
 
   /**
-   * Says whether the layout of before the Open is to be applied now; asked by {@link giveLayoutOfBeforeOpenBack} with the layout the editor answers once the panes are gone.
+   * Gives the layout of before the Open that is to be applied now; asked by {@link layoutOfBeforeOpenToRestore} with the layout the editor answers once the panes are gone.
+   * The main editor's groups must still be the learner's groups of before ({@link emptyGroupsGoneSince}); an empty group of before the editor removed in front of groups that stay is left out of the layout ({@link withoutEditorLayoutLeaves}, row 639), and one it removed at the end is made again by the layout.
    * @param before - What {@link noteLayoutBeforeOpen} noted.
    * @param now - The editor's layout now.
-   * @returns `true` when the answer is the main editor's, differs from the layout of before in its splits or proportions, and the main editor's groups are the learner's groups of before; `false` otherwise.
-   * @example if (!this.owesLayoutOfBeforeOpen(before, now)) return
+   * @returns The learner's layout of before, without the groups that are gone, when the answer is the main editor's, the groups are the learner's and the layout differs in its splits or proportions; `undefined` otherwise.
+   * @example const layout = this.layoutOfBeforeOpenOwed(before, now) // => { orientation: 1, groups: [{ size: 349 }, { size: 109 }] } once the editor removed the leftover row in front of them
    */
-  private owesLayoutOfBeforeOpen(
+  private layoutOfBeforeOpenOwed(
     before: NonNullable<StudyWorkspace['layoutBeforeOpen']>,
     now: unknown,
-  ): boolean {
+  ): unknown {
     const count = editorLayoutGroupCount(now)
-    return (
-      count !== undefined &&
-      this.isMainEditorLayout(now) &&
-      !isProportionalEditorLayout(before.layout, now) &&
-      this.hasLearnersGroupsOf(before.groups, count)
-    )
-  }
-
-  /**
-   * Says whether the main editor's groups are still the learner's groups a layout was noted for; asked by {@link owesLayoutOfBeforeOpen}.
-   * "The same groups" is tested by number and by tabs, as the editor gives a group no name that lasts: there are no more groups than before, and, leaving empty groups at the end aside, the same number, each holding every tab it held before (a group may have gained tabs, as when the debugger opened a file in it) and each group that was empty before empty still. An empty group of before that the editor removed at the end is made again by the layout.
-   * @param before - The learner's tabs of each group as noted, in the layout's order.
-   * @param mainCount - How many groups the main editor has now.
-   * @returns `true` when the groups match as described; `false` when a group was opened, closed or moved, or a tab of before is gone from its group.
-   * @example this.hasLearnersGroupsOf([['file:///a.ts'], []], 1) // => true once the editor removed the empty second group with the pane that sat in it
-   */
-  private hasLearnersGroupsOf(before: string[][], mainCount: number): boolean {
-    const now = vscode.window.tabGroups.all
+    if (count === undefined || !this.isMainEditorLayout(now)) return undefined
+    const learnersNow = vscode.window.tabGroups.all
       .toSorted((left, right) => left.viewColumn - right.viewColumn)
-      .slice(0, mainCount)
+      .slice(0, count)
       .map((group) => this.learnersTabKeysOf(group))
-    const keptBefore = withoutTrailingEmpty(before),
-      keptNow = withoutTrailingEmpty(now)
-    return (
-      now.length <= before.length &&
-      keptBefore.length === keptNow.length &&
-      keptBefore.every((keys, index) =>
-        holdsTabsOfBefore(keys, keptNow[index]!),
-      )
-    )
+    const gone = emptyGroupsGoneSince(before.groups, learnersNow)
+    if (!gone) return undefined
+    const layout = withoutEditorLayoutLeaves(before.layout, new Set(gone))
+    return isProportionalEditorLayout(layout, now) ? undefined : layout
   }
 
   /**
-   * Lists the learner's tabs of an editor group by a key that outlives the editor's tab objects; asked by {@link noteLayoutBeforeOpen} and {@link hasLearnersGroupsOf}.
+   * Lists the learner's tabs of an editor group by a key that outlives the editor's tab objects; asked by {@link noteLayoutBeforeOpen} and {@link layoutOfBeforeOpenOwed}.
    * @param group - An editor group.
    * @returns One key for each tab that is not this reader's pane or captured source ({@link isOwnPaneOrSourceTab}): a text tab's document, any other tab's kind and label.
    * @example this.learnersTabKeysOf(group) // => ['file:///work/login-form.tsx']
@@ -12913,15 +12871,22 @@ export class StudyWorkspace {
         assertCurrent,
       )
       const assertPlaced = this.retainPresentationPlacement()
-      const layout = await vscode.commands.executeCommand<unknown>(
+      let layout = await vscode.commands.executeCommand<unknown>(
         'vscode.getEditorLayout',
       )
       // Retain accepted native placement for a later Return even when this entry was cancelled; Close and newer input still revoke its proof.
       this.assertLifetime(lifetime)
       assertPlaced()
       // Read after the layout reply, which the editor sends after the removal of the group the pane's move emptied (row 626).
+      const removedByMove = groupsRemovedByMove()
+      // The groups the removed leftover leaves stand as the Study's columns left them; they are stacked as without it (row 639).
+      if (removedByMove > 0)
+        layout = await this.stackGroupsAfterLeftoverRemoval(layout, () => {
+          this.assertLifetime(lifetime)
+          assertPlaced()
+        })
       const expectedCount =
-        grid.groups.length + (retiredSource ? 0 : 1) - groupsRemovedByMove()
+        grid.groups.length + (retiredSource ? 0 : 1) - removedByMove
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
       // The record never rejects and is not awaited, so the preparation keeps its timing.
       this.rememberApplicationGroupMarker(identity)
@@ -13406,6 +13371,40 @@ export class StudyWorkspace {
       )
         ? 1
         : 0
+  }
+
+  /**
+   * Stacks the main editor's groups in rows of one height, the Application's own group first, once the editor removed the earlier window's leftover group the Application pane's move emptied; called by {@link reserveApplicationGroup} on row 626's path (row 639).
+   * A cold Study select after Developer: Reload Window gives an unproven leftover at column 1 the pane, so the learner's second group takes the Study pane's column of the Study layout. The reservation's `workbench.action.newGroupAbove` adds above the active group (VS Code 1.140.0 `workbench.desktop.main.js` 990:31740), which splits that group's cell of the grid (1106:113133, 981:46383), here the Study layout's left column; the editor then removes the emptied leftover, and the learner's second group keeps the Study pane's column beside the Application and the source. Without the leftover the select retires the Study pane's created group at the live entry, and the groups stand in rows: the Application, the source's group, the learner's other group (C57 rounds 1a and 1b). This gives the same rows. The groups keep their order, so no group is moved or merged.
+   * @param layout - The layout the editor answered after the removal.
+   * @param assertPlaced - Refuses when the placement changed, after the layout command and after its read.
+   * @returns The layout the editor answers after the rows are applied; the given layout when it stacks its groups already or is no layout.
+   * @throws What `assertPlaced` throws.
+   * @example layout = await this.stackGroupsAfterLeftoverRemoval(layout, assertPlaced) // => { orientation: 1, groups: [{ size: 229 }, { size: 229 }, { size: 229 }] }
+   */
+  private async stackGroupsAfterLeftoverRemoval(
+    layout: unknown,
+    assertPlaced: () => void,
+  ): Promise<unknown> {
+    const count = editorLayoutGroupCount(layout)
+    if (count === undefined) return layout
+    const rows = {
+      orientation: VERTICAL_EDITOR_ORIENTATION,
+      groups: Array.from({ length: count }, () => ({ size: 1 })),
+    }
+    if (isSameEditorLayoutShape(layout, rows)) return layout
+    // Pixel rows of one height where the editor answered pixels; otherwise rows without sizes, which the editor makes equal (both editors take given sizes as pixels, row 340).
+    const stacked = toPixelEditorLayout(rows, layout) ?? {
+      orientation: VERTICAL_EDITOR_ORIENTATION,
+      groups: Array.from({ length: count }, () => ({})),
+    }
+    await vscode.commands.executeCommand('vscode.setEditorLayout', stacked)
+    assertPlaced()
+    const read = await vscode.commands.executeCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    assertPlaced()
+    return read
   }
 
   /**
