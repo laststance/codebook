@@ -286,6 +286,7 @@ export class StudyService {
     | 'assertPresentationIdle'
     | 'nodeHistoryLearningMaterialSaved'
     | 'replayControlAccepted'
+    | 'markAgentRecordingOpen'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
@@ -626,8 +627,15 @@ export class StudyService {
         'PREREQUISITE_MISSING',
         'The playback workspace is unavailable.',
       )
+    // An agent's open enters the reader as the agent's: the learner's keyboard stays where Codebook need not move it (row 613).
+    const forgetAgentOpen =
+      input.action === 'open'
+        ? this.presentationController?.markAgentRecordingOpen(input.studyId)
+        : undefined
     try {
       const state = this.playbackController.command(input)
+      // An open the controller answers without a load (the same recording, loading or shown) leaves no mark for a later open.
+      if (state.revision === input.expectedRevision) forgetAgentOpen?.()
       // An accepted seek, play or pause answers a refusal the Learning replay panel still shows; an open is answered when its load is ready.
       if (input.action !== 'open')
         this.presentationController?.replayControlAccepted()
@@ -636,6 +644,7 @@ export class StudyService {
         uri: `codebook://${this.instanceId}/playback`,
       }
     } catch (error) {
+      forgetAgentOpen?.()
       // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
       const readerClosed = !this.playbackController.state().readerOpen
       throw this.playbackRefusal(error, readerClosed, input)
@@ -709,7 +718,8 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         RETIRED_PRESENTATION_REFUSAL,
       )
-    await this.presentationController.changePresentation(input)
+    // The codebook_presentation tool's request is an agent's: beside a chat view no file it cannot prove gets the keyboard (row 613).
+    await this.presentationController.changePresentation(input, 'agent')
     return this.presentationState(input.instanceId)
   }
 

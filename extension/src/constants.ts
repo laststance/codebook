@@ -337,6 +337,12 @@ export const PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE =
  */
 export const APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE =
   'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session, when a Study selection an agent asked for through codebook_presentation placed its panes in the only editor part (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar): the placement gives the captured source the keyboard to hold its own panes against a learner's newer input, and the place the selection found the keyboard in reads the same whether it was a file or the chat view, so Codebook gives the keyboard to no file it cannot prove and says where it is (Cycle 0046 row 613). The learner's own selection (the Study pane's control, a command) returns the keyboard to the active editor as before.
+ * @example void showPlainNotice(vscode.window, 'information', AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE)
+ */
+export const AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE =
+  'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

@@ -4701,6 +4701,48 @@ test('an agent opening the same recording after the reader closed opens the read
   }
 })
 
+// Value: protects=the chat input's keyboard when an agent opens a recording through codebook_playback while the Study workspace is closed and VS Code's chat view (or Cursor's chat in the side bar) has the keyboard: the replay's Application group is placed without a focus, no file gets the keyboard and the Learning summary is shown without taking it; fails_when=the replay's preparation shows the learner's active file with the keyboard, or the summary's reveal takes the keyboard, so the chat input loses it without a word; why_new=Cycle 0046 row 613 (an agent's replay open: loadPlayback -> open); seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's playback (the codebook_playback tool's handler), textDocumentShows, viewFocusCommands, keyboardInView and the information messages
+test('an agent’s replay open while the chat view has the keyboard leaves the keyboard in the chat and shows the Learning summary without it', async () => {
+  // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner typed the request into the chat view.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length,
+      viewFocusBefore = harness.viewFocusCommands.length
+
+    // Act
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+
+    // Assert: no document was shown with the keyboard, the summary's views were shown without it, and the chat view still has it; nothing is told.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.deepEqual(harness.viewFocusCommands.slice(viewFocusBefore), [
+      { command: 'codebook.observedMoments.focus', preserveFocus: true },
+      { command: 'codebook.learningSummary.focus', preserveFocus: true },
+    ])
+    assert.equal(harness.keyboardInView(), true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a newer recording open while the reader's first entry, already abandoned, is still inside a native layout call; fails_when=the newer open meets the abandoned entry's reservation and reports busy; why_new=Cycle 0034 O2 (a load that leaves on abort lets its successor reach the cold entry); seam=none
 test('a recording opened again after its first reader entry was abandoned waits for that entry instead of reporting busy', async () => {
   // Arrange

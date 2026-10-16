@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
 import {
+  AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
   AGENT_STORAGE_DIRECTORY,
   APPLICATION_GROUP_MARKER_KEY,
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
@@ -103,6 +104,7 @@ import {
   presentationPoseInvalidatedSchema,
   type PresentationIntent,
   type PresentationMode,
+  type PresentationRequester,
   type PresentationState,
   type PresentationPose,
   type PresentationPoseCapture,
@@ -485,14 +487,14 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
  * keyboardNoticesTold.add('close')
  */
 const keyboardNoticesTold = new Set<
-  'close' | 'pause' | 'chosen' | 'runEnd' | 'preparation'
+  'close' | 'pause' | 'chosen' | 'runEnd' | 'preparation' | 'agentSelection'
 >()
 
 /**
@@ -845,6 +847,8 @@ export class StudyWorkspace {
     'studyId' | 'observationId'
   > & { lifetime: number; selectionRevision: number }
   private repositoryRecordingOpen?: { studyId: string; revision: number }
+  /** The recording open an agent asked for through codebook_playback ({@link markAgentRecordingOpen}), by its study and the playback revision its load runs at; {@link loadPlayback} takes it for that load only (row 613). */
+  private agentRecordingOpen?: { studyId: string; revision: number }
   private pendingHistory?: number
   /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
   private pendingNodeHistory?: number
@@ -1171,9 +1175,18 @@ export class StudyWorkspace {
       )
   }
 
-  /** Reserves one current reader intent before asynchronous work; all three entry points share its native/storage receipts. @example await workspace.changePresentation({presentationId,expectedRevision:0,mode:'living-book',action:'select'}) */
-  changePresentation(input: PresentationIntent): Promise<PresentationState> {
-    return this.admitPresentation(input, 'pending')
+  /**
+   * Reserves one current reader intent before asynchronous work; all three entry points share its native/storage receipts.
+   * @param input - The requested change with the reader lifetime and control revision it was made for.
+   * @param requester - `'agent'` for the codebook_presentation tool's handler ({@link StudyService.selectPresentation}), whose caller may have the learner typing in a chat view: beside such a view the selection gives the keyboard to no place it cannot prove (row 613). The Study pane's control and the commands are the learner's.
+   * @returns The state after the admitted change.
+   * @example await workspace.changePresentation({presentationId,expectedRevision:0,mode:'study-workspace',action:'select'}, 'agent')
+   */
+  changePresentation(
+    input: PresentationIntent,
+    requester: PresentationRequester = 'learner',
+  ): Promise<PresentationState> {
+    return this.admitPresentation(input, 'pending', requester)
   }
 
   /** Tells whether a tab shows a captured source document of this workspace's reader; the one definition of ownership for every caller that closes such tabs or counts them as Codebook's own. It is false until {@link initialize} has created the library. @example vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter((tab) => this.ownsCapturedSourceTab(tab)) */
@@ -1461,15 +1474,17 @@ export class StudyWorkspace {
    * Closes the captured-source tabs and dead Codebook panes an earlier host session left behind, then admits the selection once on what remains; called by {@link admitPresentation}.
    * The pending transition refuses other presentation controls while the tabs close, and a reader close ends the wait. When a captured-source tab stays, the ordinary admission reports that the active editor cannot be restored, with this reason as its cause.
    * @param input - The `select` request that met a leftover tab.
+   * @param requester - Who asked for the selection ({@link changePresentation}); the admission after the close keeps it.
    * @returns The state of the admitted selection.
    * @throws The admission's own errors, given before any tab closes where {@link assertSelectionOutlastsClose} can decide them; `PRESENTATION_UNAVAILABLE` when the leftover tab is still active, or when a dead pane could not be closed (no panel is created then; the dead and leftover tabs of other groups may already have closed).
    * @example
    * ```ts
-   * const state = await this.selectAfterClosingLeftoverTabs(input) // state.layoutConfirmed === true
+   * const state = await this.selectAfterClosingLeftoverTabs(input, 'learner') // state.layoutConfirmed === true
    * ```
    */
   private async selectAfterClosingLeftoverTabs(
     input: PresentationIntent,
+    requester: PresentationRequester,
   ): Promise<PresentationState> {
     const lifetime = this.lifetime,
       transition = {
@@ -1507,7 +1522,7 @@ export class StudyWorkspace {
       )
     // The transition is released in this same turn, so no other control is admitted between it and this second, final admission.
     try {
-      return this.admitPresentation(input, closed)
+      return this.admitPresentation(input, closed, requester)
     } catch (error) {
       // Only the synchronous refusal gains the reason; later failures of the admitted change keep their own cause.
       throw this.refusalNamingKeptSource(error, closed)
@@ -1559,16 +1574,18 @@ export class StudyWorkspace {
    * Admits one presentation change for {@link changePresentation}. Every refusal it decides by itself is thrown before any native effect; only a selection that meets tabs of an earlier host session first closes those tabs through {@link selectAfterClosingLeftoverTabs}, which gives the refusals it can foresee before the close.
    * @param input - The requested change with the reader lifetime and control revision it was made for.
    * @param leftoverTabs - `'pending'` on the first entry; on the single re-entry after {@link selectAfterClosingLeftoverTabs} what {@link closeLeftoverTabs} reported. Only its `closedFocus` changes the admission: the tab the editor activated in place of the closed focused tab is accepted as the place to return to.
+   * @param requester - Who asked for the change ({@link changePresentation}); every re-entry of the same request keeps it.
    * @returns The state after the admitted change.
    * @throws When the request is stale, competes with a pending change, comes from a background window, or cannot keep the learner's focus.
    * @example
    * ```ts
-   * return this.admitPresentation(input, 'pending')
+   * return this.admitPresentation(input, 'pending', 'learner')
    * ```
    */
   private admitPresentation(
     input: PresentationIntent,
     leftoverTabs: 'pending' | LeftoverTabClose,
+    requester: PresentationRequester,
   ): Promise<PresentationState> {
     if (input.presentationId !== this.presentationId)
       throw new StudyError(
@@ -1597,13 +1614,13 @@ export class StudyWorkspace {
           vscode.window.activeTextEditor?.document.uri.toString() !==
             activeInput.uri.toString()))
     )
-      return this.selectAfterClosingLeftoverTabs(input)
+      return this.selectAfterClosingLeftoverTabs(input, requester)
     if (input.action === 'focus') return this.focusCurrentPresentation(input)
     if (this.liveComposition || this.summaryComposition) {
       this.assertCompositionAllows(input)
       // Selecting the arrangement that is confirmed already changes nothing: it is read once more without taking the focus, and only a layout that no longer holds is arranged again.
       if (input.action === 'select' && this.presentationState().layoutConfirmed)
-        return this.confirmCompositionNoop(input)
+        return this.confirmCompositionNoop(input, requester)
       const transition = {
         id: this.presentationId,
         cancellation: new AbortController(),
@@ -1689,7 +1706,7 @@ export class StudyWorkspace {
       input.mode === state.mode &&
       this.enlargedLayoutReceipt
     ) {
-      return this.confirmEnlargedLayout(input)
+      return this.confirmEnlargedLayout(input, requester)
     }
     // Selecting the current arrangement repairs geometry without replacing panes or touching foreign previews.
     if (
@@ -1715,7 +1732,7 @@ export class StudyWorkspace {
       state.layoutConfirmed &&
       state.preference.status !== 'unknown'
     )
-      return this.confirmPresentationNoop(input)
+      return this.confirmPresentationNoop(input, requester)
     if (
       input.action === 'save-preference' &&
       (input.mode !== state.mode || !state.layoutConfirmed)
@@ -1754,6 +1771,7 @@ export class StudyWorkspace {
       transition,
       restoreFocus,
       returnForeignFocus,
+      requester,
     ).finally(() => {
       if (this.presentationTransition === transition)
         this.presentationTransition = undefined
@@ -2010,14 +2028,16 @@ export class StudyWorkspace {
   /**
    * Answers a selection of the live or recording arrangement that is confirmed already; called by {@link admitPresentation}. The state is read once more as a status read does, without taking the focus.
    * @param input - The admitted selection.
+   * @param requester - Who asked for it; a repeated request keeps it.
    * @returns The confirmed state; or, when the read finds the layout changed, what arranging it again answers.
    * @example
    * ```ts
-   * if (input.action === 'select' && this.presentationState().layoutConfirmed) return this.confirmCompositionNoop(input)
+   * if (input.action === 'select' && this.presentationState().layoutConfirmed) return this.confirmCompositionNoop(input, requester)
    * ```
    */
   private confirmCompositionNoop(
     input: PresentationIntent,
+    requester: PresentationRequester,
   ): Promise<PresentationState> {
     const lifetime = this.lifetime
     const checking: Promise<PresentationState> = this.readPresentationState()
@@ -2026,7 +2046,8 @@ export class StudyWorkspace {
         if (this.presentationOperation === checking)
           this.presentationOperation = undefined
         // The read unconfirms a layout that changed, so the repeated request takes the arranging branch.
-        if (!state.layoutConfirmed) return this.changePresentation(input)
+        if (!state.layoutConfirmed)
+          return this.changePresentation(input, requester)
         this.presentationReason = undefined
         this.errors.delete('presentation')
         return { ...state, state: 'open' as const }
@@ -2039,9 +2060,10 @@ export class StudyWorkspace {
     return checking
   }
 
-  /** Rechecks actual native geometry before a same-mode no-op, retaining the revision only when no repair is needed. @example await this.confirmPresentationNoop(input) */
+  /** Rechecks actual native geometry before a same-mode no-op, retaining the revision only when no repair is needed; a repair keeps the request's `requester`. @example await this.confirmPresentationNoop(input, 'learner') */
   private confirmPresentationNoop(
     input: PresentationIntent,
+    requester: PresentationRequester,
   ): Promise<PresentationState> {
     const transition = {
         id: this.presentationId,
@@ -2095,7 +2117,7 @@ export class StudyWorkspace {
         }
         this.presentationTransition = undefined
         this.presentationConfirmed = false
-        return await this.changePresentation(input)
+        return await this.changePresentation(input, requester)
       } finally {
         if (this.presentationTransition === transition) {
           this.presentationTransition = undefined
@@ -2109,9 +2131,10 @@ export class StudyWorkspace {
     return checking
   }
 
-  /** Reconfirms an enlarged Study grid without replacing panes, falling back to normal Restore when geometry changed. @example await this.confirmEnlargedLayout(input) */
+  /** Reconfirms an enlarged Study grid without replacing panes, falling back to normal Restore, for the same `requester`, when geometry changed. @example await this.confirmEnlargedLayout(input, 'learner') */
   private confirmEnlargedLayout(
     input: PresentationIntent,
+    requester: PresentationRequester,
   ): Promise<PresentationState> {
     const transition = {
         id: this.presentationId,
@@ -2131,7 +2154,7 @@ export class StudyWorkspace {
         this.assertLifetime(lifetime)
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
-        return await this.changePresentation(input)
+        return await this.changePresentation(input, requester)
       } finally {
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
@@ -4506,9 +4529,20 @@ export class StudyWorkspace {
     transition: NonNullable<StudyWorkspace['presentationTransition']>,
     restoreFocus?: ReturnType<StudyWorkspace['capturePresentationFocus']>,
     returnForeignFocus?: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
+    requester: PresentationRequester = 'learner',
   ): Promise<PresentationState> {
     const signal = transition.cancellation.signal,
       lifetime = this.lifetime
+    // Read before any native effect: an agent's selection gives the keyboard back only to a place the learner is known to work in, or to the chat of another editor part (row 613).
+    const agentSelection =
+      requester === 'agent'
+        ? {
+            knowsLearnersPlace: this.knowsLearnersPlace(
+              [this.app, this.contextPanel].find((panel) => panel?.active),
+            ),
+            returnsToForeignTab: returnForeignFocus !== undefined,
+          }
+        : undefined
     const previousMode = this.presentationMode
     let evidenceConfirmed = false,
       restoreFocusAttempted = false
@@ -4582,7 +4616,7 @@ export class StudyWorkspace {
                 unkept.group.viewColumn,
               ),
             )
-          await this.open(signal, 'presentation')
+          await this.open(signal, 'presentation', false, requester === 'agent')
         }
         assertCurrent()
         // The open entered a live run or a recording and arranged its two panes: no Study pane exists whose render the transfer below waits for.
@@ -4765,7 +4799,8 @@ export class StudyWorkspace {
           assertRetainedPlacement()
         }
         restoreFocusAttempted = true
-        await restoreFocus?.(signal, assertSourceFocus, true)
+        if (!(await this.keepsKeyboardAfterAgentSelection(agentSelection)))
+          await restoreFocus?.(signal, assertSourceFocus, true)
         assertCurrent()
         assertRetainedPlacement = this.retainPresentationPlacement()
         const receipt = this.layoutReceipt,
@@ -4824,7 +4859,10 @@ export class StudyWorkspace {
         this.presentationMovedFocus &&
         !this.closing &&
         lifetime === this.lifetime &&
-        (this.app?.active || this.contextPanel?.active || assertSourceFocus)
+        (this.app?.active || this.contextPanel?.active || assertSourceFocus) &&
+        !(await this.keepsKeyboardAfterAgentSelection(agentSelection).catch(
+          () => false,
+        ))
       )
         await restoreFocus?.(signal, assertSourceFocus).catch(() => undefined)
       // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays.
@@ -6772,12 +6810,14 @@ export class StudyWorkspace {
    * @param signal - Cancels an obsolete reader entry.
    * @param origin - Identifies the existing navigation/placement contract for this entry.
    * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
+   * @param forAgent - `true` for an entry an agent asked for (a selection through codebook_presentation, a recording's open through codebook_playback): its Application preparation gives the keyboard to no place it cannot prove beside a chat view, and the Learning summary is shown without it (row 613).
    * @example await workspace.open(signal, 'study', true)
    */
   async open(
     signal?: AbortSignal,
     origin: 'study' | 'repository' | 'presentation' = 'study',
     preserveRecordingKeyboard = false,
+    forAgent = false,
   ): Promise<void> {
     if (origin !== 'presentation') this.assertPresentationIdle()
     signal?.throwIfAborted()
@@ -6930,6 +6970,7 @@ export class StudyWorkspace {
                 returnForeignFocus = undefined
               }
             : undefined,
+          forAgent,
         )
       else this.ensureApp()
       if (createsApp) unarrangedApp = this.app
@@ -7236,7 +7277,7 @@ export class StudyWorkspace {
         await this.showLearningSummary(
           signal,
           origin !== 'repository' && (firstOpen || compositionChanged),
-          preserveRecordingKeyboard,
+          preserveRecordingKeyboard || forAgent,
         )
       }
       if (request === this.readerOpenNumber)
@@ -9792,6 +9833,42 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Marks the recording open an agent is about to ask the playback controller for, so the load it starts enters the reader as the agent's ({@link open} with `forAgent`, row 613); called by {@link StudyService.playback} for codebook_playback's `open`, right before its command.
+   * The mark names the study and the revision the controller gives an accepted open; {@link loadPlayback} takes it for that load only.
+   * @param studyId - The study the agent opens.
+   * @returns The function that forgets the mark again, for an open the controller refused or answered without a load.
+   * @example const forget = workspace.markAgentRecordingOpen(input.studyId)
+   */
+  markAgentRecordingOpen(studyId: string): () => void {
+    const mark = {
+      studyId,
+      revision: (this.playback?.state().revision ?? 0) + 1,
+    }
+    this.agentRecordingOpen = mark
+    return (): void => {
+      if (this.agentRecordingOpen === mark) this.agentRecordingOpen = undefined
+    }
+  }
+
+  /**
+   * Takes the agent's mark of the recording open that started this load, if any; asked once by {@link loadPlayback} before it arranges the reader.
+   * @param studyId - The study whose recording loads.
+   * @returns `true` when an agent asked for this open ({@link markAgentRecordingOpen}); `false` for the learner's own open.
+   * @example const forAgent = this.takeAgentRecordingOpen(studyId)
+   */
+  private takeAgentRecordingOpen(studyId: string): boolean {
+    const mark = this.agentRecordingOpen
+    // A mark for another study or another open belongs to no load of this one.
+    if (
+      mark?.studyId !== studyId ||
+      mark.revision !== this.playback?.state().revision
+    )
+      return false
+    this.agentRecordingOpen = undefined
+    return true
+  }
+
   /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */
   private async loadPlayback(
     studyId: string,
@@ -9810,6 +9887,7 @@ export class StudyWorkspace {
         ? 'repository'
         : 'study'
     if (origin === 'repository') this.repositoryRecordingOpen = undefined
+    const forAgent = this.takeAgentRecordingOpen(studyId)
     // An agent's open reaches this loader without openRecording; the same study on its way to the Trash is refused here too.
     this.assertStudyNotMoving(studyId)
     this.replayLoadAwaitingReady = true
@@ -9881,7 +9959,7 @@ export class StudyWorkspace {
       this.recordingRevealedByEntry !==
       this.playback!.state().presentationRevision
     )
-      await this.open(signal, origin, preserveRecordingKeyboard)
+      await this.open(signal, origin, preserveRecordingKeyboard, forAgent)
     signal.throwIfAborted()
     await this.ensureReplayViewport(signal)
     signal.throwIfAborted()
@@ -12124,7 +12202,7 @@ export class StudyWorkspace {
    * @param retiredContextGroup - An empty group created for the reader's prior Context, never a learner group.
    * @param manualEntry - Explicit Open may reconcile a parked App's later manual placement; background acquisition cannot borrow focus for it.
    * @param cancelEntryFocusReturn - Supplied when {@link open} owns the final foreign focus return; retire that older return when later learner input wins.
-   * @param forAgentRun - `true` for a live run's viewport ({@link presentation}'s `createViewport`), which an agent starts while the learner may be typing in a chat view: beside such a view the focus return gives the keyboard only to a place the learner is known to work in ({@link captureApplicationPreparationReturn}, row 612).
+   * @param forAgentRun - `true` for a live run's viewport ({@link presentation}'s `createViewport`), which an agent starts while the learner may be typing in a chat view, and for an entry an agent asked for ({@link open}, row 613): beside such a view the focus return gives the keyboard only to a place the learner is known to work in ({@link captureApplicationPreparationReturn}, row 612).
    * @returns The registered App in its new owned group, or its learner-chosen group on explicit manual reentry; original groups remain separate.
    * @throws When native scope, original groups or current lifetime cannot be retained safely.
    * @example const panel = await this.prepareApplicationGroup(signal)
@@ -12524,11 +12602,7 @@ export class StudyWorkspace {
         focusedPanel || cancelEntryFocusReturn
           ? undefined
           : this.capturePresentationFocus(undefined),
-      // The learner's own sign in the active text editor, or the Study pane's report, is all that tells where the keyboard is beside a chat view.
-      knowsLearnersPlace: focusedPanel
-        ? this.reportsKeyboard(focusedPanel)
-        : vscode.window.activeTextEditor !== undefined &&
-          this.learnerWorksInActiveEditor(),
+      knowsLearnersPlace: this.knowsLearnersPlace(focusedPanel),
     }
     return async (
       signal,
@@ -12623,6 +12697,64 @@ export class StudyWorkspace {
       vscode.window,
       'information',
       APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
+    )
+  }
+
+  /**
+   * Says whether the learner is known to work where the keyboard is; asked by {@link captureApplicationPreparationReturn} and {@link performPresentation} before any native effect of an agent's request.
+   * Beside a chat view the active text editor stays the active one and a pane stays `active`, so only the learner's own sign tells: a click or a key press in the active text editor a moment ago ({@link learnerWorksInActiveEditor}), or the Study pane's own report that it has the keyboard ({@link reportsKeyboard}).
+   * @param focusedPanel - The Codebook pane that is the active editor, if any.
+   * @returns `true` for such a sign or report; `false` otherwise, also for the Application pane, whose page sends no report.
+   * @example this.knowsLearnersPlace(undefined) // => true one second after the learner's last key press in the active file
+   */
+  private knowsLearnersPlace(
+    focusedPanel: vscode.WebviewPanel | undefined,
+  ): boolean {
+    return focusedPanel
+      ? this.reportsKeyboard(focusedPanel)
+      : vscode.window.activeTextEditor !== undefined &&
+          this.learnerWorksInActiveEditor()
+  }
+
+  /**
+   * Decides, after an agent's Study selection placed its panes, whether the keyboard stays on the captured source the placement focused: in the only editor part (VS Code, and Cursor with its chat in the side bar) the place the selection captured reads the same while a chat view has the keyboard, so only a place the learner is known to work in gets it back, and the learner is told once where it is ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613). Asked by {@link performPresentation} in place of its ordinary return, also after a failed placement.
+   * @param selection - What the agent's selection knew before any native effect; `undefined` for the learner's own selection, which keeps the ordinary return.
+   * @returns
+   * - `true` when the keyboard stays where the placement left it (the learner was told once).
+   * - `false` for the learner's own selection, a place the learner is known to work in, a chat of another editor part that gets the keyboard back, and another editor part: the ordinary return goes on.
+   * @example await this.keepsKeyboardAfterAgentSelection({ knowsLearnersPlace: false, returnsToForeignTab: false }) // => true in VS Code
+   */
+  private async keepsKeyboardAfterAgentSelection(
+    selection:
+      { knowsLearnersPlace: boolean; returnsToForeignTab: boolean } | undefined,
+  ): Promise<boolean> {
+    // The learner's own selection, a known place and a chat tab of another editor part keep the ordinary return.
+    if (
+      !selection ||
+      selection.knowsLearnersPlace ||
+      selection.returnsToForeignTab
+    )
+      return false
+    // A layout read answers for the part that has the keyboard: only when it accounts for every group is the main editor the only part.
+    const count = editorLayoutGroupCount(
+      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+    )
+    if (count !== vscode.window.tabGroups.all.length) return false
+    this.tellAgentSelectionKeyboard()
+    return true
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the captured source has the keyboard after an agent's Study selection placed the panes in the only editor part; called by {@link keepsKeyboardAfterAgentSelection}.
+   * @example this.tellAgentSelectionKeyboard()
+   */
+  private tellAgentSelectionKeyboard(): void {
+    if (keyboardNoticesTold.has('agentSelection')) return
+    keyboardNoticesTold.add('agentSelection')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
     )
   }
 

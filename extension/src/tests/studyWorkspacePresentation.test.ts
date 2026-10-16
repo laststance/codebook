@@ -5153,6 +5153,155 @@ test("the answer to a selection made from Cursor's chat input reads the layout a
   }
 })
 
+// Value: protects=the learner's keyboard when an agent selects the Study workspace through codebook_presentation while VS Code's chat view (or Cursor's chat in the side bar) has it: the placement needs the captured source's focus, and afterwards no file the learner is not known to work in gets the keyboard; the learner is told once that the captured source has it; fails_when=the selection's focus return shows the learner's active file with the keyboard, so the chat input the request was typed in loses its keyboard to that file without a word; why_new=Cycle 0046 row 613; seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input, which the editor does not report), the service's selectPresentation (the codebook_presentation tool's handler), textDocumentShows, focusedSource and the information messages
+test('an agent’s Study selection made while the chat view has the keyboard gives no learner’s file the keyboard and says once that the captured source has it', async () => {
+  // Arrange: the learner's notes stand in the second group and readme.md is the active editor of the third; then the learner typed the request into the chat view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+    const state = harness.reader.presentationState()
+
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: no learner's file was shown with the keyboard, the captured source has it, and the sentence says so; the Study stands confirmed.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus)
+        .map((shown) => shown.name),
+      ['Captured-overview.mts'],
+    )
+    assert.equal(
+      harness
+        .focusedSource()
+        ?.document.uri.path.endsWith('/Captured-overview.mts'),
+      true,
+    )
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+      ],
+    )
+    assert.equal(answer.layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's keyboard when an agent selects the Study workspace right after Developer: Reload Window, with the earlier window's empty Application group still the active group and the chat view holding the keyboard: no editor group is focused after the placement and the learner is told once that the captured source has the keyboard; fails_when=the selection's focus return focuses the active editor group it captured (the empty leftover's), taking the keyboard from the chat input without a word; why_new=Cycle 0046 row 613 (with a reload: row 608's path); seam=applicationGroupMarkers, leaveEmptyLockedGroup, focusMutableDraft, the editor's focusFirstEditorGroup (the learner's last click into the empty group), focusView (the chat view's input), the service's selectPresentation, the command log, focusedSource and the information messages
+test('an agent’s Study selection right after a reload while the chat view has the keyboard focuses no editor group afterwards and says once that the captured source has it', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1; after the reload it stands empty, locked and active beside the learner's notes in column 2 and readme.md in column 3, and the learner typed the request into the chat view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    harness.focusView()
+    const commandsBefore = harness.commands.length
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: no focus command ran after the placement, the captured source has the keyboard, and the sentence says so.
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus/.test(command)),
+      [],
+    )
+    assert.equal(
+      harness
+        .focusedSource()
+        ?.document.uri.path.endsWith('/Captured-overview.mts'),
+      true,
+    )
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own Study selection (the Study pane's control or a command) while a side view has the keyboard: as before row 613, the keyboard goes back to the learner's active file after the placement and nothing is told; fails_when=row 613's rule for an agent's selection also withholds the keyboard from a learner who selected the Study workspace themselves; why_new=Cycle 0046 row 613 (its bound: only an agent's request is treated so); seam=useNativeLayout, focusMutableDraft, focusView, the reader's changePresentation (the learner's path), textDocumentShows and the information messages
+test('a learner’s own Study selection gives the keyboard back to the learner’s active file as before and tells nothing', async () => {
+  // Arrange: the learner's notes stand in the second group and readme.md is the active editor of the third; a side view has the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus)
+        .map((shown) => shown.name),
+      ['Captured-overview.mts', 'learner-readme.md'],
+    )
+    assert.equal(
+      harness.focusedSource()?.document.uri.path.endsWith('/learner-readme.md'),
+      true,
+    )
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the main editor's grid when the chat cannot be given the keyboard back: in an editor without Cursor's "Focus Agent" command the focus stays where the arrangement ended and no group is opened; fails_when=the focus command of the other editor part's column is run, which opens a new empty group in the main editor; why_new=Cycle 0045 cause 12 (d) (the numbered focus commands count the main editor's groups only); seam=workspace harness with a separate editor part, removeHostCommands
 test('a selection made while another editor part holds the keyboard, in an editor without a command that focuses that part, leaves the focus where the arrangement ended and opens no editor group', async () => {
   // Arrange
