@@ -1083,6 +1083,60 @@ test("a capture presented after Navigate Down Call Stack keeps the frame's file 
   }
 })
 
+// Value: protects=the learner's file after "Navigate Down Call Stack" at a live pause in VS Code when the editor reports its window unfocused although the window has the keyboard; fails_when=Retry or a later capture presentation shows the captured source over that file because the kept-open guard also asks for the window's focus, so the keyboard falls on the window body; why_new=Cycle 0046 original 273 H1 on C52 in VS Code 1.140.0 for Linux under WSLg (after Retry the captured source replaced the frame's file and the input was BODY; `vscode.window.state.focused` was false while the page had the focus); seam=the fake editor's changeWindowFocus
+test("Retry after Navigate Down Call Stack keeps the frame's file and its keyboard while VS Code reports its window unfocused", async () => {
+  // Arrange: a live run paused with the stop's file in column 2; Navigate Down Call Stack gave another file the keyboard, and the editor reports its window unfocused.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    await readerSeams(harness).refresh()
+    harness.selectStackFrame('actions.ts', 2, 'navigation-command')
+    harness.changeWindowFocus(false)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert: the frame's file keeps the keyboard, nothing is shown over it, and the capture offers explicit recovery.
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+        '/actions.ts',
+      ),
+      true,
+    )
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /The native source editor was kept open\. Choose Focus Captured Source to show the capture\./,
+    )
+  } finally {
+    harness.changeWindowFocus(true)
+    live?.close()
+    await harness.close()
+  }
+})
+
 for (const arrival of [
   {
     afterStoppedMs: 468,
