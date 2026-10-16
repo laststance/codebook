@@ -2053,6 +2053,81 @@ test('the fake editor hides both side bars for the maximize command, shows neith
   }
 })
 
+// Value: protects=reader tests meeting the side bars' focus commands as both editors run them: the command shows the bar and focuses its active view container (VS Code 1.140.0 workbench.desktop.main.js 1113:33119 and 859:17926; Cursor 3.23.12 18340:23013 and 17376:10969), so the terminal or a view that had the keyboard has it no longer; fails_when=the fake gives the bar the keyboard and leaves it in the terminal or the view too, so a reader that shows a bar and gives nothing back passes in the tests as if the learner's terminal kept its keyboard; why_new=Cycle 0046 row 633 (harness fidelity); seam=the fake editor's modelSideBars, sideBars, focusTerminalInBottomPanel, focusView, keyboardInView and keyboardOnBody
+test("the fake editor's side bar focus commands take the keyboard from the terminal and from a view that had it and give it to the bar, as both editors do", async () => {
+  // Arrange: both side bars are hidden; the learner types in the terminal of the bottom panel.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: false, auxiliary: false })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusTerminalInBottomPanel()
+    const keyboardPlace = () => ({
+      viewHasKeyboard: harness.keyboardInView(),
+      keyboardOnBody: harness.keyboardOnBody(),
+      bars: harness.sideBars(),
+    })
+
+    // Act: the primary bar's focus command beside the terminal, then the secondary bar's beside the Call Stack view the learner clicked into.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusSideBar',
+    )
+    const afterPrimary = keyboardPlace()
+    harness.focusView()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusAuxiliaryBar',
+    )
+    const afterSecondary = keyboardPlace()
+
+    // Assert: each bar is shown and has the keyboard; neither the terminal nor the view keeps it.
+    assert.deepEqual(
+      { afterPrimary, afterSecondary },
+      {
+        afterPrimary: {
+          viewHasKeyboard: false,
+          keyboardOnBody: false,
+          bars: { primary: true, auxiliary: false, hasKeyboard: true },
+        },
+        afterSecondary: {
+          viewHasKeyboard: false,
+          keyboardOnBody: false,
+          bars: { primary: true, auxiliary: true, hasKeyboard: true },
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests beside VS Code's chat view in front of the secondary side bar: that bar's focus command focuses its active view container, the chat, so the chat keeps the keyboard; fails_when=the fake takes the chat view's keyboard for the bar's own command, so a reader that shows the secondary bar would be blamed for a keyboard the editor gives back to the chat itself; why_new=Cycle 0046 row 633 (harness fidelity, the counterpart of the test above); seam=the fake editor's modelSideBars, sideBars, focusChatInSecondarySideBar and keyboardInView
+test("the fake editor's secondary side bar focus command keeps the keyboard in VS Code's chat view in front of that bar", async () => {
+  // Arrange: the learner types in VS Code's chat view in front of the secondary side bar.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusChatInSecondarySideBar()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusAuxiliaryBar',
+    )
+
+    // Assert: the chat view still has the keyboard, and no other bar took it.
+    assert.deepEqual(
+      { viewHasKeyboard: harness.keyboardInView(), bars: harness.sideBars() },
+      {
+        viewHasKeyboard: true,
+        bars: { primary: true, auxiliary: true, hasKeyboard: false },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests meeting the editor as it answers a numbered focus command for the column after the main editor's last group, where Cursor's chat group sits; fails_when=the fake focuses the chat's group for that command, which neither editor does: the command opens a new empty group in the main editor, so a reader that returns the focus that way passes in the tests and leaves an empty group in the editor; why_new=Cycle 0045 cause 12 (d) (obs15 P1 and P2: a new empty group at the chat's column, the chat's group one column on, the caret on the empty group); seam=the fake editor's group focus commands and its "Focus Agent" command
 test("the fake editor opens a new empty group for the focus command of the column after the main editor's last group, and Cursor's Focus Agent command gives the chat the keyboard without changing a group", async () => {
   // Arrange: two groups of the main editor, and the chat's group at column 3 with the keyboard.

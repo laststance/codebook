@@ -1462,6 +1462,23 @@ export async function workspaceHarness(
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
   }
+  /**
+   * Runs the side bar part of `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` as both editors do: the bar is shown when hidden and its active view container gets the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1113:33119 and 859:17926; Cursor 3.23.12 18340:23013 and 17376:10969). A view that had the keyboard elsewhere (the terminal, the Call Stack, VS Code's chat in another bar), the page body and a pane's inner element have it no longer; the editor reports none of it to an extension (row 633).
+   * @param auxiliary - `true` for the secondary side bar's command, `false` for the primary one's.
+   * @example giveSideBarKeyboard(false) // after workbench.action.focusSideBar: keyboardInSideBar, and no view has the keyboard
+   */
+  function giveSideBarKeyboard(auxiliary: boolean): void {
+    if (sideBars && auxiliary) sideBars.auxiliary = true
+    if (sideBars && !auxiliary) sideBars.primary = true
+    // VS Code's chat view in front of the secondary bar is that bar's active container: its focus command focuses the chat again.
+    if (auxiliary && keyboardInView && viewInSecondarySideBar) return
+    keyboardInSideBar = true
+    keyboardInView = false
+    keyboardOnBody = false
+    innerFocusedPanel = undefined
+    // The primary bar's view has the keyboard now, so the chat's input has it no longer; only Cursor's Focus Agent or the learner gives it back. (Cursor keeps its chat tab's editor part inside the secondary bar, and what that bar's focus command focuses there is not known: the model leaves the chat as it is for that command.)
+    if (!auxiliary && separateEditorPart) separateEditorPart.focused = false
+  }
   /** Models native debug opens skipping a locked App group; pause and Call Stack fixtures use an existing unlocked main group, without affecting explicit learner moves. @param requested - Native debug's preferred group. @returns An unlocked main column. @example nativeDebugColumn(1) // => 2 when App group one is locked */
   function nativeDebugColumn(requested: number): number {
     if (!groups.find((group) => group.viewColumn === requested)?.locked)
@@ -2856,16 +2873,11 @@ export async function workspaceHarness(
           if (sideBars && name === 'workbench.action.closeSidebar')
             sideBars.primary = false
           // The two focus commands show a hidden side bar, leave an open one as it is, and give it the keyboard.
-          if (sideBars && name === 'workbench.action.focusSideBar') {
-            sideBars.primary = true
-            keyboardInSideBar = true
-            // The primary bar's view has the keyboard now, so the chat's input has it no longer; only Cursor's Focus Agent or the learner gives it back. (Cursor keeps its chat tab's editor part inside the secondary bar, and what that bar's focus command focuses there is not known: the model leaves the chat as it is for that command.)
-            if (separateEditorPart) separateEditorPart.focused = false
-          }
-          if (sideBars && name === 'workbench.action.focusAuxiliaryBar') {
-            sideBars.auxiliary = true
-            keyboardInSideBar = true
-          }
+          if (
+            name === 'workbench.action.focusSideBar' ||
+            name === 'workbench.action.focusAuxiliaryBar'
+          )
+            giveSideBarKeyboard(name === 'workbench.action.focusAuxiliaryBar')
           if (name === 'workbench.action.focusActiveEditorGroup')
             keyboardInSideBar = false
           // The activated group is in view before the command answers: another group that takes the focus comes back at the minimum heights.
