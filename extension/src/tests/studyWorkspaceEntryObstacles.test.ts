@@ -857,6 +857,81 @@ test('Close after a Living book Open that took the MCP-first Application group f
   }
 })
 
+// Value: protects=the learner's window after Close of a Study whose Context holds the group a Living book Open took from the MCP-first Application, in an editor that keeps a group its last tab left (workbench.editor.closeEmptyGroups off); fails_when=Close leaves that group empty and locked at column 1 because no App owner is left for the release to retire it, keeps its record, or leaves the empty source group Codebook created beside the learner's group; why_new=Cycle 0046 finding 597 (finding 596's hand-over leaves the donated group without an App owner); seam=presentation.createViewport (the MCP-first preparation), the fake editor that keeps emptied groups, and applicationGroupMarkers
+test('Close after a Living book Open that took the MCP-first Application group retires every empty group Codebook created and forgets the record, in an editor that keeps emptied groups', async () => {
+  // Arrange: an MCP run prepared the Application at column 1 and the Living book Open gave that group to the Study Context; the editor keeps a group its last tab left.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  const chat = harness.addSeparateEditorPart()
+  const learnerNotes = harness.focusMutableDraft()
+  harness.presentationPreferences.set('codebook.presentation.v1', {
+    version: 1,
+    mode: 'living-book',
+  })
+  const reader = harness.createReader(),
+    viewport = await reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+  try {
+    await reader.open()
+    const donatedGroup = harness.groups.find((group) => group.viewColumn === 1)!
+    assert.equal(harness.panelColumn('codebook.studyContext'), 1)
+    // End the MCP run's lease first; a live lease keeps its Application available.
+    viewport.close()
+
+    // Act
+    await reader.close()
+
+    // Assert: beside the chat's own part, only the learner's group is left, with the learner's notes, and the donated group's record is gone with it.
+    const mainGroups = harness.groups.filter(
+      (group) => !group.tabs.includes(chat.tab),
+    )
+    assert.equal(harness.groups.includes(donatedGroup), false)
+    assert.equal(mainGroups.length, 1)
+    assert.equal(mainGroups[0]!.tabs.includes(learnerNotes.tab), true)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+  } finally {
+    viewport.close()
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's window after Close of a Study whose Context holds a group of its own that Codebook created beside the Application's group, in an editor that keeps a group its last tab left (workbench.editor.closeEmptyGroups off); fails_when=Close retires the Application's group but leaves the Study Context's created group empty beside the learner's group; why_new=Cycle 0046 finding 597 (Close retired only the App owner's group); seam=the fake editor that keeps emptied groups
+test('Close of a Study whose Context holds a group Codebook created gives back exactly the learner’s group, in an editor that keeps emptied groups', async () => {
+  // Arrange: a Return claims the Application group at column 1; a saved item then gives the Study Context a group of its own at column 3.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const learnersGroup = harness.groups[0]!,
+    learnersTabs = [...learnersGroup.tabs]
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.select('repository/workspace/overview')
+    const contextGroup = harness.groups.find((group) => group.viewColumn === 3)!
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+
+    // Act
+    await harness.reader.close()
+
+    // Assert: the Context's group is gone, and the learner's group stands alone with its own tabs.
+    assert.equal(harness.groups.includes(contextGroup), false)
+    assert.deepEqual(
+      harness.groups.map((group) => group.tabs),
+      [learnersTabs],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
   // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.
@@ -2416,7 +2491,7 @@ for (const order of [
     }
   })
 
-// Value: protects=the widths of the three-pane columns after a Read of the explanation, which hides the side bars and resizes no group, followed by Enlarge application and a Close: the columns have the widths they had before the Read; fails_when=the Enlarge, which begins while the Read's maximization is on, keeps no sizes or keeps those the maximized grid answers, so the Close leaves the columns as the Enlarge's Expand left them; why_new=Cycle 0046 row 334 (an Enlarge during a reading keeps the layout the reading began with); seam=the workspace harness's side bar model and three-pane columns in pixels, command log and layout read
+// Value: protects=the widths of the three-pane columns after a Read of the explanation, which hides the side bars and resizes no group, followed by Enlarge application and a Close: the columns have the widths they had before the Read; fails_when=the Enlarge, which begins while the Read's maximization is on, keeps no sizes or keeps those the maximized grid answers, so the Close leaves the columns as the Enlarge's Expand left them; why_new=Cycle 0046 row 334 (an Enlarge during a reading keeps the layout the reading began with); seam=the workspace harness's side bar model and three-pane columns in pixels, command log, layoutsAtGroupCloses (the grid when the Close begins to retire the groups Codebook created for the panes, finding 597) and layout read
 test('Close Study Workspace after a Read of the explanation and then Enlarge application in the three-pane Study workspace leaves the columns at the widths they had before the Read', async () => {
   // Arrange: the primary side bar is open; the learner reads the explanation enlarged, which hides the bar, and then enlarges the application, which shows it again.
   const harness = await workspaceHarness(false)
@@ -2451,24 +2526,25 @@ test('Close Study Workspace after a Read of the explanation and then Enlarge app
         { size: 224 },
       ],
     })
+    // The columns have their widths back when the Close begins to retire the groups Codebook created for the panes; then only the learner's group is left (finding 597).
     assert.deepEqual(
       {
         maximized: harness.maximizedEditorGroup(),
         sideBars: harness.sideBars(),
-        layout: await harness.editor.commands.executeCommand(
-          'vscode.getEditorLayout',
-        ),
+        layoutAtFirstGroupRetirement: harness.layoutsAtGroupCloses()[0],
+        groups: harness.groups.length,
       },
       {
         maximized: false,
         sideBars: { primary: true, auxiliary: false, hasKeyboard: false },
-        layout: {
+        layoutAtFirstGroupRetirement: {
           orientation: 0,
           groups: [
             { size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] },
             { size: 504 },
           ],
         },
+        groups: 1,
       },
     )
   } finally {
@@ -2633,7 +2709,7 @@ test("a Restore after Enlarge application that arranges nothing applies no layou
   }
 })
 
-// Value: protects=the widths of the three-pane columns after a Read and a Close in an editor that keeps a group its last tab left (the learner turned workbench.editor.closeEmptyGroups off), where the Close has to end the maximization with the editor's Expand: the columns have the widths they had before the Read; fails_when=that Expand leaves every other group at its minimum size and nothing gives the sizes back, because a Read that hid the side bars kept none; why_new=Cycle 0046 row 334 (the audit of every command of the reader that resizes a group: the Close's own Expand, the limit row 323 stated); seam=the workspace harness's side bar model and three-pane columns in pixels, the fake editor that keeps emptied groups, command log and layout read
+// Value: protects=the widths of the three-pane columns after a Read and a Close in an editor that keeps a group its last tab left (the learner turned workbench.editor.closeEmptyGroups off), where the Close has to end the maximization with the editor's Expand: the columns have the widths they had before the Read; fails_when=that Expand leaves every other group at its minimum size and nothing gives the sizes back, because a Read that hid the side bars kept none; why_new=Cycle 0046 row 334 (the audit of every command of the reader that resizes a group: the Close's own Expand, the limit row 323 stated); seam=the workspace harness's side bar model and three-pane columns in pixels, the fake editor that keeps emptied groups, command log, layoutsAtGroupCloses (the grid when the Close begins to retire the groups Codebook created for the panes, finding 597) and layout read
 test('Close Study Workspace after a Read of the explanation in an editor that keeps emptied groups leaves the three-pane columns at the widths they had before the Read', async () => {
   // Arrange: the primary side bar is open and the editor keeps a group its last tab left; the learner reads the explanation enlarged.
   const harness = await workspaceHarness(false)
@@ -2650,7 +2726,7 @@ test('Close Study Workspace after a Read of the explanation in an editor that ke
     // Act
     await harness.reader.close()
 
-    // Assert
+    // Assert: the columns have their widths back when the Close begins to retire the groups Codebook created for the panes; then only the learner's group is left (finding 597).
     assert.deepEqual(beforeRead, {
       orientation: 0,
       groups: [
@@ -2669,9 +2745,8 @@ test('Close Study Workspace after a Read of the explanation in an editor that ke
           ),
         maximized: harness.maximizedEditorGroup(),
         sideBars: harness.sideBars(),
-        layout: await harness.editor.commands.executeCommand(
-          'vscode.getEditorLayout',
-        ),
+        layoutAtFirstGroupRetirement: harness.layoutsAtGroupCloses()[0],
+        groups: harness.groups.length,
       },
       {
         gridCommands: [
@@ -2680,13 +2755,14 @@ test('Close Study Workspace after a Read of the explanation in an editor that ke
         ],
         maximized: false,
         sideBars: { primary: true, auxiliary: false, hasKeyboard: false },
-        layout: {
+        layoutAtFirstGroupRetirement: {
           orientation: 0,
           groups: [
             { size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] },
             { size: 504 },
           ],
         },
+        groups: 1,
       },
     )
   } finally {
@@ -3097,15 +3173,11 @@ for (const situation of [
     expected: { layoutsApplied: 0, groups: 2 },
   },
   {
-    name: 'the editor keeps the group the Study pane left empty',
-    expected: { layoutsApplied: 0, groups: 3 },
-  },
-  {
     name: 'the reader is disposed and not closed by the learner',
     expected: { layoutsApplied: 0, groups: 2 },
   },
 ] as const)
-  // Value: protects=the learner's editor groups at the end of a Study session in the three cases in which the layout of before the Open is not theirs to get back: a group no longer holds its tab of before, the editor was told to keep emptied groups, so there is one group more than before, and a reader that is disposed without the learner's Close; fails_when=the layout of before is applied all the same, over a group the learner changed, by merging a group the editor keeps, or at a disposal nobody asked for; why_new=Cycle 0046 row 339 (the guards of the give-back, each given up on purpose); seam=the workspace harness, a native layout of two columns, the fake editor's tab model changed as the learner's replacement of a file, closeDisposedPanelTabsLater, the reader's dispose and command log
+  // Value: protects=the learner's editor groups at the end of a Study session in the two cases in which the layout of before the Open is not theirs to get back: a group no longer holds its tab of before, and a reader that is disposed without the learner's Close; fails_when=the layout of before is applied all the same, over a group the learner changed, or at a disposal nobody asked for; why_new=Cycle 0046 row 339 (the guards of the give-back, each given up on purpose; the third case, an editor that keeps the group the Study pane left empty, ended with finding 597: Close retires that group Codebook created); seam=the workspace harness, a native layout of two columns, the fake editor's tab model changed as the learner's replacement of a file, closeDisposedPanelTabsLater, the reader's dispose and command log
   test(`the end of a Study session applies no layout of before the Open when ${situation.name}`, async () => {
     // Arrange: the learner has two editor groups side by side; the Study workspace is open.
     const harness = await workspaceHarness(false)
@@ -3113,7 +3185,7 @@ for (const situation of [
       orientation: 0,
       groups: [{ size: 0.7 }, { size: 0.3 }],
     })
-    if (situation.expected.groups === 2) harness.closeDisposedPanelTabsLater()
+    harness.closeDisposedPanelTabsLater()
     try {
       await harness.reader.open()
       if (situation.name.startsWith('the learner replaced'))
@@ -3143,6 +3215,49 @@ for (const situation of [
       await harness.close()
     }
   })
+
+// Value: protects=the learner's two editor groups at the end of a Study session in an editor that keeps a group its last tab left (workbench.editor.closeEmptyGroups off): the group Codebook created for the Study pane goes, and the learner's groups get the layout they had before the Open; fails_when=Close leaves the Study pane's created group empty beside the learner's groups, so the groups differ from those of before and no layout is given back; why_new=Cycle 0046 finding 597 (Close retires every empty group Codebook created for the Study; row 339 had kept that group); seam=the workspace harness, a native layout of two columns, the fake editor that keeps emptied groups, command log and layout read
+test('Close Study Workspace in an editor that keeps emptied groups retires the group Codebook created for the Study pane and gives the learner’s two groups the layout they had before the Open', async () => {
+  // Arrange: the learner has two editor groups side by side; the Study workspace is open, its Study pane in a third group Codebook created.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 0.7 }, { size: 0.3 }],
+  })
+  try {
+    await harness.reader.open()
+    const studyPaneGroup = harness.groups.find(
+      (group) => group.viewColumn === 3,
+    )!
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(
+      {
+        studyPaneGroupLeft: harness.groups.includes(studyPaneGroup),
+        layoutsApplied: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => command === 'vscode.setEditorLayout').length,
+        groups: harness.groups.length,
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      },
+      {
+        studyPaneGroupLeft: false,
+        layoutsApplied: 1,
+        groups: 2,
+        layout: { orientation: 0, groups: [{ size: 0.7 }, { size: 0.3 }] },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
 
 // Value: protects=a Close that finds the learner's groups as they stood before the Open running no layout command at all; fails_when=the layout of before is applied whenever it is noted, so every Close rebuilds the editor's grid although nothing differs; why_new=Cycle 0046 row 339 (the native record of row 323: two rows of 344 and 343 px were 344 and 343 px after Open and Close); seam=the workspace harness, a native layout of two equal rows, closeDisposedPanelTabsLater, command log and layout read
 test("Open Study Workspace and Close Study Workspace from the learner's two rows of equal height apply no layout at the Close: the rows are as before already", async () => {

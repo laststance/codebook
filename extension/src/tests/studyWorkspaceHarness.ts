@@ -357,6 +357,8 @@ export async function workspaceHarness(
   let rejectNextTabClose = false
   const tabCloseRequests: Tab[][] = []
   const tabCloseFocusRequests: boolean[] = []
+  /** The main editor's layout as the fake editor held it when each request to close a whole group arrived; see `layoutsAtGroupCloses`. */
+  const layoutsAtGroupCloses: unknown[] = []
   let heldTabCloseResponse:
     { entered: () => void; wait: Promise<void> } | undefined
   let lastSourceEditor: SourceEditor | undefined
@@ -3410,6 +3412,7 @@ export async function workspaceHarness(
           ) => {
             // The public group overload closes its tabs too; production must establish ownership before calling it.
             if (!Array.isArray(tabs)) {
+              layoutsAtGroupCloses.push(structuredClone(editorLayout))
               const column = tabs.viewColumn,
                 count = groups.length
               if (tabs.tabs.length && !closeTabs([...tabs.tabs], preserveFocus))
@@ -3814,6 +3817,11 @@ export async function workspaceHarness(
     peakPanels: () => peakPanels,
     /** Lists the tabs of every close request the reader sent to the editor, accepted or refused, so a test can assert which tabs it asked to close. @example harness.tabCloseRequests().flat().includes(deadApplication) */
     tabCloseRequests: () => tabCloseRequests.map((tabs) => [...tabs]),
+    /**
+     * Lists the main editor's layout as the fake editor held it, in the proportions or pixels it was last given, when each `tabGroups.close` request for a whole group arrived, so a test can read the grid a Close gave back before it retired the groups Codebook created (finding 597).
+     * @example harness.layoutsAtGroupCloses()[0] // => { orientation: 0, groups: [{ size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 504 }] }
+     */
+    layoutsAtGroupCloses: () => structuredClone(layoutsAtGroupCloses),
     /** Records each native close's focus flag so inactive-window and nonempty-group guards are observable. @example harness.tabCloseFocusRequests() // => [true, false] */
     tabCloseFocusRequests: () => [...tabCloseFocusRequests],
     /**

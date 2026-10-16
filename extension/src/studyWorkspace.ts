@@ -7971,6 +7971,8 @@ export class StudyWorkspace {
       this.app = undefined
       this.initialAppPlacement = undefined
       await this.releaseApplicationGroup()
+      // An editor that keeps emptied groups leaves the other groups Codebook created empty: they go too, before the layout of before the Open is given back (finding 597).
+      await this.retireEmptyCreatedGroups()
       // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
       await this.giveLayoutOfBeforeOpenBack()
       // A recorded group this Close removed takes its record along, also one no App owner was left to release (finding 596).
@@ -13580,6 +13582,23 @@ export class StudyWorkspace {
     if (owned === this.applicationGroup) this.applicationGroup = undefined
     // A released group is no longer Codebook's to retire after a reload, even when the learner adopted it; the removal never rejects and is not awaited.
     void this.clearApplicationGroupMarker()
+  }
+
+  /**
+   * Retires every empty group Codebook created for this Study, whatever pane it last held: the group the Application record describes (also the one a Living book Open gave the Study Context, finding 596), the Study Context's created group and the created Source group; {@link close} calls it once {@link releaseApplicationGroup} released the App owner's group, because an editor with `workbench.editor.closeEmptyGroups` off keeps a group its last tab left and no owner is left to retire these (finding 597).
+   * Each group is found by its identity, so a learner's group is never retired; a group that holds a tab stays, and so does one the editor refuses to retire, without ending the Close.
+   * @example await this.retireEmptyCreatedGroups() // the donated group and the empty Source group go; the learner's group stays
+   */
+  private async retireEmptyCreatedGroups(): Promise<void> {
+    const created = new Set([
+      this.recordedApplicationGroup,
+      this.readerCreatedContextGroup,
+      this.sourceDerivedGroup?.identity,
+    ])
+    // A group that now holds a tab stays, and a refused retirement keeps its group: neither ends the Close.
+    for (const identity of created)
+      if (identity)
+        await this.retireEmptyOwnedGroup(identity).catch(() => false)
   }
 
   /**
