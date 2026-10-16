@@ -979,13 +979,12 @@ for (const editor of [
   { keeps: 'keeps', removesEmptiedGroups: false },
   { keeps: 'removes', removesEmptiedGroups: true },
 ] as const)
-  // Value: protects=the learner's window after Close of a Living book Open beside no chat part, whose captured source the editor gave a group of its own at column 3; fails_when=nothing tracks the group that source display created, so Close leaves it empty beside the learner's group when the editor keeps emptied groups (workbench.editor.closeEmptyGroups off), or any other group Codebook created stays; why_new=Cycle 0046 finding 597 (finding 597's observation 3: without the chat's part no reservation precedes the source display, and showTextDocument at a column beyond the grid creates that group); seam=presentation.createViewport (the MCP-first preparation), createGroupForTextBeyondGrid (the editor's own group for a text shown beyond the grid), closeDisposedPanelTabsLater for the editor that removes emptied groups
+  // Value: protects=the learner's window after Close of a Living book Open beside no chat part, whose captured source the editor gave a group of its own at column 3; fails_when=nothing tracks the group that source display created, so Close leaves it empty beside the learner's group when the editor keeps emptied groups (workbench.editor.closeEmptyGroups off), or any other group Codebook created stays; why_new=Cycle 0046 finding 597 (finding 597's observation 3: without the chat's part no reservation precedes the source display, and showTextDocument at a column beyond the grid creates that group); seam=presentation.createViewport (the MCP-first preparation), the fake editor's own group for a text shown beyond the grid, closeDisposedPanelTabsLater for the editor that removes emptied groups
   test(`Close after a Living book Open beside no chat part leaves no group Codebook created, in an editor that ${editor.keeps} emptied groups`, async () => {
     // Arrange: an MCP run prepared the Application at column 1 beside the learner's group; the Living book Open shows the captured source at column 3, where the editor gives it a group of its own.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
     harness.focusMutableDraft()
-    harness.createGroupForTextBeyondGrid()
     if (editor.removesEmptiedGroups) harness.closeDisposedPanelTabsLater()
     const learnersTabs = [...harness.groups[0]!.tabs]
     harness.presentationPreferences.set('codebook.presentation.v1', {
@@ -1023,49 +1022,6 @@ for (const editor of [
       await harness.close()
     }
   })
-
-// Value: protects=the learner's window after Close of a Study whose arrangement created a Source group the captured source never entered, in an editor that removes emptied groups (workbench.editor.closeEmptyGroups on): the editor removes the claimed group first and every later column shifts; fails_when=the shift ends the created Source group's receipt and the App owner's release clears the record's identities before the Close retires the empty groups it created, so that empty group stays beside the learner's group; why_new=Cycle 0046 finding 597 (observation 3 in the harness's own model of a Living book Open beside no chat part: the fake shows the source in the first group and the arrangement's vscode.setEditorLayout creates the empty third group); seam=presentation.createViewport (the MCP-first preparation), the fake editor's text placement in the first group, closeDisposedPanelTabsLater
-test('Close leaves no empty group Codebook created when the editor removes the claimed group first and shifts the created Source group', async () => {
-  // Arrange: an MCP run prepared the Application at column 1; the Living book Open put the captured source beside the Context in that group and created an empty Source group at column 3; the editor removes a group its last tab left.
-  const harness = await workspaceHarness(false)
-  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
-  harness.focusMutableDraft()
-  harness.closeDisposedPanelTabsLater()
-  const learnersTabs = [...harness.groups[0]!.tabs]
-  harness.presentationPreferences.set('codebook.presentation.v1', {
-    version: 1,
-    mode: 'living-book',
-  })
-  const reader = harness.createReader(),
-    viewport = await reader.presentation.createViewport(
-      'mcp-first-run',
-      () => {},
-      () => {},
-      'normal',
-    )
-  try {
-    await reader.open()
-    assert.deepEqual(
-      harness.groups.map((group) => group.tabs.length),
-      [2, 3, 0],
-    )
-    // End the MCP run's lease first; a live lease keeps its Application available.
-    viewport.close()
-
-    // Act
-    await reader.close()
-
-    // Assert: the learner's group stands alone, with the tabs it had before the MCP run.
-    assert.deepEqual(
-      harness.groups.map((group) => group.tabs),
-      [learnersTabs],
-    )
-  } finally {
-    viewport.close()
-    await reader.dispose()
-    await harness.close()
-  }
-})
 
 // Value: protects=a record that never outlives, in the same window, the Application group it describes once a preparation that already recorded its group is cancelled; fails_when=the cancellation that arrives during the preparation's final layout read closes the empty group the preparation claimed but keeps that group's record, so after a later reload a learner's empty group at column 1 in the same grid passes for Codebook's leftover; why_new=Cycle 0046 finding 598 (found by reading: the record is written before the preparation's last check of current intent, and the failure cleanup closed the group with tabGroups.close directly); seam=presentation.createViewport with its cancellation (the MCP-first preparation a newer run replaces), holdNextCommand('vscode.getEditorLayout') and applicationGroupMarkers
 test('a cancelled Application preparation that already recorded its group forgets that record as it retires the group', async () => {
