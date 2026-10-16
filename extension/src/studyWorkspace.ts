@@ -14,6 +14,7 @@ import {
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   APPLICATION_PANE_CLOSED_MESSAGE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
+  CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
@@ -495,7 +496,7 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -511,6 +512,7 @@ const keyboardNoticesTold = new Set<
   | 'summaryBehindChat'
   | 'learnerReturn'
   | 'readEnded'
+  | 'chatEditorTab'
 >()
 
 /**
@@ -2887,6 +2889,11 @@ export class StudyWorkspace {
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
     const borrowsBefore = this.mainEditorFocusBorrows
+    // VS Code's chat opened as an editor tab gets its keyboard back also where the editor took it (row 632).
+    const chatEditorTab = isChatEditorTabInput(
+      tab.input,
+      Reflect.get(vscode, 'TabInputChat'),
+    )
     return async (takenByEditor = false, stillCurrent): Promise<boolean> => {
       // Groups the arrangement opened or closed in the main editor shift the column of a group behind them.
       const shownColumn =
@@ -2926,37 +2933,103 @@ export class StudyWorkspace {
         )
       )
         return false
-      const command = await this.focusReturnCommand(target, takenByEditor)
+      const command = await this.focusReturnCommand(
+        target,
+        takenByEditor,
+        chatEditorTab,
+      )
       // A newer pause, replay or learner choice can revoke a return while native command discovery waits.
       if (stillCurrent && !stillCurrent()) return false
-      if (command) await vscode.commands.executeCommand(command)
-      return command !== undefined
+      return this.runFocusReturnCommand(command, takenByEditor, chatEditorTab)
     }
   }
 
   /**
+   * Runs the command that gives a remembered tab's group the keyboard back, and tells the learner once where it went when that tab is VS Code's chat editor tab and the editor itself had taken the keyboard; the last step of the function {@link retainForeignTabFocus} answers.
+   * @param command - What {@link focusReturnCommand} chose; `undefined` runs nothing.
+   * @param takenByEditor - Whether the editor took the keyboard from the remembered tab (a pause, a close that showed a side bar).
+   * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}): while it is the active editor, the editor reads the same whether its input or a view had the keyboard, so a return the editor's own move called for is told ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, row 632).
+   * @returns
+   * - `true` once the command ran.
+   * - `false` without a command.
+   * @throws What the editor's command rejected with.
+   * @example await this.runFocusReturnCommand('workbench.action.focusThirdEditorGroup', true, true) // => true, and the chat editor tab's sentence is told once
+   */
+  private async runFocusReturnCommand(
+    command: string | undefined,
+    takenByEditor: boolean,
+    chatEditorTab: boolean,
+  ): Promise<boolean> {
+    if (!command) return false
+    await vscode.commands.executeCommand(command)
+    if (takenByEditor && chatEditorTab) this.tellChatEditorTabKeyboard()
+    return true
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that VS Code's chat editor tab has the keyboard again and that the editor cannot tell its input from a view ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); called by {@link runFocusReturnCommand}.
+   * @example this.tellChatEditorTabKeyboard()
+   */
+  private tellChatEditorTabKeyboard(): void {
+    if (keyboardNoticesTold.has('chatEditorTab')) return
+    keyboardNoticesTold.add('chatEditorTab')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE,
+    )
+  }
+
+  /**
    * Chooses the command that gives a remembered tab's group the keyboard back; asked by the function {@link retainForeignTabFocus} answers, once it knows that the focus may be given back.
-   * The editor's numbered focus commands count the groups of the main editor only: for the column of another editor part's group (Cursor's chat) the command opens a new empty group in the main editor. Only a group that is known to be one of the main editor's is focused by its number, and only a tab that is known to lie outside the main editor gets the host's own command for its chat; while the main editor's group count is not known nothing is run for a group, and the focus stays where it is. Without the host's command it stays too. At a pause, and after a close that showed a side bar a Read hid, only the chat gets the keyboard back: another tab of the main editor (a settings page, an image) is treated like a learner's file, which gets nothing back there, because the editor reads the same for such a tab whether the keyboard was in it or in the terminal, a view or a side-view chat.
+   * The editor's numbered focus commands count the groups of the main editor only: for the column of another editor part's group (Cursor's chat) the command opens a new empty group in the main editor. Only a group that is known to be one of the main editor's is focused by its number, and only a tab that is known to lie outside the main editor gets the host's own command for its chat; while the main editor's group count is not known nothing is run for a group, and the focus stays where it is. Without the host's command it stays too. At a pause, and after a close that showed a side bar a Read hid, only the chat gets the keyboard back: Cursor's chat through its command, and VS Code's chat opened as an editor tab of a main group through that group's focus command where the editor moved the keyboard to another group ({@link isChatTabBesideMovedKeyboard}, row 632); another tab of the main editor (a settings page, an image) is treated like a learner's file, which gets nothing back there, because the editor reads the same for such a tab whether the keyboard was in it or in the terminal, a view or a side-view chat.
    * @param target - The group that still shows the remembered tab, `undefined` for a tab another editor part held the keyboard over.
    * @param takenByEditor - Whether the editor itself took the keyboard from the remembered tab, as the caller knows, and it is not given back after an arrangement: at a pause of a live run ({@link settleKeyboardAtPause}), where the editor's debugger opened the paused file with the keyboard, and at a close that ends a Read ({@link returnsKeyboardToChatAfterSideBars}), where the editor's command showed a side bar with the keyboard.
+   * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}), whose group gets the keyboard back also where the editor took it.
    * @returns
-   * - The numbered focus command of a group of the main editor, after an arrangement only.
+   * - The numbered focus command of a group of the main editor: after an arrangement, and for VS Code's chat editor tab also at a pause, while its group is not the active one.
    * - {@link CURSOR_FOCUS_AGENT_COMMAND} for a tab of another editor part or one held by another part, where the host registers it.
-   * - `undefined` for a group of the main editor at a pause and after a close that ends a Read, for a group that is not known to be the main editor's or another part's ({@link placeOfRememberedGroup}), and in a host without the chat's command.
+   * - `undefined` for any other group of the main editor at a pause and after a close that ends a Read, for a group that is not known to be the main editor's or another part's ({@link placeOfRememberedGroup}), and in a host without the chat's command.
    * @example
    * ```ts
    * await this.focusReturnCommand(chatGroup, true) // => 'composer.focusComposer' in Cursor
+   * await this.focusReturnCommand(vsCodeChatTabGroup, true, true) // => 'workbench.action.focusThirdEditorGroup' for its group at column 3
    * await this.focusReturnCommand(settingsGroup, true) // => undefined
    * ```
    */
   private async focusReturnCommand(
     target: vscode.TabGroup | undefined,
     takenByEditor: boolean,
+    chatEditorTab = false,
   ): Promise<string | undefined> {
     const place = await this.placeOfRememberedGroup(target)
     if (place === 'other') return this.chatFocusCommand()
-    if (place === 'unknown' || takenByEditor) return undefined
+    if (
+      place === 'unknown' ||
+      (takenByEditor &&
+        !this.isChatTabBesideMovedKeyboard(target, chatEditorTab))
+    )
+      return undefined
     return focusEditorGroupCommand(place)
+  }
+
+  /**
+   * Says whether VS Code's chat editor tab stands in a group the editor moved the keyboard away from, so that its group's focus command gives the chat input the keyboard back; asked by {@link focusReturnCommand} where the editor itself took the keyboard (row 632).
+   * At a pause the debugger activated the paused file's group, another than the chat's. At a close that showed a side bar a Read hid, the chat's group is still the active one, and {@link showSideBarsHiddenByRead} focused it after the bars: the editor's group focus gives its active editor, the chat, the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 990:4464, 1106:74902, 3129:7546), so nothing more is run and {@link close} says where the keyboard is.
+   * @param target - The group that still shows the remembered tab.
+   * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}).
+   * @returns `true` for VS Code's chat editor tab in a group that is not the active one; `false` for any other tab, no group, and the active group.
+   * @example this.isChatTabBesideMovedKeyboard(chatGroup, true) // => true at a pause whose file the debugger opened in another group
+   */
+  private isChatTabBesideMovedKeyboard(
+    target: vscode.TabGroup | undefined,
+    chatEditorTab: boolean,
+  ): boolean {
+    return (
+      chatEditorTab &&
+      target !== undefined &&
+      target.viewColumn !== vscode.window.tabGroups.activeTabGroup.viewColumn
+    )
   }
 
   /**

@@ -373,6 +373,12 @@ export const APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE =
  */
 export const LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE =
   'Return to current pause closed the Study pane, which had the keyboard, to arrange the live run. The active editor group has the keyboard now (the Application pane’s, once it is placed). Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session, after it gave VS Code's chat opened as an editor tab (Chat: Open Chat in Editor, a tab of a main editor group) the keyboard back with its group's focus command where the editor itself had moved the keyboard to another group: at a pause of a live run, where the debugger opened the paused file with the keyboard. Cursor's chat tab gets its keyboard back there with Focus Agent; VS Code's gets it the same way now (Cycle 0046 row 632). While that tab is the active editor the extension API reads the same whether its chat input or a view (the terminal, the Call Stack) had the keyboard, since neither is a text editor (VS Code 1.140.0 `workbench.desktop.main.js` 705:2504), so the sentence says where the keyboard went and what to do if it was elsewhere. A Close that showed a side bar a Read hid tells {@link STUDY_CLOSE_KEYBOARD_MESSAGE} instead: the chat's group is still the active one there, and the group focus after the bars gave the chat input the keyboard.
+ * @example void showPlainNotice(vscode.window, 'information', CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE)
+ */
+export const CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE =
+  'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

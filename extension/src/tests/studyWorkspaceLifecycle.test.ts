@@ -3554,6 +3554,58 @@ test("Close Study Workspace that ends a Read while Cursor's chat tab has the key
   }
 })
 
+// Value: protects=the keyboard of a learner who types in VS Code's chat opened as an editor tab (a tab of a main editor group) when "Codebook: Close Study Workspace" ends a Read: the side bar the Read hid is shown again, which takes the keyboard, and the chat tab's group, still the active one, gets it back from the group focus that follows the bars and again once the panes are closed (VS Code 1.140.0 workbench.desktop.main.js 990:4464 focuses the active group, whose focus gives its active editor, the chat, the keyboard: 1106:74902, 3129:7546); the Close's sentence says once where the keyboard is and that a view cannot be told from the chat; fails_when=row 632's give-back at a pause also runs at the Close, so the chat's group is focused a third time by its number and the learner is told two sentences; why_new=Cycle 0046 row 632 (the Close half: VS Code's chat editor tab gets its keyboard back at a Close already); seam=the workspace harness's side bar model, focusChatEditorTab (TabInputChat), the reader's Read, the active tab group, command log and information messages
+test("Close Study Workspace that ends a Read while VS Code's chat editor tab has the keyboard shows the side bar the Read hid again, gives that chat tab's group, the active one, the keyboard back and says once where the keyboard is", async () => {
+  // Arrange: VS Code with four learner groups and the primary side bar open; the Study workspace takes the first three, and the learner reads the explanation enlarged, which hides the bar, and types in the chat opened as an editor tab in front of the fourth group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}, {}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    harness.focusMutableDraft('notes.ts', 4)
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    const chat = harness.focusChatEditorTab(4)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert: the bar is back, the chat tab's group is the active one with the chat in front and got the keyboard through the active group's focus, and the Close's sentence alone is told.
+    const active = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        sideBars: harness.sideBars(),
+        activeColumn: active.viewColumn,
+        chatInFront: active.activeTab === chat,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        sentences: harness.informationMessages.map(
+          (message) => message.message,
+        ),
+        state: harness.reader.presentationState().state,
+      },
+      {
+        sideBars: { primary: true, auxiliary: false, hasKeyboard: false },
+        activeColumn: 4,
+        chatInFront: true,
+        keyboardCommands: [
+          'workbench.action.focusSideBar',
+          'workbench.action.focusActiveEditorGroup',
+          'workbench.action.focusActiveEditorGroup',
+        ],
+        sentences: [
+          'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+        ],
+        state: 'closed',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner told where the keyboard is after a Close that ended a Read beside Cursor's chat tab while the editor named a Settings page of the main editor: the editor reads the same whether the keyboard was in that page or in the chat, so nothing is given back, the active editor group has the keyboard and the Close notice says so; fails_when=such a close shows the side bars with the editor's focus commands, focuses the active editor group and tells nothing, so a learner who typed in the chat finds the keyboard gone without a word; why_new=Cycle 0046 row 317 (a), the state in which the chat cannot be known to have had the keyboard; seam=the workspace harness's addSeparateEditorPart, addOpaqueTab, focusOpaqueTab, side bar model, command log and information messages
 test("Close Study Workspace that ends a Read while the editor names its Settings page beside Cursor's chat tab gives the active editor group the keyboard and says where it is", async () => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part and the primary side bar open; the learner reads the explanation enlarged, which hides the bar; then the Settings page is the tab in front of the first group and the learner types in the chat while the editor goes on naming that group.
