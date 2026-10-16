@@ -1137,6 +1137,62 @@ test("Retry after Navigate Down Call Stack keeps the frame's file and its keyboa
   }
 })
 
+// Value: protects=the frame's file a learner opened with one Call Stack click at a live pause in Cursor while the editor still names the chat's part; fails_when=Retry shows the captured source over that file because the kept-open guard looks only at the active text editor, which Cursor does not report while it names the chat's part; why_new=Cycle 0046 original 273 H2 on C53 in Cursor 3.23.12 (after a genuine click on the renderWithHooks row the list kept the keyboard, no active text editor was reported, and Retry showed the captured source in column 2 with no kept-open message); seam=the fake editor's separate chat part and its click gesture
+test("Retry after a Call Stack click keeps the frame's file in front while Cursor names its chat part", async () => {
+  // Arrange: a live run paused with the stop's file in column 2; Cursor names its chat part, and one click on a Call Stack row opened that frame's file in column 2 while the list keeps the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    await readerSeams(harness).refresh()
+    const chat = harness.addSeparateEditorPart()
+    chat.focusTab()
+    harness.focusView()
+    const frameFile = harness.selectStackFrame('actions.ts', 2)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert: the list keeps the keyboard, the frame's file stays in front of column 2, nothing is shown over it, and the capture offers explicit recovery.
+    assert.equal(harness.keyboardInView(), true)
+    const sourceGroup = harness.groups.find((group) => group.viewColumn === 2)
+    assert.equal(
+      sourceGroup?.activeTab?.input instanceof Object &&
+        'uri' in sourceGroup.activeTab.input &&
+        String(sourceGroup.activeTab.input.uri) === String(frameFile.uri),
+      true,
+    )
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+    assert.match(
+      harness.reader.inspect().view!.errors.join('\n'),
+      /The native source editor was kept open\. Choose Focus Captured Source to show the capture\./,
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 for (const arrival of [
   {
     afterStoppedMs: 468,

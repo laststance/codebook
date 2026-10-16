@@ -11113,8 +11113,7 @@ export class StudyWorkspace {
           !this.frameCameWithStop &&
           isStackFrameItem(vscode.debug.activeStackItem) &&
           !this.learnerWorksInActiveEditor() &&
-          this.isLearnersEditor(vscode.window.activeTextEditor) &&
-          this.isActiveEditorInFrontAt(targetColumn, document.uri)
+          this.isLearnersFileInFrontAt(targetColumn, document.uri)
         )
           throw new Error(
             'The native source editor was kept open. Choose Focus Captured Source to show the capture.',
@@ -11783,14 +11782,14 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the active text editor is the tab in front of the group at a column and shows another text than the captured source; asked by {@link renderSelection} before it would show the source over a file a native frame command opened.
-   * The group is found by its column: after "Navigate Down Call Stack" gave the frame's file the keyboard, Cursor 3.23.12 can keep naming an earlier group (the Application's) as the active tab group. The window's focus is not asked: VS Code 1.140.0 for Linux under WSLg reported its window unfocused while its page had the keyboard, and an unfocused window's front file is the learner's place too.
+   * Says whether the tab in front of the group at a column is the learner's own text file, the file a native frame command or a Call Stack click put there; asked by {@link renderSelection} before it would show the captured source over it.
+   * The group is found by its column, and its front tab decides: after "Navigate Down Call Stack", Cursor 3.23.12 can keep naming an earlier group (the Application's), and while it names its chat part it reports no active text editor at all, even after a Call Stack click opened the frame's file. An active text editor must be that front tab. The window's focus is not asked: VS Code 1.140.0 for Linux under WSLg reported its window unfocused while its page had the keyboard.
    * @param column - The group the captured source would be shown in.
    * @param source - The captured source.
-   * @returns `true` when the active text editor is in front at `column` with another document; `false` otherwise.
-   * @example this.isActiveEditorInFrontAt(targetColumn, document.uri) // => true for the frame's file in front of column 2
+   * @returns `true` when the front tab at `column` shows a text document of the learner's other than the captured source and, if the editor reports an active text editor, it is that tab's; `false` otherwise.
+   * @example this.isLearnersFileInFrontAt(targetColumn, document.uri) // => true for the frame's file in front of column 2
    */
-  private isActiveEditorInFrontAt(
+  private isLearnersFileInFrontAt(
     column: vscode.ViewColumn,
     source: vscode.Uri,
   ): boolean {
@@ -11798,11 +11797,17 @@ export class StudyWorkspace {
       shown = vscode.window.tabGroups.all.find(
         (group) => group.viewColumn === column,
       )?.activeTab?.input
+    if (
+      !(shown instanceof vscode.TabInputText) ||
+      shown.uri.scheme === STUDY_SOURCE_SCHEME ||
+      shown.uri.toString() === source.toString()
+    )
+      return false
+    // No active text editor: the front tab alone names the learner's place.
+    if (!editor) return true
     return (
-      editor?.viewColumn === column &&
-      shown instanceof vscode.TabInputText &&
-      shown.uri.toString() === editor.document.uri.toString() &&
-      shown.uri.toString() !== source.toString()
+      editor.viewColumn === column &&
+      editor.document.uri.toString() === shown.uri.toString()
     )
   }
 
