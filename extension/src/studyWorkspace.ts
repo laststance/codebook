@@ -11665,6 +11665,9 @@ export class StudyWorkspace {
           for (const obsoleteUri of obsoleteUris)
             if (!stillShown.has(obsoleteUri)) this.documents.delete(obsoleteUri)
         }
+        // A reentry that showed the source below the Application closes the copy it left in a learner's group, so the capture keeps one tab (row 627).
+        if (placement?.kind === 'reentry' && sourceColumn !== undefined)
+          await this.retireMovedSourceCopies(uri, sourceColumn)
         if (
           revision !== this.revision ||
           this.closing ||
@@ -11695,6 +11698,45 @@ export class StudyWorkspace {
       this.reportFailedSelection(selectionKey, error)
     })
     return this.rendering
+  }
+
+  /**
+   * Closes the copies of a captured source that an explicit reentry left in other groups once {@link renderSelection} showed the source directly below the Application (row 627). A Study selection beside two learner groups shows the source in front of the second one; the Live Return (or a replay entry) then inserts the Application's own group above the first, and {@link rememberApplicationGroup} names the group below the Application, the first learner group, as the source's target, so the second group kept a copy the live arrangement does not use, over the learner's own front tab.
+   * The editor activates that group's most recently active editor in the copy's place and restores its view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141 and 988:96536; Cursor 3.23.12 17264:12900 and 11678:22600). A copy that is pinned, that has the keyboard, or that is its group's only tab stays: its close would unpin the learner's choice, leave the keyboard nowhere, or remove the group under `closeEmptyGroups` (VS Code 1106:79878).
+   * @param uri - The captured source the reentry showed.
+   * @param column - The column it was shown in, below the Application.
+   * @example await this.retireMovedSourceCopies(uri, vscode.ViewColumn.Two) // the second learner group, now column 3, shows auth.ts again
+   */
+  private async retireMovedSourceCopies(
+    uri: vscode.Uri,
+    column: vscode.ViewColumn,
+  ): Promise<void> {
+    const shown = uri.toString(),
+      focused = vscode.window.activeTextEditor
+    const copies = vscode.window.tabGroups.all
+      .filter(
+        (group) =>
+          group.viewColumn !== column &&
+          group.tabs.length > 1 &&
+          !(
+            focused?.viewColumn === group.viewColumn &&
+            focused.document.uri.toString() === shown
+          ),
+      )
+      .flatMap((group) =>
+        group.tabs.filter(
+          (tab) =>
+            !tab.isPinned &&
+            this.textTabUri(tab) === shown &&
+            this.ownsCapturedSourceTab(tab),
+        ),
+      )
+    // A copy the editor does not close only stays in view; the live arrangement goes on.
+    if (copies.length)
+      await vscode.window.tabGroups.close(copies, true).then(
+        () => undefined,
+        () => undefined,
+      )
   }
 
   /**

@@ -5485,6 +5485,75 @@ test('an agent’s Return Current whose live arrangement covers the group of VS 
   }
 })
 
+// Value: protects=the learner's second group and the one-tab-per-capture rule when an agent's Study selection is followed by its Return Current beside two learner groups: the selection shows the captured source in front of the learner's second group (column 2), and the Return inserts the Application's own group above the first and shows the source again directly below the Application (the first learner group, now column 2); the copy the Study left in the second group (now column 3) is closed, so that group shows the learner's auth.ts again, and Close still returns both groups exactly; fails_when=the Return leaves the Study's Source tab in front of the second group, so the same capture is shown twice and covers auth.ts until Close (Cycle 0046 C56 1a natively in VS Code 1.140.0: layout 229/229/229 with [Application], [actions.ts … Captured-login-form.tsx], [auth.ts, Captured-login-form.tsx]); why_new=Cycle 0046 row 627; seam=useNativeLayout with two learner groups (leaveEmptyGroup, focusMutableDraft), addSeparateEditorPart and focusTab for Cursor's chat part, the service's selectPresentation and returnToCurrent (the codebook_presentation and codebook_return_current handlers), harness.groups, Close
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`an agent’s Return Current after its Study selection beside two learner groups shows the captured source once, below the Application, and gives the second group its own front tab back (${host})`, async () => {
+    // Arrange: the learner's groups G1 [actions.ts] and G2 [auth.ts, a draft whose caret is on line 8]; in Cursor its chat tab, in a separate editor part, has the keyboard.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    try {
+      harness.leaveEmptyGroup(1)
+      harness.leaveEmptyGroup(2)
+      const auth = harness.focusMutableDraft('auth.ts', 2)
+      const caret = auth.editor.selections[0]!
+      auth.editor.selections = [
+        { anchor: caret.anchor.with(7, 0), active: caret.active.with(7, 0) },
+      ]
+      harness.focusMutableDraft('actions.ts', 1)
+      const chat =
+        host === 'Cursor' ? harness.addSeparateEditorPart() : undefined
+      if (host === 'Cursor') harness.leavePaneFocusUnreportedBesideChat()
+      chat?.focusTab()
+      const selection = harness.reader.presentationState()
+      await harness.service.selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      chat?.focusTab()
+      const state = harness.reader.presentationState()
+
+      // Act
+      await harness.service.returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      const afterReturn = harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) =>
+          'uri' in tab.input
+            ? `${tab === group.activeTab ? '*' : ''}${tab.input.uri.path.split('/').at(-1)}`
+            : `${tab === group.activeTab ? '*' : ''}${'viewType' in tab.input ? tab.input.viewType : 'chat'}`,
+        ),
+      }))
+      const authCaretAfterReturn = auth.editor.selections[0]!.active.line
+      await harness.close()
+
+      // Assert: the Application above the captured source, which is shown once; the second learner group shows auth.ts in front with its caret, and Close returns both groups.
+      assert.deepEqual(afterReturn, [
+        { column: 1, tabs: ['*codebook.scopedBrowser'] },
+        { column: 2, tabs: ['actions.ts', '*Captured-overview.mts'] },
+        { column: 3, tabs: ['*auth.ts'] },
+        ...(host === 'Cursor' ? [{ column: 4, tabs: ['*chat'] }] : []),
+      ])
+      assert.equal(authCaretAfterReturn, 7)
+      assert.equal(auth.document.getText(), 'Original learner draft.\n')
+      assert.deepEqual(
+        harness.groups.map((group) =>
+          group.tabs.map((tab) =>
+            'uri' in tab.input ? tab.input.uri.path.split('/').at(-1) : 'chat',
+          ),
+        ),
+        [['actions.ts'], ['auth.ts'], ...(host === 'Cursor' ? [['chat']] : [])],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the chat input's keyboard in VS Code when an agent starts a run right after its own Study selection, without Return Current: the reader's next refresh (every 250 ms, well before the run's Application viewport) enters the Live arrangement as the agent's run, so no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=that entry prepares the Application as the learner's and its focus return shows the captured source, the active text editor, with the keyboard, and nothing tells the learner; why_new=Cycle 0046 finding on codebook_start (the reader's own Live entry of a run); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), the reader's refresh as its timer runs it, textDocumentShows and the information messages
 test('an agent’s run started right after its own Study selection, while the chat view has the keyboard, enters Live with no file given the keyboard and says once that the Application’s group has it', async () => {
   // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again.
