@@ -18,6 +18,7 @@ import {
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
+  LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE,
   LEARNER_SELECTION_KINDS,
   LEARNER_SIGN_FRESH_MS,
   LEARNER_STARTED_STOP_REASONS,
@@ -492,7 +493,7 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -506,6 +507,7 @@ const keyboardNoticesTold = new Set<
   | 'preparation'
   | 'agentSelection'
   | 'summaryBehindChat'
+  | 'learnerReturn'
 >()
 
 /**
@@ -7862,7 +7864,7 @@ export class StudyWorkspace {
 
   /**
    * Prepares the native Live composition and releases historical rendering when a learner or MCP control explicitly returns, before a later run starts.
-   * @param requester - `'agent'` for codebook_return_current ({@link returnToCurrent}): the Application preparation is an agent's ({@link open} with `forAgent`), so beside a chat view it gives the keyboard to no place it cannot prove and tells once where it is. The Study pane's Return Current is the learner's.
+   * @param requester - `'agent'` for codebook_return_current ({@link returnToCurrent}): the Application preparation is an agent's ({@link open} with `forAgent`), so beside a chat view it gives the keyboard to no place it cannot prove and tells once where it is. The Study pane's Return Current is the learner's: the place whose control the learner pressed is read first, and the Return's end gives it the keyboard back or says where the keyboard is ({@link settleLearnersReturnKeyboard}, row 624).
    * @example await this.returnCurrentSelection('agent')
    */
   private async returnCurrentSelection(
@@ -7870,7 +7872,10 @@ export class StudyWorkspace {
   ): Promise<void> {
     this.assertPresentationIdle()
     const lifetime = this.lifetime,
-      returnForeignFocus = this.retainForeignTabFocus(undefined)
+      returnForeignFocus = this.retainForeignTabFocus(undefined),
+      // Only the learner's press has a place of its own: the pane or the view whose control was pressed.
+      learnersPlace =
+        requester === 'learner' ? this.learnersKeyboardPlace() : undefined
     this.returningCurrent = requester
     try {
       this.historyRequest++
@@ -7889,7 +7894,11 @@ export class StudyWorkspace {
       if (this.opened && !this.liveComposition)
         await this.open(undefined, 'presentation', false, requester === 'agent')
     } finally {
-      await this.finishCurrentReturn(lifetime, returnForeignFocus)
+      await this.finishCurrentReturn(
+        lifetime,
+        returnForeignFocus,
+        learnersPlace,
+      )
     }
   }
 
@@ -7897,12 +7906,14 @@ export class StudyWorkspace {
    * Settles a Live return's remembered focus and releases its gate; {@link returnCurrentSelection} calls it after rendering or refusal.
    * @param lifetime - The reader lifetime that admitted this return; Close invalidates it.
    * @param returnForeignFocus - The existing native focus return, if another editor part originally held the keyboard.
+   * @param learnersPlace - Where the learner's own Return was pressed ({@link learnersKeyboardPlace}); `undefined` for an agent's Return and for a place the editor does not tell.
    * @returns After restoring retained focus or preserving a newer window, tab or source selection.
-   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus)
+   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus, 'study')
    */
   private async finishCurrentReturn(
     lifetime: number,
     returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
+    learnersPlace?: ReturnType<StudyWorkspace['learnersKeyboardPlace']>,
   ): Promise<void> {
     const assertRetainedFocus = this.retainPresentationPlacement(),
       selections = JSON.stringify(vscode.window.activeTextEditor?.selections)
@@ -7921,10 +7932,64 @@ export class StudyWorkspace {
       }
     }
     try {
-      if (stillCurrent()) await returnForeignFocus?.(false, stillCurrent)
+      if (!stillCurrent()) return
+      // A chat of another editor part that had the keyboard gets it back first; the learner's own place is settled only otherwise.
+      if (await returnForeignFocus?.(false, stillCurrent)) return
+      if (stillCurrent()) await this.settleLearnersReturnKeyboard(learnersPlace)
     } finally {
       this.returningCurrent = undefined
     }
+  }
+
+  /**
+   * Names the place whose control the learner pressed for a Return to current pause, read before the Return changes anything; asked by {@link returnCurrentSelection} for the learner's Return only.
+   * @returns
+   * - `'study'` when the Study pane reports that it has the keyboard ({@link reportsKeyboard}): its Return button, its shortcut, or the command run while it had the keyboard.
+   * - `'moments'` when the Observed moments view of the bottom panel reports it ({@link momentsReportsKeyboard}).
+   * - `undefined` otherwise: the keyboard is somewhere the editor does not tell.
+   * @example this.learnersKeyboardPlace() // => 'study' after a click on Return to current pause in the Study pane
+   */
+  private learnersKeyboardPlace(): 'study' | 'moments' | undefined {
+    if (this.contextPanel && this.reportsKeyboard(this.contextPanel))
+      return 'study'
+    return this.moments && this.momentsReportsKeyboard ? 'moments' : undefined
+  }
+
+  /**
+   * Gives the keyboard a place after the learner's Return to current pause; called by {@link finishCurrentReturn} once no chat of another editor part took it back (row 624).
+   * The Observed moments view outlives the live arrangement: it gets its keyboard back with its own focus command, which leaves a shown view in its container (VS Code 1.140.0 `workbench.desktop.main.js` 1639:157156) and undoes the first group's focus a preparation beside Cursor's chat used. The Study pane does not outlive it: the live arrangement closes that pane, and the keyboard it had is on no element, so the active editor group, the new Application group, gets it by the rule of a Close ({@link giveActiveGroupKeyboardAfterClose}) and the learner is told once.
+   * @param place - What {@link learnersKeyboardPlace} read before the Return.
+   * @example await this.settleLearnersReturnKeyboard('study') // the Application's group has the keyboard, and the learner is told where it is
+   */
+  private async settleLearnersReturnKeyboard(
+    place: ReturnType<StudyWorkspace['learnersKeyboardPlace']>,
+  ): Promise<void> {
+    if (place === 'moments' && this.moments?.visible) {
+      await vscode.commands
+        .executeCommand('codebook.observedMoments.focus')
+        .then(undefined, () => undefined)
+      return
+    }
+    // A Study pane the Return did not close keeps its keyboard.
+    if (place !== 'study' || this.contextPanel) return
+    await vscode.commands
+      .executeCommand('workbench.action.focusActiveEditorGroup')
+      .then(undefined, () => undefined)
+    this.tellLearnersReturnKeyboard()
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the active editor group has the keyboard the Study pane had before the learner's Return closed it ({@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}); called by {@link settleLearnersReturnKeyboard}.
+   * @example this.tellLearnersReturnKeyboard()
+   */
+  private tellLearnersReturnKeyboard(): void {
+    if (keyboardNoticesTold.has('learnerReturn')) return
+    keyboardNoticesTold.add('learnerReturn')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE,
+    )
   }
 
   /** Selects a learner-owned item while turning off automatic following of later pauses. @example await workspace.select('repository/interface/theme') */

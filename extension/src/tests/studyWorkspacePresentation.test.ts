@@ -5404,6 +5404,93 @@ test('an agent’s run started right after its own Study selection, while the ch
   }
 })
 
+// Value: protects=the learner who presses Return to current pause in the Study pane while it has the keyboard: the live arrangement closes that pane, so its keyboard would be on no element (a key pressed then goes nowhere) with the new Application group named as the active one; the keyboard is given to that group and the learner is told once where it is; fails_when=a learner's Live Return adds no focus return of its own (returnPreparationFocus returns at once for it, finishCurrentReturn gives the keyboard back only to a foreign tab), so the keyboard stays on the page body and nothing is told; why_new=Cycle 0046 row 624; seam=the workspace harness in VS Code's model (one editor part) and in Cursor's (addSeparateEditorPart), the Study pane's pane-focus report, the pane's return-current action, keyboardOnBody, focusedPanel and the information messages
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`Return to current pause pressed in the Study pane in ${host} gives the Application's group the keyboard the closed Study pane had and says so once`, async () => {
+    // Arrange: the learner reads a saved item while a run is current, and the Study pane has the keyboard.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    if (host === 'Cursor') harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      await harness.reader.select('repository/workspace/overview')
+      await harness.reader.action('focus-context')
+      harness.receiveContext({ type: 'pane-focus', focused: true })
+      const messagesBefore = harness.informationMessages.length
+
+      // Act: the learner presses Return to current pause in the Study pane.
+      await harness.reader.action('return-current', true)
+
+      // Assert: the Study pane is gone, the Application's group has the keyboard, and the sentence says so once.
+      assert.deepEqual(
+        {
+          studyPaneOpen: Boolean(harness.reader['contextPanel']),
+          keyboardOnBody: harness.keyboardOnBody(),
+          activeTab: harness.focusedPanel(),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          studyPaneOpen: false,
+          keyboardOnBody: false,
+          activeTab: 'codebook.scopedBrowser',
+          messages: [
+            'Return to current pause closed the Study pane, which had the keyboard, to arrange the live run. The active editor group has the keyboard now (the Application pane’s, once it is placed). Click where you want to type.',
+          ],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner who presses Return to current pause in the Observed moments view of the bottom panel, which outlives the Study pane the live arrangement closes: that view gets its keyboard back with its own focus command (VS Code 1.140.0 workbench.desktop.main.js 1639:157156: the view's focus command opens it with the focus unless asked to keep it), and nothing is told; fails_when=in Cursor's model the Application group's preparation focused the first editor group, which took the view's keyboard, and the Return gives it back to no one, so it ends on the page body without a word; why_new=Cycle 0046 row 624 (the Return control the learner pressed still exists there); seam=the workspace harness in VS Code's and Cursor's models, the bottom view's pane-focus report, focusView (a view that is no editor has the keyboard), viewFocusCommands and the information messages
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`Return to current pause pressed in the Observed moments view in ${host} gives that view its keyboard back and tells nothing`, async () => {
+    // Arrange: the learner reads a saved item while a run is current, opened Observed moments in the bottom panel and clicked into it.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    if (host === 'Cursor') harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      await harness.reader.select('repository/workspace/overview')
+      await harness.editor.commands.executeCommand(
+        'codebook.observedMoments.focus',
+      )
+      harness.focusView()
+      harness.receivePlaybackPanel({ type: 'pane-focus', focused: true })
+      const viewFocusBefore = harness.viewFocusCommands.length,
+        messagesBefore = harness.informationMessages.length
+
+      // Act: the learner presses Return to current pause in Observed moments.
+      await harness.reader.action('return-current', true)
+
+      // Assert: the Study pane is gone, the view's focus command ran once with the focus, and nothing is told.
+      assert.deepEqual(
+        {
+          studyPaneOpen: Boolean(harness.reader['contextPanel']),
+          viewFocusCommands: harness.viewFocusCommands.slice(viewFocusBefore),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          studyPaneOpen: false,
+          viewFocusCommands: [
+            {
+              command: 'codebook.observedMoments.focus',
+              preserveFocus: false,
+            },
+          ],
+          messages: [],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the main editor's grid when the chat cannot be given the keyboard back: in an editor without Cursor's "Focus Agent" command the focus stays where the arrangement ended and no group is opened; fails_when=the focus command of the other editor part's column is run, which opens a new empty group in the main editor; why_new=Cycle 0045 cause 12 (d) (the numbered focus commands count the main editor's groups only); seam=workspace harness with a separate editor part, removeHostCommands
 test('a selection made while another editor part holds the keyboard, in an editor without a command that focuses that part, leaves the focus where the arrangement ended and opens no editor group', async () => {
   // Arrange

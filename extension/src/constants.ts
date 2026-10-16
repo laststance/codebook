@@ -361,6 +361,12 @@ export const LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE =
  */
 export const APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE =
   'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.'
+/**
+ * What the reader tells the learner, once in an editor session, after the learner's own Return to current pause (the Study pane's control, its shortcut or the command while that pane had the keyboard) closed the Study pane for the live arrangement: a pane that is closed while it has the keyboard leaves it on no element, so a key the learner presses then goes nowhere (Cycle 0046 row 624). The invoking control is gone, so the active editor group gets the keyboard by the rule of a Close ({@link STUDY_CLOSE_KEYBOARD_MESSAGE}): the new Application group once the Return placed it, and whatever group the editor names when the Return was refused after the pane closed. The sentence says where the keyboard is in both cases.
+ * @example void showPlainNotice(vscode.window, 'information', LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE)
+ */
+export const LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE =
+  'Return to current pause closed the Study pane, which had the keyboard, to arrange the live run. The active editor group has the keyboard now (the Application pane’s, once it is placed). Click where you want to type.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
