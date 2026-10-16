@@ -13549,6 +13549,9 @@ export class StudyWorkspace {
     )
     if (!group) return true
     if (group.tabs.length) return false
+    // The record describes the Application allocation alone (a parked owner's still-retiring original); a Context or another owned group's retirement keeps it (finding 595).
+    const retiresRecordedGroup =
+      this.applicationAllocationIdentity(this.applicationGroup) === identity
     const previous = this.applicationGroupChange
     const removal: NonNullable<StudyWorkspace['applicationGroupChange']> = {
       kind: 'remove',
@@ -13560,8 +13563,8 @@ export class StudyWorkspace {
         refusal: 'The editor refused to retire an empty Codebook group.',
         pending: 'owned Codebook group removal',
       })
-      // The retired group's record goes with it; the removal never rejects and is not awaited, so the identity boundary below is released at once.
-      void this.clearApplicationGroupMarker()
+      // The retired Application group's record goes with it; the removal never rejects and is not awaited, so the identity boundary below is released at once.
+      if (retiresRecordedGroup) void this.clearApplicationGroupMarker()
       return true
     } finally {
       if (this.applicationGroupChange === removal)
@@ -13827,7 +13830,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Identifies pending allocated work for {@link restoreRepositoryLayout} and {@link applicationAllocationToPark} without adopting a borrowed parking group.
+   * Identifies pending allocated work for {@link restoreRepositoryLayout} and {@link applicationAllocationToPark}, and the group the Application record describes for {@link retireEmptyOwnedGroup}, without adopting a borrowed parking group.
    * @param owned - The caller's current App owner; absence supplies no allocation authority.
    * @returns The allocated or still-retiring group identity, otherwise undefined after parking completes.
    * @example const identity = this.applicationAllocationIdentity(this.applicationGroup)

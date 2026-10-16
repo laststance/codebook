@@ -608,6 +608,88 @@ test('Close forgets the recorded Application group, so a later empty group at co
   }
 })
 
+// Value: protects=the record of the Application group the Study still holds when a Return retires the Study's own empty Context group; fails_when=retiring the Context group forgets the Application group's record, so the window after a reload has no proof for the Application group left empty at column 1; why_new=Cycle 0046 finding 595 (C55 in Cursor: after rounds of Return Current the reload kept the empty Application group, and the cold select refused with "The previously focused source group changed; focus was not guessed."); seam=applicationGroupMarkers
+test('a Return that retires the Study’s own Context group keeps the record of the Application group the Study still holds', async () => {
+  // Arrange: a first Return claims the Application group at column 1; a saved item then gives the Study Context a group of its own at column 3.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.select('repository/workspace/overview')
+    const contextGroup = harness.groups.find((group) => group.viewColumn === 3)!
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert: the Context group is gone, the Application still stands in its group at column 1, and that group's record is unchanged.
+    assert.equal(harness.groups.includes(contextGroup), false)
+    assert.equal(harness.reader['app']!.viewColumn, 1)
+    const marker = harness.applicationGroupMarkers.get(
+      'codebook.applicationGroup.v1',
+    ) as { writer?: unknown } | undefined
+    assert.deepEqual(
+      { ...marker, writer: typeof marker?.writer },
+      {
+        version: 1,
+        writer: 'string',
+        column: 1,
+        groupCount: 2,
+        layout: {
+          orientation: 1,
+          groups: [{ size: 0.25 }, { size: 0.25 }],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold Study select after a window reload retiring the empty Application group whose record outlived a Return that retired the Study's own Context group; fails_when=that Return forgot the record, so the cold select leaves the leftover group and puts the Application into it; why_new=Cycle 0046 finding 595 (C55 in Cursor: the reload after rounds of Return Current kept the empty Application group at column 1, and no unlock or close was issued); seam=createReader (the window after the reload, over the same workspace state) and leaveEmptyLockedGroup
+test('a cold Study select after a window reload retires the empty Application group although a Return before the reload retired the Study’s Context group', async () => {
+  // Arrange: a first Return claims the Application group; a saved item gives the Context a group of its own, and a second Return retires that group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    // The window reloads: the Application pane is not restored, and its group stays empty and locked at column 1.
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    const nextWindow = harness.createReader()
+    try {
+      const state = nextWindow.presentationState()
+
+      // Act
+      const selected = await nextWindow.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+
+      // Assert: the leftover group is gone and its record forgotten; the new window's Application stands in column 1 with the layout confirmed.
+      assert.equal(harness.groups.includes(leftover), false)
+      assert.equal(
+        harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+        undefined,
+      )
+      assert.equal(nextWindow['app']!.viewColumn, 1)
+      assert.equal(selected.layoutConfirmed, true)
+    } finally {
+      await nextWindow.dispose()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
   // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.
