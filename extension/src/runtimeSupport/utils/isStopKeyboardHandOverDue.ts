@@ -1,7 +1,7 @@
 /**
  * Says whether Codebook gives the keyboard to the file a debugger stop opened, instead of leaving the focus where the editor put it.
  * Codebook hands over only where the editor would not focus the paused file itself: the effective `debug.focusEditorOnBreak` is `false` (the contributed default), no explicit layer sets it, no recording is open (a replay's historical debugger opens no file with the keyboard), and the stop is not Codebook's (its chat return keeps the keyboard).
- * Asked by {@link StudyWorkspace} when the active text editor changes after a stop was read, and when it decides whether to hold the captured source back.
+ * Asked by {@link StudyWorkspace} when the editor reports a stop's frame, before it hands the stop's keyboard over and before it decides whether a return to the chat is owed.
  *
  * @param state - The facts the reader knows at that moment.
  * @param state.recordingActive - Whether a learning recording is open.

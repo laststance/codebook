@@ -3514,35 +3514,31 @@ test("the editor's focus pass to a learner's stop whose adapter asked to keep th
   }
 })
 
-for (const order of ['file-then-frame', 'frame-then-file'] as const)
-  // Value: protects=the keyboard of a learner whose own debug session stops while they work in a file, under Codebook's contributed debug.focusEditorOnBreak false; fails_when=the hand-over is narrowed so far that the stop the editor's own handling shows (its paused file opened preserving the focus over the learner's file) gets no keyboard, or gets it twice, so the keyboard falls on the window body or is taken again; why_new=Cycle 0046 finding 602 (the side of decision R7 the fix keeps: native parity at a stop the editor brings to the front itself, whichever of the file's opening and the frame reaches the extension host first); seam=pauseDebugger with staysInBackground for a session that is no Codebook run, showStopKeepingFocus in either order, reportFrameOfSameStop
-  test(`a stop of a learner's own debug session that the editor shows hands its paused file the keyboard once (${order})`, async () => {
-    // Arrange: the reader is open under Codebook's contributed default, and the learner works in a file in column 2.
-    const harness = await workspaceHarness()
-    harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    harness.contributeFocusEditorOnBreakDefault(false)
-    try {
-      await harness.reader.open()
-      harness.focusMutableDraft('page.tsx', 2)
-      const showsBefore = harness.textDocumentShows().length
+// Value: protects=the keyboard of a learner whose own debug session stops while they work in a file, under Codebook's contributed debug.focusEditorOnBreak false; fails_when=the hand-over is narrowed so far that the stop the editor's own handling shows (its paused file opened preserving the focus over the learner's file, then its frame, the order both editors report them in) gets no keyboard, or gets it twice, so the keyboard falls on the window body or is taken again; why_new=Cycle 0046 finding 602 (the side of decision R7 the fix keeps: native parity at a stop the editor brings to the front itself); seam=pauseDebugger with staysInBackground for a session that is no Codebook run, showStopKeepingFocus, reportFrameOfSameStop
+test("a stop of a learner's own debug session that the editor shows hands its paused file the keyboard once", async () => {
+  // Arrange: the reader is open under Codebook's contributed default, and the learner works in a file in column 2.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    const showsBefore = harness.textDocumentShows().length
 
-      // Act: the learner's session stops at a breakpoint; the editor's own handling opens the paused file preserving the focus and reports the frame, and focuses that frame again once the rest of the stack is loaded.
-      harness.pauseDebugger({
-        session: 'learner-node',
-        staysInBackground: true,
-      })
-      harness.showStopKeepingFocus('learner-node', 'actions.ts', 2, order)
-      harness.reportFrameOfSameStop()
+    // Act: the learner's session stops at a breakpoint; the editor's own handling opens the paused file preserving the focus and reports the frame, and focuses that frame again once the rest of the stack is loaded.
+    harness.pauseDebugger({ session: 'learner-node', staysInBackground: true })
+    harness.showStopKeepingFocus('learner-node', 'actions.ts', 2)
+    harness.reportFrameOfSameStop()
 
-      // Assert: the paused file is shown with the keyboard exactly once, and the window body has none.
-      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
-        { name: 'actions.ts', viewColumn: 2, preserveFocus: false },
-      ])
-      assert.equal(harness.keyboardOnBody(), false)
-    } finally {
-      await harness.close()
-    }
-  })
+    // Assert: the paused file is shown with the keyboard exactly once, and the window body has none.
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
+      { name: 'actions.ts', viewColumn: 2, preserveFocus: false },
+    ])
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    await harness.close()
+  }
+})
 
 // Value: protects=the keyboard at a learner's stop that was read behind a Codebook run's paused frame and that the editor's own handling still brings to the front after the run went on, before the editor's pass of the focus, where the editor's default would give its paused file the keyboard; fails_when=the fix of finding 602 refuses every stop read behind another session's frame, so the file the stop's own handling opens preserving the focus over the learner's file gets no keyboard and the keyboard falls on the window body; why_new=Cycle 0046 finding 602 (the hand-over follows the reader's own judgement of the stop, cameBeforeFocusPass); seam=pauseDebugger for two sessions with staysInBackground, continueDebugSession, resumeDebugger, showStopKeepingFocus, focusMutableDraft, the clock of performance.now held for the editor events
 test("a learner's stop read behind a Codebook run's frame that the editor shows before its focus pass hands its paused file the keyboard", async (t) => {
@@ -3658,6 +3654,66 @@ test("a server stop that Codebook's own continue caused leaves the keyboard in t
     )
   } finally {
     live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner in the Explorer during a pause of their own debug session that a step within the paused file made: the editor opens nothing new for that stop, so no text editor becomes active, and a file the learner then opens from the Explorer with one click keeps the keyboard in the Explorer; fails_when=the hand-over of that stop stays armed because no active-editor change came for it, and Codebook gives the next file that becomes active in the same pause the keyboard; why_new=Cycle 0046 finding 603 (decision R7's parity with debug.focusEditorOnBreak true, which focuses the paused editor when the stop is shown: the stop's hand-over is resolved at the stop); seam=pauseDebugger with staysInBackground and showStopKeepingFocus for the first stop, continueDebugSession with the next request, pauseDebugger for the step's stop in the file already in front, focusView, openFileWithoutKeyboard, the clock of performance.now held for the editor events
+test('a file opened from the Explorer two seconds after a step within the paused file gets no keyboard from Codebook', async (t) => {
+  // Arrange: the reader is open under Codebook's contributed default; the learner's own debug session stopped at a breakpoint in actions.ts, which the editor showed preserving the focus over the learner's file, and Codebook gave actions.ts the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.pauseDebugger({ session: 'learner-node', staysInBackground: true })
+    harness.showStopKeepingFocus('learner-node', 'actions.ts', 2)
+
+    // Act: on a held clock the learner presses F10 in actions.ts: the editor sends the next request, the adapter stops on the next line of the same file, and the editor reports the frame with no active-editor change, actions.ts being in front already; the learner goes to the Explorer, and two seconds later opens a file from it with one click.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    harness.continueDebugSession('learner-node', 'next')
+    harness.pauseDebugger({ session: 'learner-node', reason: 'step' })
+    harness.focusView()
+    clockMs += 2_000
+    const showsBeforeOpen = harness.textDocumentShows().length
+    harness.openFileWithoutKeyboard('notes.ts', 2)
+    clock.mock.restore()
+
+    // Assert: the Explorer keeps the keyboard, and the open shows no file with it.
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(harness.textDocumentShows().slice(showsBeforeOpen), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard at a step within the paused file of a learner's own debug session that the learner started from a view (the Debug Console, the Call Stack), under Codebook's contributed debug.focusEditorOnBreak false; fails_when=Codebook hands over only at an active-editor change, so a stop whose paused file is in front already does not get the keyboard when the editor reports it, as the editor's default gives it (EditorPanes.doOpenEditor focuses the opened editor whenever preserveFocus is off, also an editor that is active already); why_new=Cycle 0046 finding 603 (decision R7 resolves the stop's hand-over at the stop: the paused editor gets the keyboard when the editor reports the stop's frame); seam=pauseDebugger with staysInBackground and showStopKeepingFocus for the first stop, focusView, continueDebugSession with the next request, pauseDebugger for the step's stop in the file already in front
+test('a step within the paused file that the learner starts from a view gives the paused file the keyboard when the editor reports the stop', async () => {
+  // Arrange: the reader is open under Codebook's contributed default; the learner's own debug session stopped at a breakpoint in actions.ts, which the editor showed preserving the focus over the learner's file, and Codebook gave actions.ts the keyboard; then the learner clicked into the Debug Console.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.pauseDebugger({ session: 'learner-node', staysInBackground: true })
+    harness.showStopKeepingFocus('learner-node', 'actions.ts', 2)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the learner presses F10 in the Debug Console: the adapter stops on the next line of actions.ts, and the editor reports the frame with no active-editor change, actions.ts being in front already.
+    harness.continueDebugSession('learner-node', 'next')
+    harness.pauseDebugger({ session: 'learner-node', reason: 'step' })
+
+    // Assert: the paused file is shown with the keyboard once; the Debug Console and the window body have none.
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
+      { name: 'actions.ts', viewColumn: 2, preserveFocus: false },
+    ])
+    assert.equal(harness.keyboardInView(), false)
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
     await harness.close()
   }
 })

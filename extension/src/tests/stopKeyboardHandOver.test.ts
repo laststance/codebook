@@ -13,8 +13,8 @@ test('a reported stop waits for its hand-over', () => {
 
   // Assert
   assert.deepEqual(
-    [handOver.armedSessionId(), handOver.heldSessionId()],
-    ['live-next-browser', 'live-next-browser'],
+    [handOver.isArmedFor('live-next-browser'), handOver.heldSessionId()],
+    [true, 'live-next-browser'],
   )
 })
 
@@ -30,11 +30,11 @@ test('a handed-over stop is done and still held', () => {
   // Assert
   assert.deepEqual(
     [
-      handOver.armedSessionId(),
+      handOver.isArmedFor('live-next-browser'),
       handOver.heldSessionId(),
       handOver.isDoneFor('live-next-browser'),
     ],
-    [undefined, 'live-next-browser', true],
+    [false, 'live-next-browser', true],
   )
 })
 
@@ -63,7 +63,7 @@ test('another session’s stop after a handed-over one waits for its own hand-ov
   handOver.arm('live-next-server')
 
   // Assert
-  assert.equal(handOver.armedSessionId(), 'live-next-server')
+  assert.equal(handOver.isArmedFor('live-next-server'), true)
 })
 
 // Value: protects=the next stop's hand-over after the session went on; fails_when=a resumed session keeps its done stop, so a refresh or a learner's next step never gets the keyboard; why_new=Cycle 0046 finding 589, C54 round 9f (continued, then stopped)
@@ -93,7 +93,19 @@ test('another session going on leaves the held stop', () => {
   handOver.disarm('live-next-server')
 
   // Assert
-  assert.equal(handOver.armedSessionId(), 'live-next-browser')
+  assert.equal(handOver.isArmedFor('live-next-browser'), true)
+})
+
+// Value: protects=the keyboard at the frame of one session while another session's stop waits for its hand-over; fails_when=the frame of a session whose stop does not wait is taken for the waiting stop's frame, and its active text editor gets the keyboard; why_new=Cycle 0046 finding 603 (the hand-over is resolved at the stop's own frame)
+test('a waiting stop is waiting only for the frame of its own session', () => {
+  // Arrange
+  const handOver = new StopKeyboardHandOver()
+
+  // Act
+  handOver.arm('learner-node')
+
+  // Assert
+  assert.equal(handOver.isArmedFor('live-next-browser'), false)
 })
 
 // Value: protects=the reader before any stop; fails_when=marking with no stop armed invents a handed-over stop that the keyboard model then trusts; why_new=Cycle 0046 decision R7

@@ -1,7 +1,7 @@
 /**
  * The keyboard hand-over of the debugger stop the reader is showing: armed when the adapter reports a stop, done once Codebook gave the paused file the keyboard, idle again when the session goes on.
  * Keeps the rule "one hand-over per stop": a second frame of the same stop, or an invalidation that makes the editor handle the stop again, finds the stop done and does nothing. Only a resume of the session (its `continued` event or the learner's request) starts a new stop.
- * Owned by {@link StudyWorkspace}, which arms it in `noteStopOf`, disarms it in `noteSessionWentOn` and `forgetSession`, and marks it done in its active-editor listener.
+ * Owned by {@link StudyWorkspace}, which arms it in `noteStopOf`, disarms it in `noteSessionWentOn` and `forgetSession`, and marks it done when the editor reports the stop's frame (`handOverStopKeyboard`).
  *
  * @example
  * const handOver = new StopKeyboardHandOver()
@@ -45,12 +45,13 @@ export class StopKeyboardHandOver {
   }
 
   /**
-   * Names the session of the armed stop that still waits for its hand-over.
-   * @returns The session id while a stop is armed and not handed over; `undefined` otherwise.
-   * @example handOver.armedSessionId() // => 'live-next-browser' right after arm
+   * Says whether a session's stop still waits for its hand-over, which the editor's report of that stop's frame resolves.
+   * @param sessionId - The debug session of the frame the editor reports.
+   * @returns `true` only while that session's stop is armed and not handed over.
+   * @example handOver.isArmedFor('live-next-browser') // => true right after arm('live-next-browser')
    */
-  armedSessionId(): string | undefined {
-    return this.state === 'armed' ? this.stoppedSessionId : undefined
+  isArmedFor(sessionId: string): boolean {
+    return this.state === 'armed' && this.stoppedSessionId === sessionId
   }
 
   /**

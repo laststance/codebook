@@ -1313,7 +1313,7 @@ export async function workspaceHarness(
     return made
   }
   /**
-   * Reports a new frame of a session as Run and Debug's active stack item and tells the reader's listeners; the frame step of `showStopKeepingFocus` and `passFocusToStoppedSession`, which send it before or after the file's opening.
+   * Reports a new frame of a session as Run and Debug's active stack item and tells the reader's listeners; the frame step of `showStopKeepingFocus`, which sends it after the file's opening, and of `passFocusToStoppedSession`, which sends it before or after.
    * @param sessionId - The session whose frame the editor focuses.
    * @example reportFrameOf('live-next-browser')
    */
@@ -4568,7 +4568,6 @@ export async function workspaceHarness(
      * @param sessionId - The session that stopped.
      * @param filename - The paused file.
      * @param column - The group the editor opens it in.
-     * @param order - `file-then-frame` (left out) is the order both editors send the two reports in; `frame-then-file` reports the frame before the file's opening, an order no trace showed, for the reader's keyboard hand-over, which must not depend on the order (Cycle 0046 finding 602).
      * @example
      * harness.pauseDebugger({ session: 'live-next-browser', reason: 'step', staysInBackground: true })
      * harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
@@ -4577,10 +4576,8 @@ export async function workspaceHarness(
       sessionId: string,
       filename: string,
       column: number,
-      order: 'file-then-frame' | 'frame-then-file' = 'file-then-frame',
     ): void {
       const pausedColumn = nativeDebugColumn(column)
-      if (order === 'frame-then-file') reportFrameOf(sessionId)
       // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
       const hidesFocusedEditor =
         activeTabGroup.viewColumn === pausedColumn &&
@@ -4593,7 +4590,7 @@ export async function workspaceHarness(
       openDraftTab(filename, pausedColumn, true)
       if (hidesFocusedEditor) keyboardOnBody = true
       activeTextEditorChanged(focusedSourceEditor())
-      if (order === 'file-then-frame') reportFrameOf(sessionId)
+      reportFrameOf(sessionId)
     },
     /**
      * Reports another frame of the stop the editor shows, with no new stop and no new file: the editor's stop handling focuses the frame again once the rest of the stack is loaded, which reveals the paused file it already shows (Cycle 0046 finding 589, frames 1313, 1314 and 1372 of one stop in the C54 9f round).
@@ -4682,17 +4679,21 @@ export async function workspaceHarness(
       for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
-     * Lets a paused session go on as the editor tells its adapter: the session's trackers see the `continue` request. Run and Debug's active stack item stays as it is: the editor keeps the frame for about 200 ms (`resumeDebugger` is what it reports then).
+     * Lets a paused session go on as the editor tells its adapter: the session's trackers see the `continue` request, or the `next` request of the learner's Step Over (F10). Run and Debug's active stack item stays as it is: the editor keeps the frame for about 200 ms (`resumeDebugger` is what it reports then).
      * @param sessionId - The session; left out, the live run's server session.
+     * @param command - `continue` (left out) or `next`, the request the editor sends.
      * @example
      * harness.pauseDebugger({ session: 'live-next-browser' })
      * harness.continueDebugSession('live-next-browser')
      */
-    continueDebugSession(sessionId = 'live-next-server'): void {
+    continueDebugSession(
+      sessionId = 'live-next-server',
+      command: 'continue' | 'next' = 'continue',
+    ): void {
       for (const tracker of trackersOf({ id: sessionId }))
         tracker?.onWillReceiveMessage?.({
           type: 'request',
-          command: 'continue',
+          command,
           arguments: { threadId: 1 },
         })
     },
@@ -4701,7 +4702,7 @@ export async function workspaceHarness(
      * @param sessionId - The stopped session.
      * @param filename - The frame's file.
      * @param column - The view column of the group the editor opens it in.
-     * @param order - `file-then-frame` (left out) is the order both editors send the two reports in; `frame-then-file` reports the frame first, as in `showStopKeepingFocus`.
+     * @param order - `file-then-frame` (left out) is the order both editors send the two reports in; `frame-then-file` reports the frame first, the order Cursor 3.23 was seen to use only for a double click on the row of a frame whose file was not open (Cycle 0046, round 9b of C54 and C55: the file 659 to 660 ms after the frame), for a test that no keyboard is handed over then (finding 602).
      * @example
      * harness.pauseDebugger({ staysInBackground: true })
      * harness.passFocusToStoppedSession('live-next-server', 'actions.ts', 1)
