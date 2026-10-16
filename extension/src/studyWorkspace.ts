@@ -1656,7 +1656,10 @@ export class StudyWorkspace {
       const knowsKeyboardPlace = this.knowsKeyboardPlaceAtAdmission()
       const focusedPane = this.trackFocusedStudyPane(),
         lifetime = this.lifetime
-      const returnForeignFocus = this.retainForeignTabFocus(undefined)
+      const returnForeignFocus = this.retainForeignTabFocus(
+        undefined,
+        requester === 'agent',
+      )
       const recordedBundle = this.recordingActive
         ? this.playback?.bundle()
         : undefined
@@ -2836,8 +2839,9 @@ export class StudyWorkspace {
   /**
    * Remembers the tab the editor names as active when no text editor and no Study pane has the focus, so a selection or a restore is admitted without closing or moving that tab; called by {@link admitPresentation} for every arrangement and by {@link confirmPresentationNoop}, by {@link sampleKeyboardOutsideEditors} for the record of a pause, and by {@link close} before it ends a Read. Cursor's Agent chat is such a tab of an editor group while it is shown as a tab of another editor part; and while its chat input holds the keyboard there, Cursor can name a learner's own file of the main editor as the active tab without an active text editor. Nobody can focus anything else while the agent works. While Cursor shows that chat as a pane of the secondary side bar, the editor names an active text editor beside it, as VS Code does beside its chat view, and nothing is remembered.
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
+   * @param forAgent - `true` for an agent's arrangement of the live or recording panes (the composition branch of {@link admitPresentation}): a Study pane's tab the editor names while no Study pane and no text editor is active is then read as the chat input of another editor part over that tab, as a learner's file is, because Cursor's Focus Agent, with which an agent's Return Current gave the chat its keyboard back, changes no tab or group (row 628). The learner's own arrangements keep their rule: such a tab is no foreign tab to return to.
    * @returns
-   * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's, or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
+   * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's (outside `forAgent`), or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
    * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Called with `true` by {@link returnsKeyboardToChatAtPause} and {@link judgeKeyboardAtPauseEnd}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that a text editor has it: the paused file the editor's debugger opened, or the captured source shown in its place), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. {@link returnsKeyboardToChatAfterSideBars} calls it with `true` in the same way after a close showed a side bar a Read hid: the caller knows that the bar's command took the keyboard. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
    * @example
    * ```ts
@@ -2848,6 +2852,7 @@ export class StudyWorkspace {
    */
   private retainForeignTabFocus(
     activatedByClose: vscode.Tab | undefined,
+    forAgent = false,
   ):
     | ((
         takenByEditor?: boolean,
@@ -2859,12 +2864,16 @@ export class StudyWorkspace {
     const group = vscode.window.tabGroups.activeTabGroup,
       activeTab = group.activeTab
     const heldUri = this.textTabUriHeldByAnotherPart(activeTab, group)
-    const heldByAnotherPart = heldUri !== undefined
-    const tab = this.foreignTabToReturnTo(
-      activeTab,
-      activatedByClose,
-      heldByAnotherPart,
-    )
+    // Beside an agent's request a Study pane's tab named without an active pane is held by the chat, as a learner's file is (row 628); a moved pane's tab may be a preview, which says nothing of the chat.
+    const paneHeldByChat = forAgent && this.isStudyPaneInput(activeTab?.input)
+    const heldByAnotherPart = heldUri !== undefined || paneHeldByChat
+    const tab = paneHeldByChat
+      ? activeTab
+      : this.foreignTabToReturnTo(
+          activeTab,
+          activatedByClose,
+          heldByAnotherPart,
+        )
     if (!tab) return undefined
     const column = group.viewColumn,
       groupCount = vscode.window.tabGroups.all.length
@@ -3988,7 +3997,7 @@ export class StudyWorkspace {
 
   /**
    * Says whether a tab is Codebook's own and has no focus to give back: a captured source without a text editor, or a Study pane's tab; the last condition of {@link isTabWithoutFocusReturn}.
-   * The editor can still name a Study pane's tab as the active one while another editor part has the keyboard: that is no foreign tab to return to. A captured source without a text editor has no focus that could be kept.
+   * The editor can still name a Study pane's tab as the active one while another editor part has the keyboard: that is no foreign tab to return to (an agent's arrangement of the live panes reads it as the chat's place before it asks this, {@link retainForeignTabFocus}'s `forAgent`). A captured source without a text editor has no focus that could be kept.
    * @param tab - The tab the editor names as active.
    * @param heldByAnotherPart - Whether another editor part holds the keyboard over that tab's visible text editor.
    * @returns `true` for a captured source that is not held by another part, and for an Application or Study pane's tab.
@@ -4000,11 +4009,21 @@ export class StudyWorkspace {
   ): boolean {
     return (
       (this.isCapturedSourceInput(tab.input) && !heldByAnotherPart) ||
-      this.isCodebookPaneInput(
-        tab.input,
-        'codebook.scopedBrowser',
-        'codebook.studyContext',
-      )
+      this.isStudyPaneInput(tab.input)
+    )
+  }
+
+  /**
+   * Says whether a tab input is one of the reader's two Study panes, the Application pane or the Study pane; asked by {@link isCodebookTabWithoutFocus} and by {@link retainForeignTabFocus}.
+   * @param input - A tab's input, if any.
+   * @returns `true` for the webview of `codebook.scopedBrowser` or `codebook.studyContext`; `false` for every other input and none.
+   * @example this.isStudyPaneInput(vscode.window.tabGroups.activeTabGroup.activeTab?.input) // => true while the editor names the Application pane's tab
+   */
+  private isStudyPaneInput(input: unknown): boolean {
+    return this.isCodebookPaneInput(
+      input,
+      'codebook.scopedBrowser',
+      'codebook.studyContext',
     )
   }
 
