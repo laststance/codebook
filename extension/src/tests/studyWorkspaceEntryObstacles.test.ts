@@ -7,6 +7,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
   configuredWorkspaceHarness,
+  readerSeams,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
@@ -2393,6 +2394,71 @@ test('an agent’s run that prepares the Application while the learner reads a f
       viewport.close()
     }
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat input's keyboard when an agent reveals the current pause's source through codebook_reveal while the Study workspace is closed and the learner closed the run's Application pane: the reader's entry prepares a new Application group as an agent's, so no file the learner is not known to work in gets the keyboard; the sentence the run's own preparation told stays the only one in the editor session; fails_when=the entry prepares the Application as the learner's and its focus return shows the learner's active file with the keyboard; why_new=Cycle 0046 finding on codebook_reveal (row 612's rule on the reveal's reader entry); seam=useNativeLayout, focusMutableDraft, a live run's viewport, closeTabByHand (the learner closes the Application pane), focusView (the chat view's input), presentation.revealSource (what the codebook_reveal handler's configured run calls), textDocumentShows, keyboardInView and the information messages
+test('an agent’s source reveal that opens the closed Study workspace gives no learner’s file the keyboard', async () => {
+  // Arrange: a live run's Application pane stands in column 1 beside the learner's actions.ts; the reader is closed, the learner closed the Application pane, and then typed the request into the chat view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  let live: { close(): void } | undefined
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    harness.closeTabByHand(application.nativeTab)
+    harness.focusView()
+    const snapshot = harness.service.snapshot(
+      record,
+      harness.service.state(record).participants.browser.snapshotUri!,
+    )
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await harness.reader.presentation.revealSource(snapshot, 'server.mts')
+
+    // Assert: no document was shown with the keyboard and the chat view still has it; the run's own preparation told the editor session's one sentence about the new group.
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+      ],
+    )
+  } finally {
+    live?.close()
     await harness.close()
   }
 })

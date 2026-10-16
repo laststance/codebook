@@ -6739,7 +6739,8 @@ export class StudyWorkspace {
         (!this.opened || (!this.liveComposition && this.selection.follow))
       ) {
         this.selection = { ...this.selection, follow: true, tab: 'live' }
-        await this.open()
+        // Only the codebook_reveal handler reaches this reveal: the entry is an agent's, which gives no unproven file the keyboard (row 612's rule).
+        await this.open(undefined, 'study', false, true)
       }
       if (!this.opened) return false
       const displaysObservation = (): boolean =>
