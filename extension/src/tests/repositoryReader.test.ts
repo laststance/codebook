@@ -127,6 +127,10 @@ async function readerHarness(context: TestContext) {
   let requiresSourceFocus = false,
     coldLayout = false,
     arrangements = 0
+  /** What the arrangement's keyboard return answers ({@link RepositoryReaderModule.RepositoryKeyboardReturn}): `undefined` while the arrangement gives none, `true` when it gives the chat its keyboard back, `false` when it cannot. */
+  let keyboardReturnAnswer: boolean | undefined,
+    keyboardReturns = 0
+  const notices: string[] = []
   let sourceDocumentGate: { entered(): void; wait: Promise<void> } | undefined
   let sourceDisplayGate: { entered(): void; wait: Promise<void> } | undefined
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined
@@ -234,6 +238,10 @@ async function readerHarness(context: TestContext) {
         window: {
           get state() {
             return { focused: windowFocused }
+          },
+          showInformationMessage: async (message: string) => {
+            notices.push(message)
+            return undefined
           },
           onDidChangeWindowState(
             callback: (state: { focused: boolean }) => void,
@@ -569,6 +577,17 @@ async function readerHarness(context: TestContext) {
           const assertFocused = await focus.acquireSourceFocus()
           assertFocused()
         }
+        const answer = keyboardReturnAnswer
+        if (answer === undefined) return undefined
+        // The arrangement's return, asked after the Wiki is shown: a chat tab that gets its keyboard back has it, and no text editor is active.
+        return async () => {
+          keyboardReturns++
+          if (answer) {
+            activeEditor = undefined
+            for (const listener of focusListeners) listener()
+          }
+          return answer
+        }
       },
       evidence: async (binding, recording) => {
         linked.push({ binding, recording })
@@ -675,6 +694,15 @@ async function readerHarness(context: TestContext) {
     useColdLayout(): void {
       coldLayout = true
     },
+    /**
+     * Makes the arrangement answer a keyboard return the way {@link StudyWorkspace.arrangeRepository} does after its measurement borrowed the keyboard from Cursor's chat tab: `true` gives the chat its keyboard back, `false` says that it stays where the measurement left it.
+     * @example harness.answerKeyboardReturn(true)
+     */
+    answerKeyboardReturn(answer: boolean): void {
+      keyboardReturnAnswer = answer
+    },
+    keyboardReturns: () => keyboardReturns,
+    notices,
     useNativeCitationActivation(
       order: 'group-first' | 'editor-first' = 'group-first',
     ): void {
@@ -948,6 +976,108 @@ for (const input of ['chat', 'file'] as const)
     assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
     assert.equal(harness.reader.inspect().view.loading, false)
   })
+
+// Value: protects=the learner's keyboard when an agent opens an article through codebook_open_book in a window where neither the Wiki nor a Study arrangement is open: StudyWorkspace.arrangeRepository's cold layout keeps a receipt of the learner's focus, and the entry handed that receipt to the cited source and then activated the Wiki, so VS Code's chat view input (and a file the learner typed in) lost the keyboard without a word; fails_when=an agent's cold entry still gives the cited source the keyboard after the cold layout, or activates the Wiki; why_new=Cycle 0046 row 620 (054da12f's test arranged without the cold receipt the real cold layout keeps); seam=readerHarness with useColdLayout (the cold branch's retainCurrentFocus), focusChat (a view's input) and focusUnrelatedDraft, openFromAgent, the focused editor, the source displays and the reveals' preserveFocus
+for (const input of ['chat', 'file'] as const)
+  test(`an agent opening an article where no Wiki and no Study arrangement is open keeps the learner's ${input} input`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.useColdLayout()
+    if (input === 'chat') harness.focusChat()
+    else harness.focusUnrelatedDraft()
+    const originalInput = harness.focusedSource()
+
+    // Act
+    await harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+
+    // Assert: the cited source was shown once without the keyboard, the Wiki was created in column 2 without it, no reveal activated it, and nothing was told.
+    assert.equal(harness.focusedSource(), originalInput)
+    assert.equal(harness.shown.length, 1)
+    assert.deepEqual(harness.panelColumns, [2])
+    assert.deepEqual(harness.revealFocus, [])
+    assert.deepEqual(harness.notices, [])
+    assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+    assert.equal(harness.reader.inspect().view.loading, false)
+  })
+
+// Value: protects=Cursor's chat tab keyboard when an agent opens an article through codebook_open_book while no Wiki is open and the cold layout's measurement had to give the cited source the keyboard (the chat tab of Cursor's chat editor part had it, and the first group showed nothing the measurement could focus); fails_when=the entry activates the Wiki over the borrowed source and never asks the arrangement to give the chat tab its keyboard back; why_new=Cycle 0046 row 620; seam=readerHarness with useColdLayout, requireSourceFocus (the measurement's citation borrow), answerKeyboardReturn(true) (StudyWorkspace.arrangeRepository's give-back to the chat tab), focusChat, openFromAgent
+test("an agent's cold Wiki open whose layout borrowed the cited source's focus gives Cursor's chat tab its keyboard back", async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.requireSourceFocus()
+  harness.answerKeyboardReturn(true)
+  harness.focusChat()
+
+  // Act
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+
+  // Assert: the Wiki was shown without the keyboard, and the arrangement was asked once, after it, to give the chat its keyboard back.
+  assert.equal(harness.keyboardReturns(), 1)
+  assert.equal(harness.focusedSource(), undefined)
+  assert.deepEqual(harness.panelColumns, [2])
+  assert.deepEqual(harness.revealFocus, [])
+  assert.deepEqual(harness.notices, [])
+  assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+})
+
+// Value: protects=the learner's knowledge of where the keyboard is when an agent's cold Wiki open (codebook_open_book) borrowed it for the layout and the arrangement cannot give it back (the chat tab moved, the host has no command for its chat): the keyboard goes to the Wiki, not to a file, and the learner is told once in the editor session; fails_when=the cited source keeps the keyboard silently, the Wiki is not activated, or the sentence is told again at the next such open; why_new=Cycle 0046 row 620; seam=readerHarness with useColdLayout, requireSourceFocus, answerKeyboardReturn(false), the fake window's information notices, Close between the two opens
+test("an agent's cold Wiki open that cannot give back the keyboard its layout borrowed gives it to the Wiki and says so once", async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.requireSourceFocus()
+  harness.answerKeyboardReturn(false)
+  harness.focusChat()
+  const article = {
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  }
+
+  // Act
+  await harness.reader.openFromAgent(article)
+  harness.reader.close()
+  harness.focusChat()
+  await harness.reader.openFromAgent(article)
+
+  // Assert: each open asked the arrangement once and then activated its Wiki; the sentence was told for the first open only.
+  assert.equal(harness.keyboardReturns(), 2)
+  assert.deepEqual(harness.panelColumns, [2, 2])
+  assert.deepEqual(harness.revealFocus, [false, false])
+  assert.deepEqual(harness.notices, [
+    'Codebook opened the Repository Wiki an agent asked for, and the Wiki has the keyboard now: arranging the Wiki beside its cited source needed the focus of the first editor group, and Codebook could not give the keyboard back to where you were typing. Click where you want to type.',
+  ])
+})
+
+// Value: protects=the learner's own Open Repository Wiki in a window without a Wiki: it keeps activating the Wiki after the cited source, and the agent's keyboard return is not asked for it; fails_when=row 620's agent handling leaks into the learner's entry; why_new=Cycle 0046 row 620 guard; seam=readerHarness with useColdLayout, answerKeyboardReturn(true), open without forAgent
+test("the learner's cold Open Repository Wiki still gives the Wiki the keyboard and asks for no keyboard return", async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.answerKeyboardReturn(true)
+  harness.focusChat()
+
+  // Act
+  await harness.reader.open(harness.selection)
+
+  // Assert
+  assert.equal(harness.keyboardReturns(), 0)
+  assert.deepEqual(harness.revealFocus, [false])
+  assert.equal(
+    harness.focusedSource()?.document.uri.toString(),
+    harness.shown[0]?.uri.toString(),
+  )
+  assert.deepEqual(harness.notices, [])
+})
 
 // Regression: Cycle0046 native423 — a Return command must preserve input until the learner selects the Wiki.
 // Found by /qa on 2026-10-10; private native-final/n331-n332-c17/vscode/return-reproduction.json.

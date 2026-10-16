@@ -11,6 +11,7 @@ import {
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_READER_READY_TIMEOUT_MS,
   REPOSITORY_SOURCE_SCHEME,
+  REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE,
 } from './constants'
 import { requireWorkspace } from './environment'
 import {
@@ -58,6 +59,18 @@ export interface RepositoryLayoutFocus {
   }
 }
 
+/**
+ * Gives back the keyboard a Wiki arrangement's measurement borrowed; {@link StudyWorkspace.arrangeRepository} answers it before any effect, and {@link RepositoryReader.open} asks it once an agent's Wiki is shown (codebook_open_book, row 620).
+ * @returns
+ * - `true` when the keyboard is where the learner had it: nothing borrowed it, the measurement gave it back itself, or a chat tab got it back.
+ * - `false` when it stays in the main editor where the measurement left it.
+ * @example await keyboardReturn() // => true after Cursor's chat tab got its keyboard back
+ */
+export type RepositoryKeyboardReturn = () => Promise<boolean>
+
+/** Whether {@link RepositoryReader} told {@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE} in this editor session: kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells it no second time. */
+let agentWikiKeyboardTold = false
+
 interface RepositoryControls {
   storage(): Promise<LearningLibrary>
   connect(): Promise<void>
@@ -65,7 +78,7 @@ interface RepositoryControls {
     signal: AbortSignal,
     returnSelection?: RepositorySelection,
     focus?: RepositoryLayoutFocus,
-  ): Promise<void>
+  ): Promise<RepositoryKeyboardReturn | undefined>
   evidence(
     binding: BookObservationBinding,
     recording: boolean,
@@ -204,7 +217,7 @@ export class RepositoryReader {
    * Opens an exact article; {@link openFromAgent} keeps existing native input while learner navigation activates the Wiki.
    * @param restoreReadingLayout - Restore the actual Study Return's saved native arrangement.
    * @param preserveNativeInput - Existing-Wiki agent reads and external Return commands keep native input; cold entry still activates its reader.
-   * @param forAgent - `true` for codebook_open_book ({@link openFromAgent}): a cold entry that borrowed no editor focus for its layout creates and shows the Wiki without the keyboard, which stays where the learner had it (the chat view's input in VS Code). An external Return command's cold entry still activates the Wiki.
+   * @param forAgent - `true` for codebook_open_book ({@link openFromAgent}): a cold entry shows the cited source and the Wiki without the keyboard, which stays where the learner had it (the chat view's input in VS Code); a keyboard its layout's measurement borrowed goes back through the arrangement's {@link RepositoryKeyboardReturn} (Cursor's chat tab), or to the Wiki with a notice told once (row 620). An external Return command's cold entry still activates the Wiki.
    * @example await reader.open(selection)
    */
   async open(
@@ -237,6 +250,7 @@ export class RepositoryReader {
       | ReturnType<NonNullable<RepositoryLayoutFocus['retainCurrentFocus']>>
       | undefined
     let anchoredSource: { uri: vscode.Uri; assertFocused(): void } | undefined
+    let keyboardReturn: RepositoryKeyboardReturn | undefined
     try {
       const store = await this.storage()
       this.assertCurrent(generation)
@@ -338,7 +352,7 @@ export class RepositoryReader {
           initiatingEditor,
         )
       } else {
-        await this.controls.arrange(
+        keyboardReturn = await this.controls.arrange(
           navigation.signal,
           restoreReadingLayout ? input : undefined,
           {
@@ -374,17 +388,16 @@ export class RepositoryReader {
       coldFocus?.assertRetained()
       anchoredSource?.assertFocused()
       if (!background) initialFocus.dispose()
-      // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff.
-      if (coldFocus && acquireSourceFocus && !anchoredSource)
+      // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff. An agent's entry gives the cited source no keyboard (row 620).
+      if (coldFocus && acquireSourceFocus && !anchoredSource && !coldAgentEntry)
         await acquireSourceFocus()
-      // An empty catalog has no later I/O or citation: release immediately before the synchronous Wiki activation.
-      if (!selection || !book) {
+      // An empty catalog has no later I/O or citation, and an agent's entry takes no keyboard for one: release immediately before the Wiki is shown.
+      if (!selection || !book || coldAgentEntry) {
         coldFocus?.assertRetained()
         coldFocus?.dispose()
       }
-      // An agent's cold entry that moved no keyboard for its layout shows the Wiki without taking it from the learner (codebook_open_book).
-      const keepsLearnersKeyboard = coldAgentEntry && !anchoredSource
-      this.ensurePanel(Boolean(anchoredSource) || keepsLearnersKeyboard)
+      // An agent's cold entry shows the Wiki without taking the keyboard from the learner (codebook_open_book).
+      this.ensurePanel(Boolean(anchoredSource) || coldAgentEntry)
       this.publish()
       if (selection && book) {
         await this.load(selection, book, generation, anchoredSource)
@@ -407,8 +420,10 @@ export class RepositoryReader {
           generation,
           navigation.signal,
           undefined,
-          !keepsLearnersKeyboard,
+          !coldAgentEntry,
         )
+        if (coldAgentEntry)
+          await this.settleAgentEntryKeyboard(keyboardReturn, this.panel)
       } else {
         await this.completeDeferredReturn(signal, initialFocus)
       }
@@ -565,6 +580,39 @@ export class RepositoryReader {
         'Native focus changed during repository navigation; the newer learner focus was preserved.',
       )
     this.revealPanel(panel, false)
+  }
+
+  /**
+   * Settles the keyboard once an agent's cold Wiki is shown ({@link open} with `forAgent`, codebook_open_book, row 620): the arrangement's {@link RepositoryKeyboardReturn} gives back what its measurement borrowed (Cursor's chat tab); a keyboard it cannot give back goes to the Wiki, no file, and the learner is told once in the editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}).
+   * @param keyboardReturn - The arrangement's return, `undefined` when the entry arranged nothing.
+   * @param panel - The Wiki the entry showed.
+   * @example await this.settleAgentEntryKeyboard(keyboardReturn, this.panel) // Cursor: the chat tab has its keyboard again
+   */
+  private async settleAgentEntryKeyboard(
+    keyboardReturn: RepositoryKeyboardReturn | undefined,
+    panel: vscode.WebviewPanel | undefined,
+  ): Promise<void> {
+    if (!keyboardReturn || !panel) return
+    const unchanged = this.retainNativeFocus()
+    try {
+      // The keyboard is where the learner had it, or back there.
+      if (await keyboardReturn()) return
+      unchanged.assertRetained()
+    } catch {
+      // A newer choice of the learner keeps its keyboard and is told nothing.
+      return
+    } finally {
+      unchanged.dispose()
+    }
+    if (this.panel !== panel) return
+    this.revealPanel(panel, false)
+    if (agentWikiKeyboardTold) return
+    agentWikiKeyboardTold = true
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE,
+    )
   }
 
   /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection, and a cold Wiki is shown without the keyboard. @example await reader.openFromAgent(input) */

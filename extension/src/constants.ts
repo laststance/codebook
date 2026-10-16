@@ -344,6 +344,12 @@ export const APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE =
 export const AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE =
   'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
 /**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki had to measure the main editor beside another editor part (Cursor's chat editor part) by focusing its first group, and the keyboard could not be given back: the chat tab moved or closed, or the host has no command for its chat. The keyboard then goes to the Wiki, no file the learner might type into unknowingly, and the sentence says so (Cycle 0046 row 620). Where the chat tab can be found again it gets its keyboard back and nothing is told.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE)
+ */
+export const REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for, and the Wiki has the keyboard now: arranging the Wiki beside its cited source needed the focus of the first editor group, and Codebook could not give the keyboard back to where you were typing. Click where you want to type.'
+/**
  * What the reader tells the learner, once in an editor session, when an entry an agent asked for (a recording's open through codebook_playback, a Study selection through codebook_presentation while a replay is loaded) leaves the Learning summary behind the view in front of VS Code's secondary side bar. VS Code puts its chat there by default, and opening the summary's container in that bar removes the chat's element with the keyboard inside, even when the focus is kept (1.140.0 `workbench.desktop.main.js` 1639:157175, 1106:186495, 1106:190002), so the agent's answer would be hidden and the keyboard lost; Codebook keeps the chat in front and says where the summary waits. The learner's own replay open still brings the summary to the front.
  * @example void showPlainNotice(vscode.window, 'information', LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE)
  */

@@ -122,6 +122,7 @@ import {
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type {
   RepositoryFocusTarget,
+  RepositoryKeyboardReturn,
   RepositoryLayoutFocus,
 } from './repositoryReader'
 import type { BookObservationBinding } from './repositorySchemas'
@@ -6415,8 +6416,50 @@ export class StudyWorkspace {
     return this.library!
   }
 
-  /** Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. @example await workspace.arrangeRepository(signal, selection) */
+  /**
+   * Arranges the Wiki's layout for {@link RepositoryReader.open} ({@link arrangeRepositoryLayout}) and answers how to give back the keyboard its measurement may borrow, captured before any effect.
+   * @param signal - Cancellation of the Wiki entry.
+   * @param returnSelection - The article of an actual Return, whose saved native arrangement is restored.
+   * @param focus - The reader's focus receipts for the layout work.
+   * @returns The keyboard return the reader asks after an agent's Wiki is shown (codebook_open_book, row 620).
+   * @example const keyboardReturn = await workspace.arrangeRepository(signal) // await keyboardReturn() => true
+   */
   async arrangeRepository(
+    signal: AbortSignal,
+    returnSelection?: RepositorySelection,
+    focus?: RepositoryLayoutFocus,
+  ): Promise<RepositoryKeyboardReturn | undefined> {
+    const keyboardReturn = this.captureRepositoryKeyboardReturn()
+    await this.arrangeRepositoryLayout(signal, returnSelection, focus)
+    return keyboardReturn
+  }
+
+  /**
+   * Captures, before a Wiki arrangement's first effect, how to give back the keyboard its measurement may borrow ({@link readMainEditorGrid} focuses the first group beside another editor part, Cursor's chat); {@link arrangeRepository} answers it to {@link RepositoryReader.open}, which asks it once an agent's Wiki is shown (codebook_open_book, row 620).
+   * @returns The return: `true` when no measurement borrowed the keyboard, when the measurement gave a Study pane or a text editor its focus back itself, or when the foreign tab that had it (Cursor's chat tab) got it back ({@link retainForeignTabFocus}); `false` when it stays where the measurement left it.
+   * @example const keyboardReturn = this.captureRepositoryKeyboardReturn() // await keyboardReturn() => true after composer.focusComposer
+   */
+  private captureRepositoryKeyboardReturn(): RepositoryKeyboardReturn {
+    const borrowsBefore = this.mainEditorFocusBorrows,
+      giveBack = this.retainForeignTabFocus(undefined),
+      paneBefore = [this.app, this.contextPanel].find((panel) => panel?.active),
+      editorBefore = vscode.window.activeTextEditor,
+      editorStateBefore = textEditorFocusState(editorBefore)
+    return async (): Promise<boolean> => {
+      if (this.mainEditorFocusBorrows === borrowsBefore) return true
+      if (giveBack) return giveBack().catch(() => false)
+      // Without a foreign tab the learner had a Study pane or a text editor, which the measurement focuses again only in the main editor.
+      return (
+        Boolean(paneBefore?.active) ||
+        (editorBefore !== undefined &&
+          textEditorFocusState(vscode.window.activeTextEditor) ===
+            editorStateBefore)
+      )
+    }
+  }
+
+  /** Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. @example await this.arrangeRepositoryLayout(signal, selection) */
+  private async arrangeRepositoryLayout(
     signal: AbortSignal,
     returnSelection?: RepositorySelection,
     focus?: RepositoryLayoutFocus,

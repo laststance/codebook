@@ -144,7 +144,7 @@ async function feedbackHarness(context: TestContext) {
   const reader = new boundary.RepositoryReader({
     storage: async () => library,
     connect: async () => {},
-    arrange: async () => {},
+    arrange: async () => undefined,
     evidence: async () => {
       enteredEvidence++
     },

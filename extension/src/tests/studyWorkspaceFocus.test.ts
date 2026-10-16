@@ -164,6 +164,102 @@ for (const order of ['editor first', 'group first'] as const)
     }
   })
 
+// Value: protects=Cursor's chat tab keyboard after a cold Wiki layout an agent asked for (codebook_open_book): the measurement focuses the first editor group to measure the main editor beside Cursor's chat editor part and leaves the keyboard on the learner's file there, and the arrangement's keyboard return, asked by RepositoryReader.open once the Wiki is shown, gives it back through Cursor's chat command; fails_when=arrangeRepository answers no keyboard return or one that leaves the keyboard in the first group; why_new=Cycle 0046 row 620; seam=workspaceHarness with addSeparateEditorPart and focusTab (Cursor's chat tab with the keyboard), focusMutableDraft in column 1, the reader's own focus receipts, the native commands
+test("a cold Wiki layout that borrowed the keyboard of Cursor's chat tab gives it back to the chat when the reader asks", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 490 }, { size: 490 }],
+  })
+  const chat = harness.addSeparateEditorPart(),
+    primary = harness.focusMutableDraft('primary.txt', 1)
+  chat.focusTab()
+  const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+  const focus = {
+    begin(): void {},
+    retainCurrentFocus(
+      acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+    ) {
+      const receipt = harness.retainRepositoryFocus(acquire)
+      receipts.push(receipt)
+      return receipt
+    },
+  }
+  try {
+    // Act
+    const keyboardReturn = await harness.reader.arrangeRepository(
+      new AbortController().signal,
+      undefined,
+      focus,
+    )
+    const focusedAfterLayout = harness.focusedSource()?.document.uri.toString()
+    for (const receipt of receipts) receipt.dispose()
+    const returned = await keyboardReturn?.()
+
+    // Assert: the measurement left the keyboard on the learner's file of the first group, and the return gave it to the chat through Cursor's chat command.
+    assert.equal(focusedAfterLayout, primary.document.uri.toString())
+    assert.equal(returned, true)
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.focusedSource(), undefined)
+    assert.deepEqual(
+      harness.commands.filter(
+        (command) => command === 'composer.focusComposer',
+      ),
+      ['composer.focusComposer'],
+    )
+  } finally {
+    for (const receipt of receipts) receipt.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=VS Code's chat view keyboard after a cold Wiki layout an agent asked for (codebook_open_book): in the only editor part the measurement focuses nothing, so the arrangement's keyboard return answers that the keyboard is where the learner had it and runs no command; fails_when=arrangeRepository answers no keyboard return, or its return focuses a group or the chat; why_new=Cycle 0046 row 620; seam=workspaceHarness with focusChatInSecondarySideBar, the reader's own focus receipts, the native commands
+test("a cold Wiki layout beside VS Code's chat view borrows no keyboard and its return focuses nothing", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 490 }, { size: 490 }],
+  })
+  harness.focusMutableDraft('primary.txt', 1)
+  harness.focusChatInSecondarySideBar()
+  const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+  const focus = {
+    begin(): void {},
+    retainCurrentFocus(
+      acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+    ) {
+      const receipt = harness.retainRepositoryFocus(acquire)
+      receipts.push(receipt)
+      return receipt
+    },
+  }
+  try {
+    // Act
+    const keyboardReturn = await harness.reader.arrangeRepository(
+      new AbortController().signal,
+      undefined,
+      focus,
+    )
+    for (const receipt of receipts) receipt.dispose()
+    const commandsBeforeReturn = harness.commands.length
+    const returned = await keyboardReturn?.()
+
+    // Assert
+    assert.equal(returned, true)
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(harness.commands.slice(commandsBeforeReturn), [])
+    assert.equal(
+      harness.commands.includes('workbench.action.focusFirstEditorGroup'),
+      false,
+    )
+  } finally {
+    for (const receipt of receipts) receipt.dispose()
+    await harness.close()
+  }
+})
+
 for (const interaction of [
   'chat',
   'chat roundtrip',
@@ -2179,7 +2275,7 @@ test("opening the Repository Wiki right after Study Close beside Cursor's chat a
     wiki = harness.openWiki(2)
   let firstMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
     borrowedMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
-    arranging: Promise<void> | undefined,
+    arranging: Promise<unknown> | undefined,
     releaseRetainedEditor = (): void => {}
   try {
     // The Study workspace is opened over the Wiki and closed with the keyboard in its Study pane; longer than the fake editor takes to remove an emptied group.
@@ -2353,7 +2449,7 @@ for (const input of [
         ReturnType<typeof harness.holdNextCommand> | undefined,
       borrowedMeasurement:
         ReturnType<typeof harness.holdNextCommand> | undefined,
-      arranging: Promise<void> | undefined,
+      arranging: Promise<unknown> | undefined,
       releaseRetainedEditor = (): void => {}
     try {
       await harness.reader.open()
@@ -2450,7 +2546,7 @@ test("a leftover Repository Wiki pane of an earlier extension host selected besi
     })
   let firstMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
     borrowedMeasurement: ReturnType<typeof harness.holdNextCommand> | undefined,
-    arranging: Promise<void> | undefined,
+    arranging: Promise<unknown> | undefined,
     releaseRetainedEditor = (): void => {}
   try {
     const commandsBeforeArrangement = harness.commands.length
