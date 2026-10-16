@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
 import {
+  AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
   AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
   AGENT_STORAGE_DIRECTORY,
   APPLICATION_GROUP_MARKER_KEY,
@@ -496,7 +497,7 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailedApplication'` and `'agentSelectionFailedStudy'` are the two sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -513,6 +514,8 @@ const keyboardNoticesTold = new Set<
   | 'learnerReturn'
   | 'readEnded'
   | 'chatEditorTab'
+  | 'agentSelectionFailedApplication'
+  | 'agentSelectionFailedStudy'
 >()
 
 /**
@@ -5023,9 +5026,10 @@ export class StudyWorkspace {
         !this.closing &&
         lifetime === this.lifetime &&
         (this.app?.active || this.contextPanel?.active || assertSourceFocus) &&
-        !(await this.keepsKeyboardAfterAgentSelection(agentSelection).catch(
-          () => false,
-        ))
+        // An agent's failed selection names the place that has the keyboard now, a pane or the captured source (row 634).
+        !(await this.keepsKeyboardAfterAgentSelection(agentSelection, () =>
+          this.tellKeyboardPlaceAfterFailedSelection(),
+        ).catch(() => false))
       )
         await restoreFocus?.(signal, assertSourceFocus).catch(() => undefined)
       // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays.
@@ -13108,8 +13112,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Decides, after an agent's Study selection placed its panes, whether the keyboard stays on the captured source the placement focused: in the only editor part (VS Code, and Cursor with its chat in the side bar) the place the selection captured reads the same while a chat view has the keyboard, so only a place the learner is known to work in gets it back, and the learner is told once where it is ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613). Asked by {@link performPresentation} in place of its ordinary return, also after a failed placement.
+   * Decides, after an agent's Study selection placed its panes, whether the keyboard stays on the captured source the placement focused: in the only editor part (VS Code, and Cursor with its chat in the side bar) the place the selection captured reads the same while a chat view has the keyboard, so only a place the learner is known to work in gets it back, and the learner is told once where it is ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613). Asked by {@link performPresentation} in place of its ordinary return, also after a failed placement, where the sentence names the place the keyboard has then ({@link tellKeyboardPlaceAfterFailedSelection}, row 634).
    * @param selection - What the agent's selection knew before any native effect; `undefined` for the learner's own selection, which keeps the ordinary return.
+   * @param tellKeyboardPlace - Tells the learner where the keyboard stays; left out, the captured source's sentence of a placement that holds.
    * @returns
    * - `true` when the keyboard stays where the placement left it (the learner was told once).
    * - `false` for the learner's own selection, a place the learner is known to work in, a chat of another editor part that gets the keyboard back, and another editor part: the ordinary return goes on.
@@ -13118,6 +13123,7 @@ export class StudyWorkspace {
   private async keepsKeyboardAfterAgentSelection(
     selection:
       { knowsLearnersPlace: boolean; returnsToForeignTab: boolean } | undefined,
+    tellKeyboardPlace: () => void = () => this.tellAgentSelectionKeyboard(),
   ): Promise<boolean> {
     // The learner's own selection, a known place and a chat tab of another editor part keep the ordinary return.
     if (
@@ -13131,8 +13137,45 @@ export class StudyWorkspace {
       await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
     )
     if (count !== vscode.window.tabGroups.all.length) return false
-    this.tellAgentSelectionKeyboard()
+    tellKeyboardPlace()
     return true
+  }
+
+  /**
+   * Tells the learner, once in an editor session for each place, where the keyboard is after an agent's Study selection failed once its placement had focused the captured source; passed by the failure path of {@link performPresentation} to {@link keepsKeyboardAfterAgentSelection} (row 634).
+   * The placement's guarantee that the captured source holds the keyboard ends with the failure: the editor may have given the Application pane or the Study pane the keyboard meanwhile, so the active one is read now.
+   * - The Application pane or the Study pane that is active: its own sentence ({@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}).
+   * - The captured source that is the active text editor: the selection's sentence ({@link tellKeyboardLeftOnSource}).
+   * - Any other place, which the learner chose or the editor does not tell: nothing.
+   * @example this.tellKeyboardPlaceAfterFailedSelection() // the Application pane's sentence while that pane is active
+   */
+  private tellKeyboardPlaceAfterFailedSelection(): void {
+    if (this.app?.active)
+      return this.tellFailedSelectionPaneKeyboard('application')
+    if (this.contextPanel?.active)
+      return this.tellFailedSelectionPaneKeyboard('study')
+    this.tellKeyboardLeftOnSource()
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that one of the reader's panes has the keyboard after an agent's Study selection failed; called by {@link tellKeyboardPlaceAfterFailedSelection}.
+   * @param pane - `'application'` for the Application pane, `'study'` for the Study pane.
+   * @example this.tellFailedSelectionPaneKeyboard('study')
+   */
+  private tellFailedSelectionPaneKeyboard(
+    pane: keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
+  ): void {
+    const notice =
+      pane === 'application'
+        ? 'agentSelectionFailedApplication'
+        : 'agentSelectionFailedStudy'
+    if (keyboardNoticesTold.has(notice)) return
+    keyboardNoticesTold.add(notice)
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES[pane],
+    )
   }
 
   /**

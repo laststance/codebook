@@ -5202,6 +5202,162 @@ test('an agent’s Study selection made while the chat view has the keyboard giv
   }
 })
 
+for (const failure of [
+  {
+    holder: 'the Application pane',
+    paneTakingKeyboard: 'app',
+    focusedPanel: 'codebook.scopedBrowser',
+    focusedSourceIsCaptured: false,
+    sentence:
+      'Codebook could not finish the Study arrangement an agent asked for, and the Application pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+  },
+  {
+    holder: 'the Study pane',
+    paneTakingKeyboard: 'contextPanel',
+    focusedPanel: 'codebook.studyContext',
+    focusedSourceIsCaptured: false,
+    sentence:
+      'Codebook could not finish the Study arrangement an agent asked for, and the Study pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+  },
+  {
+    holder: 'the captured source',
+    paneTakingKeyboard: undefined,
+    focusedPanel: undefined,
+    focusedSourceIsCaptured: true,
+    sentence:
+      'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+  },
+] as const)
+  // Value: protects=the learner told where the keyboard is when an agent's Study selection (codebook_presentation) fails after its placement focused the captured source, while VS Code's chat view had the keyboard: no learner's file gets the keyboard (row 613's rule holds on the failure path too), and the one sentence names the place that has it now, the captured source, the Application pane or the Study pane; fails_when=the failure path tells the captured source's sentence ("… its captured source has the keyboard now …") without reading where the keyboard is, so a learner whose Application or Study pane took it is sent to the wrong place; why_new=Cycle 0046 row 634 (CodeRabbit on 2d7d660c..dc60b8f6, performPresentation's catch path and keepsKeyboardAfterAgentSelection); seam=useNativeLayout, changeEditorLayout (an unconfirmed Study layout), focusMutableDraft, focusChatInSecondarySideBar, holdNextCommand and failNextCommand on vscode.setEditorLayout, a pane's reveal with the keyboard while that command is pending, the service's selectPresentation, focusedPanel, focusedSource, textDocumentShows and the information messages
+  test(`an agent’s Study selection that fails after its placement while ${failure.holder} has the keyboard gives no learner’s file the keyboard and says once that ${failure.holder} has it`, async () => {
+    // Arrange: the Study workspace is open; the learner resized its panes, went back to actions.ts in the first group, and typed the request into VS Code's chat view. The editor will give ${failure.holder} the keyboard while the placement's layout command is pending, and then refuse that command.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      await harness.reader.open()
+      harness.focusMutableDraft('actions.ts', 1)
+      harness.changeEditorLayout({
+        orientation: 0,
+        groups: [
+          { size: 0.7, groups: [{ size: 0.3 }, { size: 0.7 }] },
+          { size: 0.3 },
+        ],
+      })
+      const unconfirmed = await harness.reader.readPresentationState()
+      harness.focusChatInSecondarySideBar()
+      const showsBefore = harness.textDocumentShows().length,
+        messagesBefore = harness.informationMessages.length
+      harness.failNextCommand('vscode.setEditorLayout')
+      const layoutCommand = harness.holdNextCommand('vscode.setEditorLayout')
+
+      // Act
+      let refusal: unknown
+      const selecting = harness.service
+        .selectPresentation({
+          instanceId: harness.service.instanceId,
+          presentationId: unconfirmed.presentationId,
+          expectedRevision: unconfirmed.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        })
+        .catch((error: unknown) => {
+          refusal = error
+        })
+      await layoutCommand.started
+      if (failure.paneTakingKeyboard)
+        harness.reader[failure.paneTakingKeyboard]!.reveal(undefined, false)
+      layoutCommand.release()
+      await selecting
+
+      // Assert: the selection was refused; the only document shown with the keyboard is the captured source the placement needed, and the sentence names the place that has the keyboard now.
+      assert.deepEqual(
+        {
+          refusal: String(refusal),
+          focusedPanel: harness.focusedPanel(),
+          focusedSourceIsCaptured: Boolean(
+            harness
+              .focusedSource()
+              ?.document.uri.path.endsWith('/Captured-overview.mts'),
+          ),
+          shownWithKeyboard: harness
+            .textDocumentShows()
+            .slice(showsBefore)
+            .filter((shown) => !shown.preserveFocus)
+            .map((shown) => shown.name),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          refusal:
+            'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+          focusedPanel: failure.focusedPanel,
+          focusedSourceIsCaptured: failure.focusedSourceIsCaptured,
+          shownWithKeyboard: ['Captured-overview.mts'],
+          messages: [failure.sentence],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner's own Study selection that fails after its placement focused the captured source: the failure path still gives the learner's file the keyboard back, as it did before row 634 changed the agent's failure path; fails_when=the agent's rule (no unproven file gets the keyboard) or its sentence reaches the learner's own failed selection; why_new=Cycle 0046 row 634 (the learner's half); seam=useNativeLayout, changeEditorLayout, focusMutableDraft, failNextCommand on vscode.setEditorLayout, the reader's changePresentation (the learner's control), the active text editor and the information messages
+test('a learner’s own Study selection that fails after its placement gives the learner’s file its keyboard back and tells nothing', async () => {
+  // Arrange: the Study workspace is open; the learner resized its panes and works in actions.ts in the first group. The editor will refuse the placement's layout command.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.changeEditorLayout({
+      orientation: 0,
+      groups: [
+        { size: 0.7, groups: [{ size: 0.3 }, { size: 0.7 }] },
+        { size: 0.3 },
+      ],
+    })
+    const unconfirmed = await harness.reader.readPresentationState()
+    const messagesBefore = harness.informationMessages.length
+    harness.failNextCommand('vscode.setEditorLayout')
+
+    // Act
+    let refusal: unknown
+    await harness.reader
+      .changePresentation({
+        presentationId: unconfirmed.presentationId,
+        expectedRevision: unconfirmed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .catch((error: unknown) => {
+        refusal = error
+      })
+
+    // Assert: refused, actions.ts has the keyboard again, and nothing is told.
+    assert.deepEqual(
+      {
+        refusal: String(refusal),
+        activeTextEditor:
+          harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal:
+          'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        activeTextEditor: 'actions.ts',
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's keyboard when an agent selects the Study workspace right after Developer: Reload Window, with the earlier window's empty Application group still the active group and the chat view holding the keyboard: no editor group is focused after the placement and the learner is told once that the captured source has the keyboard; fails_when=the selection's focus return focuses the active editor group it captured (the empty leftover's), taking the keyboard from the chat input without a word; why_new=Cycle 0046 row 613 (with a reload: row 608's path); seam=applicationGroupMarkers, leaveEmptyLockedGroup, focusMutableDraft, the editor's focusFirstEditorGroup (the learner's last click into the empty group), focusView (the chat view's input), the service's selectPresentation, the command log, focusedSource and the information messages
 test('an agent’s Study selection right after a reload while the chat view has the keyboard focuses no editor group afterwards and says once that the captured source has it', async () => {
   // Arrange: the earlier window recorded its Application group at column 1; after the reload it stands empty, locked and active beside the learner's notes in column 2 and readme.md in column 3, and the learner typed the request into the chat view.
