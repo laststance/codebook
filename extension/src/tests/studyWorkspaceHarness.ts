@@ -747,6 +747,8 @@ export async function workspaceHarness(
   let movesPanelsLater = false
   // Cursor names the group that held the keyboard before a new group was inserted again one editor change later; see `reactivatePreviousGroupAfterInsertion`.
   let reactivatesPreviousGroupLater = false
+  // Cursor activated that group again before the next lock reached the editor, so the lock locked it; see `reactivatePreviousGroupBeforeLock`.
+  let reactivatesPreviousGroupBeforeLock = false
   let reactivatesPreviousGroupAtLayoutRead = false
   let layoutReadsUntilReactivation = 0
   let groupFocusedBeforeInsertion: (typeof groups)[number] | undefined
@@ -2818,6 +2820,11 @@ export async function workspaceHarness(
             return
           }
           if (name === 'workbench.action.lockEditorGroup') {
+            // Once: the group that held the keyboard before the insertion is the active one again when the lock arrives, and the tab model names it as the lock answers.
+            if (reactivatesPreviousGroupBeforeLock) {
+              reactivatesPreviousGroupBeforeLock = false
+              reactivatePreviousGroup()
+            }
             activeTabGroup.locked = true
             // The editor names the group that held the keyboard before the insertion again as the lock settles, while the new group is still empty.
             if (reactivatesPreviousGroupLater) reactivatePreviousGroup()
@@ -5044,6 +5051,13 @@ export async function workspaceHarness(
      */
     reactivatePreviousGroupAfterInsertion(): void {
       reactivatesPreviousGroupLater = true
+    },
+    /**
+     * Makes the fake editor activate the group that held the keyboard before a native group insertion again before the next `workbench.action.lockEditorGroup` reaches it, once: the lock, which takes no argument and acts on the active group, locks that group, and the tab model names it as the lock answers. Cursor 3.23.12 did so in C57 round 1b, where the Return's new Application group stood unlocked above the learner's first group, which was locked and stayed locked after Close (Cycle 0046 row 644).
+     * @example harness.reactivatePreviousGroupBeforeLock()
+     */
+    reactivatePreviousGroupBeforeLock(): void {
+      reactivatesPreviousGroupBeforeLock = true
     },
     /**
      * Makes the fake editor name the group that held the keyboard before a native group insertion as active again at the next layout read after it, as {@link reactivatePreviousGroupAfterInsertion} does at the lock; the read that follows Codebook's own App move sees the editor's late focus.

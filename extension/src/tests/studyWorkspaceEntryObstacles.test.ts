@@ -639,6 +639,72 @@ for (const situation of [
     }
   })
 
+// Value: protects=the learner's groups from Codebook's lock: when Cursor activates the group that held the keyboard before the Return's new Application group was inserted (the learner's first group, whose Application pane the reservation focused) again before the lock reaches it, the lock without argument locks that learner group (C57 round 1b: the new Application group stood unlocked above the learner's locked group, which stayed locked after Close); the reservation now finds the tab model naming that group as the lock answers, unlocks it, focuses the new group and locks that one, so only the Application's own group is locked and Close leaves no group locked; fails_when=the lock's target is taken on trust from the naming before the lock, so a learner's group stays locked through Close and into the next rounds; why_new=Cycle 0046 row 644; seam=useNativeLayout, addSeparateEditorPart (Cursor's chat part), reactivatePreviousGroupBeforeLock, the reader's agent select and returnToCurrent, close, the groups' lock flags and the command log
+test("in Cursor, an agent's Return Current whose lock reaches the learner's group Cursor activated again locks only the Application's own group, and Close leaves no group locked", async () => {
+  // Arrange: actions.ts in the first group and auth.ts in the second; the agent selected the Study from Cursor's chat, which put the Application pane into the first group. Cursor will activate that group again before the Return's lock arrives.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    const learnerAuth = harness.focusMutableDraft('auth.ts', 2)
+    const learnerActions = harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    chat.focusTab()
+    harness.reactivatePreviousGroupBeforeLock()
+    const selected = harness.reader.presentationState()
+    /** Says whether the group that holds a tab is locked. */
+    const lockedWith = (tab: unknown): boolean | undefined =>
+      harness.groups.find((group) => group.tabs.some((held) => held === tab))
+        ?.locked
+    const lockedGroups = (): number[] =>
+      harness.groups
+        .filter((group) => group.locked)
+        .map((group) => group.viewColumn)
+
+    // Act
+    await harness.reader.returnToCurrent(
+      {
+        presentationId: selected.presentationId,
+        expectedRevision: selected.reader.contentRevision,
+      },
+      'agent',
+    )
+    const live = {
+      layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+      applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+      lockedColumns: lockedGroups(),
+      actionsGroupLocked: Boolean(lockedWith(learnerActions.tab)),
+      authGroupLocked: Boolean(lockedWith(learnerAuth.tab)),
+    }
+    await harness.reader.close()
+
+    // Assert: during the live run only the Application's own group at column 1 is locked; after Close no group is locked.
+    assert.deepEqual(
+      { ...live, lockedAfterClose: lockedGroups() },
+      {
+        layoutConfirmed: true,
+        applicationColumn: 1,
+        lockedColumns: [1],
+        actionsGroupLocked: false,
+        authGroupLocked: false,
+        lockedAfterClose: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a cold Study select after a window reload retiring the empty Application group the earlier window recorded, before the Application is placed; fails_when=the cold entry leaves that unproven leftover group and places the Application in it, so the window keeps an empty locked group beside the learner's groups; why_new=Cycle 0046 finding 590 (C54 in both hosts: Developer: Reload Window kept the earlier window's owned group empty at column 1); seam=applicationGroupMarkers (the earlier window's record) and leaveEmptyLockedGroup
 test('a cold Study select after a window reload retires the empty Application group the earlier window recorded', async () => {
   // Arrange: the earlier window recorded its Application group at column 1 of this three-group grid; after the reload that group stands empty and locked, the learner's files stand in columns 2 and 3, and the chat part has the keyboard.
