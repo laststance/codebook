@@ -336,9 +336,12 @@ test('a library that holds a study in a newer format beside its older file lists
       'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
     newerSentenceOfKnownFile =
       'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.'
-  await assert.rejects(readOfNewer, { message: newerSentence })
-  await assert.rejects(checkpointOfNewer, { message: newerSentence })
-  await assert.rejects(readOfKnownFile, { message: newerSentenceOfKnownFile })
+  // All three refusals get their handler at once: a read that rejects while an earlier one is still awaited would be unhandled.
+  await Promise.all([
+    assert.rejects(readOfNewer, { message: newerSentence }),
+    assert.rejects(checkpointOfNewer, { message: newerSentence }),
+    assert.rejects(readOfKnownFile, { message: newerSentenceOfKnownFile }),
+  ])
   assert.equal(count, 3)
   assert.deepEqual(
     Object.fromEntries(

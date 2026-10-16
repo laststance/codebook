@@ -12128,8 +12128,17 @@ export class StudyWorkspace {
       const panel = this.ensureApp()
       if (!existingPanel) createdPanel = panel
       // Move only the owned panel; none of the original groups or their lock states is modified.
-      if (panel.viewColumn !== vscode.ViewColumn.One)
+      if (panel.viewColumn !== vscode.ViewColumn.One) {
         panel.reveal(vscode.ViewColumn.One, true)
+        // The editor reports the move later; a placement guard taken before that report reads this own move as a learner change.
+        await waitUntil(
+          () => panel.viewColumn === vscode.ViewColumn.One,
+          'prepared application main pane',
+          PRESENTATION_READY_TIMEOUT_MS,
+          signal,
+        )
+        assertCurrent()
+      }
       await this.settleInitialApp(signal, lifetime)
       // Move Source only after App leaves its old group, so native preview replacement cannot dispose the retained renderer.
       const retiredSource = await this.retireSourceDerivedGroup(

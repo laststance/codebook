@@ -297,6 +297,36 @@ test('a presentation selection refused for a learner preview names that tab, its
   }
 })
 
+// Value: protects=Return to the current pause from a saved item in a reader whose Application pane still stands in a learner group; fails_when=the App preparation takes its placement guard before the editor reported the Application pane's move into the newly allocated group, so Codebook's own move reads as a learner change and the return fails with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0046 finding 583 (C50 in VS Code 1.140.0 and Cursor 3.23.12: the first Return Current after a cold Study select was refused, and the extension-host observer saw the pane's move reported during the next layout read); seam=the fake editor's movePanelsLater
+test('Return to the current pause from a saved item puts the Application in its own group at the first click', async () => {
+  // Arrange: the reader shows a saved item, and the editor reports a pane's move into another column only during the next layout read.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    harness.movePanelsLater()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert: no refusal; one owned group was allocated and the Application stands in it, with the layout confirmed.
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => command === 'workbench.action.newGroupAbove')
+        .length,
+      1,
+    )
+    assert.equal(harness.reader['app']!.viewColumn, 1)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Open replay opening the recording at the first click while the learner's file is the tab in front of the live Application pane; fails_when=the entry reveals the Application pane and starts its arrangement before the editor has reported that reveal, so its own reveal reads as a change the learner made and the click ends with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0045 NF-20 (Cursor: the first click failed whenever a preview or kept tab was in front of the pane, the second opened it); seam=the recorded reader harness, focusMutableDraft, the fake editor reporting a pane's reveal later, and the fake clock, which alone lets the fake editor's own timer pass (local review tests-1 #3: no real delay decides whether the report arrives during the arrangement)
 test("Open replay with the learner's file in front of the live Application pane opens the recording at the first click", async (context) => {
   // Arrange: the reader is open, and the file the learner (or the debugger) opened in the Application's group is in front of the pane with the keyboard focus.

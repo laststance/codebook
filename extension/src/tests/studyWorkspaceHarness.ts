@@ -703,6 +703,8 @@ export async function workspaceHarness(
   // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
   let revealsPanelsLater = false,
     applyingLaterReveal = false
+  // Both editors report a pane revealed into another column during the next layout read; see `movePanelsLater`.
+  let movesPanelsLater = false
   // Cursor 3.23.12 closes a disposed panel's tab, and a moment later the group it left empty, while a layout read is pending.
   let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
@@ -1729,13 +1731,16 @@ export async function workspaceHarness(
         )
       },
       reveal(column?: number, preserveFocus?: boolean): void {
-        // The pane comes to the front of its group, with the tab events of that, one turn after this call returned.
-        if (
-          revealsPanelsLater &&
-          !applyingLaterReveal &&
-          column === undefined &&
-          !groups.some((group) => group.activeTab === nativeTab)
-        ) {
+        // The pane comes to the front of its group, or moves to another column, with the tab events of that, one turn after this call returned.
+        const revealsInPlaceLater =
+            revealsPanelsLater &&
+            column === undefined &&
+            !groups.some((group) => group.activeTab === nativeTab),
+          movesLater =
+            movesPanelsLater &&
+            column !== undefined &&
+            nativeReaderColumn(column) !== value.viewColumn
+        if (!applyingLaterReveal && (revealsInPlaceLater || movesLater)) {
           const applyReveal = (): void => {
             if (!panels.has(value)) return
             applyingLaterReveal = true
@@ -2819,7 +2824,9 @@ export async function workspaceHarness(
             const dueTabCloses = pendingDisposedTabCloses.splice(0)
             if (
               dueTabCloses.length &&
-              (closeDisposedPanelTabsDuringLayoutRead || revealsPanelsLater)
+              (closeDisposedPanelTabsDuringLayoutRead ||
+                revealsPanelsLater ||
+                movesPanelsLater)
             ) {
               // Cursor's closes arrive while the read is pending: the reader's listeners see them before the answer.
               await new Promise<void>((resolve) => setImmediate(resolve))
@@ -4636,6 +4643,13 @@ export async function workspaceHarness(
      */
     revealPanelsLater(): void {
       revealsPanelsLater = true
+    },
+    /**
+     * Makes the fake editor move a pane that `reveal(column)` sends to another column after the call returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the pane's column, its `active` flag and the tab events changing then. VS Code 1.140.0 and Cursor 3.23.12 for Linux both reported the Application pane's move into its newly allocated group this way, during the `vscode.getEditorLayout` read that followed the reveal (Cycle 0046 finding 583, the extension-host observer's `appViewState` event 16 ms after that read began).
+     * @example harness.movePanelsLater()
+     */
+    movePanelsLater(): void {
+      movesPanelsLater = true
     },
     /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while the chat has the keyboard, whether it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2) or a group of the main editor (obs15 R: a recording opened from the chat input while the editor named the captured source's group): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the named group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
