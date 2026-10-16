@@ -87,6 +87,8 @@ async function feedbackHarness(context: TestContext) {
           state: { focused: true },
           onDidChangeWindowState: disposable,
           tabGroups: {
+            // No editor group shows a tab here; a Close of the Wiki finds no cited source to retire (row 641).
+            all: [],
             activeTabGroup: { viewColumn: 1 },
             onDidChangeTabs: disposable,
             onDidChangeTabGroups: disposable,

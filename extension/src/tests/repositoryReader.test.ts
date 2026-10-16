@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { join, matchesGlob, relative, resolve } from 'node:path'
+import { basename, join, matchesGlob, relative, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type { RepositorySelection } from '../learnerSchemas'
@@ -109,11 +109,16 @@ async function readerHarness(context: TestContext) {
     selectionListeners = new Set<(event?: NativeSelectionEvent) => void>(),
     tabListeners = new Set<() => void>(),
     groupListeners = new Set<() => void>()
+  type NativeTab = { input: TabInputText | TabInputWebview; isPinned?: boolean }
   const sourceGroup: {
     viewColumn: number
-    tabs: { input: TabInputText | TabInputWebview }[]
-    activeTab?: { input: TabInputText | TabInputWebview }
+    tabs: NativeTab[]
+    activeTab?: NativeTab
   } = { viewColumn: 1, tabs: [] }
+  /** The text editor of each learner tab, with the caret the editor restores when the tab comes to the front again. */
+  const learnerEditors = new Map<NativeTab, NativeEditor>()
+  /** The tabs the reader asked the editor to close, as their URIs. */
+  const closedTabs: string[] = []
   const otherGroup: typeof sourceGroup = { viewColumn: 2, tabs: [] }
   let activeGroup = sourceGroup
   let windowFocused = true
@@ -268,6 +273,40 @@ async function readerHarness(context: TestContext) {
             all: [sourceGroup, otherGroup],
             get activeTabGroup() {
               return activeGroup
+            },
+            /**
+             * Closes tabs as both editors do: a group whose front tab closes brings its most recently active other tab to the front with that editor's view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141, 988:96536), and the editor that had the keyboard hands it to that tab's editor. Tabs are pushed in the order they came to the front, so the last remaining one is the most recently active.
+             */
+            close: async (tabs: NativeTab | NativeTab[]): Promise<boolean> => {
+              const closing = Array.isArray(tabs) ? tabs : [tabs]
+              for (const group of [sourceGroup, otherGroup]) {
+                const frontClosed =
+                  group.activeTab !== undefined &&
+                  closing.includes(group.activeTab)
+                group.tabs = group.tabs.filter((tab) => !closing.includes(tab))
+                if (!frontClosed) continue
+                group.activeTab = group.tabs.at(-1)
+                const closedEditorHadKeyboard = closing.some(
+                  (tab) =>
+                    tab.input instanceof TabInputText &&
+                    activeEditor?.document.uri.toString() ===
+                      tab.input.uri.toString(),
+                )
+                if (closedEditorHadKeyboard) {
+                  activeEditor = group.activeTab
+                    ? learnerEditors.get(group.activeTab)
+                    : undefined
+                  for (const listener of focusListeners) listener()
+                }
+              }
+              for (const tab of closing)
+                closedTabs.push(
+                  tab.input instanceof TabInputText
+                    ? tab.input.uri.toString()
+                    : tab.input.viewType,
+                )
+              for (const listener of tabListeners) listener()
+              return true
             },
             onDidChangeTabs(callback: () => void) {
               tabListeners.add(callback)
@@ -863,24 +902,50 @@ async function readerHarness(context: TestContext) {
     hideWiki(): void {
       hideWikiPanel()
     },
-    focusUnrelatedDraft(filename = 'unrelated-draft.txt'): void {
+    focusUnrelatedDraft(filename = 'unrelated-draft.txt'): NativeEditor {
       const document = {
           uri: Uri.file(join(root, filename)),
           version: 1,
           getText: () => 'Keep my draft.',
         },
-        tab = { input: new TabInputText(document.uri) }
-      activeEditor = {
-        document,
-        viewColumn: 1,
-        selections: [
-          { anchor: new Position(0, 0), active: new Position(0, 0) },
-        ],
-      }
+        tab = { input: new TabInputText(document.uri) },
+        editor = {
+          document,
+          viewColumn: 1,
+          selections: [
+            { anchor: new Position(0, 0), active: new Position(0, 0) },
+          ],
+        }
+      activeEditor = editor
+      learnerEditors.set(tab, editor)
       sourceGroup.tabs.push(tab)
       sourceGroup.activeTab = tab
       for (const listener of focusListeners) listener()
+      return editor
     },
+    /** Names the first group's tabs in their order as `scheme:file name`, and its front tab, as the learner sees them. @example harness.firstGroupTabs() // => { tabs: ['file:login-form.tsx'], front: 'file:login-form.tsx' } */
+    firstGroupTabs(): { tabs: string[]; front: string | undefined } {
+      const name = (tab: NativeTab): string =>
+        tab.input instanceof TabInputText
+          ? `${tab.input.uri.scheme}:${basename(tab.input.uri.path)}`
+          : tab.input.viewType
+      return {
+        tabs: sourceGroup.tabs.map(name),
+        front: sourceGroup.activeTab && name(sourceGroup.activeTab),
+      }
+    },
+    /** Pins the cited-source tab in front of the first group, as the learner's Pin Editor does. @example harness.pinFrontSourceTab() */
+    pinFrontSourceTab(): void {
+      assert.ok(sourceGroup.activeTab)
+      sourceGroup.activeTab.isPinned = true
+    },
+    /** Closes the Wiki's tab by hand, as the learner's click on its close button does: the editor disposes the panel. @example harness.closeWikiTabByHand() */
+    closeWikiTabByHand(): void {
+      const [panel] = panels
+      assert.ok(panel)
+      Reflect.apply(Reflect.get(panel, 'dispose'), panel, [])
+    },
+    closedTabs,
     connections: () => connections,
     changeWorkspace: (): void => {
       workspace = '/another/workspace'
@@ -1056,6 +1121,128 @@ test("an agent's cold Wiki open that cannot give back the keyboard its layout bo
   assert.deepEqual(harness.notices, [
     'Codebook opened the Repository Wiki an agent asked for, and the Wiki has the keyboard now: arranging the Wiki beside its cited source needed the focus of the first editor group, and Codebook could not give the keyboard back to where you were typing. Click where you want to type.',
   ])
+})
+
+// Value: protects=the learner's own front tab in the first group after an agent's Wiki open (codebook_open_book while no Wiki and no Study arrangement is open) is closed with Close Repository Wiki: the read-only cited-source tab the reader showed in front of the learner's file goes with the Wiki, the learner's file is in front again, and the chat keeps the keyboard; fails_when=RepositoryReader.close disposes only the Wiki panel, so a Codebook tab the learner never chose keeps covering the learner's file after the Wiki is gone (C57 2c in VS Code 1.140.0: `codebook-repository-source://…/login-form.tsx` in front of the learner's app/ui/login-form.tsx); why_new=Cycle 0046 row 641; seam=readerHarness with useColdLayout, focusUnrelatedDraft (the learner's login-form.tsx in front of the first group), focusChat, openFromAgent, close, the fake tabGroups.close, firstGroupTabs and focusedSource
+test('an agent’s Wiki open closed with Close Repository Wiki leaves no cited-source tab and brings the learner’s file in the first group to the front again', async (context) => {
+  // Arrange: the learner's login-form.tsx is in front of the first group, and the learner typed the request into the chat; the agent opened the article, whose cited source the reader showed in front of the learner's file.
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.focusUnrelatedDraft('login-form.tsx')
+  harness.focusChat()
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+  const whileWikiOpen = harness.firstGroupTabs()
+
+  // Act
+  harness.reader.close()
+
+  // Assert: the cited source left with the Wiki, the learner's file is in front again, and the chat keeps the keyboard.
+  assert.deepEqual(
+    {
+      whileWikiOpen,
+      afterClose: harness.firstGroupTabs(),
+      wikiPanels: harness.panels.size,
+      keyboardInAnEditor: harness.focusedSource() !== undefined,
+    },
+    {
+      whileWikiOpen: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:order.ts'],
+        front: 'codebook-repository-source:order.ts',
+      },
+      afterClose: {
+        tabs: ['file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
+      wikiPanels: 0,
+      keyboardInAnEditor: false,
+    },
+  )
+})
+
+// Value: protects=the learner's own file and caret after the learner's own Open Repository Wiki ends with the Wiki tab closed by hand: the cited source the reader showed leaves with the Wiki, and the learner's file is in front of the first group again with its caret; fails_when=the Wiki's own close (its panel's disposal) leaves the read-only cited source in front of the learner's file, as Close Repository Wiki did; why_new=Cycle 0046 row 641 (the Wiki's other close); seam=readerHarness, focusUnrelatedDraft with a caret on line 3 (selectSource), open without forAgent, closeWikiTabByHand (the panel's disposal), the fake tabGroups.close and firstGroupTabs
+test('the learner’s own Wiki whose tab the learner closes by hand leaves no cited-source tab and brings the learner’s file in the first group to the front again with its caret', async (context) => {
+  // Arrange: the learner works in login-form.tsx with the caret on line 3, then opens the Repository Wiki, whose cited source comes to the front of the first group.
+  const harness = await readerHarness(context)
+  const draft = harness.focusUnrelatedDraft('login-form.tsx')
+  harness.selectSource(2, 4)
+  await harness.reader.open(harness.selection)
+  const whileWikiOpen = harness.firstGroupTabs()
+
+  // Act
+  harness.closeWikiTabByHand()
+
+  // Assert: the cited source left with the Wiki; the learner's file is in front again with its caret on line 3.
+  assert.deepEqual(
+    {
+      whileWikiOpen,
+      afterClose: harness.firstGroupTabs(),
+      caret: draft.selections.map((selection) => [
+        selection.active.line,
+        selection.active.character,
+      ]),
+    },
+    {
+      whileWikiOpen: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      afterClose: {
+        tabs: ['file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
+      caret: [[2, 4]],
+    },
+  )
+})
+
+// Value: protects=a cited-source tab the learner pinned: the learner chose to keep it, so it stays when the Wiki closes; fails_when=row 641's retirement also closes a pinned cited source and unpins the learner's choice; why_new=Cycle 0046 row 641 guard; seam=readerHarness, focusUnrelatedDraft, open, pinFrontSourceTab (the learner's Pin Editor), close, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source tab the learner pinned stays in front of the first group when the Wiki closes', async (context) => {
+  // Arrange: the learner opened the Repository Wiki over login-form.tsx and pinned the cited source.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.pinFrontSourceTab()
+
+  // Act
+  harness.reader.close()
+
+  // Assert: nothing was closed; the pinned cited source is still in front.
+  assert.deepEqual(
+    { afterClose: harness.firstGroupTabs(), closedTabs: harness.closedTabs },
+    {
+      afterClose: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=the learner's arrangement of groups when the Wiki closes over a first group that shows only its cited source: that group keeps the tab, since closing it would remove the group under the editor's closeEmptyGroups; fails_when=row 641's retirement empties a group and changes the learner's layout; why_new=Cycle 0046 row 641 guard; seam=readerHarness (an empty first group), open, close, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source tab that is the only tab of its group stays when the Wiki closes', async (context) => {
+  // Arrange: the first group was empty, so the Repository Wiki's cited source is its only tab.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+
+  // Act
+  harness.reader.close()
+
+  // Assert: nothing was closed; the group still shows the cited source.
+  assert.deepEqual(
+    { afterClose: harness.firstGroupTabs(), closedTabs: harness.closedTabs },
+    {
+      afterClose: {
+        tabs: ['codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: [],
+    },
+  )
 })
 
 // Value: protects=the learner's own Open Repository Wiki in a window without a Wiki: it keeps activating the Wiki after the cited source, and the agent's keyboard return is not asked for it; fails_when=row 620's agent handling leaks into the learner's entry; why_new=Cycle 0046 row 620 guard; seam=readerHarness with useColdLayout, answerKeyboardReturn(true), open without forAgent

@@ -783,7 +783,11 @@ export class RepositoryReader {
     this.assertCurrent(generation)
   }
 
-  /** Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader. @example reader.close() */
+  /**
+   * Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader; called by Close Repository Wiki and by {@link dispose}.
+   * The Wiki's close also retires the cited-source tabs the reader showed ({@link retireCitedSourceTabs}, row 641); a {@link dispose} for the window's close or a change of its folders leaves the editor's tabs as they are.
+   * @example reader.close()
+   */
   close(): void {
     this.sourceDeferred = false
     this.deferredReturn = undefined
@@ -797,6 +801,49 @@ export class RepositoryReader {
     this.panel = undefined
     panel?.dispose()
     this.clearWatchers()
+    if (panel && !this.disposed) this.retireCitedSourceTabs()
+  }
+
+  /**
+   * Closes the read-only cited-source tabs this reader showed once its Wiki closes, so the learner's own front tab of their groups comes back; called by {@link close} (Close Repository Wiki) and when the Wiki's tab is closed by hand ({@link ensurePanel}), Cycle 0046 row 641.
+   * The reader shows a citation in front of the first group without preview (`openSource`), over the learner's own file, also for an agent's open the learner never chose; it serves the Wiki beside it, whose article, refresh and navigation no longer reach it once the Wiki is gone, and the learner's current file stays one Open Current File away. The editor brings the group's most recently active other tab to the front with its view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141, 988:96536; Cursor 3.23.12 17264:12900, 11678:22600). A tab the learner pinned stays, and so does every cited source of a group that holds nothing else: its close would remove that group under `closeEmptyGroups` (VS Code 1106:79878). A close the editor refuses leaves the tabs as they are.
+   * @example this.retireCitedSourceTabs() // the learner's login-form.tsx is in front of the first group again
+   */
+  private retireCitedSourceTabs(): void {
+    const workspaceKey = this.store?.library.workspaceKey
+    if (!workspaceKey) return
+    const retired = vscode.window.tabGroups.all.flatMap((group) =>
+      this.retirableCitedSources(group, workspaceKey),
+    )
+    if (retired.length)
+      void vscode.window.tabGroups.close(retired, true).then(
+        () => undefined,
+        () => undefined,
+      )
+  }
+
+  /**
+   * Picks the cited-source tabs of one group that {@link retireCitedSourceTabs} closes.
+   * @param group - An editor group of the window.
+   * @param workspaceKey - The library key this reader's source URIs carry as their authority.
+   * @returns
+   * - The group's unpinned tabs of this reader's cited sources, while the group holds another tab too.
+   * - No tab for a group that holds only such tabs, and for a group without them.
+   * @example this.retirableCitedSources(firstGroup, key) // => [the order.ts citation tab] beside the learner's login-form.tsx
+   */
+  private retirableCitedSources(
+    group: vscode.TabGroup,
+    workspaceKey: string,
+  ): vscode.Tab[] {
+    const cited = group.tabs.filter(
+      (tab) =>
+        !tab.isPinned &&
+        tab.input instanceof vscode.TabInputText &&
+        tab.input.uri.scheme === REPOSITORY_SOURCE_SCHEME &&
+        tab.input.uri.authority === workspaceKey,
+    )
+    // A group the retirement would empty keeps its tabs.
+    return cited.length < group.tabs.length ? cited : []
   }
   /**
    * Drains publication and shared learner writes while disposing only this reader's UI ownership; called when the window closes and when a change of the workspace's folders replaces the reader.
@@ -1607,6 +1654,8 @@ export class RepositoryReader {
         this.statusGeneration++
         this.clearWatchers()
         clearTimeout(this.refreshTimer)
+        // The Wiki's tab closed by hand ends the Wiki as Close Repository Wiki does (row 641).
+        this.retireCitedSourceTabs()
       }
     })
     panel.webview.html = repositoryHtml()
