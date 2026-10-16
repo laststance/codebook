@@ -382,6 +382,15 @@ export const LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE =
 export const APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE =
   'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.'
 /**
+ * What the reader tells the learner, once in an editor session, when a Study selection an agent asked for through codebook_presentation entered a replay or a live run and its Application preparation left the keyboard in the Application's new group while the preparation's own sentence ({@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}), told once in the session already, stayed untold (Cycle 0046 row 640). The new group takes the keyboard from the editor area (VS Code 1.140.0 `workbench.desktop.main.js` 990:31740), and the arrangement's layout command gives it to the Application pane in front of that group (1106:112155 with 1106:112962, 1106:74902, 705:66733; Cursor 3.23.12 17501:57509); row 613 gives a file the learner is not known to work in nothing back. `took` is told when the preparation focused an editor group itself, `mayHave` when the editor area alone could have lost the keyboard.
+ * @example void showPlainNotice(vscode.window, 'information', AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES.mayHave)
+ */
+export const AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES = {
+  took: 'Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group, and the Application pane has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+  mayHave:
+    'Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group. If you were typing in a file or another editor tab, the Application pane has the keyboard now: click where you want to type. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+} as const
+/**
  * What the reader tells the learner, once in an editor session, after the learner's own Return to current pause (the Study pane's control, its shortcut or the command while that pane had the keyboard) closed the Study pane for the live arrangement: a pane that is closed while it has the keyboard leaves it on no element, so a key the learner presses then goes nowhere (Cycle 0046 row 624). The invoking control is gone, so the active editor group gets the keyboard by the rule of a Close ({@link STUDY_CLOSE_KEYBOARD_MESSAGE}): the new Application group once the Return placed it, and whatever group the editor names when the Return was refused after the pane closed. The sentence says where the keyboard is in both cases.
  * @example void showPlainNotice(vscode.window, 'information', LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE)
  */

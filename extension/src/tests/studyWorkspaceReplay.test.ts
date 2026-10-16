@@ -4799,6 +4799,72 @@ test('an agent’s Study selection while a replay stays loaded and the chat view
   }
 })
 
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the learner's knowledge of where the keyboard is when an agent's Study selection (codebook_presentation) reopens a replay an agent had opened earlier, while the learner's file has the keyboard without a fresh sign of the learner's hand: the Application's new group takes the keyboard from the editor area (VS Code 1.140.0 workbench.desktop.main.js 990:31740), and the arrangement's layout command gives it to the Application pane in front of that group (1106:112155 with 1106:112962, group focus 1106:74902, the webview editor's focus 705:66733; Cursor 3.23.12 17501:57509); row 613 gives an unproven file nothing back, so the selection tells once where the keyboard is, also when the preparation's own sentence was told for the earlier replay open; fails_when=the preparation's sentence, told once in the session already, is the only one the selection has, so the Application pane takes the learner's keyboard without a word (C57 2a: page focus BODY, then the Application pane's webview, no information message); why_new=Cycle 0046 row 640; seam=recordedReaderHarness, the service's playback (codebook_playback open) and the reader's close, useNativeLayout, leaveEmptyGroup, focusMutableDraft, Cursor's host name (its chat in the side bar, one editor part), the service's selectPresentation (codebook_presentation), focusedPanel and innerFocusedPanel (the fake editor gives the active group the keyboard after a layout command when the page body had it), textDocumentShows and the information messages
+  test(`in ${host}, an agent’s Study selection that reopens a replay an agent opened earlier, while the learner’s file has the keyboard, says once that the Application pane has it`, async () => {
+    // Arrange: an agent opened a saved recording while the learner worked in login-form.tsx in the first group, and the Study workspace was closed; the learner's file has the keyboard again, put there without a key press.
+    const harness = await recordedReaderHarness(true, true)
+    if (host === 'Cursor') harness.useHostAppName('Cursor')
+    try {
+      await harness.reader.close()
+      harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+      harness.leaveEmptyGroup(1)
+      harness.focusMutableDraft('login-form.tsx', 1)
+      harness.service.playback({
+        instanceId: harness.service.instanceId,
+        studyId: harness.studyId,
+        action: 'open',
+        expectedRevision: harness.controller.state().revision,
+      })
+      await harness.controller.settle()
+      await harness.reader.close()
+      harness.focusMutableDraft('login-form.tsx', 1)
+      const state = harness.reader.presentationState(),
+        showsBefore = harness.textDocumentShows().length,
+        messagesBefore = harness.informationMessages.length
+
+      // Act
+      const answer = await harness.service.selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      await harness.controller.settle()
+
+      // Assert: the replay's arrangement is confirmed, the Application pane has the keyboard, no file was shown with it, and the sentence says once where it is.
+      assert.deepEqual(
+        {
+          layoutConfirmed: answer.layoutConfirmed,
+          contentTab: answer.reader.contentTab,
+          activePane: harness.focusedPanel(),
+          paneWithKeyboard: harness.innerFocusedPanel(),
+          shownWithKeyboard: harness
+            .textDocumentShows()
+            .slice(showsBefore)
+            .filter((shown) => !shown.preserveFocus)
+            .map((shown) => shown.name),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          layoutConfirmed: true,
+          contentTab: 'recording',
+          activePane: 'codebook.scopedBrowser',
+          paneWithKeyboard: 'codebook.scopedBrowser',
+          shownWithKeyboard: [],
+          messages: [
+            'Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group. If you were typing in a file or another editor tab, the Application pane has the keyboard now: click where you want to type. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+          ],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the learner's terminal and its keyboard in the bottom panel when an agent opens a recording through codebook_playback in VS Code: the Observed moments view's focus command opens its container in place of the terminal even with the focus kept (1.140.0 workbench.desktop.main.js 1639:157156 -> openView 1639:152215 -> doOpenComposite 1106:186495, hideActiveComposite 1106:190002), which hides the terminal and drops its keyboard; the agent's entry leaves the panel as it is, and the one sentence told once names both places where the replay's controls wait; fails_when=the agent's replay open still focuses the moments view while it is not shown, or tells nothing about where the controls wait; why_new=Cycle 0046 row 621; seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusTerminalInBottomPanel (the panel's terminal with the keyboard), the service's playback (the codebook_playback handler), viewFocusCommands, keyboardInView, terminalInFrontOfPanel and the information messages
 test('an agent’s replay open in VS Code while the learner types in the bottom panel’s terminal keeps the terminal in front with its keyboard and says where the replay controls wait', async () => {
   // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner types in the terminal of the bottom panel.

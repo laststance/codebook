@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
 import {
+  AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES,
   AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
   AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
   AGENT_STORAGE_DIRECTORY,
@@ -506,7 +507,7 @@ interface KeyboardPauseOfRecord {
 const selectionOwnsForeignReturn = (): void => {}
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailed:application'`, `'agentSelectionFailed:study'` and `'agentSelectionFailed:source'` are the three sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailed:application'`, `'agentSelectionFailed:study'` and `'agentSelectionFailed:source'` are the three sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}, `'agentSelectionApplication'` is either sentence of {@link AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES}, whichever came first.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -523,6 +524,7 @@ const keyboardNoticesTold = new Set<
   | 'learnerReturn'
   | 'readEnded'
   | 'chatEditorTab'
+  | 'agentSelectionApplication'
   | `agentSelectionFailed:${keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}`
 >()
 
@@ -896,6 +898,8 @@ export class StudyWorkspace {
   private returningCurrent: PresentationRequester | undefined
   /** The sentence an agent's Live Return owes when its end gives the remembered tab nothing back ({@link owePreparationNotice}): `true` for {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}, `false` for {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, `undefined` when none is owed. */
   private preparationNoticeOwed: boolean | undefined
+  /** Whether the last Application preparation that left the keyboard in its new group focused an editor group itself, kept while its sentence stayed untold because it was told once in the session already ({@link tellPreparedApplicationKeyboard}); an agent's Study selection that entered a replay or a live run tells its own sentence then ({@link tellUntoldSelectionKeyboard}, row 640). `undefined` when no such preparation is untold. */
+  private untoldPreparationKeyboard: boolean | undefined
   private presentationMode: PresentationMode = 'study-workspace'
   private requestedPresentation?: PresentationMode
   private presentationConfirmed = false
@@ -4795,6 +4799,7 @@ export class StudyWorkspace {
         await this.initialize()
         assertCurrent()
         assertRetainedPlacement?.()
+        this.untoldPreparationKeyboard = undefined
         const opening = !this.opened
         if (opening) {
           // Found before the open creates any pane, so the refusal leaves the window as it was.
@@ -4833,6 +4838,7 @@ export class StudyWorkspace {
           }
           await returnForeignFocus?.().catch(() => undefined)
           assertCurrent()
+          this.tellUntoldSelectionKeyboard(requester)
           return { ...entered, preference: this.presentationState().preference }
         }
         assertRetainedPlacement ??= this.retainPresentationPlacement()
@@ -13181,7 +13187,11 @@ export class StudyWorkspace {
    * @example this.tellPreparedApplicationKeyboard(true) // VS Code, the learner's file was the active editor of the second group
    */
   private tellPreparedApplicationKeyboard(tookKeyboard: boolean): void {
-    if (keyboardNoticesTold.has('preparation')) return
+    // Told once already: an agent's selection that made this preparation says it in its own words (row 640).
+    if (keyboardNoticesTold.has('preparation')) {
+      this.untoldPreparationKeyboard = tookKeyboard
+      return
+    }
     keyboardNoticesTold.add('preparation')
     void showPlainNotice(
       vscode.window,
@@ -13189,6 +13199,30 @@ export class StudyWorkspace {
       tookKeyboard
         ? APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE
         : APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE,
+    )
+  }
+
+  /**
+   * Tells the learner, once in an editor session, where an agent's Study selection that entered a replay or a live run left the keyboard, when its Application preparation left it in the new group and the preparation's own sentence stayed untold, told once in the session already ({@link AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES}, row 640); called by {@link performPresentation} once that entry is confirmed. The note of the untold preparation is used up either way.
+   * @param requester - Who asked for the selection; the learner's own selection tells nothing.
+   * @example this.tellUntoldSelectionKeyboard('agent') // "Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group. If you were typing in a file …"
+   */
+  private tellUntoldSelectionKeyboard(requester: PresentationRequester): void {
+    const untold = this.untoldPreparationKeyboard
+    this.untoldPreparationKeyboard = undefined
+    if (
+      requester !== 'agent' ||
+      untold === undefined ||
+      keyboardNoticesTold.has('agentSelectionApplication')
+    )
+      return
+    keyboardNoticesTold.add('agentSelectionApplication')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES[
+        untold ? 'took' : 'mayHave'
+      ],
     )
   }
 

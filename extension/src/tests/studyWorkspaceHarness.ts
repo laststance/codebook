@@ -1685,6 +1685,19 @@ export async function workspaceHarness(
     })
     activeTextEditorChanged(undefined)
   }
+  /**
+   * Gives the active group of the main editor the keyboard after a layout command, as both editors do when the page body had it: `applyLayout` notes whether the body or the editor area had the focus and focuses the active group after the new grid (VS Code 1.140.0 `workbench.desktop.main.js` 1106:112155 with 1106:112962; Cursor 3.23.12 17501:57509), and a group's focus focuses its active editor (1106:74902): a pane's webview takes the keyboard (705:66733), and so does a text editor. An empty group keeps it on its own element, which this model counts as the page body.
+   * @example focusActiveGroupAfterLayout() // the Application pane in front of the active group has the keyboard
+   */
+  function focusActiveGroupAfterLayout(): void {
+    if (!keyboardOnBody || !windowState.focused) return
+    const front = activeTabGroup.activeTab
+    if (!front) return
+    keyboardOnBody = false
+    const pane = [...panels].find((candidate) => candidate.nativeTab === front)
+    // A pane in front takes the keyboard into its document; a text editor in front has it as the active text editor already.
+    if (pane && !suppressNativeInnerFocus) innerFocusedPanel = pane.kind
+  }
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
     if (partialFocusEditor) return partialFocusEditor.value
@@ -3312,6 +3325,7 @@ export async function workspaceHarness(
               if (opened.length)
                 changedGroups({ opened, closed: [], changed: [] })
             }
+            focusActiveGroupAfterLayout()
           }
           // Native layout is already accepted before its delayed RPC response reaches the extension.
           if (name === 'vscode.setEditorLayout') {
