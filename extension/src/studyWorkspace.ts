@@ -12117,6 +12117,8 @@ export class StudyWorkspace {
   ): Promise<vscode.WebviewPanel> {
     signal?.throwIfAborted()
     this.assertLifetime(this.lifetime)
+    // A closed reader's first preparation, as an agent's run right after Developer: Reload Window, retires the earlier window's proven leftovers before it allocates (row 609).
+    await this.retireLeftoversBeforePreparation(signal)
     // A first acquisition cannot register beside an earlier host's leftover pane.
     if (!this.app && this.deadPaneTabs().length)
       await this.retirePreviousApplicationPanes(signal)
@@ -12138,6 +12140,21 @@ export class StudyWorkspace {
     // Native command discovery remains outside the queue so Close can drain accepted placement.
     await preparation.restoreFocus?.()
     return preparation.panel
+  }
+
+  /**
+   * Retires the earlier window's proven leftover groups before {@link prepareApplicationGroup} allocates, when a closed reader prepares its first Application (an agent's run right after Developer: Reload Window, before any Study select): the allocation would otherwise stand beside them and its record would replace the earlier one, so they were never proved again (row 609). The proof's focus commands take the keyboard; a chat that had it gets it back here, so the preparation's own focus return captures it where it was. Nothing happens for an open reader, without an earlier window's record, or when no recorded group is a leftover ({@link retireLeftoverApplicationGroup}).
+   * @param signal - The preparation's cancellation.
+   * @throws When the editor refuses a proved group's close, or the grid does not lose exactly that group.
+   * @example await this.retireLeftoversBeforePreparation(signal) // the earlier window's empty groups go; the chat keeps its keyboard
+   */
+  private async retireLeftoversBeforePreparation(
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const giveKeyboardBack = this.retainForeignTabFocus(undefined)
+    // Only a proof that ran moved the keyboard.
+    if (await this.retireLeftoverApplicationGroup(signal))
+      await giveKeyboardBack?.(true).catch(() => false)
   }
 
   /**
