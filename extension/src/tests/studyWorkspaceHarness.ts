@@ -1375,6 +1375,27 @@ export async function workspaceHarness(
     for (const listener of [...activeStackItemListeners]) listener()
   }
   /**
+   * Opens a stop's paused file in front of its group preserving the focus, as both editors' stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23), and reports the active text editor: when the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). The file step of `showStopKeepingFocus` and `openPausedFileKeepingFocus`.
+   * @param filename - The paused file.
+   * @param column - The group the editor opens it in.
+   * @example openPausedFileKeepingFocus('login-form.tsx', 2)
+   */
+  function openPausedFileKeepingFocus(filename: string, column: number): void {
+    const pausedColumn = nativeDebugColumn(column)
+    // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
+    const hidesFocusedEditor =
+      activeTabGroup.viewColumn === pausedColumn &&
+      windowState.focused &&
+      !keyboardOnBody &&
+      !keyboardInView &&
+      !keyboardInSideBar &&
+      !separateEditorPart?.focused &&
+      focusedSourceEditor() !== undefined
+    openDraftTab(filename, pausedColumn, true)
+    if (hidesFocusedEditor) keyboardOnBody = true
+    activeTextEditorChanged(focusedSourceEditor())
+  }
+  /**
    * Opens a learner-owned text document as the tab in front of a group, with its text editor visible there, and gives nothing the keyboard; the shared first step of `focusMutableDraft`, which then gives that editor the keyboard, and of `selectStackFrame`, which does not.
    * @param filename - The document's file name in the harness's folder.
    * @param column - The view column of the group.
@@ -4631,19 +4652,27 @@ export async function workspaceHarness(
       filename: string,
       column: number,
     ): void {
-      const pausedColumn = nativeDebugColumn(column)
-      // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
-      const hidesFocusedEditor =
-        activeTabGroup.viewColumn === pausedColumn &&
-        windowState.focused &&
-        !keyboardOnBody &&
-        !keyboardInView &&
-        !keyboardInSideBar &&
-        !separateEditorPart?.focused &&
-        focusedSourceEditor() !== undefined
-      openDraftTab(filename, pausedColumn, true)
-      if (hidesFocusedEditor) keyboardOnBody = true
-      activeTextEditorChanged(focusedSourceEditor())
+      openPausedFileKeepingFocus(filename, column)
+      reportFrameOf(sessionId)
+    },
+    /**
+     * Opens a stop's paused file the way both editors' own stop handling does under `debug.focusEditorOnBreak: false`, and reports no frame yet: the first half of `showStopKeepingFocus`, for a test that reads the reader between the paused file's opening and the stop's frame, which both editors report 4 to 105 ms later (Cycle 0046, the native observers of C50 to C55). `reportStopFrame` is the second half.
+     * @param filename - The paused file.
+     * @param column - The group the editor opens it in.
+     * @example
+     * harness.pauseDebugger({ session: 'learner-node', staysInBackground: true, pausedFile: 'actions.ts' })
+     * harness.openPausedFileKeepingFocus('actions.ts', 2)
+     * harness.reportStopFrame('learner-node')
+     */
+    openPausedFileKeepingFocus(filename: string, column: number): void {
+      openPausedFileKeepingFocus(filename, column)
+    },
+    /**
+     * Reports the frame of a session's current stop, the one the adapter answered as its top frame: the second half of `showStopKeepingFocus`.
+     * @param sessionId - The stopped session.
+     * @example harness.reportStopFrame('learner-node')
+     */
+    reportStopFrame(sessionId: string): void {
       reportFrameOf(sessionId)
     },
     /**

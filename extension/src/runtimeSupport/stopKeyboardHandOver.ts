@@ -1,4 +1,8 @@
 import { editorsPausedFrame } from './utils/editorsPausedFrame'
+import {
+  isEditorOfDebugSource,
+  type DocumentUriParts,
+} from './utils/isEditorOfDebugSource'
 import { stackTraceRequestOf } from './utils/stackTraceRequestOf'
 import {
   stackTraceResponseOf,
@@ -115,6 +119,33 @@ export class StopKeyboardHandOver {
     return held?.state === 'armed'
       ? editorsPausedFrame(held.frames, held.reason)?.id
       : undefined
+  }
+
+  /**
+   * Names the armed stop whose paused file a text editor that became active shows: the source of the frame the editor focuses for that stop ({@link editorsPausedFrame}), mapped as the editor maps a source to a document ({@link isEditorOfDebugSource}). Asked when a text editor becomes active, which for a stop the editor's own handling brings is the paused file's opening, 4 to 105 ms before the stop's frame (Cycle 0046, C50 to C55).
+   * @param editor - The text editor that became active, if any.
+   * @param platform - The operating system, which decides whether a file's case counts.
+   * @returns The stop's session with that editor; `undefined` without an editor and when no armed stop's paused file is that document.
+   * @example handOver.armedStopOpenedIn(actionsEditor) // => { sessionId: 'learner-node', editor: actionsEditor } once the adapter answered learner-node's top frame in actions.ts
+   */
+  armedStopOpenedIn<Editor extends { document: { uri: DocumentUriParts } }>(
+    editor: Editor | undefined,
+    platform: NodeJS.Platform = process.platform,
+  ): { sessionId: string; editor: Editor } | undefined {
+    if (editor === undefined) return undefined
+    for (const [sessionId, held] of this.stops) {
+      const source =
+        held.state === 'armed'
+          ? editorsPausedFrame(held.frames, held.reason)?.source
+          : undefined
+      // The first armed stop whose paused file the editor shows is the stop that opened it.
+      if (
+        source !== undefined &&
+        isEditorOfDebugSource(editor.document.uri, source, sessionId, platform)
+      )
+        return { sessionId, editor }
+    }
+    return undefined
   }
 
   /**

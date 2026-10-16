@@ -306,3 +306,62 @@ test('a reported frame settles a waiting stop and leaves a handed-over stop done
     [false, true],
   )
 })
+
+// Value: protects=the hand-over at the paused file's opening, which comes 4 to 105 ms before the stop's frame: only the source of the frame the editor focuses for an armed stop is that file; fails_when=another file, a stop that was handed over already, or no editor is taken for the paused file's opening, and the keyboard goes to a file the stop never opened or is handed over twice; why_new=Cycle 0046, the latency of finding 603's frame-report resolution
+test('only the source of the frame the editor focuses for an armed stop is recognized as its paused file', () => {
+  // Arrange: the learner's stop, whose top frame in actions.ts the adapter answered.
+  const handOver = new StopKeyboardHandOver()
+  handOver.arm('learner-node', { threadId: 1, reason: 'breakpoint' })
+  handOver.readEditorsMessage('learner-node', {
+    type: 'request',
+    seq: 41,
+    command: 'stackTrace',
+    arguments: { threadId: 1, startFrame: 0, levels: 1 },
+  })
+  handOver.readAdaptersMessage('learner-node', {
+    type: 'response',
+    request_seq: 41,
+    success: true,
+    command: 'stackTrace',
+    body: {
+      stackFrames: [{ id: 4, source: { path: '/app/actions.ts' } }],
+    },
+  })
+  const actionsEditor = {
+    document: {
+      uri: {
+        scheme: 'file',
+        path: '/app/actions.ts',
+        query: '',
+        fsPath: '/app/actions.ts',
+      },
+    },
+  }
+  const notesEditor = {
+    document: {
+      uri: {
+        scheme: 'file',
+        path: '/app/notes.ts',
+        query: '',
+        fsPath: '/app/notes.ts',
+      },
+    },
+  }
+
+  // Act: actions.ts, notes.ts and no editor become active; then actions.ts once more after the stop was handed over.
+  const whileWaiting = [
+    handOver.armedStopOpenedIn(actionsEditor, 'linux'),
+    handOver.armedStopOpenedIn(notesEditor, 'linux'),
+    handOver.armedStopOpenedIn(undefined, 'linux'),
+  ]
+  handOver.markDone('learner-node')
+  const afterHandOver = handOver.armedStopOpenedIn(actionsEditor, 'linux')
+
+  // Assert
+  assert.deepEqual(whileWaiting, [
+    { sessionId: 'learner-node', editor: actionsEditor },
+    undefined,
+    undefined,
+  ])
+  assert.equal(afterHandOver, undefined)
+})

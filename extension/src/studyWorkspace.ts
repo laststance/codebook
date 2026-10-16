@@ -11789,7 +11789,7 @@ export class StudyWorkspace {
   /**
    * Gives the keyboard to the file the editor's debugger opened at a stop Codebook did not cause, once per stop, when the editor reports that stop's frame; called by {@link judgeKeyboardAtPauseBegin} for a frame that came with a stop whose hand-over is due ({@link holdsStopKeyboard}), which also settles the pause to the learner.
    * Under Codebook's contributed `debug.focusEditorOnBreak: false`, VS Code and Cursor open the paused file in the active group preserving the focus, which hides the editor that had the keyboard and leaves it on no element (Cycle 0046 finding 589: a learner's Step Into, an adapter refresh after a palette command). At a stop the run caused the chat keeps the keyboard ({@link returnsKeyboardToChatAtPause}); at any other stop the paused file gets it, as the editor's own default would give it.
-   * The editor reports the frame after the paused file's opening, so the active text editor is that file then, also when it was in front already and no active-editor change came for the stop (a step within the file, Cycle 0046 finding 603); see {@link pausedEditorOfStop}. A frame that came without its stop (the editor's pass of the focus, the learner's click in the Call Stack view, both preserving the focus) and a text editor that becomes active later in the pause get no keyboard, as with the editor's default (findings 602 and 603).
+   * The editor reports the frame after the paused file's opening, so the active text editor is that file then, also when it was in front already and no active-editor change came for the stop (a step within the file, Cycle 0046 finding 603); see {@link pausedEditorOfStop}. A frame that came without its stop (the editor's pass of the focus, the learner's click in the Call Stack view, both preserving the focus) and a text editor that becomes active later in the pause get no keyboard, as with the editor's default (findings 602 and 603). A paused file whose opening was recognized as such got the keyboard at once ({@link handOverAtPausedFileOpening}), and its stop is done here.
    * @example this.handOverStopKeyboard()
    */
   private handOverStopKeyboard(): void {
@@ -11798,7 +11798,49 @@ export class StudyWorkspace {
       activeTextEditor: vscode.window.activeTextEditor,
       handOver: this.stopHandOver,
     })
-    if (!paused) return
+    if (paused) this.giveStopKeyboard(paused)
+  }
+
+  /**
+   * Gives the keyboard at once to the paused file the editor opened for a stop its own handling brings, without waiting for the stop's frame; called by the active-editor listener of {@link installReaders}.
+   * The R7 bound counts from the paused file's activation (40 ms in Cursor, 300 ms in VS Code), and the stop's frame comes 4 to 105 ms after it (Cycle 0046, C50 to C55). The opening is recognized only by proof: the text editor shows the source of the frame the editor focuses for an armed stop ({@link StopKeyboardHandOver.armedStopOpenedIn}), the stop's note says its own handling brings it now ({@link stopShownNow}), and its hand-over is due ({@link isStopHandOverDue}). Any other text editor that becomes active (a file the learner opens from the Explorer while the adapter is slow to answer, the paused file of a stop the editor keeps in the background) waits for the frame, which decides ({@link handOverStopKeyboard}).
+   * @param editor - The text editor that became active, if any.
+   * @example this.handOverAtPausedFileOpening(editor)
+   */
+  private handOverAtPausedFileOpening(
+    editor: vscode.TextEditor | undefined,
+  ): void {
+    const opened = this.stopHandOver.armedStopOpenedIn(editor)
+    if (
+      !opened ||
+      !this.stopShownNow(opened.sessionId) ||
+      !this.isStopHandOverDue(opened.sessionId)
+    )
+      return
+    this.leavePauseToLearner()
+    this.giveStopKeyboard(opened)
+  }
+
+  /**
+   * Says whether the editor's own handling of a session's stop, whose frame it has not reported yet, brings that stop to the front now ({@link wasShownByItsStop}); asked by {@link handOverAtPausedFileOpening}.
+   * @param sessionId - The debug session of the stop.
+   * @returns `true` while the stop's note waits for its frame and says its own handling brings it; `false` for a stop read behind another session's focused frame that is still paused or past the editor's pass of the focus, and once the frame was reported.
+   * @example this.stopShownNow('learner-node') // => false for a stop read behind a paused Codebook run's frame
+   */
+  private stopShownNow(sessionId: string): boolean {
+    const note = this.announcedStops.get(sessionId)
+    return note !== undefined && this.wasShownByItsStop(note)
+  }
+
+  /**
+   * Gives a stop's paused file the keyboard and marks the stop done; the step of {@link handOverStopKeyboard} and {@link handOverAtPausedFileOpening}.
+   * @param paused - The stop's session and the text editor that shows its paused file.
+   * @example this.giveStopKeyboard({ sessionId: 'learner-node', editor })
+   */
+  private giveStopKeyboard(paused: {
+    sessionId: string
+    editor: vscode.TextEditor
+  }): void {
     this.stopHandOver.markDone(paused.sessionId)
     // A keyboard courtesy: an editor that refuses the show leaves the focus where it was.
     void vscode.window
@@ -15167,9 +15209,11 @@ export class StudyWorkspace {
       ),
     )
     this.disposables.push(
-      vscode.window.onDidChangeActiveTextEditor(() =>
-        this.confirmInitialAppRegistration(),
-      ),
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        this.confirmInitialAppRegistration()
+        // The paused file the editor opens for a stop its own handling brings gets the keyboard at once.
+        this.handOverAtPausedFileOpening(editor)
+      }),
     )
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument((event) => {
