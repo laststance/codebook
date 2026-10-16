@@ -96,6 +96,35 @@ test('another session going on leaves the held stop', () => {
   assert.equal(handOver.isArmedFor('live-next-browser'), true)
 })
 
+// Value: protects=the keyboard at a stop whose adapter asked the editor to keep the focus where it is, which neither editor focuses; fails_when=such a stop waits for a hand-over, so the frame the editor's pass of the focus or the learner's click brings within half a second gives the file it opened preserving the focus the keyboard; why_new=Cycle 0046 finding 604
+test('a stop whose adapter asked to keep the focus does not wait for a hand-over', () => {
+  // Arrange
+  const handOver = new StopKeyboardHandOver()
+
+  // Act
+  handOver.arm('learner-node', true)
+
+  // Assert
+  assert.deepEqual(
+    [handOver.isArmedFor('learner-node'), handOver.heldSessionId()],
+    [false, undefined],
+  )
+})
+
+// Value: protects=the hand-over state of a session's earlier stop when another thread of it stops with the adapter's preserveFocusHint; fails_when=that stop ends the earlier stop's waiting or handed-over state, so its file loses the keyboard model's hold or its hand-over; why_new=Cycle 0046 finding 604 (such a stop leaves the record as it was)
+test('a stop whose adapter asked to keep the focus leaves the session’s handed-over stop as it was', () => {
+  // Arrange
+  const handOver = new StopKeyboardHandOver()
+  handOver.arm('learner-node')
+  handOver.markDone()
+
+  // Act
+  handOver.arm('learner-node', true)
+
+  // Assert
+  assert.equal(handOver.isDoneFor('learner-node'), true)
+})
+
 // Value: protects=the keyboard at the frame of one session while another session's stop waits for its hand-over; fails_when=the frame of a session whose stop does not wait is taken for the waiting stop's frame, and its active text editor gets the keyboard; why_new=Cycle 0046 finding 603 (the hand-over is resolved at the stop's own frame)
 test('a waiting stop is waiting only for the frame of its own session', () => {
   // Arrange

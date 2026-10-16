@@ -14,13 +14,21 @@ export class StopKeyboardHandOver {
   private stoppedSessionId: string | undefined
 
   /**
-   * Arms the hand-over for a stop the adapter reported, unless the same session's stop is already done.
+   * Arms the hand-over for a stop the adapter reported, unless the same session's stop is already done or the adapter asked the editor to keep the focus where it is.
+   * At a stop with the adapter's `preserveFocusHint` neither editor focuses anything (the stop handling of their debug sessions calls `focusStackFrame` only when the hint is not set, VS Code 1.140.0 and Cursor 3.23.12), so its frame reaches the front only by the editor's pass of the focus or the learner's click in the Call Stack view, both preserving the focus, and the editor's default gives no file the keyboard there (Cycle 0046 finding 604). Such a stop leaves the record as it was.
    * @param sessionId - The debug session that stopped.
-   * @example handOver.arm('live-next-browser')
+   * @param asksToKeepFocus - Whether the adapter's `stopped` event set `preserveFocusHint`.
+   * @example
+   * handOver.arm('live-next-browser')
+   * handOver.arm('learner-node', true) // learner-node's stop never waits for a hand-over
    */
-  arm(sessionId: string): void {
-    // A stop already handed over stays done: an invalidation of the same stop must not hand the keyboard over again.
-    if (this.state === 'done' && this.stoppedSessionId === sessionId) return
+  arm(sessionId: string, asksToKeepFocus = false): void {
+    // A stop already handed over stays done: an invalidation of the same stop must not hand the keyboard over again. A stop the editor never focuses gets no hand-over.
+    if (
+      asksToKeepFocus ||
+      (this.state === 'done' && this.stoppedSessionId === sessionId)
+    )
+      return
     this.state = 'armed'
     this.stoppedSessionId = sessionId
   }

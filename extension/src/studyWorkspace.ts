@@ -3095,8 +3095,8 @@ export class StudyWorkspace {
     })
     if (this.isLearnersStopFromEditor(stop.reason))
       this.keyboardOutsideEditors = undefined
-    // The stop waits for the keyboard hand-over, which the editor's report of its frame resolves.
-    this.stopHandOver.arm(sessionId)
+    // The stop waits for the keyboard hand-over, which the editor's report of its frame resolves; a stop whose adapter asked to keep the focus never does.
+    this.stopHandOver.arm(sessionId, stop.keepsFocus)
   }
 
   /**

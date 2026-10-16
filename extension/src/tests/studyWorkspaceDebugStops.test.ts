@@ -3717,3 +3717,104 @@ test('a step within the paused file that the learner starts from a view gives th
     await harness.close()
   }
 })
+
+// Value: protects=the keyboard of a learner in the Call Stack view who single-clicks, 200 ms after it was reported, the frame of a stop of their own debug session whose adapter asked the editor to keep the focus where it is; fails_when=the hand-over takes a frame within STOP_OWN_FOCUS_BOUND_MS of such a stop for one the stop's own handling brought and gives the file the click opened preserving the focus the keyboard, although neither editor focuses anything at such a stop (handleStop focuses only when !preserveFocusHint, VS Code 1.140.0 and Cursor 3.23.12 workbench); why_new=Cycle 0046 finding 604 (the 500 ms judgement stays for the reader's other callers and is not used for the hand-over); seam=pauseDebugger with keepsFocus and staysInBackground for a session that is no Codebook run, focusView, passFocusToStoppedSession for the click, the clock of performance.now held for the editor events
+test('a click 200 ms after a stop whose adapter asked to keep the focus leaves the keyboard in the Call Stack view', async (t) => {
+  // Arrange: the reader is open under Codebook's contributed default; the learner had a file in front of column 2 and clicked into the Call Stack view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: on a held clock the learner's own debug session reports a stop with the adapter's preserveFocusHint, which the editor does not bring to the front; 200 ms later the learner single-clicks its frame in the Call Stack view, which opens its file preserving the focus and reports the frame.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    harness.pauseDebugger({
+      session: 'learner-node',
+      staysInBackground: true,
+      keepsFocus: true,
+    })
+    clockMs += 200
+    harness.passFocusToStoppedSession('learner-node', 'actions.ts', 2)
+    clock.mock.restore()
+
+    // Assert: the Call Stack view keeps the keyboard, and no file is shown with it.
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner in the Call Stack view when the editor passes the focus, 200 ms after it was reported, to a stop of their own debug session whose adapter asked the editor to keep the focus where it is; fails_when=the hand-over takes the frame of that pass, within STOP_OWN_FOCUS_BOUND_MS of the stop, for one the stop's own handling brought and gives the file the pass opened preserving the focus the keyboard, although the stop's handling focuses nothing and the pass preserves the focus (passFocusScheduler calls focusStackFrame without options); why_new=Cycle 0046 finding 604; seam=pauseDebugger with keepsFocus and staysInBackground, continueDebugSession, resumeDebugger, passFocusToStoppedSession, focusView, the clock of performance.now held for the editor events
+test("the editor's focus pass 200 ms after a stop whose adapter asked to keep the focus gets no keyboard from Codebook", async (t) => {
+  // Arrange: a live run paused at a stop of its own, which the editor showed preserving the focus under Codebook's contributed default; the learner clicked into the Call Stack view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      staysInBackground: true,
+    })
+    codebookStopLedger.recordStop('live-next-browser', true)
+    harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: on a held clock the run's continue lets the browser session go on, and the editor reports its thread 200 ms later; 600 ms after the continue the learner's own session reports a stop with the adapter's preserveFocusHint, and 200 ms after that the editor passes the focus to it, opening its file preserving the focus.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    codebookStopLedger.openWindow(['live-next-browser'])
+    harness.continueDebugSession('live-next-browser')
+    clockMs += 200
+    harness.resumeDebugger()
+    clockMs += 400
+    harness.pauseDebugger({
+      session: 'learner-node',
+      staysInBackground: true,
+      keepsFocus: true,
+    })
+    clockMs += 200
+    harness.passFocusToStoppedSession('learner-node', 'actions.ts', 2)
+    clock.mock.restore()
+
+    // Assert: the Call Stack view keeps the keyboard, and no file is shown with it.
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
