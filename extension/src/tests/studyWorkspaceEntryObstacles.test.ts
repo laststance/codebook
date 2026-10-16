@@ -2089,8 +2089,8 @@ test('an agent’s first run after a reload whose record no longer proves the le
   }
 })
 
-// Value: protects=the chat input's keyboard in VS Code, and in Cursor with its chat in the side bar, when an agent's run prepares the Application while the Study workspace is closed and the learner's file is the active editor of the first group: the Application gets its own locked group without any editor group's focus and no file gets the keyboard, so nothing needs to be told; fails_when=the preparation focuses the first group and its focus return shows the learner's active file with the keyboard, so the chat input the learner just typed in loses its keyboard to that file for good, without a word; why_new=Cycle 0046 row 612 (C56 run c56-1f-control: focusFirstEditorGroup, then showTextDocument(actions.ts, preserveFocus false) from restorePreparationFocus); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input, which the editor does not report), presentation.createViewport (the MCP-first preparation), keyboardInView, textDocumentShows and the information messages
-test('an agent’s run that prepares the Application while the chat view has the keyboard leaves the keyboard in the chat and focuses nothing', async () => {
+// Value: protects=the chat input's keyboard in VS Code, and in Cursor with its chat in the side bar, when an agent's run prepares the Application while the Study workspace is closed and the learner's file is the active editor of the first group: the Application gets its own locked group without any editor group's focus, no file gets the keyboard, and the one sentence the editor's ambiguity calls for (row 614) says that a view keeps it; fails_when=the preparation focuses the first group and its focus return shows the learner's active file with the keyboard, so the chat input the learner just typed in loses its keyboard to that file for good, without a word; why_new=Cycle 0046 row 612 (C56 run c56-1f-control: focusFirstEditorGroup, then showTextDocument(actions.ts, preserveFocus false) from restorePreparationFocus); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input, which the editor does not report), presentation.createViewport (the MCP-first preparation), keyboardInView, textDocumentShows and the information messages
+test('an agent’s run that prepares the Application while the chat view has the keyboard leaves the keyboard in the chat, focuses nothing and says once where the keyboard may be', async () => {
   // Arrange: the learner's actions.ts is the active editor of the first group and auth.ts stands in the second; then the learner typed the request into the chat view, which the editor does not report.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
@@ -2111,7 +2111,7 @@ test('an agent’s run that prepares the Application while the chat view has the
     )
 
     try {
-      // Assert: no document was shown with the keyboard and the chat view still has it; the Application stands alone in its locked group at column 1 beside the learner's two groups, and nothing is told.
+      // Assert: no document was shown with the keyboard and the chat view still has it; the Application stands alone in its locked group at column 1 beside the learner's two groups, and the sentence names both places the keyboard may be.
       assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
       assert.equal(harness.keyboardInView(), true)
       assert.deepEqual(
@@ -2128,7 +2128,12 @@ test('an agent’s run that prepares the Application while the chat view has the
         ],
       )
       assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
-      assert.deepEqual(harness.informationMessages, [])
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+        ],
+      )
     } finally {
       viewport.close()
     }
@@ -2137,8 +2142,8 @@ test('an agent’s run that prepares the Application while the chat view has the
   }
 })
 
-// Value: protects=the chat input's keyboard in VS Code when an agent's first run after Developer: Reload Window retires the earlier window's empty Application group, which the editor restored as its active group: the proof and the close of that group and the new Application group take no editor group's focus, no file gets the keyboard, and nothing needs to be told; fails_when=the leftover proof focuses the recorded column, the removal of the focused group hands the keyboard to the learner's file, and the preparation's focus return then shows that file with the keyboard; why_new=Cycle 0046 row 612 (C56 run c56-1f2: row 609's proof focusFirstEditorGroup, retainForeignTabFocus giving nothing back beside an active text editor, then showTextDocument(actions.ts, preserveFocus false)); seam=applicationGroupMarkers, leaveEmptyGroup, focusMutableDraft, the editor's focusFirstEditorGroup (the learner's last click into the empty group), focusView (the chat view's input), presentation.createViewport (the MCP-first preparation), keyboardInView, textDocumentShows and the information messages
-test('an agent’s first run after a reload retires the earlier window’s empty Application group the editor restored as active, and leaves the keyboard in the chat view', async () => {
+// Value: protects=the chat input's keyboard in VS Code when an agent's first run after Developer: Reload Window retires the earlier window's empty Application group, which the editor restored as its active group: the proof and the close of that group and the new Application group take no editor group's focus, no file gets the keyboard, and the one sentence the editor's ambiguity calls for (row 614) says that a view keeps it; fails_when=the leftover proof focuses the recorded column, the removal of the focused group hands the keyboard to the learner's file, and the preparation's focus return then shows that file with the keyboard; why_new=Cycle 0046 row 612 (C56 run c56-1f2: row 609's proof focusFirstEditorGroup, retainForeignTabFocus giving nothing back beside an active text editor, then showTextDocument(actions.ts, preserveFocus false)); seam=applicationGroupMarkers, leaveEmptyGroup, focusMutableDraft, the editor's focusFirstEditorGroup (the learner's last click into the empty group), focusView (the chat view's input), presentation.createViewport (the MCP-first preparation), keyboardInView, textDocumentShows and the information messages
+test('an agent’s first run after a reload retires the earlier window’s empty Application group the editor restored as active, leaves the keyboard in the chat view and says once where the keyboard may be', async () => {
   // Arrange: the earlier window recorded its Application group at column 1; after the reload it stands empty and active beside the learner's actions.ts in column 2 and auth.ts in column 3, and the learner typed the request into the chat view.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
@@ -2176,7 +2181,7 @@ test('an agent’s first run after a reload retires the earlier window’s empty
     )
 
     try {
-      // Assert: no document was shown with the keyboard and the chat view still has it; the leftover is gone, the new Application group stands locked at column 1 before the learner's two groups, and nothing is told.
+      // Assert: no document was shown with the keyboard and the chat view still has it; the leftover is gone, the new Application group stands locked at column 1 before the learner's two groups, and the sentence names both places the keyboard may be.
       assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
       assert.equal(harness.keyboardInView(), true)
       assert.equal(harness.groups.includes(applicationLeftover), false)
@@ -2193,7 +2198,12 @@ test('an agent’s first run after a reload retires the earlier window’s empty
           { column: 3, locked: false, holdsActions: false, holdsAuth: true },
         ],
       )
-      assert.deepEqual(harness.informationMessages, [])
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+        ],
+      )
     } finally {
       viewport.close()
     }
@@ -2341,6 +2351,44 @@ test('an agent’s run that prepares the Application while the learner types in 
       assert.equal(harness.keyboardOnBody(), false)
       assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
       assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who reads a file of the first group, without a key press, while an agent's run prepares the Application in VS Code: the new group takes the keyboard from that file by the editor's own rule, nothing proves that the keyboard was there and not in a chat view, so the file does not get it and the learner is told once where it may be; fails_when=the keyboard is left in the Application's group without a word (Cycle 0046 row 614, introduced by row 612's preparation without a focus); why_new=Cycle 0046 row 614; seam=useNativeLayout, focusMutableDraft (the learner's file, with no fresh sign), presentation.createViewport (the MCP-first preparation), textDocumentShows, keyboardOnBody and the information messages
+test('an agent’s run that prepares the Application while the learner reads a first-group file without a key press gives that file nothing it cannot prove and says once where the keyboard may be', async () => {
+  // Arrange: actions.ts is the active editor of the first group and has the keyboard; the learner has not pressed a key in it for a while, so no sign says so.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: the new group took the keyboard from actions.ts, no document was shown with it afterwards, and the sentence says where the keyboard may be.
+      assert.deepEqual(harness.informationMessages, [
+        {
+          message:
+            'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+          items: [],
+        },
+      ])
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.equal(harness.keyboardOnBody(), true)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     } finally {
       viewport.close()
     }

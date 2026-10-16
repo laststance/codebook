@@ -4367,6 +4367,8 @@ test('an isolated App preserves closed-reader native input and actual source rep
       () => {},
       'normal',
     )
+    // The preparation's own sentence about the new group (row 614) is no part of this test.
+    const messagesBefore = harness.informationMessages.length
     const readerState = harness.reader.presentationState().state,
       revealsBefore = harness.panelReveals().length
     harness.pauseDebugger({
@@ -4376,7 +4378,9 @@ test('an isolated App preserves closed-reader native input and actual source rep
     await harness.revealApplicationPaneOverPausedFile()
     const closedReader = {
       column: harness.editor.window.activeTextEditor?.viewColumn,
-      notices: harness.informationMessages.map((message) => message.message),
+      notices: harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
     }
 
     // Act: the actual capture opens its source; after continuation a second capture replaces the next native file.
@@ -4387,9 +4391,9 @@ test('an isolated App preserves closed-reader native input and actual source rep
       action: 'repository-click',
     })
     await harness.reader.open()
-    const afterFirstCapture = harness.informationMessages.map(
-      (message) => message.message,
-    )
+    const afterFirstCapture = harness.informationMessages
+      .slice(messagesBefore)
+      .map((message) => message.message)
     await harness.runtimes[0]!.continue(
       'browser',
       harness.runtimes[0]!.snapshots.at(-1)!.pause,
@@ -4410,7 +4414,9 @@ test('an isolated App preserves closed-reader native input and actual source rep
       'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
     ])
     assert.deepEqual(
-      harness.informationMessages.map((message) => message.message),
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
       [
         'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
       ],
@@ -4460,6 +4466,8 @@ test('actual captured-source takeovers tell the learner once across reader repla
       () => {},
       'normal',
     )
+    // The preparation's own sentence about the new group (row 614) is no part of this test.
+    const messagesBefore = harness.informationMessages.length
     harness.pauseDebugger({
       focusesEditorOnBreak: true,
       opensWithKeyboard: { filename: 'login-form.tsx', column: 1 },
@@ -4471,9 +4479,9 @@ test('actual captured-source takeovers tell the learner once across reader repla
       action: 'repository-click',
     })
     await harness.reader.open()
-    const firstNotices = harness.informationMessages.map(
-      (message) => message.message,
-    )
+    const firstNotices = harness.informationMessages
+      .slice(messagesBefore)
+      .map((message) => message.message)
     harness.resumeDebugger()
     first.close()
     // Disposal preserves the learner's own focused draft; no unrelated Close keyboard notice is part of this test.
@@ -4515,7 +4523,9 @@ test('actual captured-source takeovers tell the learner once across reader repla
       'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
     ])
     assert.deepEqual(
-      harness.informationMessages.map((message) => message.message),
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
       [
         'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
       ],

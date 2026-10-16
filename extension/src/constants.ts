@@ -332,7 +332,7 @@ export const PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE =
   'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.'
 /**
  * What the reader tells the learner, once in an editor session, when it placed the Application pane in a new editor group of the only editor part (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar) after focusing an editor group: another group than the first was the active one (`workbench.action.newGroupAbove` adds above the active group only: VS Code 1.140.0 `workbench.desktop.main.js` 990:31741, Cursor 17388:33629), or an earlier window's leftover group had to take the keyboard for its proof. The new group has the keyboard then. The extension API reads the same whether the keyboard was in a file or in the chat view before (the active text editor stays the active one while a view has it), so Codebook gives it to no file, except one the learner clicked or typed in a moment ago ({@link LEARNER_SIGN_FRESH_MS}), and says where it is (Cycle 0046 row 612).
- * Without such a focus the new group takes the keyboard only from the editor area, and a chat view keeps it: nothing is told then, at the price {@link LEARNER_SIGN_FRESH_MS} names for a learner who reads a file of the first group without a key press.
+ * Without such a focus the new group takes the keyboard only from the editor area, and a chat view keeps it; {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE} is told then.
  * @example void showPlainNotice(vscode.window, 'information', APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE)
  */
 export const APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE =
@@ -343,6 +343,12 @@ export const APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE =
  */
 export const AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE =
   'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session, when it placed the Application pane in a new editor group of the only editor part without focusing any editor group, and nothing proved where the keyboard was: `workbench.action.newGroupAbove` gives the new group the keyboard only when the editor area or the page body had it (VS Code 1.140.0 `workbench.desktop.main.js` 990:31741, Cursor 17388:33629), and a chat view, the terminal or another view keeps it. The extension API reads the same for a file of the first group that had the keyboard without a fresh sign of the learner's hand ({@link LEARNER_SIGN_FRESH_MS}) and for a chat view beside it, and no command focuses a group or a pane only when the editor area has the keyboard short of adding or removing a group, so the sentence names both cases (Cycle 0046 row 614).
+ * @example void showPlainNotice(vscode.window, 'information', APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE)
+ */
+export const APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE =
+  'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

@@ -10,6 +10,7 @@ import {
   AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
   AGENT_STORAGE_DIRECTORY,
   APPLICATION_GROUP_MARKER_KEY,
+  APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE,
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   APPLICATION_PANE_CLOSED_MESSAGE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
@@ -487,7 +488,7 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -12659,12 +12660,12 @@ export class StudyWorkspace {
   }
 
   /**
-   * Settles the keyboard after an agent's run's Application preparation in the only editor part (VS Code, and Cursor with its chat in the side bar), where the active text editor and a pane's `active` flag read the same while a chat view has the keyboard (row 612): no file or pane is given the keyboard unless the learner is known to work there, and a keyboard the preparation took itself is named once ({@link tellPreparedApplicationKeyboard}); asked by {@link returnPreparationFocus} before it focuses anything.
+   * Settles the keyboard after an agent's run's Application preparation in the only editor part (VS Code, and Cursor with its chat in the side bar), where the active text editor and a pane's `active` flag read the same while a chat view has the keyboard (row 612): no file or pane is given the keyboard unless the learner is known to work there, and the learner is told once where it is or may be ({@link tellPreparedApplicationKeyboard}); asked by {@link returnPreparationFocus} before it focuses anything.
    * @param preparation - Whether the main editor is the only editor part, whether the preparation is a live run's, and whether it focused an editor group.
    * @param knowsLearnersPlace - Whether a fresh sign of the learner's own hand in the active text editor ({@link learnerWorksInActiveEditor}) or the Study pane's report ({@link reportsKeyboard}) said where the keyboard was.
    * @param stillCurrent - The preparation's guard for the current input; a newer learner choice is told nothing.
    * @returns
-   * - `true` when the keyboard stays where the preparation left it (and the learner was told, once, if the preparation took it).
+   * - `true` when the keyboard stays where the preparation left it, and the learner was told once.
    * - `false` for another editor part, a preparation that is not an agent's run, and a place the learner is known to work in: the ordinary return goes on.
    * @example this.settleKeyboardBesideChatView({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true }, false, stillCurrent) // => true, after the notice
    */
@@ -12680,23 +12681,26 @@ export class StudyWorkspace {
       knowsLearnersPlace
     )
       return false
-    // A keyboard the preparation took is named; one it left where it was needs no word.
-    if (preparation.tookKeyboard && stillCurrent())
-      this.tellPreparedApplicationKeyboard()
+    // A newer choice of the learner is told nothing; otherwise no path leaves the keyboard in the Application's group without a word (row 614).
+    if (stillCurrent())
+      this.tellPreparedApplicationKeyboard(preparation.tookKeyboard)
     return true
   }
 
   /**
-   * Tells the learner, once in an editor session, that the new Application group has the keyboard after a preparation in the only editor part focused an editor group and gave the keyboard back to nobody; called by {@link settleKeyboardBesideChatView} in place of a return to a file or a pane the learner is not known to work in.
-   * @example this.tellPreparedApplicationKeyboard() // VS Code, the learner's file was the active editor of the second group
+   * Tells the learner, once in an editor session, where the keyboard is after a preparation in the only editor part gave it back to nobody; called by {@link settleKeyboardBesideChatView} in place of a return to a file or a pane the learner is not known to work in.
+   * @param tookKeyboard - Whether the preparation focused an editor group itself: the new Application group has the keyboard then ({@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}). Otherwise that group has it only if the editor area had it, which nothing proves, and a view keeps it ({@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}).
+   * @example this.tellPreparedApplicationKeyboard(true) // VS Code, the learner's file was the active editor of the second group
    */
-  private tellPreparedApplicationKeyboard(): void {
+  private tellPreparedApplicationKeyboard(tookKeyboard: boolean): void {
     if (keyboardNoticesTold.has('preparation')) return
     keyboardNoticesTold.add('preparation')
     void showPlainNotice(
       vscode.window,
       'information',
-      APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
+      tookKeyboard
+        ? APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE
+        : APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE,
     )
   }
 

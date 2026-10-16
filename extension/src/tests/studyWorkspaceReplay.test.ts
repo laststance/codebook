@@ -4723,7 +4723,7 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
     })
     await harness.controller.settle()
 
-    // Assert: no document was shown with the keyboard, the summary's views were shown without it, and the chat view still has it; nothing is told.
+    // Assert: no document was shown with the keyboard, the summary's views were shown without it, and the chat view still has it; the one sentence the editor's ambiguity calls for (row 614) says that a view keeps it.
     assert.deepEqual(
       harness
         .textDocumentShows()
@@ -4737,7 +4737,12 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
     ])
     assert.equal(harness.keyboardInView(), true)
     assert.equal(harness.controller.state().readiness, 'ready')
-    assert.deepEqual(harness.informationMessages, [])
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+      ],
+    )
   } finally {
     await harness.close()
   }

@@ -3685,7 +3685,9 @@ test('a live run ending preserves side-view typing even while its Application re
     assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
     assert.equal(harness.keyboardInView(), true)
     assert.equal(harness.innerFocusedPanel(), undefined)
-    const commandsBefore = harness.commands.length
+    // The preparation's own sentence about the new group (row 614) is no part of this test.
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
 
     // Act: automatic retirement completes without the learner choosing another input.
     live.close()
@@ -3704,7 +3706,7 @@ test('a live run ending preserves side-view typing even while its Application re
         focusCommands: harness.commands
           .slice(commandsBefore)
           .filter((command) => /^workbench\.action\.focus/.test(command)),
-        notices: harness.informationMessages,
+        notices: harness.informationMessages.slice(messagesBefore),
       },
       {
         keyboardInView: true,
@@ -3803,7 +3805,9 @@ for (const preparation of ['initialization', 'progress read'])
       await preparationStarted
       assert.equal(harness.reader.presentationState().state, 'applying')
       assert.equal(harness.reader['opened'], false)
-      const commandsBefore = harness.commands.length
+      // The preparation's own sentence about the new group (row 614) is no part of this test.
+      const commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
 
       // Act: the old inspection finishes before the newer Open can finish reading progress.
       releaseInspection()
@@ -3818,7 +3822,7 @@ for (const preparation of ['initialization', 'progress read'])
           .filter((command) => /^workbench\.action\.focus/.test(command)),
         [],
       )
-      assert.deepEqual(harness.informationMessages, [])
+      assert.deepEqual(harness.informationMessages.slice(messagesBefore), [])
       releasePreparation()
       const result = await changing
       assert.equal(result.state, 'open')
@@ -3878,7 +3882,9 @@ for (const replacement of ['a newer live lease', 'a replacement document'])
         }
         return originalPost(message)
       }
-      const commandsBefore = harness.commands.length
+      // The preparation's own sentence about the new group (row 614) is no part of this test.
+      const commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
 
       // Act: new ownership arrives before the original inspection answers.
       live.close()
@@ -3904,7 +3910,7 @@ for (const replacement of ['a newer live lease', 'a replacement document'])
           .filter((command) => /^workbench\.action\.focus/.test(command)),
         [],
       )
-      assert.deepEqual(harness.informationMessages, [])
+      assert.deepEqual(harness.informationMessages.slice(messagesBefore), [])
     } finally {
       releaseInspection()
       restorePostMessage()
@@ -3938,12 +3944,14 @@ test('a live run that ends while its Application pane has the keyboard and the S
       keyboardInApplicationPane:
         harness.focusedPanel() === 'codebook.scopedBrowser',
     }
-    const commandsBefore = harness.commands.length
+    // The preparation's own sentence about the new group (row 614) is no part of this test.
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
 
     // Act: the run ends and gives its pane back; then a second run ends the same way in the same editor session.
     live.close()
     await waitUntil(
-      () => harness.informationMessages.length > 0,
+      () => harness.informationMessages.length > messagesBefore,
       'the notice of the run that closed its pane',
       2_000,
     ).catch(() => undefined)
@@ -3953,7 +3961,9 @@ test('a live run that ends while its Application pane has the keyboard and the S
       focusCommands: harness.commands
         .slice(commandsBefore)
         .filter((command) => /^workbench\.action\.focus/.test(command)),
-      sentences: harness.informationMessages.map((message) => message.message),
+      sentences: harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
     }
     const second = await harness.reader.presentation.createViewport(
       randomUUID(),
@@ -3988,7 +3998,7 @@ test('a live run that ends while its Application pane has the keyboard and the S
       ],
     })
     assert.equal(harness.keyboardOnBody(), false)
-    assert.equal(harness.informationMessages.length, 1)
+    assert.equal(harness.informationMessages.slice(messagesBefore).length, 1)
   } finally {
     await harness.close()
   }
@@ -4023,7 +4033,9 @@ for (const situation of [
         harness.reader['app']!.reveal(undefined, false)
         harness.changeWindowFocus(false)
       }
-      const commandsBefore = harness.commands.length
+      // The preparation's own sentence about the new group (row 614) is no part of this test.
+      const commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
 
       // Act: the run ends; longer than the reader would take to settle the keyboard.
       live.close()
@@ -4036,7 +4048,7 @@ for (const situation of [
           focusCommands: harness.commands
             .slice(commandsBefore)
             .filter((command) => /^workbench\.action\.focus/.test(command)),
-          sentences: harness.informationMessages,
+          sentences: harness.informationMessages.slice(messagesBefore),
         },
         { panels: 0, focusCommands: [], sentences: [] },
       )
@@ -4137,7 +4149,9 @@ test('a run that ends with its Application pane active sends no keyboard command
       harness.changeWindowFocus(false)
     })
     removeDisposalObserver = (): void => disposal.dispose()
-    const commandsBefore = harness.commands.length
+    // The preparation's own sentence about the new group (row 614) is no part of this test.
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
 
     // Act: end the run; actual native disposal triggers departure while its tab is still pending.
     live.close()
@@ -4160,7 +4174,7 @@ test('a run that ends with its Application pane active sends no keyboard command
         focusCommands: harness.commands
           .slice(commandsBefore)
           .filter((command) => /^workbench\.action\.focus/.test(command)),
-        notices: harness.informationMessages,
+        notices: harness.informationMessages.slice(messagesBefore),
       },
       { panels: 0, focusCommands: [], notices: [] },
     )
