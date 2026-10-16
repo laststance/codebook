@@ -2215,6 +2215,36 @@ The three fixers' commits were cherry-picked without conflict onto `c1c8c0a0` (f
 
 Gates on the final source: `pnpm --dir extension health` exit 0 (4397 tests, 4396 pass, 1 existing skip; 413 of 413 files scored with the run's coverage; a stale compiled `wikiChatWatchTitle.test.js` from 592's deleted test was removed from `dist` first, as the gate refuses a compiled test without a source); format, typecheck, lint (`eslint --concurrency=2`), dupes, dead-code and the package regressions (359 of 359) pass; all 102 workspace controls fail their declared tests on the integrated compiled module with the bytes restored; the fixes' own controls fail their tests (589: A 6, F 1, C 1, D 3, E 5; 590/591: eight variants; 592: K1 to K8), each restored. Private `artifacts/cycle-0046/c55/gates/`, `controls/`, `fix-controls/`. Next: package and install C55, then the native rounds of the C55 charter (`artifacts/cycle-0046/c55/charter-draft.md`, frozen before any C55 input).
 
+### C55 normally installed; native charter frozen (2026-10-16)
+
+C55: clean commit `90e7e4d5` (the C54 source with the fixes of 588 to 592 and finding 594's removal), VSIX `fa2a5423dd641153ad3042c85aedf6349b10a9a8755078ba4109ac7ecc769d27` (1,458,110 bytes, 29 entries; package and package check pass), sourceHash `ad1743d2…`, extension 0.2.30/API 1.7. Both editors were quit through `workbench.action.quit` (VS Code with no unsaved document in its Wiki window; Cursor through its "Quit Cursor?" dialog), the VSIX was installed with each editor's CLI (`--install-extension … --force`, the dedicated user-data and extensions folders), and both were started again on the dashboard with the debugging ports: VS Code 1.140.0 (window `6291460`) and Cursor (window `18874372`) each load revision `90e7e4d5`, clean, at the standard place (reported 617,32, 1336×1020 and 1335×1020). Dashboard `main` `1936e419`.
+
+Frozen before any C55 input (private `artifacts/cycle-0046/c55/charter-draft.md`):
+
+Candidate C55 = C54 + fixes 588 (merged 402050c8), 589 (R7), 590/591 (ownership marker), 592 (watch notification vs stacked toast).
+Same windows, harness and reset as C54 (c54/cursor_round.sh, vscode_round.sh, case_step.py, hold_pause.py, frame_sheets.py).
+
+1. 588, Cursor: 9a, 9a2, 9b exactly as on C54. PASS = the C54 amendment's sign PASS: after Retry the captured source is in front of the
+   learner's group with the keyboard (TEXTAREA), 0 BODY samples from the frame on. FAIL = any BODY sample after Retry.
+2. 589, R7, both hosts:
+   a. 9f (navigation command, Toggle Skipping this File, Retry): after js-debug's refresh (`continued`, `stopped`) the paused file has the
+      keyboard within the frozen transient bound (40 ms Cursor, 300 ms VS Code from the paused file's activation; the BODY samples inside it are
+      counted and disclosed), then 0 BODY to 1.5 s after Retry.
+   b. F11 from the captured source at the first live pause: the stop opens login-form.tsx and that editor has the keyboard within the bound;
+      the run then ends with the existing manual-resume sentence ("Manual or competing resume invalidated live pause").
+   c. F10 in one file (a learner's step that stays in the same file): the keyboard stays in that file, 0 BODY outside the bound.
+   d. codebook_continue with the chat input focused (a Codebook-caused stop): the chat keeps the keyboard (preserving default).
+   e. A debug session outside Codebook (the dashboard's own launch, a breakpoint hit): the paused file gets the keyboard as without Codebook.
+   f. Explicit `debug.focusEditorOnBreak: false` in the workspace layer: Codebook gives nothing; the editor's own behaviour stands (recorded).
+3. 590/591, both hosts: reproduce_590.py (Study open and confirmed, Developer: Reload Window), then cold Study select + Return Current:
+   PASS = the layout is confirmed, the leftover empty owned group is retired, Return Current shows the App in its own group; Restore and
+   Close Study Workspace return the learner's original groups exactly (labels, active, preview, dirty, URIs). FAIL = any refusal or a merged group.
+   591: a failed preparation (the C54 reload-1 path) followed by Restore never merges a learner group.
+4. 592, VS Code with a second toast stacked (VS Code's Docker recommendation or another real notification): during an update waiting at a
+   chat approval, the topmost element at Allow and Skip is the button. FAIL = the notification's element.
+5. H1-H3 spot check per host (one round each) and 567's original-group Return.
+Every round: recorded video, frames inspected around each gesture and Retry, terminal cleanup, VS Code auth.ts draft set aside and restored.
+
 ## Historical evidence checkpoints
 
 - [2026-10-16 complete integration checkpoint](0046-evidence-checkpoint-20261016-integration.md), copied byte-for-byte before shortening completed R3/T9 integration history; SHA-256 `7c9f8efb8313fbdc08b38383e65fc99d88f8c5e02cdaa6b335d1de35b2c12677`. Its251219bytes preserve every source cut, failed attempt and original assertion through the current quality cut. The49incoming integration headings above remain and link to their full entries. Current authority, all581tasks, native/input limitations, current quality results and the next action remain in this active record; no historical count or old failure is promoted.
