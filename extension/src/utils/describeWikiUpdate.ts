@@ -156,10 +156,10 @@ export function describeWikiUpdate(
         (running.isOutputOutsideProject
           ? ' ' + wording.outsideOutputApprovalsNote
           : '') +
-        // Once the chat asked for an approval Codebook does not see it stop: a learner who refused a step and stays on this page would wait out the bound.
+        // Once the chat asked for an approval Codebook does not see it stop: a learner who refused a step and stays on this page would wait out the bound. The watch's Cancel is its entry in the status bar.
         ' ' +
         wording.refusedStepAdvice +
-        ' in the editor’s notification; otherwise Codebook keeps watching for the whole ' +
+        ' in the editor’s status bar; otherwise Codebook keeps watching for the whole ' +
         bound +
         '.',
     )

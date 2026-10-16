@@ -22,9 +22,25 @@ import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { listenTo } from './listenTo'
 import { loadModule } from './loadModule'
 
-/** The Cancel button of one progress notification the window showed. */
+/** The Cancel of one run the window showed: the Cancel button of a progress notification (a Cursor run), or a press on the status bar entry that watches a VS Code update. */
 export type CancellableProgress = {
   cancel(): void
+}
+
+/** A status bar entry the fake editor holds: what the extension set on it, and whether it is on screen. */
+type FakeStatusBarEntry = {
+  id: string
+  alignment: number | undefined
+  name?: string
+  text: string
+  tooltip?: string
+  command?: string | { command: string }
+  accessibilityInformation?: { label: string; role?: string }
+  isShown: boolean
+  isDisposed: boolean
+  show(): void
+  hide(): void
+  dispose(): void
 }
 
 type UriHandler = (uri: { path: string; query: string }) => Promise<void>
@@ -66,7 +82,7 @@ export type HeldUpdateStep =
  * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
- * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
+ * @param options.cancellable - Collects the Cancel of each run the window shows: the Cancel button of a progress notification, and the press on a status bar entry, which runs the entry's command while the entry is on screen, as a click does; the window shows both and records their texts also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
@@ -77,7 +93,7 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
- * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
+ * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles, the text of every status bar entry it showed (`statusBarTexts`) and of those on screen now (`visibleStatusBarTexts`)), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
  *
  * @example
  * ```ts
@@ -132,6 +148,8 @@ export async function openWikiUpdateWindow(options: {
   confirmations: string[]
   confirmationDetails: string[]
   progressTitles: string[]
+  statusBarTexts: string[]
+  visibleStatusBarTexts(): string[]
   looks: {
     candidateListings: number
     stampReads: number
@@ -192,6 +210,8 @@ export async function openWikiUpdateWindow(options: {
   const confirmations: string[] = []
   const confirmationDetails: string[] = []
   const progressTitles: string[] = []
+  const statusBarTexts: string[] = []
+  const statusBarEntries: FakeStatusBarEntry[] = []
   const looks = { candidateListings: 0, stampReads: 0, stampReadsDone: 0 }
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
@@ -226,6 +246,45 @@ export async function openWikiUpdateWindow(options: {
     })
     return task({}, token)
   }
+  /** Creates a status bar entry as the editor does; showing it records its text and offers its press to a test that collects the Cancel of each run. */
+  const createStatusBarItem = (
+    id: string,
+    alignment?: number,
+  ): FakeStatusBarEntry => {
+    const entry: FakeStatusBarEntry = {
+      id,
+      alignment,
+      text: '',
+      isShown: false,
+      isDisposed: false,
+      show(): void {
+        // A disposed entry stays gone, and an entry already on screen is not shown twice.
+        if (entry.isDisposed || entry.isShown) return
+        entry.isShown = true
+        statusBarTexts.push(entry.text)
+        options.cancellable?.push({
+          cancel(): void {
+            // A click reaches only an entry that is on screen, and runs the command the entry names.
+            if (!entry.isShown) return
+            const commandName =
+              typeof entry.command === 'string'
+                ? entry.command
+                : entry.command?.command
+            if (commandName !== undefined) void commands.get(commandName)?.()
+          },
+        })
+      },
+      hide(): void {
+        entry.isShown = false
+      },
+      dispose(): void {
+        entry.isShown = false
+        entry.isDisposed = true
+      },
+    }
+    statusBarEntries.push(entry)
+    return entry
+  }
   // A replaced constant reaches only the extension's own module: one it never reads would change nothing.
   await assertConstantsReadBy(
     resolve(__dirname, '../../extension.js'),
@@ -236,6 +295,7 @@ export async function openWikiUpdateWindow(options: {
     {
       vscode: {
         ProgressLocation: { Notification: 15 },
+        StatusBarAlignment: { Left: 1, Right: 2 },
         RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
@@ -340,8 +400,9 @@ export async function openWikiUpdateWindow(options: {
           onDidStartTerminalShellExecution: (
             listener: (event: FakeShellExecution) => void,
           ) => listenTo(terminalCommandListeners, listener),
-          // A real editor always has it, so every test runs the product's notification path; only collecting the Cancel buttons is optional.
+          // A real editor always has both, so every test runs the product's own way of showing a run; only collecting their Cancel is optional.
           withProgress,
+          createStatusBarItem,
         },
       },
       './environment': { requireWorkspace: () => openedWorkspace },
@@ -492,6 +553,11 @@ export async function openWikiUpdateWindow(options: {
     confirmations,
     confirmationDetails,
     progressTitles,
+    statusBarTexts,
+    visibleStatusBarTexts: (): string[] =>
+      statusBarEntries
+        .filter((entry) => entry.isShown)
+        .map((entry) => entry.text),
     looks,
     openWorkspace(nextProjectRoot: string): void {
       openedWorkspace = nextProjectRoot

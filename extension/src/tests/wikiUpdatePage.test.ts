@@ -43,7 +43,7 @@ test('a page loaded during a run shows the running sentence and holds the update
   assert.equal(page.isShown(status), true)
   assert.equal(
     status?.textContent,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(link?.getAttribute('aria-disabled'), 'true')
   assert.equal(click.wasSwallowed, true)
@@ -129,7 +129,7 @@ test('the page shows the running update and then its result when the learner con
   // Assert
   assert.equal(
     textWhileRunning,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(linkStateWhileRunning, 'true')
   assert.equal(page.isShown(status), true)
@@ -418,7 +418,7 @@ test('a press after contact was lost during a run shows the running update again
   assert.equal(stateWhileTheReaderWasGone, 'unreachable')
   assert.equal(
     status?.textContent,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(link?.getAttribute('aria-disabled'), 'true')
 })
@@ -1251,14 +1251,14 @@ test('the running line of a VS Code update whose output lies outside the project
     // Assert
     assert.equal(
       page.find('[data-codebook-update-status]')?.textContent,
-      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. The chat asks before each step in a folder outside this project. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. The chat asks before each step in a folder outside this project. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
     )
   } finally {
     await wiki.close()
   }
 })
 
-// Value: protects=the advice after a refused step, which only the page's running line gives since the notification of the watch has two lines; fails_when=the page writes its own copy of the advice, so a change of the extension's wording leaves the page with the old one, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223, renamed with row 336; seam=the reader's constants, of which the advice is reworded
+// Value: protects=the advice after a refused step, which only the page's running line gives since the watch's status bar entry names only its Cancel; fails_when=the page writes its own copy of the advice, so a change of the extension's wording leaves the page with the old one, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223, renamed with row 336; seam=the reader's constants, of which the advice is reworded
 test('the running line of a VS Code update gives the advice after a refused step in the words the extension hands the page, also after the advice is reworded', async () => {
   // Arrange: a reader whose advice after a refused step reads differently from today's.
   const editorAdvice = 'After you refused a step of the chat, choose Cancel'
@@ -1286,7 +1286,7 @@ test('the running line of a VS Code update gives the advice after a refused step
     // Assert
     assert.equal(
       page.find('[data-codebook-update-status]')?.textContent,
-      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. After you refused a step of the chat, choose Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. After you refused a step of the chat, choose Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
     )
   } finally {
     await wiki.close()

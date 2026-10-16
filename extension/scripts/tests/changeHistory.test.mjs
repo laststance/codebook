@@ -48,10 +48,10 @@ const COMPOSED_QUOTATIONS = new Map([
     ],
   ],
   [
-    'If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    'If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
     [
       'If you refuse a step of the chat, press Cancel',
-      ' in the editor’s notification; otherwise Codebook keeps watching for the whole ',
+      ' in the editor’s status bar; otherwise Codebook keeps watching for the whole ',
     ],
   ],
   [

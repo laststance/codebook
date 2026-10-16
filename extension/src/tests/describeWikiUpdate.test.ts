@@ -70,11 +70,11 @@ test('the running line of a VS Code update ends with what to do after a refused 
   // Assert
   assert.equal(
     sentenceOf(requested),
-    'Updating LLM Wiki… The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 10 minutes.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 10 minutes.',
   )
   assert.equal(
     sentenceOf(staged),
-    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 10 minutes.',
+    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 10 minutes.',
   )
   assert.equal(
     sentenceOf(inCursor),
@@ -102,7 +102,7 @@ test('a running VS Code update sends the learner to the chat and names the 15 mi
   // Assert
   assert.deepEqual(described, {
     lead: 'Updating LLM Wiki…',
-    rest: ' The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    rest: ' The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
     detail: [],
     output: 'Output: .codebook/wiki',
     offerReload: false,
@@ -127,7 +127,7 @@ test('a running update whose agent has staged a candidate says a new site is bei
   // Assert
   assert.equal(
     sentenceOf(inVsCode),
-    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(
     sentenceOf(inCursor),
@@ -890,7 +890,7 @@ test('the running line of a VS Code update whose output lies outside the project
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
 })
 

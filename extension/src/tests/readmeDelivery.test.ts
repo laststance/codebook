@@ -22,7 +22,8 @@ import {
   SUMMARY_PLACEMENT_OFFER,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
-  WIKI_CHAT_WATCH_TITLE,
+  WIKI_CHAT_WATCH_STATUS_TEXT,
+  WIKI_CHAT_WATCH_TOOLTIP,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
   WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
@@ -522,26 +523,37 @@ test('the packaged README says that the wait for a chat whose watch stopped ends
   assert.deepEqual(delivered, [true])
 })
 
-// Value: protects=a learner whose chat's Stop or input lies under the notification of the watch, and the learner of the command, who reads no confirmation; fails_when=the README quotes another title than the editor shows, no longer says that the notification can be hidden while the watch goes on and where its Cancel then is, or no longer says for the command where the request goes and where the ends of the watch are named; why_new=Cycle 0046 row 336 (the title lost the sentences of rows 216, 217 and 261, which the README must now carry for the command); seam=none
-test('the packaged README quotes the two-line title of the notification that watches a VS Code update, says that the notification can be hidden while the watch goes on, and says for the command where the request goes and where the ends of the watch are named', async () => {
+// Value: protects=a learner whose chat asks for approvals while Codebook watches a VS Code update, and the learner of the command, who reads no confirmation; fails_when=the README quotes another entry or tooltip than the editor shows, still describes the watch as a notification, no longer says that pressing the entry stops watching and not the chat, or no longer says for the command where the request goes and where the ends of the watch are named; why_new=Cycle 0046 row 336 (the title lost the sentences of rows 216, 217 and 261, which the README must now carry for the command) and row 592 (the watch moved from a notification into the status bar); seam=none
+test('the packaged README quotes the status bar entry and the tooltip that watch a VS Code update, says that pressing the entry stops watching and not the chat and that no notification of the watch lies over the chat’s approvals, and says for the command where the request goes and where the ends of the watch are named', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
-    'While Codebook watches a VS Code update the editor shows the notification `Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.` at the lower right of the window, for as long as the watch lasts.',
-    "The editor shows the Chat view there too by default, so the title is kept to two lines: the buttons of a step the chat asks you to approve then stay free. The chat's Stop button and the bottom of its input can still lie under the notification; that placement is the editor's.",
-    'Hide the notification when it is in the way: the watch goes on, and its Cancel is in the notification list behind the bell in the status bar.',
-    "The title says the same wherever the request went (a new chat, the chat the Chat view restored, or the chat that was open); where it went is said by the confirmation and above, and when the watch ends and what to do after a refused step by the page's running line and the table.",
-    "Where the Wiki's output folder lies outside the project, the chat asks you to approve each step there (an output inside the project, `codebook.wikiOutputDirectory`, needs none); the confirmation and the page's running line say so, the notification does not.",
+    'While Codebook watches a VS Code update the right of the status bar shows the entry `$(sync~spin) Watching for the LLM Wiki update · Cancel` (a spinning icon, then the words), for as long as the watch lasts; its tooltip reads `Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.`',
+    'Pressing the entry is the Cancel: it stops watching, not the chat. The entry leaves the status bar when the watch ends.',
+    'The watch shows no notification: the editor stacks its notifications at the lower right of the window, where it shows the Chat view by default, so any other notification would push a notification that lasts the whole watch over the buttons of a step the chat asks you to approve. The status bar lies below every notification, and those buttons stay free.',
+    "The entry says the same wherever the request went (a new chat, the chat the Chat view restored, or the chat that was open); where it went is said by the confirmation and above, and when the watch ends and what to do after a refused step by the page's running line and the table.",
+    "Where the Wiki's output folder lies outside the project, the chat asks you to approve each step there (an output inside the project, `codebook.wikiOutputDirectory`, needs none); the confirmation and the page's running line say so, the status bar entry does not.",
     'The command starts at once and asks nothing: its request goes into a new chat in the same way (into the chat the Chat view restores, if that view opens only now) and replaces a draft in an empty chat in the same way; the Chat view shows the chat with the request. When the watch ends and what to do after you refused a step of the chat are in the row **Updating LLM Wiki…** below.',
   ])
 
-  // Assert: the README holds each sentence, and the title it quotes is the editor's.
+  // Assert: the README holds each sentence, quotes the entry and the tooltip the editor shows, and no longer sends the learner to a notification of the watch.
   assert.deepEqual(delivered, [true, true, true, true, true, true])
-  assert.equal(
-    WIKI_CHAT_WATCH_TITLE,
-    'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+  assert.deepEqual(
+    [WIKI_CHAT_WATCH_STATUS_TEXT, WIKI_CHAT_WATCH_TOOLTIP],
+    [
+      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+    ],
+  )
+  assert.deepEqual(
+    [
+      'the editor shows the notification `Watching',
+      'press Cancel in the notification',
+      'behind the bell',
+    ].filter((oldWords) => readme.includes(oldWords)),
+    [],
   )
 })
 
@@ -567,8 +579,8 @@ test('the packaged README says when the watch of a VS Code update ends and that 
 
   // Act
   const delivered = heldSentences(readme, [
-    "The watch ends when the new Wiki is published, when a file of your own in the Wiki folder is in the way of the publish (**Update stopped**), when a new site is on disk whose manifest Codebook still cannot read 10 seconds after it appeared, when the chat's reply ends before the chat asked you to approve a step, when you press Cancel in the notification, or after those 15 minutes.",
-    'If you refuse a step, press Cancel in the notification: once the chat has asked you, Codebook does not see it stop, and would watch for the 15 minutes.',
+    "The watch ends when the new Wiki is published, when a file of your own in the Wiki folder is in the way of the publish (**Update stopped**), when a new site is on disk whose manifest Codebook still cannot read 10 seconds after it appeared, when the chat's reply ends before the chat asked you to approve a step, when you press Cancel in the status bar, or after those 15 minutes.",
+    'If you refuse a step, press Cancel in the status bar: once the chat has asked you, Codebook does not see it stop, and would watch for the 15 minutes.',
     'Stop the chat itself to cancel the update. If it has already stopped (you refused a step), press **Update anyway** when you update again.',
   ])
 

@@ -20,7 +20,7 @@ import {
   PRIVATE_FILE_MODE,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
-  WIKI_CHAT_WATCH_TITLE,
+  WIKI_CHAT_WATCH_CANCEL_COMMAND,
   WIKI_CHAT_WITHDRAW_SETTLE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
@@ -124,6 +124,7 @@ import {
 } from './utils/selectActiveWikiCandidate'
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
+import { showWikiChatWatchStatus } from './utils/showWikiChatWatchStatus'
 import { SET_UP_AI_CHAT_COMMAND } from './utils/startOverBy'
 import {
   startWikiChatUpdate,
@@ -211,10 +212,12 @@ export function activate(
   let wikiUpdate: Promise<void> | undefined
   // One update run per window, shared by the command, the `/update` link and the browser button.
   const wikiUpdateRun = new WikiUpdateRun()
-  // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped. `awaitsChat` marks a VS Code update that still waits for the chat's first sign, which shows no notification yet.
+  // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped. `awaitsChat` marks a VS Code update that still waits for the chat's first sign, whose watch is not shown yet.
   let activeWikiRun:
     | { controller: AbortController; settled: Promise<void>; awaitsChat?: true }
     | undefined
+  // The Cancel of the VS Code watch whose status bar entry is shown: a press on the entry stops that watch, not the chat; nothing while no entry is shown.
+  let cancelShownWikiChatWatch: (() => void) | undefined
   // How this window's last run ended, also across a reload: a candidate written while it lasted is this window's own leftover.
   let lastWikiRun: WikiLastRun | undefined = wikiLastRunSchema.safeParse(
     context.workspaceState.get(WIKI_UPDATE_LAST_RUN_STATE_KEY),
@@ -908,11 +911,16 @@ export function activate(
       () => undefined,
     )
   }
-  /** Names where the running update's progress can be read in the editor now, for {@link showWikiUpdateRunning}: none in an editor without the progress API; the notification that follows the chat's first sign while a VS Code update still waits for it; otherwise the notification of the watch or of the Cursor agent's run, which is shown. @example wikiProgressPlace() // => 'awaited-chat' while a VS Code update waits for the chat's first sign */
+  /** Names where the running update's progress can be read in the editor now, for {@link showWikiUpdateRunning}: none in an editor that cannot show the run; the status bar entry that follows the chat's first sign while a VS Code update still waits for it; otherwise the status bar entry of the VS Code watch or the notification of the Cursor agent's run, which is shown. @example wikiProgressPlace() // => 'awaited-chat' while a VS Code update waits for the chat's first sign */
   const wikiProgressPlace = (): WikiUpdateProgressPlace => {
-    // Without the progress API no update shows a notification ({@link withCancellableProgress}).
-    if (!vscode.window.withProgress) return 'reader-only'
-    return activeWikiRun?.awaitsChat ? 'awaited-chat' : 'notification'
+    // A Cursor run is a progress notification ({@link withCancellableProgress}), which an editor without the progress API does not show.
+    if (isCursorHost) {
+      if (!vscode.window.withProgress) return 'reader-only'
+      return 'notification'
+    }
+    // A VS Code watch is an entry of the status bar ({@link withWikiChatWatchStatus}), which an editor without the status bar API does not show.
+    if (!vscode.window.createStatusBarItem) return 'reader-only'
+    return activeWikiRun?.awaitsChat ? 'awaited-chat' : 'status-bar'
   }
   /** Tells the learner that a second start was refused and where the first run's progress is at this moment ({@link describeSecondWikiUpdateStart}). @example showWikiUpdateRunning() */
   const showWikiUpdateRunning = (): void => {
@@ -1075,7 +1083,7 @@ export function activate(
       candidates,
     )
   }
-  /** Shows the one progress notification of a run and aborts the run when the learner presses its Cancel; both hosts' updates work inside it. @example await withCancellableProgress('Updating LLM Wiki with Cursor Agent', run, update) */
+  /** Shows the one progress notification of a Cursor update's run and aborts the run when the learner presses its Cancel; the agent works inside it. A VS Code watch is shown in the status bar instead ({@link withWikiChatWatchStatus}). @example await withCancellableProgress('Updating LLM Wiki with Cursor Agent', run, update) */
   const withCancellableProgress = async (
     title: string,
     run: WikiRun,
@@ -1095,12 +1103,34 @@ export function activate(
       },
     )
   }
-  /** Watches for the editor agent's publish after VS Code's chat took up the request, then records the run's result for the reader; settles when the watch has stopped. The notification it shows for that time has a title of two lines, whatever the run ({@link WIKI_CHAT_WATCH_TITLE}): a taller one covers the chat's approval buttons. @param chat - Of the start in the chat: the watch of the chat's reply (when the reply ends, one more look decides and the run ends at once). @example await watchVsCodeWikiUpdate(run, chatStart) */
+  /** Shows the status bar entry of a VS Code watch while the watch runs, and aborts the run when the learner presses the entry ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}), which stops watching, not the chat. It shows no notification: the editor stacks notifications over the Chat view, where any other notification pushes one that lasts the whole watch over the chat's approval buttons. @example await withWikiChatWatchStatus(run, watch) */
+  const withWikiChatWatchStatus = async (
+    run: WikiRun,
+    work: () => Promise<void>,
+  ): Promise<void> => {
+    // An editor without the status bar API still runs the watch, without a Cancel.
+    if (!vscode.window.createStatusBarItem) return work()
+    const entry = showWikiChatWatchStatus(
+      vscode.window,
+      vscode.StatusBarAlignment.Right,
+    )
+    const cancel = (): void => run.controller.abort()
+    cancelShownWikiChatWatch = cancel
+    try {
+      await work()
+    } finally {
+      // The entry and its Cancel go with the watch; a Cancel another watch set meanwhile stays.
+      if (cancelShownWikiChatWatch === cancel)
+        cancelShownWikiChatWatch = undefined
+      entry.dispose()
+    }
+  }
+  /** Watches for the editor agent's publish after VS Code's chat took up the request, then records the run's result for the reader; settles when the watch has stopped. For that time the status bar shows the watch and its Cancel, the same for every run ({@link withWikiChatWatchStatus}), and no notification lies over the chat's approval buttons. @param chat - Of the start in the chat: the watch of the chat's reply (when the reply ends, one more look decides and the run ends at once). @example await watchVsCodeWikiUpdate(run, chatStart) */
   const watchVsCodeWikiUpdate = (
     run: WikiRun,
     { reply }: WatchedWikiChat,
   ): Promise<void> =>
-    withCancellableProgress(WIKI_CHAT_WATCH_TITLE, run, async () =>
+    withWikiChatWatchStatus(run, async () =>
       // The end is recorded outside the watch's guard: only what the watch itself threw is a watch that broke off.
       finishWikiUpdate(run, await watchForWikiPublish(run, reply)),
     )
@@ -1508,7 +1538,7 @@ export function activate(
           settled: new Promise<void>((resolveSettled) => {
             reportOpeningEnded = resolveSettled
           }),
-          // Until the chat's first sign no notification watches this run; a second start says so.
+          // Until the chat's first sign the status bar shows no watch of this run; a second start says so.
           awaitsChat: true as const,
         }
         activeWikiRun = opening
@@ -1911,6 +1941,10 @@ export function activate(
         )
         throw error
       }
+    }),
+    // A press on the watch's status bar entry: it stops the watch it shows, and nothing once that watch has ended.
+    registerCommand(WIKI_CHAT_WATCH_CANCEL_COMMAND, () => {
+      cancelShownWikiChatWatch?.()
     }),
     registerCommand('codebook.saveLearningReplay', async (studyId?: string) => {
       try {

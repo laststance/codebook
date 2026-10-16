@@ -168,7 +168,8 @@ test('a VS Code Wiki update shows running, then the new identity once the editor
   }
 })
 
-test('cancelling a VS Code Wiki update ends it as cancelled and leaves the published site byte-identical', async () => {
+// Value: protects=the Cancel of a VS Code watch, which stops watching and not the chat, and the published site; fails_when=the press on the watch's status bar entry runs no command or one that does not stop the watch, the press also runs a command against the chat, the entry stays after the watch ended, or the cancel touches the site; why_new=Cycle 0046 row 592 moved the watch and its Cancel from a notification into the status bar; seam=the fake window's status bar, whose press runs the entry's command
+test('cancelling a VS Code Wiki update with its status bar entry stops watching and not the chat, ends it as cancelled, removes the entry and leaves the published site byte-identical', async () => {
   // Arrange
   const progress: CancellableProgress[] = []
   const wiki = await openWikiWindow({ cancellable: progress })
@@ -176,8 +177,9 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
   const indexBefore = await readFile(join(wiki.outputDirectory, 'index.html'))
   try {
     await wiki.clickUpdate()
+    const commandsBeforeTheCancel = [...wiki.executedCommands]
 
-    // Act
+    // Act: the learner presses the watch's entry in the status bar.
     progress[0]!.cancel()
     const ended = await waitForEnd(wiki.status)
 
@@ -187,9 +189,12 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
       ended.state === 'cancelled' ? [ended.host, ended.site] : [],
       ['vscode', 'kept'],
     )
-    assert.deepEqual(wiki.progressTitles, [
-      'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+    assert.deepEqual(wiki.executedCommands, commandsBeforeTheCancel)
+    assert.deepEqual(wiki.statusBarTexts, [
+      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
     ])
+    assert.deepEqual(wiki.visibleStatusBarTexts(), [])
+    assert.deepEqual(wiki.progressTitles, [])
     assert.equal(wiki.notices.length, 1)
     assert.match(
       wiki.notices[0] ?? '',
@@ -208,9 +213,40 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
   }
 })
 
-// Value: protects=every update running inside the editor's progress notification, the only place its Cancel button is, in tests as in a real editor; fails_when=the test window offers the notification only to a test that collects Cancel buttons, so every other test runs a fallback no editor takes, or the notification's task no longer runs the watch or the agent; why_new=Cycle 0045 D-L8 with PC-5.10 (the title is recorded before the task runs, so the end of each run is asserted too); seam=none
-test('every Wiki update shows one progress notification that can be cancelled, also when nobody cancels it', async () => {
-  // Arrange: one window per host, and neither collects a Cancel button.
+// Value: protects=the Allow and Skip buttons of an approval the chat asks for while Codebook watches a VS Code update; fails_when=the watch shows a notification for its whole length, which the editor stacks at the window's lower right over the Chat view, so any other notification pushes it over those buttons, or the watch's status bar entry stays after the update ended; why_new=Cycle 0046 row 592 (C54 native, VS Code 1.140.0: with VS Code's Docker recommendation below it, the watch's notification of 450 by 90 px rose to y 771 to 861 and lay over Allow and Skip at y 828); seam=the fake window's withProgress and createStatusBarItem
+test('while Codebook watches a VS Code update no notification of the watch stays on screen over the chat’s approval: the watch is an entry of the status bar, gone once the update has ended', async () => {
+  // Arrange: the chat took up the request and waits at its first approval, so the watch has begun.
+  const wiki = await openWikiWindow()
+  try {
+    await wiki.clickUpdate()
+    const whileWatching = {
+      state: wiki.status().state,
+      notifications: [...wiki.progressTitles],
+      statusBar: wiki.visibleStatusBarTexts(),
+    }
+
+    // Act: the chat publishes once the learner has approved its steps.
+    wiki.setFreshness(CURRENT)
+    await wiki.publish('b'.repeat(64))
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.deepEqual(whileWatching, {
+      state: 'running',
+      notifications: [],
+      statusBar: ['$(sync~spin) Watching for the LLM Wiki update · Cancel'],
+    })
+    assert.equal(ended.state, 'succeeded')
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual(wiki.visibleStatusBarTexts(), [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=every update running inside the one place that shows it and holds its Cancel, in tests as in a real editor: the status bar entry of a VS Code watch, the progress notification of a Cursor run; fails_when=the test window offers that place only to a test that collects Cancel buttons, so every other test runs a fallback no editor takes, or the watch or the agent no longer runs while its place is shown; why_new=Cycle 0045 D-L8 with PC-5.10 (the title is recorded before the task runs, so the end of each run is asserted too), Cycle 0046 row 592 (the VS Code watch moved into the status bar); seam=none
+test('every Wiki update shows the one place that can cancel it, also when nobody cancels it: a status bar entry for the VS Code watch, a progress notification for the Cursor run', async () => {
+  // Arrange: one window per host, and neither collects a Cancel.
   const vsCodeWiki = await openWikiWindow()
   let publishFromCursor: (() => Promise<void>) | undefined
   const cursorWiki = await openWikiWindow({
@@ -225,7 +261,7 @@ test('every Wiki update shows one progress notification that can be cancelled, a
     await cursorWiki.publish('c'.repeat(64))
   }
   try {
-    // Act: each run ends through the task of its notification, the watch in VS Code and the agent in Cursor.
+    // Act: each run ends while its place is shown, the watch in VS Code and the agent in Cursor.
     await vsCodeWiki.clickUpdate()
     vsCodeWiki.setFreshness(CURRENT)
     await vsCodeWiki.publish('b'.repeat(64))
@@ -233,12 +269,14 @@ test('every Wiki update shows one progress notification that can be cancelled, a
     await cursorWiki.clickUpdate()
 
     // Assert
-    assert.deepEqual(vsCodeWiki.progressTitles, [
-      'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
-    ])
-    assert.deepEqual(cursorWiki.progressTitles, [
-      'Updating LLM Wiki with Cursor Agent',
-    ])
+    assert.deepEqual(
+      [vsCodeWiki.statusBarTexts, vsCodeWiki.progressTitles],
+      [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+    )
+    assert.deepEqual(
+      [cursorWiki.statusBarTexts, cursorWiki.progressTitles],
+      [[], ['Updating LLM Wiki with Cursor Agent']],
+    )
     assert.equal(vsCodeEnd.state, 'succeeded')
     assert.equal(cursorWiki.status().state, 'succeeded')
   } finally {
@@ -673,29 +711,31 @@ test("dismissing the confirmation of the browser's update link starts no update:
       'Update this project’s LLM Wiki with the editor agent?',
     ])
     assert.deepEqual(wiki.chatRequests, [])
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
     assert.equal(wiki.status().state, 'idle')
   } finally {
     await wiki.close()
   }
 })
 
-// Value: protects=a learner who presses Update a second time while a VS Code update is watched reading where its progress is; fails_when=the second start asks for a confirmation or sends a second request, or its sentence no longer names the notification that is on screen at that moment; why_new=Cycle 0046 row 316 named the state: the chat has given its first sign and the watch's notification is shown; seam=none
-test('a second start from the browser link while the watch’s notification is shown is refused before the confirmation is shown and says that the progress is in the browser reader and in that notification', async () => {
-  // Arrange: the chat took up the request at once, so the watch has begun and its notification is shown.
+// Value: protects=a learner who presses Update a second time while a VS Code update is watched reading where its progress is; fails_when=the second start asks for a confirmation or sends a second request, or its sentence names a notification, which a VS Code watch no longer shows, instead of the status bar entry that is on screen at that moment; why_new=Cycle 0046 row 316 named the state: the chat has given its first sign and the watch is shown; row 592 moved the watch into the status bar; seam=none
+test('a second start from the browser link while the watch is shown in the status bar is refused before the confirmation is shown and says that the progress is in the browser reader and in the status bar', async () => {
+  // Arrange: the chat took up the request at once, so the watch has begun and its status bar entry is shown.
   const wiki = await openWikiWindow()
   try {
     await wiki.clickUpdate()
-    const notificationsShown = wiki.progressTitles.length
+    const watchShown = wiki.visibleStatusBarTexts()
 
     // Act
     await wiki.clickUpdate()
 
     // Assert
-    assert.equal(notificationsShown, 1)
+    assert.deepEqual(watchShown, [
+      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+    ])
     assert.equal(wiki.confirmations.length, 1)
     assert.deepEqual(wiki.notices, [
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the status bar here.',
     ])
     assert.equal(wiki.chatRequests.length, 1)
   } finally {
@@ -703,9 +743,9 @@ test('a second start from the browser link while the watch’s notification is s
   }
 })
 
-// Value: protects=a learner who presses Update a second time within the first seconds of a VS Code update, before the chat has given a sign; fails_when=the second start names a notification "here" although none is shown until the chat's first sign, so the learner looks for something that is not there; why_new=Cycle 0046 row 316: the sentence named the notification in every state; seam=none
-test('a second start from the browser link before the chat’s first sign names no notification: it says that the progress is in the browser reader and that a notification follows once the chat has taken up the request', async () => {
-  // Arrange: the run has begun and the chat command has not answered yet, so no notification is shown.
+// Value: protects=a learner who presses Update a second time within the first seconds of a VS Code update, before the chat has given a sign; fails_when=the second start names a place "here" although nothing is shown until the chat's first sign, so the learner looks for something that is not there, or it promises a notification where the status bar entry follows; why_new=Cycle 0046 row 316: the sentence named the notification in every state; row 592 moved the watch into the status bar; seam=none
+test('a second start from the browser link before the chat’s first sign names nothing on screen: it says that the progress is in the browser reader and that the status bar shows the watch once the chat has taken up the request', async () => {
+  // Arrange: the run has begun and the chat command has not answered yet, so nothing of the watch is shown.
   const wiki = await openWikiWindow({ cancellable: [] })
   try {
     const chat = wiki.hold('chat-open')
@@ -715,16 +755,19 @@ test('a second start from the browser link before the chat’s first sign names 
     // Act
     await wiki.clickUpdate()
     const noticesBeforeTheFirstSign = [...wiki.notices]
-    const notificationsShown = wiki.progressTitles.length
+    const shownBeforeTheFirstSign = [
+      ...wiki.progressTitles,
+      ...wiki.statusBarTexts,
+    ]
     await wiki.closeWindow()
     chat.release()
     await firstClick
 
     // Assert
-    assert.equal(notificationsShown, 0)
+    assert.deepEqual(shownBeforeTheFirstSign, [])
     assert.equal(wiki.confirmations.length, 1)
     assert.deepEqual(noticesBeforeTheFirstSign, [
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, a notification here watches the update.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, the status bar here shows the watch and its Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -750,8 +793,8 @@ test('the update command and the browser link pressed while the first start is s
       wiki.chatRequests.map((request) => request.name),
       ['workbench.action.chat.open'],
     )
-    assert.deepEqual(wiki.progressTitles, [
-      'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+    assert.deepEqual(wiki.statusBarTexts, [
+      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
     ])
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
@@ -1207,7 +1250,7 @@ test('closing the window while a VS Code update is still in its start checks sen
 
     // Assert
     assert.deepEqual(wiki.chatRequests, [])
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
     assert.equal(wiki.status().state, 'idle')
   } finally {
     await wiki.close()
@@ -1230,7 +1273,7 @@ test('closing the window while the VS Code chat is still opening ends the update
 
     // Assert
     assert.equal(whileChatOpens, 'running')
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
     assert.equal(wiki.status().state, 'cancelled')
     assert.deepEqual(wiki.notices, [])
   } finally {
@@ -1272,7 +1315,7 @@ test('a window that closes while the VS Code chat is still opening waits until t
     assert.equal(closedBeforeTheRunEnded, false)
     assert.equal(stateWhenClosed, 'cancelled')
     assert.equal(markerWhenClosed, 'gone')
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
     await wiki.close()
   }
@@ -1897,7 +1940,7 @@ test('a chat that takes the request and never answers ends the update after 30 s
         `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running\\. Check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
       ),
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
     await wiki.close()
   }
@@ -2083,7 +2126,7 @@ test('a chat that asks for its first approval while Codebook takes the request b
       status.state === 'failed' ? status.reason : '',
       'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
     await wiki.close()
   }
@@ -2328,7 +2371,7 @@ test('a chat command that returns at once with nothing while no chat replies lea
       status.state === 'failed' ? status.reason : '',
       'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
     assert.deepEqual(wiki.executedCommands, [
       'workbench.action.chat.open',
       'workbench.action.chat.newChat',
@@ -2371,7 +2414,7 @@ test('a file the learner opens, a terminal that opens and a command the learner 
       status.state === 'failed' ? status.reason : '',
       'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
     await wiki.close()
   }
@@ -2414,7 +2457,7 @@ test('a chat whose first answer would come after 40 seconds is stopped at the 30
       status.state === 'failed' ? status.reason : '',
       'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
     await wiki.close()
   }
@@ -2446,8 +2489,8 @@ test('a chat whose reply waits for a confirmation 20 seconds after it took the r
     // Assert
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
-    assert.deepEqual(wiki.progressTitles, [
-      'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+    assert.deepEqual(wiki.visibleStatusBarTexts(), [
+      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
     ])
   } finally {
     await wiki.close()
@@ -2476,7 +2519,7 @@ test('a chat whose response is complete and that published nothing ends the upda
       afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
       'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
     assert.equal(markerAfterFirstPress, 'gone')
     assert.equal(wiki.chatRequests.length, 2)
     assert.deepEqual(wiki.warnings, [])
@@ -2502,7 +2545,7 @@ test('a chat whose response is complete after it published ends the update as Up
     // Assert
     const status = wiki.status()
     assert.equal(status.state, 'succeeded')
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
     assert.equal(wiki.notices.length, 1)
     assert.match(
       wiki.notices[0] ?? '',
@@ -2779,7 +2822,7 @@ test('a chat whose reply reports an error ends the update at once with a sentenc
         `^Update failed at ${CLOCK_TIME}: The editor chat answered the update request with an error and stopped \\(You have exceeded your premium request allowance\\.\\)\\. Read its message in the Chat view, then press Update LLM Wiki again\\. The last usable site is kept\\.$`,
       ),
     )
-    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
     await wiki.close()
   }
@@ -3834,8 +3877,8 @@ test('in an editor without the New Chat command the confirmation says that the r
   }
 })
 
-// Value: protects=the learner who must press Allow or Skip on an approval of the chat while Codebook watches the update: the notification of the watch lies at the lower right over the Chat view for the whole watch; fails_when=the title grows past two lines again (where the request went, when the watch ends, the advice after a refused step, the note on an output outside the project), so the toast covers the approval's buttons, or the title differs by entry or by editor and says something untrue of a request that went into a restored or an open chat; why_new=Cycle 0046 row 336 (measured in VS Code 1.140.0 at 1327 by 1016 px: a title of six lines made a toast of 450 by 178 px over Allow and Skip); it replaces the three tests of rows 216 and 217 that pinned the long title; seam=the editor's list of commands, from which New Chat is taken for the third window
-test('the notification that watches a VS Code update has the same title of two lines for the command, for the page’s button with a chat that asks for an approval, and in an editor without New Chat: what is watched, and that Cancel stops watching, not the chat', async () => {
+// Value: protects=the learner who must press Allow or Skip on an approval of the chat while Codebook watches the update, from every entry of the update; fails_when=one entry or editor shows the watch as a notification again, which lies at the lower right over the Chat view and any other notification pushes over the approval's buttons, or the entry differs by entry or by editor and says something untrue of a request that went into a restored or an open chat; why_new=Cycle 0046 row 336 (a title of six lines made a toast of 450 by 178 px over Allow and Skip) and row 592 (a title of two lines did too once another notification stacked below it); it replaces the three tests of rows 216 and 217 that pinned the long title; seam=the editor's list of commands, from which New Chat is taken for the third window
+test('the watch of a VS Code update is the same status bar entry, and no notification, for the command, for the page’s button with a chat that asks for an approval, and in an editor without New Chat', async () => {
   // Arrange
   const fromTheCommand = await openWikiWindow()
   const fromTheButton = await openWikiWindow({
@@ -3850,22 +3893,17 @@ test('the notification that watches a VS Code update has the same title of two l
     await fromTheButton.clickUpdate()
     await withoutNewChat.runUpdateCommand()
 
-    // Assert: the command asked for no confirmation, and each window shows the one title.
+    // Assert: the command asked for no confirmation, and each window shows the one entry and no notification.
     assert.deepEqual(fromTheCommand.confirmations, [])
     assert.deepEqual(
-      [fromTheCommand, fromTheButton, withoutNewChat].map(
-        (window) => window.progressTitles,
-      ),
+      [fromTheCommand, fromTheButton, withoutNewChat].map((window) => [
+        window.visibleStatusBarTexts(),
+        window.progressTitles,
+      ]),
       [
-        [
-          'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
-        ],
-        [
-          'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
-        ],
-        [
-          'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
-        ],
+        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
       ],
     )
   } finally {
@@ -3875,8 +3913,8 @@ test('the notification that watches a VS Code update has the same title of two l
   }
 })
 
-// Value: protects=the learner whose Wiki lies outside the project, where the chat asks to approve each step: the confirmation says why before the press, and the notification of the watch must not cover those approvals; fails_when=the confirmation loses the note, or the note is put into the notification's title again, which then has five lines; why_new=Cycle 0045 (the note), Cycle 0046 row 336 (the title without it); seam=none
-test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there, and the notification that watches it keeps its title of two lines', async () => {
+// Value: protects=the learner whose Wiki lies outside the project, where the chat asks to approve each step: the confirmation says why before the press, and the watch must not cover those approvals; fails_when=the confirmation loses the note, or such an update is watched with a notification again, or with an entry of its own words; why_new=Cycle 0045 (the note), Cycle 0046 row 336 (the title without it), row 592 (the watch in the status bar); seam=none
+test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there, and its watch is the same status bar entry, with no notification', async () => {
   // Arrange
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-inside-')),
@@ -3913,9 +3951,10 @@ test('the confirmation of an update whose output lies outside the project says t
       [fromTheLink, runningFromTheLink],
       [fromTheCommand, runningFromTheCommand],
     ] as const) {
-      assert.deepEqual(window.progressTitles, [
-        'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
-      ])
+      assert.deepEqual(
+        [window.statusBarTexts, window.progressTitles],
+        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+      )
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,
         true,

@@ -658,17 +658,24 @@ export const WIKI_UPDATE_UNNAMED_BLOCK_REASON =
   'The update was blocked, but no blocking file was named.'
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */
 export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
-/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. The title of the watch's notification does not carry it ({@link WIKI_CHAT_WATCH_TITLE_LIMIT_CHARS}). */
+/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. The watch's status bar entry does not carry it ({@link WIKI_CHAT_WATCH_TOOLTIP}). */
 export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
   'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
-/** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Cancel. Handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it with where Cancel is; the watch's notification is too short to carry it ({@link WIKI_CHAT_WATCH_TITLE_LIMIT_CHARS}). */
+/** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Cancel. Handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it with where Cancel is, the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}), which names only its Cancel. */
 export const WIKI_REFUSED_STEP_ADVICE =
   'If you refuse a step of the chat, press Cancel'
-/** The title of the progress notification that is shown for as long as Codebook watches a VS Code Wiki update, for every entry of the update. It says what is watched and what its Cancel stops, in words that are true wherever the request went: a new chat, the chat the Chat view restored, or the chat that was open. Where the request went, when the watch ends and what to do after a refused step are said by the confirmation, the page's running line and the README. */
-export const WIKI_CHAT_WATCH_TITLE =
+/** The text of the status bar entry that is shown for as long as Codebook watches a VS Code Wiki update, for every entry of the update: a spinning icon, what is watched and its Cancel, which a press on the entry runs ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}). The watch shows no notification: the editor stacks notifications at the window's lower right, over the Chat view in its default place, so any other notification pushes one that lasts the whole watch over the Allow and Skip buttons of an approval the chat asks for (measured in VS Code 1.140.0 with a notification of two lines and the editor's own recommendation below it). The status bar lies below every notification. */
+export const WIKI_CHAT_WATCH_STATUS_TEXT =
+  '$(sync~spin) Watching for the LLM Wiki update · Cancel'
+/** The tooltip and accessible name of the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}). It says what is watched and what its Cancel stops, in words that are true wherever the request went: a new chat, the chat the Chat view restored, or the chat that was open. Where the request went, when the watch ends and what to do after a refused step are said by the confirmation, the page's running line and the README. */
+export const WIKI_CHAT_WATCH_TOOLTIP =
   'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.'
-/** How many characters the title of the watch's notification may have ({@link WIKI_CHAT_WATCH_TITLE}). The editor shows the notification at the lower right for the whole watch, over the Chat view in its default place, and a toast of 450 px holds about 50 characters a line: with more than two lines its top lies over the Allow and Skip buttons of an approval the chat asks for, which the learner must be able to press (measured in a window of 1327 by 1016 px with a title of six lines). */
-export const WIKI_CHAT_WATCH_TITLE_LIMIT_CHARS = 100
+/** The command a press on the watch's status bar entry runs: it stops the VS Code watch this window shows, not the chat. Registered at activation and not contributed to the Command Palette: the entry is its one way in. */
+export const WIKI_CHAT_WATCH_CANCEL_COMMAND = 'codebook.cancelWikiChatWatch'
+/** The identifier of the watch's status bar entry, under which the editor keeps whether the learner hid it. */
+export const WIKI_CHAT_WATCH_STATUS_ID = 'codebook.wikiChatWatch'
+/** The name of the watch's status bar entry in the status bar's context menu. */
+export const WIKI_CHAT_WATCH_STATUS_NAME = 'Codebook LLM Wiki update'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request. */
 export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
