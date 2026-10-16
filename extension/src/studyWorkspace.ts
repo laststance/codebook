@@ -187,6 +187,7 @@ import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
 import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { editorSelectionState } from './utils/editorSelectionState'
+import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
@@ -15638,6 +15639,16 @@ export class StudyWorkspace {
           vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn,
         )
       }
+      const emptyFirstGroup = vscode.window.tabGroups.all.some(
+        (group) =>
+          group.viewColumn === vscode.ViewColumn.One && !group.tabs.length,
+      )
+      // Beside another editor part an empty first group reports no keyboard focus at all (no text editor, and the editor keeps naming the group it named before): the measurement is refused at once, naming that group, instead of waiting for a report that never comes (row 610).
+      if (!useCitation && !sourceBorrow && emptyFirstGroup)
+        throw new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          emptyFirstGroupObstacle(),
+        )
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(
         useCitation

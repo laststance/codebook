@@ -1887,6 +1887,208 @@ test('the first Application preparation of a reloaded window retires the earlier
   }
 })
 
+// Value: protects=an agent's first run right after a reload whose record no longer proves the earlier window's leftovers (the learner resized a group), beside Cursor's chat: the preparation is refused at once with a sentence that names the empty first group and its remedy, nothing is unlocked or closed, the record stays and the chat keeps its keyboard; fails_when=the preparation waits 5 s for a focus report the empty first group never gives and refuses with a sentence that names no group, or a failed proof unlocks, closes or forgets anything; why_new=Cycle 0046 row 610 (and the guard of row 609's path when the proof fails); seam=applicationGroupMarkers (a record the resized grid no longer equals), leaveEmptyLockedGroup, leaveEmptyGroup, presentation.createViewport (the MCP-first preparation) and addSeparateEditorPart with the chat's focusTab
+test('an agent’s first run after a reload whose record no longer proves the empty first group is refused at once with that group named, touching nothing', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 and its Context group at column 3 in a grid the learner has since resized; both stand empty beside the learner's notes in column 2, and the chat has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    const earlierRecord = {
+      version: 2,
+      writer: 'the window before the reload',
+      columns: [1, 3],
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 3 }, { size: 1 }, { size: 1 }],
+      },
+    }
+    harness.applicationGroupMarkers.set(
+      'codebook.applicationGroup.v1',
+      earlierRecord,
+    )
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.leaveEmptyGroup(3)
+    const applicationLeftover = harness.groups.find(
+        (group) => group.viewColumn === 1,
+      )!,
+      contextLeftover = harness.groups.find((group) => group.viewColumn === 3)!
+    chat.focusTab()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const outcome = await Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'mcp-first-run',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    ).catch((error: unknown) => error)
+
+    // Assert: the refusal names the empty first group and its remedy; both leftovers stand as they were, nothing was unlocked, the record is the earlier window's, and the chat has the keyboard.
+    assert.equal(
+      outcome instanceof Error ? outcome.message : outcome,
+      'The Codebook panes were not arranged: the first editor group (column 1) is empty, and beside the chat the editor reports no keyboard focus in an empty group. Open a file in that group or close it, then try again.',
+    )
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.unlockEditorGroup'),
+      false,
+    )
+    assert.deepEqual(
+      [applicationLeftover, contextLeftover].map((group) => ({
+        stands: harness.groups.includes(group),
+        locked: Boolean(group.locked),
+        tabs: group.tabs.length,
+      })),
+      [
+        { stands: true, locked: true, tabs: 0 },
+        { stands: true, locked: false, tabs: 0 },
+      ],
+    )
+    assert.deepEqual(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      earlierRecord,
+    )
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's first run beside Cursor's chat when the learner's own first editor group is empty (workbench.editor.closeEmptyGroups off), with no reload and no record: the preparation is refused at once with a sentence that names that group and its remedy, the group stays, and the chat keeps its keyboard; fails_when=the preparation waits 5 s for a focus report the empty group never gives and refuses with a sentence that names no group; why_new=Cycle 0046 row 610 (the same refusal without any reload); seam=leaveEmptyGroup, presentation.createViewport (the MCP-first preparation) and addSeparateEditorPart with the chat's focusTab
+test('an agent’s first run beside the chat with the learner’s own empty first group is refused at once with that group named, and the group stays', async () => {
+  // Arrange: the learner's first editor group is empty and the editor keeps it; the learner's notes stand in column 2, and the chat has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const learnersEmptyGroup = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    chat.focusTab()
+
+    // Act
+    const outcome = await Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'mcp-first-run',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    ).catch((error: unknown) => error)
+
+    // Assert
+    assert.equal(
+      outcome instanceof Error ? outcome.message : outcome,
+      'The Codebook panes were not arranged: the first editor group (column 1) is empty, and beside the chat the editor reports no keyboard focus in an empty group. Open a file in that group or close it, then try again.',
+    )
+    assert.equal(harness.groups.includes(learnersEmptyGroup), true)
+    assert.equal(learnersEmptyGroup.tabs.length, 0)
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the earlier window's unproven leftovers at an agent's first run after a reload in an editor without another editor part: the Application gets its own new group at column 1 beside them, and nothing is unlocked, closed or merged; fails_when=a failed proof unlocks or closes a leftover, or the preparation puts the Application into the empty locked group; why_new=Cycle 0046 rows 609 and 610 (the guard of row 591's rule on the preparation's path when the proof fails); seam=applicationGroupMarkers (a record the resized grid no longer equals), leaveEmptyLockedGroup, leaveEmptyGroup and presentation.createViewport (the MCP-first preparation)
+test('an agent’s first run after a reload whose record no longer proves the leftovers places the Application in its own group beside them and unlocks or closes nothing', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 and its Context group at column 3 in a grid the learner has since resized; both stand empty beside the learner's notes in column 2; no chat part.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 2,
+      writer: 'the window before the reload',
+      columns: [1, 3],
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 3 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    const learnerNotes = harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.leaveEmptyGroup(3)
+    const applicationLeftover = harness.groups.find(
+        (group) => group.viewColumn === 1,
+      )!,
+      contextLeftover = harness.groups.find((group) => group.viewColumn === 3)!
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: the Application stands alone in a new locked group at column 1; both leftovers stand beside it as they were, and nothing was unlocked.
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .includes('workbench.action.unlockEditorGroup'),
+        false,
+      )
+      assert.deepEqual(
+        harness.groups.map((group) => ({
+          column: group.viewColumn,
+          locked: Boolean(group.locked),
+          tabs: group.tabs.length,
+          leftover: group === applicationLeftover || group === contextLeftover,
+          holdsNotes: group.tabs.includes(learnerNotes.tab),
+        })),
+        [
+          {
+            column: 1,
+            locked: true,
+            tabs: 1,
+            leftover: false,
+            holdsNotes: false,
+          },
+          {
+            column: 2,
+            locked: true,
+            tabs: 0,
+            leftover: true,
+            holdsNotes: false,
+          },
+          {
+            column: 3,
+            locked: false,
+            tabs: 1,
+            leftover: false,
+            holdsNotes: true,
+          },
+          {
+            column: 4,
+            locked: false,
+            tabs: 0,
+            leftover: true,
+            holdsNotes: false,
+          },
+        ],
+      )
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
   // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.
