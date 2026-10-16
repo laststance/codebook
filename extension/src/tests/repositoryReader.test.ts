@@ -120,6 +120,7 @@ async function readerHarness(context: TestContext) {
   let activateWikiPanel = (): void => {}
   let blurWikiPanel = (): void => {}
   let focusStudyPanel = (): void => {}
+  let closeStudyPanel = (): void => {}
   let hideWikiPanel = (): void => {}
   let nativeWikiSelection = false
   let retireWikiTextEditor = false
@@ -494,6 +495,20 @@ async function readerHarness(context: TestContext) {
               for (const listener of tabListeners) listener()
               for (const listener of groupListeners) listener()
             }
+            closeStudyPanel = (): void => {
+              // Close removes the Study tab, so its group selects the Wiki tab again before the focus command lands.
+              otherGroup.tabs = otherGroup.tabs.filter(
+                (tab) =>
+                  !(
+                    tab.input instanceof TabInputWebview &&
+                    tab.input.viewType ===
+                      'mainThreadWebview-codebook.studyContext'
+                  ),
+              )
+              otherGroup.activeTab = wikiTab
+              for (const listener of tabListeners) listener()
+              activateWikiPanel()
+            }
             activateWikiPanel = (): void => {
               activeEditor = undefined
               activeGroup = otherGroup
@@ -776,6 +791,20 @@ async function readerHarness(context: TestContext) {
     },
     focusStudy(): void {
       focusStudyPanel()
+    },
+    /**
+     * Models the native end of a completed registered Study Close over the Wiki: the Study tab leaves the Wiki's group, the Wiki tab is selected again, and Close's group-focus command gives keyboard to the recreated Wiki document.
+     *
+     * Called by the Cycle 0046 row 444 regressions after {@link focusStudy}; the recreated document then reports `ready` and renders the old article.
+     *
+     * @example
+     * ```ts
+     * harness.focusStudy()
+     * harness.closeStudy()
+     * ```
+     */
+    closeStudy(): void {
+      closeStudyPanel()
     },
     /** Models the selected Wiki tab callbacks for Return regressions; recording Return also retires that group's text editor. @param retiresEditor - Emits the observed text-editor loss after tab selection. @example harness.useNativeWikiSelection(true) */
     useNativeWikiSelection(retiresEditor = false): void {
@@ -2913,3 +2942,120 @@ test('reopening the Wiki marks its existing article as loading before source and
     await opening.catch(() => undefined)
   }
 })
+
+// Value: protects=the ordinary Wiki command right after a completed Study Close; fails_when=a Wiki-group transition that leaves the acquired source editor untouched is refused as newer learner input; why_new=Cycle 0046 row 444 (C24 capture 223 failed 104ms after Close with this ordering while the article loaded; the same transition can land while the host waits for the render); seam=none.
+for (const phase of ['loads', 'renders'] as const)
+  test(`opening the original article right after Study Close completes when the Wiki group becomes active again while the article ${phase} and the acquired source keeps the keyboard`, async (context) => {
+    // Arrange: the original article, the Study over its hidden Wiki, then a completed Close that refocuses the recreated Wiki.
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    await harness.reader.open(harness.selection)
+    harness.hideWiki()
+    harness.focusStudy()
+    const messagesBeforeClose = harness.publishedMessages.length
+    harness.closeStudy()
+    await waitUntil(
+      () => harness.publishedMessages.length > messagesBeforeClose,
+      'the recreated Wiki document to render the old article',
+    )
+    const revealsBefore = harness.revealFocus.length,
+      listenersBefore = harness.focusListenerCount(),
+      display = harness.holdSourceDisplay(),
+      opening = harness.reader.open(harness.selection),
+      result = opening.then(
+        () => ({ opened: true, error: '' }),
+        (error: unknown) => ({ opened: false, error: String(error) }),
+      )
+    await display.started
+    // The owned source acquisition has made the citation the active text editor.
+    assert.equal(
+      harness.focusedSource()?.document.getText(),
+      'export const price = 24;\n',
+    )
+    const messagesBeforeArticle = harness.publishedMessages.length,
+      renderer = harness.holdRenderer()
+    display.release()
+    await renderer.started
+    // The rendering phase begins once the usable article and its citation states are published.
+    if (phase === 'renders')
+      await waitUntil(
+        () =>
+          harness.publishedMessages.length > messagesBeforeArticle &&
+          harness.publishedMessages.at(-1)?.loading === false &&
+          harness.publishedMessages.at(-1)?.sources.length === 2,
+        'the usable article to wait for its render',
+      )
+    try {
+      // Act: the editor reports the Wiki's group as active while activeTextEditor still names the source, the window stays focused and no learner input arrives.
+      harness.switchTabGroup()
+      renderer.release()
+
+      // Assert
+      assert.deepEqual(await result, { opened: true, error: '' })
+      assert.deepEqual(harness.revealFocus.slice(revealsBefore), [false])
+      assert.equal(harness.reader.inspect().view.selection?.nodeId, 'module')
+      assert.equal(harness.reader.inspect().view.error, '')
+      assert.equal(harness.focusListenerCount(), listenersBefore)
+    } finally {
+      renderer.release()
+      await result
+    }
+  })
+
+// Value: protects=newer learner input during the ordinary Wiki command after Study Close; fails_when=the accepted Wiki-group return also forgives a selection, another editor, the learner's own Wiki choice or another group; why_new=Cycle 0046 row 444 (the bound of the accepted late transition); seam=none.
+for (const input of [
+  'a source selection after the Wiki-group return',
+  'another editor after the Wiki-group return',
+  'keyboard moved into the Wiki after the Wiki-group return',
+  'a source-group choice after the Wiki-group return',
+  'keyboard moved into the Wiki without a Wiki-group return',
+] as const)
+  test(`${input} still cancels opening the original article right after Study Close`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.requireSourceFocus()
+    await harness.reader.open(harness.selection)
+    harness.hideWiki()
+    harness.focusStudy()
+    const messagesBeforeClose = harness.publishedMessages.length
+    harness.closeStudy()
+    await waitUntil(
+      () => harness.publishedMessages.length > messagesBeforeClose,
+      'the recreated Wiki document to render the old article',
+    )
+    const revealsBefore = harness.revealFocus.length,
+      listenersBefore = harness.focusListenerCount(),
+      display = harness.holdSourceDisplay(),
+      opening = harness.reader.open(harness.selection),
+      result = opening.then(
+        () => ({ opened: true, error: '' }),
+        (error: unknown) => ({ opened: false, error: String(error) }),
+      )
+    await display.started
+    const renderer = harness.holdRenderer()
+    display.release()
+    await renderer.started
+    try {
+      // Act
+      if (input.endsWith('after the Wiki-group return'))
+        harness.switchTabGroup()
+      if (input.startsWith('a source selection')) harness.selectSource(0, 6, 1)
+      if (input.startsWith('another editor')) harness.focusUnrelatedDraft()
+      if (input.startsWith('keyboard moved into the Wiki')) harness.focusWiki()
+      if (input.startsWith('a source-group choice'))
+        harness.switchTabGroup(true)
+      renderer.release()
+
+      // Assert
+      assert.deepEqual(await result, {
+        opened: false,
+        error:
+          'Error: Native focus changed during repository navigation; the newer learner focus was preserved.',
+      })
+      assert.deepEqual(harness.revealFocus.slice(revealsBefore), [])
+      assert.equal(harness.focusListenerCount(), listenersBefore)
+    } finally {
+      renderer.release()
+      await result
+    }
+  })

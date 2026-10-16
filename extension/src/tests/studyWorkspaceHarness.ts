@@ -4078,8 +4078,10 @@ export async function workspaceHarness(
         (count, panel) => count + panel.viewListenerCount(),
         0,
       ),
-    retainRepositoryFocus:
-      repositoryBoundary.RepositoryReader.prototype['retainNativeFocus'],
+    // The reader's own receipt, run on a reader without a Wiki pane: these Study cases drive Wiki layout work without a Repository Wiki reader.
+    retainRepositoryFocus: repositoryBoundary.RepositoryReader.prototype[
+      'retainNativeFocus'
+    ].bind(Object.create(repositoryBoundary.RepositoryReader.prototype)),
     /** Splits a native primary-focus handoff across actual event surfaces for cold Wiki integration tests. @example harness.usePrimaryFocusNotificationOrder('group first') */
     usePrimaryFocusNotificationOrder(
       order: typeof primaryNotificationOrder,

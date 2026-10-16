@@ -31,6 +31,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { repositoryHtml } from './ui/repositoryHtml'
+import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
@@ -1229,7 +1230,7 @@ export class RepositoryReader {
     }
   }
 
-  /** Retains initial or acquired focus for {@link open}; later input irrevocably retires it. @param acquire - The requested citation whose native activation may be observed in stages. @param acceptGroupSelection - Admits once the own quiet Wiki selection and disappearance of its unchanged same-group text editor. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
+  /** Retains initial or acquired focus for {@link open}; later input irrevocably retires it, while the editor's own late selection of this Wiki's group beside the unchanged text editor is no input ({@link adoptWikiGroupReturn}). @param acquire - The requested citation whose native activation may be observed in stages. @param acceptGroupSelection - Admits once the own quiet Wiki selection and disappearance of its unchanged same-group text editor. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
   private retainNativeFocus(
     acquire?: RepositoryFocusTarget,
     acceptGroupSelection?: () => boolean,
@@ -1251,6 +1252,9 @@ export class RepositoryReader {
         ]),
       }
     }
+    // The editor's own selection of this Wiki's group leaves the text editor active; a learner's choice takes its keyboard.
+    const wikiSelectedBesideTextEditor = (): boolean =>
+      Boolean(vscode.window.activeTextEditor) && this.hasNativeWikiFocus()
     const pending = snapshot()
     let selectedEditorRetained: (() => boolean) | undefined
     let initial = acquire ? undefined : pending,
@@ -1341,6 +1345,12 @@ export class RepositoryReader {
         selectedEditorRetained()
       )
         initial = { ...initial, editor: current.editor }
+      // A late return to this Wiki's group beside the untouched text editor is no newer input (row 444); earlier departures stay sticky.
+      initial = adoptWikiGroupReturn(
+        initial,
+        current,
+        wikiSelectedBesideTextEditor(),
+      )
       changed ||=
         current.editor !== initial?.editor || current.group !== initial?.group
     }
