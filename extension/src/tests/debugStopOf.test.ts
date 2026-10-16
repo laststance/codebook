@@ -27,10 +27,10 @@ test("only the debug adapter's stopped event is read as a stop, with the reason 
 
   // Assert
   assert.deepEqual(stops, [
-    { reason: 'step', keepsFocus: false },
-    { reason: undefined, keepsFocus: false },
-    { reason: undefined, keepsFocus: false },
-    { reason: 'breakpoint', keepsFocus: true },
+    { reason: 'step', keepsFocus: false, threadId: 1 },
+    { reason: undefined, keepsFocus: false, threadId: 1 },
+    { reason: undefined, keepsFocus: false, threadId: undefined },
+    { reason: 'breakpoint', keepsFocus: true, threadId: undefined },
     undefined,
     undefined,
     undefined,

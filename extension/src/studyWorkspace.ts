@@ -3020,8 +3020,9 @@ export class StudyWorkspace {
     return {
       onDidSendMessage: (message: unknown): void =>
         this.readAdaptersMessage(session.id, message),
-      // An adapter need not send `continued` after the editor's own resume or step: the request says it too.
+      // An adapter need not send `continued` after the editor's own resume or step: the request says it too. The editor's stackTrace requests tell which frame it focuses for a stop.
       onWillReceiveMessage: (message: unknown): void => {
+        this.stopHandOver.readEditorsMessage(session.id, message)
         if (isDebugResumeMessage(message)) this.noteSessionWentOn(session.id)
       },
       // The editor stops the adapter, or the adapter exits by itself: either is the session's end, and both may come.
@@ -3035,18 +3036,24 @@ export class StudyWorkspace {
    * - A `stopped` event is noted ({@link noteStopOf}).
    * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle the stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it.
    * - A `continued` event is noted as the moment the session went on, which puts its noted stop in doubt ({@link noteSessionWentOn}).
+   * - An answer to the editor's `stackTrace` request goes to the stop's keyboard hand-over, which learns from it the frame the editor focuses for the stop ({@link StopKeyboardHandOver}).
    * @param sessionId - The session of the adapter.
    * @param message - The message as the tracker receives it.
    * @example onDidSendMessage: (message) => this.readAdaptersMessage(session.id, message)
    */
   private readAdaptersMessage(sessionId: string, message: unknown): void {
+    this.stopHandOver.readAdaptersMessage(sessionId, message)
     const stop = debugStopOf(message)
     if (stop) {
       // A session that stops runs no longer: its frame is focused until it goes on again.
       this.sessionsWentOnAtMs.delete(sessionId)
       this.noteStopOf(sessionId, stop)
     } else if (isDebugStopsInvalidation(message))
-      this.noteStopOf(sessionId, { reason: undefined, keepsFocus: false })
+      this.noteStopOf(sessionId, {
+        reason: undefined,
+        keepsFocus: false,
+        threadId: undefined,
+      })
     else if (isDebugResumeMessage(message)) this.noteSessionWentOn(sessionId)
   }
 
@@ -3097,7 +3104,7 @@ export class StudyWorkspace {
     if (this.isLearnersStopFromEditor(stop.reason))
       this.keyboardOutsideEditors = undefined
     // The stop waits for the keyboard hand-over, which the editor's report of its frame resolves; a stop whose adapter asked to keep the focus never does.
-    this.stopHandOver.arm(sessionId, stop.keepsFocus)
+    this.stopHandOver.arm(sessionId, stop)
   }
 
   /**
@@ -3305,6 +3312,8 @@ export class StudyWorkspace {
     if (this.frameCameWithStop) this.judgeKeyboardAtPauseBegin()
     else if (isStackFrameItem(item)) this.leavePauseToLearner()
     else this.judgeKeyboardAtPauseEnd()
+    // A reported frame resolves its session's hand-over: nothing later in that pause is the paused file.
+    this.stopHandOver.settle(heldStopSessionOf(item, this.stopHandOver))
   }
 
   /**

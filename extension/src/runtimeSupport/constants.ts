@@ -58,6 +58,20 @@ export const STOP_HANDLING_INVALIDATION_AREAS: ReadonlySet<string> = new Set([
   'threads',
   'stacks',
 ])
+/**
+ * The stop reasons at which the editor focuses a frame even when its source is deemphasized (VS Code 1.140 and Cursor 3.23, `getTopStackFrame`); at every other reason it skips such frames. Read by {@link editorsPausedFrame}.
+ * @example DEEMPHASIZED_FRAME_STOP_REASONS.has('pause') // => false: a pause in a file of skipFiles focuses the first frame outside it
+ */
+export const DEEMPHASIZED_FRAME_STOP_REASONS: ReadonlySet<string> = new Set([
+  'breakpoint',
+  'step',
+  'function breakpoint',
+])
+/**
+ * How many frames of a stopped thread the editor has loaded when it picks the frame to focus for a stop: the top one, and the next 19 it asks for 420 ms later (`refreshTopOfCallstack`, `fetchCallStack(1)` then `fetchCallStack(19)`, VS Code 1.140 and Cursor 3.23). Read by {@link editorsPausedFrame}; frames the learner loads later in the Call Stack view are no candidates.
+ * @example frames.slice(0, EDITOR_STOP_FOCUS_FRAME_COUNT)
+ */
+export const EDITOR_STOP_FOCUS_FRAME_COUNT = 20
 export const RESUME_COMMANDS = new Set([
   'continue',
   'next',

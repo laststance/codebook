@@ -3871,3 +3871,70 @@ test("a Codebook run's stop read while the learner's handed-over stop is shown d
     await harness.close()
   }
 })
+
+// Value: protects=the keyboard of a learner in the Call Stack view who presses Pause on their own idle Node session and then single-clicks its top frame: js-debug stops with the reason pause in Node's own code, every frame deemphasized by skipFiles (<node_internals>/** by default), so the editor's stop handling focuses the thread alone and opens no file, and the click opens the frame's file preserving the focus; fails_when=the stop's note stays waiting because the editor reported no frame for it, the click's frame is then taken for the stop's own and Codebook gives the clicked file the keyboard, although the editor's default focuses nothing at that stop; why_new=Cycle 0046, the limit left by finding 603 (a stop where no frame qualifies for getTopStackFrame: VS Code 1.140.0 workbench line 695 col 4742, Cursor 3.23.12 line 17299 col 4299; js-debug 1.140.0 keeps a user pause in skipped code, extension.js line 70 col 792); seam=pauseDebugger with reason pause, staysInBackground and framesDeemphasized (the editor's stackTrace request and the adapter's answer), showStopWithoutFrame, focusView, passFocusToStoppedSession for the click
+test('a click on the top frame of a pause in skipped Node code, for which the editor focused no frame, leaves the keyboard in the Call Stack view', async () => {
+  // Arrange: the reader is open under Codebook's contributed default; the learner had a file in front of column 2 and clicked into the Call Stack view.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the learner presses Pause on their idle Node session: the adapter stops in Node's own timers code, every frame skipped, and the editor focuses the thread alone; then the learner single-clicks the top frame, which opens its file preserving the focus and reports the frame.
+    harness.pauseDebugger({
+      session: 'learner-node',
+      reason: 'pause',
+      staysInBackground: true,
+      framesDeemphasized: true,
+      pausedFile: 'timers.js',
+    })
+    harness.showStopWithoutFrame('learner-node')
+    harness.passFocusToStoppedSession('learner-node', 'timers.js', 2)
+
+    // Assert: the Call Stack view keeps the keyboard, and no file is shown with it.
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard at a breakpoint of a learner's own debug session in a file of skipFiles: the editor focuses the deemphasized top frame at a breakpoint stop and opens its file preserving the focus, as its default gives that file the keyboard; fails_when=the hand-over applies the deemphasis rule to every reason and refuses that frame, so the file that covers the learner's file keeps no keyboard and the window body has it; why_new=Cycle 0046, the limit left by finding 603 (getTopStackFrame keeps a deemphasized frame for breakpoint, step and function breakpoint); seam=pauseDebugger with staysInBackground and framesDeemphasized, showStopKeepingFocus
+test('a breakpoint in a skipped file that the editor shows hands its paused file the keyboard', async () => {
+  // Arrange: the reader is open under Codebook's contributed default, and the learner works in a file in column 2.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the learner's session stops at a breakpoint in a file of skipFiles; the editor's own handling opens it preserving the focus and reports its frame.
+    harness.pauseDebugger({
+      session: 'learner-node',
+      staysInBackground: true,
+      framesDeemphasized: true,
+      pausedFile: 'vendor.js',
+    })
+    harness.showStopKeepingFocus('learner-node', 'vendor.js', 2)
+
+    // Assert: the paused file is shown with the keyboard, and the window body has none.
+    assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
+      { name: 'vendor.js', viewColumn: 2, preserveFocus: false },
+    ])
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    await harness.close()
+  }
+})
