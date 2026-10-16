@@ -2404,6 +2404,64 @@ test('an agent’s run that prepares the Application while VS Code’s chat edit
   }
 })
 
+// Value: protects=the keyboard of VS Code's chat editor tab that the learner moved into a floating window (Chat: Move Chat into New Window), where the learner typed the request: an agent's run places its Application in a new group above the first one, and the chat gets its keyboard back through the numbered focus command of its group's column, which in VS Code counts the groups of every editor part, raises the floating window and gives the chat editor's input the keyboard (1.140.0 workbench.desktop.main.js 987:4284, 1106:181056, 1106:133818, 3129:7546); nothing is told; fails_when=the floating window's group counts as another editor part, whose only give-back is Cursor's Focus Agent, so VS Code runs nothing and tells nothing while the Application's group keeps the keyboard; why_new=Cycle 0046 row 636; seam=useNativeLayout, focusMutableDraft, addSeparateEditorPart('vscode-floating-chat') and its focusTab, presentation.createViewport (the MCP-first preparation), the command log, the chat's keyboard and the information messages
+test('an agent’s run that prepares the Application while VS Code’s chat editor tab in a floating window has the keyboard gives that chat its keyboard back and tells nothing', async () => {
+  // Arrange: actions.ts is in the first group and auth.ts in the second; the learner typed the request into the chat editor tab moved into a floating window, whose group the editor counts at column 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart('vscode-floating-chat')
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: the Application stands in its own group at column 1; the floating window's group, now column 4, got the keyboard back through its numbered focus command, and nothing was told.
+      assert.deepEqual(
+        {
+          applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+          chatColumn: harness.groups.find((group) =>
+            group.tabs.includes(chat.tab),
+          )?.viewColumn,
+          focusCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) => /^workbench\.action\.focus/.test(command)),
+          chatHasKeyboard: chat.focused(),
+          messages: harness.informationMessages.map(
+            (message) => message.message,
+          ),
+        },
+        {
+          applicationColumn: 1,
+          chatColumn: 4,
+          focusCommands: [
+            'workbench.action.focusFirstEditorGroup',
+            'workbench.action.focusFirstEditorGroup',
+            'workbench.action.focusFourthEditorGroup',
+          ],
+          chatHasKeyboard: true,
+          messages: [],
+        },
+      )
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=row 612's bound beside row 625: a page of the main editor that is no chat (the editor's Settings, Cursor's composer tab, whose input the extension API gives no kind) reads the same whether the keyboard was in it or in a view beside it, so an agent's run gives it nothing back after placing its Application and says once that the new group has the keyboard; fails_when=row 625's return to VS Code's chat editor tab also focuses a group for a tab that cannot be proven a chat; why_new=Cycle 0046 row 625 guard; seam=useNativeLayout, focusMutableDraft, addOpaqueTab and focusOpaqueTab, presentation.createViewport, the command log and the information messages
 test('an agent’s run that prepares the Application while a Settings tab is the active tab gives that tab nothing back and says once that the Application’s group has the keyboard', async () => {
   // Arrange: actions.ts is in the first group, and the editor's Settings is the active tab of the second group.

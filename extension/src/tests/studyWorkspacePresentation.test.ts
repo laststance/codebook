@@ -5549,6 +5549,56 @@ test('an agent’s Study selection that covers the group of VS Code’s chat edi
   }
 })
 
+// Value: protects=the keyboard of VS Code's chat editor tab that the learner moved into a floating window, where the agent's request was typed: the agent's Study selection arranges the panes and gives the chat its keyboard back through the numbered focus command of its group's column, which VS Code counts across its editor parts, so no sentence sends the learner to the captured source; fails_when=the floating window's group counts as another editor part whose only give-back is Cursor's Focus Agent, so VS Code runs nothing, the captured source keeps the keyboard and the learner is told "Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now …"; why_new=Cycle 0046 row 636; seam=useNativeLayout, focusMutableDraft, addSeparateEditorPart('vscode-floating-chat') and its focusTab, the service's selectPresentation (codebook_presentation), the command log, the chat's keyboard and the information messages
+test('an agent’s Study selection made from VS Code’s chat editor tab in a floating window gives that chat its keyboard back and tells nothing', async () => {
+  // Arrange: actions.ts is in the first group; the learner typed the request into the chat editor tab moved into a floating window, whose group the editor counts at column 3.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart('vscode-floating-chat')
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    const selection = harness.reader.presentationState()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the Study layout is confirmed; the floating window's group, now column 4, got the keyboard back through its numbered focus command after the measurement's focus of the first group, and nothing was told.
+    assert.deepEqual(
+      {
+        layoutConfirmed: answer.layoutConfirmed,
+        chatColumn: harness.groups.find((group) =>
+          group.tabs.includes(chat.tab),
+        )?.viewColumn,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        layoutConfirmed: true,
+        chatColumn: 4,
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusFourthEditorGroup',
+        ],
+        chatHasKeyboard: true,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=VS Code's chat editor tab keyboard in an agent's cold order (select, Return Current): the Return's preparation focuses the first group to place the Application, and the Return's own end gives the chat tab, in front of its group behind the new Application group, its keyboard back; no sentence says that the Application's group has the keyboard; fails_when=the preparation tells row 612's sentence ("that group has the keyboard now") and the Return then gives the chat tab the keyboard, so the learner is told the opposite of where the keyboard is; why_new=Cycle 0046 row 625; seam=useNativeLayout, focusMutableDraft, focusChatEditorTab and focusOpaqueTab (the learner clicking the chat tab again, in front of the Study pane), the service's selectPresentation and returnToCurrent (codebook_presentation, codebook_return_current), the active tab group and the information messages
 test('an agent’s Return Current while VS Code’s chat editor tab has the keyboard gives that chat tab its keyboard back without saying that the Application’s group has it', async () => {
   // Arrange: the agent selected the Study from the chat opened as an editor tab of the third group, and the learner clicked the chat tab and typed the next request there.

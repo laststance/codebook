@@ -320,6 +320,8 @@ export async function workspaceHarness(
         tab: Tab
         layout: unknown
         focused: boolean
+        /** `true` for VS Code's chat editor tab moved into a floating window (see `addSeparateEditorPart`), `false` for Cursor's Agent chat part. */
+        floatingVsCodeChat: boolean
       }
     | undefined
   let separatePartLayoutReport: unknown
@@ -1639,6 +1641,24 @@ export async function workspaceHarness(
       groups.filter((group) => group !== separateEditorPart?.group).length + 1,
     )
   }
+  /**
+   * Gives the separate part's chat the keyboard the way both editors report it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. The learner's click into Cursor's Agent chat tab (`chat.focusTab()`), and VS Code's numbered focus command for a floating window's group, both end so.
+   * @example focusSeparatePartGroup()
+   */
+  function focusSeparatePartGroup(): void {
+    const previous = activeTabGroup
+    activeTabGroup = separateEditorPart!.group
+    separateEditorPart!.focused = true
+    keyboardOnBody = false
+    keyboardInView = false
+    innerFocusedPanel = undefined
+    changedGroups({
+      opened: [],
+      closed: [],
+      changed: [previous, activeTabGroup],
+    })
+    activeTextEditorChanged(undefined)
+  }
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
     if (partialFocusEditor) return partialFocusEditor.value
@@ -2674,8 +2694,10 @@ export async function workspaceHarness(
         async getCommands(): Promise<string[]> {
           return [
             ...nativeHostCommands,
-            // Cursor, whose Agent chat is the separate editor part, registers "Focus Agent".
-            ...(separateEditorPart ? [CURSOR_FOCUS_AGENT_COMMAND] : []),
+            // Cursor, whose Agent chat is the separate editor part, registers "Focus Agent"; VS Code, whose chat editor tab stands in a floating window, does not.
+            ...(separateEditorPart && !separateEditorPart.floatingVsCodeChat
+              ? [CURSOR_FOCUS_AGENT_COMMAND]
+              : []),
           ].filter((name) => !absentHostCommands.has(name))
         },
         async executeCommand(
@@ -2897,8 +2919,15 @@ export async function workspaceHarness(
             keyboardInView = false
           }
           const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
+          // VS Code's commands count the groups of every editor part, so the column of a floating window's group focuses that group, raises its window and gives its chat input the keyboard (1.140.0 workbench.desktop.main.js 987:4284, 1106:181056, 1106:133818, 3129:7546).
+          if (
+            focusedColumn > 1 &&
+            separateEditorPart?.floatingVsCodeChat &&
+            separateEditorPart.group.viewColumn === focusedColumn
+          )
+            focusSeparatePartGroup()
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
-          if (focusedColumn > 1) {
+          else if (focusedColumn > 1) {
             const mainGroups = groups.filter(
               (group) => group !== separateEditorPart?.group,
             )
@@ -5074,13 +5103,20 @@ export async function workspaceHarness(
     hideGridWhileMaximized(): void {
       hideGridWhileMaximized = true
     },
-    /** Adds a real separate-part boundary without changing the main leaf count, matching the recorded Cursor probe. @example const chat = harness.addSeparateEditorPart(); chat.focus(); */
-    addSeparateEditorPart() {
+    /**
+     * Adds a real separate-part boundary without changing the main leaf count, matching the recorded Cursor probe.
+     * @param kind - `'cursor-agent'` (the default) for Cursor's Agent chat part, whose tab input the extension API gives no kind and whose host registers Focus Agent; `'vscode-floating-chat'` for VS Code's chat editor tab moved into a floating window (Chat: Move Chat into New Window): a `TabInputChat` tab whose group the extension API counts after the main editor's (1.140.0 `workbench.desktop.main.js` 699:19807, 1106:181094), no Focus Agent, and the numbered focus command of its column gives it the keyboard.
+     * @example const chat = harness.addSeparateEditorPart(); chat.focus();
+     */
+    addSeparateEditorPart(
+      kind: 'cursor-agent' | 'vscode-floating-chat' = 'cursor-agent',
+    ) {
       assert.equal(nativeLayout, true)
       assert.equal(separateEditorPart, undefined)
+      const floatingVsCodeChat = kind === 'vscode-floating-chat'
       const chatTab = {
-        input: new TabInputUnknown(),
-        label: 'New Agent',
+        input: floatingVsCodeChat ? new TabInputChat() : new TabInputUnknown(),
+        label: floatingVsCodeChat ? 'Chat' : 'New Agent',
         isPreview: false,
         isDirty: false,
       }
@@ -5094,6 +5130,7 @@ export async function workspaceHarness(
         tab: chatTab,
         layout: { orientation: 1, groups: [{ size: 743 }] },
         focused: false,
+        floatingVsCodeChat,
       }
       groups.push(group)
       changedGroups({ opened: [group], closed: [], changed: [] })
@@ -5110,20 +5147,7 @@ export async function workspaceHarness(
           activeTextEditorChanged(undefined)
         },
         /** Gives the chat tab the keyboard focus the way Cursor reports it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. @example chat.focusTab() */
-        focusTab(): void {
-          const previous = activeTabGroup
-          activeTabGroup = separateEditorPart!.group
-          separateEditorPart!.focused = true
-          keyboardOnBody = false
-          keyboardInView = false
-          innerFocusedPanel = undefined
-          changedGroups({
-            opened: [],
-            closed: [],
-            changed: [previous, activeTabGroup],
-          })
-          activeTextEditorChanged(undefined)
-        },
+        focusTab: focusSeparatePartGroup,
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
         resync(change: 'wrapper' | 'opened' | 'unannounced' | 'move'): void {
           const previous = separateEditorPart!.group,

@@ -2989,14 +2989,14 @@ export class StudyWorkspace {
 
   /**
    * Chooses the command that gives a remembered tab's group the keyboard back; asked by the function {@link retainForeignTabFocus} answers, once it knows that the focus may be given back.
-   * The editor's numbered focus commands count the groups of the main editor only: for the column of another editor part's group (Cursor's chat) the command opens a new empty group in the main editor. Only a group that is known to be one of the main editor's is focused by its number, and only a tab that is known to lie outside the main editor gets the host's own command for its chat; while the main editor's group count is not known nothing is run for a group, and the focus stays where it is. Without the host's command it stays too. At a pause, and after a close that showed a side bar a Read hid, only the chat gets the keyboard back: Cursor's chat through its command, and VS Code's chat opened as an editor tab of a main group through that group's focus command where the editor moved the keyboard to another group ({@link isChatTabBesideMovedKeyboard}, row 632); another tab of the main editor (a settings page, an image) is treated like a learner's file, which gets nothing back there, because the editor reads the same for such a tab whether the keyboard was in it or in the terminal, a view or a side-view chat.
+   * Cursor's numbered focus commands count the groups of the main editor only: for the column of another editor part's group (Cursor's chat) the command opens a new empty group in the main editor. Only a group that is known to be one of the main editor's is focused by its number, and only a tab that is known to lie outside the main editor gets the host's own command for its chat, or, for VS Code's chat editor tab in a floating window, the number VS Code counts across its editor parts ({@link otherPartFocusCommand}, row 636); while the main editor's group count is not known nothing is run for a group, and the focus stays where it is. Without such a command it stays too. At a pause, and after a close that showed a side bar a Read hid, only the chat gets the keyboard back: Cursor's chat through its command, and VS Code's chat opened as an editor tab of a main group through that group's focus command where the editor moved the keyboard to another group ({@link isChatTabBesideMovedKeyboard}, row 632); another tab of the main editor (a settings page, an image) is treated like a learner's file, which gets nothing back there, because the editor reads the same for such a tab whether the keyboard was in it or in the terminal, a view or a side-view chat.
    * @param target - The group that still shows the remembered tab, `undefined` for a tab another editor part held the keyboard over.
    * @param takenByEditor - Whether the editor itself took the keyboard from the remembered tab, as the caller knows, and it is not given back after an arrangement: at a pause of a live run ({@link settleKeyboardAtPause}), where the editor's debugger opened the paused file with the keyboard, and at a close that ends a Read ({@link returnsKeyboardToChatAfterSideBars}), where the editor's command showed a side bar with the keyboard.
    * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}), whose group gets the keyboard back also where the editor took it.
    * @returns
    * - The numbered focus command of a group of the main editor: after an arrangement, and for VS Code's chat editor tab also at a pause, while its group is not the active one.
-   * - {@link CURSOR_FOCUS_AGENT_COMMAND} for a tab of another editor part or one held by another part, where the host registers it.
-   * - `undefined` for any other group of the main editor at a pause and after a close that ends a Read, for a group that is not known to be the main editor's or another part's ({@link placeOfRememberedGroup}), and in a host without the chat's command.
+   * - For a tab of another editor part or one held by another part: {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it, and the numbered focus command of the group's column for VS Code's chat editor tab in a floating window ({@link otherPartFocusCommand}).
+   * - `undefined` for any other group of the main editor at a pause and after a close that ends a Read, for a group that is not known to be the main editor's or another part's ({@link placeOfRememberedGroup}), and for another part's tab no command focuses.
    * @example
    * ```ts
    * await this.focusReturnCommand(chatGroup, true) // => 'composer.focusComposer' in Cursor
@@ -3010,7 +3010,8 @@ export class StudyWorkspace {
     chatEditorTab = false,
   ): Promise<string | undefined> {
     const place = await this.placeOfRememberedGroup(target)
-    if (place === 'other') return this.chatFocusCommand()
+    if (place === 'other')
+      return this.otherPartFocusCommand(target, chatEditorTab)
     if (
       place === 'unknown' ||
       (takenByEditor &&
@@ -3057,6 +3058,27 @@ export class StudyWorkspace {
     return this.registeredChatFocusCommand
       ? CURSOR_FOCUS_AGENT_COMMAND
       : undefined
+  }
+
+  /**
+   * Names the command that gives a remembered tab of another editor part the keyboard back; asked by {@link focusReturnCommand} for a group that is known to lie outside the main editor (row 636).
+   * Cursor's Agent chat gets {@link CURSOR_FOCUS_AGENT_COMMAND}. VS Code registers no command for its chat, but its numbered group focus commands count the groups of every editor part in the order the extension API numbers the view columns, so VS Code's chat editor tab moved into a floating window gets the command of its group's column: the group's focus gives the chat editor's input the keyboard and raises its window (VS Code 1.140.0 `workbench.desktop.main.js` 987:4284, 1106:181056, 1106:181094, 699:19807, 1106:74902, 3129:7546, 36:2290, 1106:133818). Cursor counts only its main editor's groups (Cursor 3.23.12 11684:4156), so a group's number is never run for its other part.
+   * @param target - The group that still shows the remembered tab, `undefined` for a tab another editor part held the keyboard over.
+   * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}).
+   * @returns
+   * - {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it.
+   * - The numbered focus command of the group's column for VS Code's chat editor tab, while the column is one of the first eight.
+   * - `undefined` otherwise; where the caller tells where the keyboard is when nothing is given back, it still does.
+   * @example await this.otherPartFocusCommand(floatingChatGroup, true) // => 'workbench.action.focusFourthEditorGroup' in VS Code for its group at column 4
+   */
+  private async otherPartFocusCommand(
+    target: vscode.TabGroup | undefined,
+    chatEditorTab: boolean,
+  ): Promise<string | undefined> {
+    const chatCommand = await this.chatFocusCommand()
+    // Only VS Code's chat editor tab of a known group is focused by its column; Cursor's chat keeps its own command.
+    if (chatCommand || !chatEditorTab || !target) return chatCommand
+    return focusEditorGroupCommand(target.viewColumn)
   }
 
   /**
