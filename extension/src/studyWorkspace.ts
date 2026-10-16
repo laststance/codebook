@@ -500,6 +500,12 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
+ * The cancellation {@link StudyWorkspace.open} hands an Application preparation when a selection owns the final return to the foreign tab (the Agent chat) whose keyboard the entry's first measurement borrowed (row 643): the preparation then captures and runs no focus return of its own, and the selection's return, which runs after the open, gives the chat its keyboard back. Nothing of the entry is retired by it.
+ * @example selectionOwnsForeignReturn() // does nothing
+ */
+const selectionOwnsForeignReturn = (): void => {}
+
+/**
  * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailed:application'`, `'agentSelectionFailed:study'` and `'agentSelectionFailed:source'` are the three sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
@@ -7051,6 +7057,42 @@ export class StudyWorkspace {
     this.publish()
   }
 
+  /**
+   * Measures the main editor once before any pane exists while a tab of another editor part holds the keyboard (the Agent chat) and the first group shows a text editor; the step of a first {@link open} after it closed the leftover tabs.
+   * Cursor reports the focus the measurement gives a text editor, and not the focus it gives the Application pane once that is in front of it while the editor names the chat's group. That holds for a selection, a restore, Open replay and Open Study Workspace alike. The measurement leaves the keyboard in that text editor, which Cursor then reports as the active one while it still names the chat's group (finding 588).
+   * @param signal - The entry's cancellation.
+   * @param lifetime - The reader lifetime the entry began in.
+   * @returns The return to the foreign tab ({@link retainForeignTabFocus}) captured before the measurement, when it measured; `undefined` when no foreign tab held the keyboard or the first group shows no text editor. A selection's entry hands the preparation {@link selectionOwnsForeignReturn} when it measured: the preparation's own focus capture would take the text editor the borrow focused for the learner's, with the chat's group Cursor still names as its group, and its return was refused with "The previously focused source group changed; focus was not guessed." (row 643).
+   * @throws What the measurement throws, and when the reader or the entry ended meanwhile.
+   * @example const borrowed = await this.measureBeforePanesBesideForeignTab(signal, lifetime) // => the chat's return in Cursor with login-form.tsx in the first group
+   */
+  private async measureBeforePanesBesideForeignTab(
+    signal: AbortSignal | undefined,
+    lifetime: number,
+  ): Promise<ReturnType<StudyWorkspace['retainForeignTabFocus']>> {
+    const giveBack = this.retainForeignTabFocus(undefined)
+    const firstInput = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === vscode.ViewColumn.One,
+    )?.activeTab?.input
+    // Only a first group whose text editor is visible is measured.
+    if (
+      !giveBack ||
+      !(firstInput instanceof vscode.TabInputText) ||
+      !vscode.window.visibleTextEditors.some(
+        (editor) =>
+          editor.viewColumn === vscode.ViewColumn.One &&
+          editor.document.uri.toString() === firstInput.uri.toString(),
+      )
+    )
+      return undefined
+    await this.withLayout(signal, async (_lifetime, assertCurrent) => {
+      await this.readMainEditorGrid(signal, assertCurrent)
+    })
+    this.assertLifetime(lifetime)
+    signal?.throwIfAborted()
+    return giveBack
+  }
+
   /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome.
    * @param signal - Cancels an obsolete reader entry.
    * @param origin - Identifies the existing navigation/placement contract for this entry.
@@ -7111,6 +7153,9 @@ export class StudyWorkspace {
       if (firstOpen && request === this.readerOpenNumber) this.opened = false
     }
     signal?.addEventListener('abort', cancel, { once: true })
+    let borrowedFromForeignTab: ReturnType<
+      StudyWorkspace['retainForeignTabFocus']
+    >
     try {
       await this.initialize()
       this.assertLifetime(lifetime)
@@ -7124,25 +7169,10 @@ export class StudyWorkspace {
         await this.closeLeftoverTabs(signal)
         this.assertLifetime(lifetime)
         signal?.throwIfAborted()
-        const firstInput = vscode.window.tabGroups.all.find(
-          (group) => group.viewColumn === vscode.ViewColumn.One,
-        )?.activeTab?.input
-        // While a tab of another editor part holds the keyboard (the Agent chat), the main editor is measured once before any pane exists, when its first group shows a text editor: Cursor reports the focus the measurement gives a text editor, and not the focus it gives the Application pane once that is in front of it while the editor names the chat's group. That holds for a selection, a restore, Open replay and Open Study Workspace alike.
-        if (
-          this.retainForeignTabFocus(undefined) &&
-          firstInput instanceof vscode.TabInputText &&
-          vscode.window.visibleTextEditors.some(
-            (editor) =>
-              editor.viewColumn === vscode.ViewColumn.One &&
-              editor.document.uri.toString() === firstInput.uri.toString(),
-          )
-        ) {
-          await this.withLayout(signal, async (_lifetime, assertCurrent) => {
-            await this.readMainEditorGrid(signal, assertCurrent)
-          })
-          this.assertLifetime(lifetime)
-          signal?.throwIfAborted()
-        }
+        borrowedFromForeignTab = await this.measureBeforePanesBesideForeignTab(
+          signal,
+          lifetime,
+        )
       }
       await this.refreshProgress()
       this.assertLifetime(lifetime)
@@ -7210,11 +7240,12 @@ export class StudyWorkspace {
           signal,
           retiredContextGroup,
           true,
+          // The entry's own final return, or the selection's after a measurement borrowed the chat's keyboard (row 643), replaces the preparation's.
           returnForeignFocus
             ? (): void => {
                 returnForeignFocus = undefined
               }
-            : undefined,
+            : borrowedFromForeignTab && selectionOwnsForeignReturn,
           forAgent,
         )
       else this.ensureApp()
@@ -13831,16 +13862,11 @@ export class StudyWorkspace {
     if (!(await this.provenLeftoverGroup(marker))) return undefined
     await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
     const group = await this.provenLeftoverGroup(marker)
-    if (!group || !(await vscode.window.tabGroups.close(group, true)))
+    if (!group)
       throw new Error(
         'The editor refused to retire the empty Application group an earlier window left.',
       )
-    await waitUntil(
-      () => vscode.window.tabGroups.all.length === groupsBefore - 1,
-      'leftover Application group removal',
-      PRESENTATION_READY_TIMEOUT_MS,
-      signal,
-    )
+    await this.closeLeftoverAsIssuedRemoval(group, groupsBefore, signal)
     const layout = await vscode.commands.executeCommand<unknown>(
       'vscode.getEditorLayout',
     )
@@ -13849,6 +13875,41 @@ export class StudyWorkspace {
         'The removal of the Application group an earlier window left could not be confirmed.',
       )
     return { groupCount: marker.groupCount - 1, layout }
+  }
+
+  /**
+   * Closes a proven leftover group as Codebook's own issued removal and waits until the editor removed it; the close step of {@link retireProvenLeftoverGroup}.
+   * The groups behind the leftover move one column to the left. The editor answers a removed group with a whole new tab model (Cursor 3.23.12 `workbench.desktop.main.js` 17269:26248 `onDidRemoveGroup` → `_createTabsModel`, sent at 17269:31858), and Cursor gives every group a new object with it, so {@link observeEditorGroups} keeps a moved group's identity only through a shift Codebook issued ({@link issuedApplicationColumnShift}). Marked so, the learner's group whose focus a cold Study select captured is still found by its identity when that select gives its focus back, instead of the refusal "The previously focused source group changed; focus was not guessed." (row 643).
+   * @param group - The proven leftover, unlocked already.
+   * @param groupsBefore - How many groups the editor named before the close.
+   * @param signal - The entry's cancellation.
+   * @throws When the editor refuses the close, or the removal is not reported in time.
+   * @example await this.closeLeftoverAsIssuedRemoval(group, 4, signal)
+   */
+  private async closeLeftoverAsIssuedRemoval(
+    group: vscode.TabGroup,
+    groupsBefore: number,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const previous = this.applicationGroupChange
+    const identity = this.editorGroupIdentities.get(group)
+    const removal = identity && { kind: 'remove' as const, identity }
+    if (removal) this.applicationGroupChange = removal
+    try {
+      if (!(await vscode.window.tabGroups.close(group, true)))
+        throw new Error(
+          'The editor refused to retire the empty Application group an earlier window left.',
+        )
+      await waitUntil(
+        () => vscode.window.tabGroups.all.length === groupsBefore - 1,
+        'leftover Application group removal',
+        PRESENTATION_READY_TIMEOUT_MS,
+        signal,
+      )
+    } finally {
+      if (removal && this.applicationGroupChange === removal)
+        this.applicationGroupChange = previous
+    }
   }
 
   /**

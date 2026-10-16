@@ -4557,6 +4557,197 @@ for (const reader of ['closed', 'open'] as const)
     }
   })
 
+// Value: protects=an agent's cold Study selection during a paused live run made while Cursor's chat tab has the keyboard (the five-stop flow's cold order): the selection's first measurement borrows the main editor, after which Cursor reports the first group's file as the active text editor while it still names the chat's group, and the selection confirms the live panes and gives the chat its keyboard back; fails_when=the Application preparation captures that borrowed file as the learner's focus with the chat's group as its group, and its return refuses the selection with "The previously focused source group changed; focus was not guessed." (C57 c57-5-cu-cold and c57-5-cu-4-cold, twice in two attempts); why_new=Cycle 0046 row 643 (the addendum's case without a reload); seam=workspace harness with the controlled runtime, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat (Cursor's stale group name, finding 588), the service's selectPresentation (codebook_presentation) and the command log
+test('an agent’s cold Study selection during a paused live run made while Cursor’s chat tab has the keyboard confirms the live panes and gives the chat its keyboard back', async () => {
+  // Arrange: Cursor with login-form.tsx in front of the first group, auth.ts in the second, and the Agent chat as a tab of its own editor part; a run paused, the Study is closed, and the chat input has the keyboard while the editor names the chat's group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.focusMutableDraft('login-form.tsx', 1)
+    await pauseLiveRun(harness)
+    chat.focusTab()
+    const selection = harness.reader.presentationState()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    let refusal: unknown
+    const answer = await harness.service
+      .selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .catch((error: unknown) => {
+        refusal = error
+        return undefined
+      })
+
+    // Assert: the live panes are confirmed, and Cursor's own command gave the chat input its keyboard back last.
+    assert.deepEqual(
+      {
+        refusal: (refusal as { causeDetail?: unknown } | undefined)
+          ?.causeDetail,
+        layoutConfirmed: answer?.layoutConfirmed,
+        reason: answer?.reason,
+        appColumn: answer?.panes.appColumn,
+        sourceColumn: answer?.panes.sourceColumn,
+        lastKeyboardCommand: harness.commands
+          .slice(commandsBefore)
+          .filter(isKeyboardCommand)
+          .at(-1),
+        chatHasKeyboard: chat.focused(),
+      },
+      {
+        refusal: undefined,
+        layoutConfirmed: true,
+        reason: undefined,
+        appColumn: 1,
+        sourceColumn: 2,
+        lastKeyboardCommand: 'composer.focusComposer',
+        chatHasKeyboard: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const host of ['Cursor', 'VS Code'] as const)
+  // Value: protects=an agent's cold Study selection after Developer: Reload Window whose learner had the keyboard in a file of the group behind the earlier window's empty locked Application group: the selection retires that proven leftover, the learner's group moves one column to the left, and the selection still finds that group by its identity, so it confirms the Study layout; fails_when=the leftover's close is no issued removal, Cursor gives every group a new object with the new tab model (Cursor 3.23.12 workbench.desktop.main.js 17269:26248), the moved group gets a new identity, and the selection's focus return refuses with "The previously focused source group changed; focus was not guessed." (C57 c57-cursor-1a, 1b and 1b-probe; VS Code keeps its group objects); why_new=Cycle 0046 row 643; seam=applicationGroupMarkers (a record that proves the leftover), leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges (Cursor's group objects), focusMutableDraft, the service's selectPresentation and harness.groups
+  test(`in ${host}, an agent’s cold Study selection after a reload whose learner had the keyboard in the group behind the earlier window’s leftover retires the leftover and confirms the Study layout`, async () => {
+    // Arrange: the earlier window recorded its Application group at column 1 of three rows; after the reload that group stands empty and locked, login-form.tsx is in the second row and the learner works in auth.ts in the third. In Cursor the Agent chat's part stands beside the main editor, and every tab change gives each group a new object.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+    if (host === 'Cursor') {
+      harness.addSeparateEditorPart()
+      harness.replaceGroupObjectsOnTabChanges()
+    }
+    try {
+      harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+        version: 1,
+        writer: 'the window before the reload',
+        column: 1,
+        groupCount: 3,
+        layout: {
+          orientation: 1,
+          groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+        },
+      })
+      harness.leaveEmptyLockedGroup(1)
+      const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+      const loginForm = harness.focusMutableDraft('login-form.tsx', 2)
+      const auth = harness.focusMutableDraft('auth.ts', 3)
+      const selection = harness.reader.presentationState()
+
+      // Act
+      let refusal: unknown
+      const answer = await harness.service
+        .selectPresentation({
+          instanceId: harness.service.instanceId,
+          presentationId: selection.presentationId,
+          expectedRevision: selection.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        })
+        .catch((error: unknown) => {
+          refusal = error
+          return undefined
+        })
+
+      // Assert: confirmed; the leftover is gone and both learner files keep their groups, now one column to the left.
+      /** Names the column of the group that holds a tab. */
+      const columnOf = (tab: unknown): number | undefined =>
+        harness.groups.find((group) => group.tabs.some((held) => held === tab))
+          ?.viewColumn
+      assert.deepEqual(
+        {
+          refusal: (refusal as { causeDetail?: unknown } | undefined)
+            ?.causeDetail,
+          layoutConfirmed: answer?.layoutConfirmed,
+          reason: answer?.reason,
+          leftoverStands: harness.groups.some(
+            (group) =>
+              group.viewColumn === leftover.viewColumn &&
+              group.tabs.length === 0 &&
+              group.locked,
+          ),
+          loginFormColumn: columnOf(loginForm.tab),
+          authColumn: columnOf(auth.tab),
+        },
+        {
+          refusal: undefined,
+          layoutConfirmed: true,
+          reason: undefined,
+          leftoverStands: false,
+          loginFormColumn: 1,
+          authColumn: 2,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the service's selectPresentation
+test('in Cursor, a cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
+  // Arrange: as above in Cursor; the selection's layout command will wait until the learner closed auth.ts.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('login-form.tsx', 2)
+    harness.focusMutableDraft('auth.ts', 3)
+    const authTab = harness.groups.find(
+      (group) => group.viewColumn === 3,
+    )!.activeTab!
+    const selection = harness.reader.presentationState()
+    const layoutCommand = harness.holdNextCommand('runCommands')
+
+    // Act
+    let refusal: unknown
+    const selecting = harness.service
+      .selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .catch((error: unknown) => {
+        refusal = error
+      })
+    await layoutCommand.started
+    harness.closeTabByHand(authTab)
+    layoutCommand.release()
+    await selecting
+
+    // Assert: refused; nothing guessed a focus for the closed file.
+    assert.equal(
+      (refusal as { code?: unknown } | undefined)?.code,
+      'PRESENTATION_UNAVAILABLE',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the agent chat's keyboard after a restore of the live panes that failed once the arrangement had moved the keyboard into the main editor: the chat has it again; fails_when=only the successful arrangement gives the focus back, so a restore the editor fails leaves the keyboard in the main editor and the agent's next key press goes there; why_new=Cycle 0045 local review coderabbit #6 (the live and replay branch returned the focus on success only, unlike a selection and an open); seam=workspace harness with the controlled runtime, a separate editor part, and failNextCommand on the arrangement's command batch
 test("a restore of the live panes that the editor fails after the arrangement took the keyboard, made while the agent chat's tab has the focus in Cursor, gives the chat the keyboard back", async () => {
   // Arrange: the reader follows a paused run in Cursor and the agent's chat has the keyboard; the editor will fail the command batch of the restore's arrangement.
