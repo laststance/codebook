@@ -12,7 +12,7 @@ test('the empty groups at the recorded columns are retired from the last column 
   ]
 
   // Act
-  const leftovers = recordedLeftoverGroups([1, 3], groups)
+  const leftovers = recordedLeftoverGroups([1, 3], groups, new Set())
 
   // Assert
   assert.deepEqual(leftovers, [
@@ -30,7 +30,7 @@ test('a recorded group that now holds a learner tab is no leftover, and the othe
   ]
 
   // Act
-  const leftovers = recordedLeftoverGroups([1, 3], groups)
+  const leftovers = recordedLeftoverGroups([1, 3], groups, new Set())
 
   // Assert
   assert.deepEqual(leftovers, [
@@ -46,7 +46,7 @@ test('an empty group at a column the record does not name is never a leftover', 
   ]
 
   // Act
-  const leftovers = recordedLeftoverGroups([1], groups)
+  const leftovers = recordedLeftoverGroups([1], groups, new Set())
 
   // Assert
   assert.deepEqual(leftovers, [])
@@ -60,7 +60,49 @@ test('a recorded empty group the editor has no focus command for retires no grou
   }))
 
   // Act
-  const leftovers = recordedLeftoverGroups([1, 9], groups)
+  const leftovers = recordedLeftoverGroups([1, 9], groups, new Set())
+
+  // Assert
+  assert.deepEqual(leftovers, [])
+})
+
+test('a recorded group that holds only the earlier session’s restored captured source is a leftover, retired with that tab', () => {
+  // Arrange
+  const restoredSource = { label: 'Captured-overview.mts' }
+  const groups = [
+    { viewColumn: 1, tabs: [{ label: 'README.md' }] },
+    { viewColumn: 2, tabs: [restoredSource] },
+    { viewColumn: 3, tabs: [] },
+  ]
+
+  // Act
+  const leftovers = recordedLeftoverGroups(
+    [2, 3],
+    groups,
+    new Set([restoredSource]),
+  )
+
+  // Assert
+  assert.deepEqual(leftovers, [
+    { column: 3, focusCommand: 'workbench.action.focusThirdEditorGroup' },
+    { column: 2, focusCommand: 'workbench.action.focusSecondEditorGroup' },
+  ])
+})
+
+test('a recorded group that holds a learner’s file beside the restored captured source is no leftover', () => {
+  // Arrange
+  const restoredSource = { label: 'Captured-overview.mts' }
+  const groups = [
+    { viewColumn: 1, tabs: [{ label: 'README.md' }] },
+    { viewColumn: 2, tabs: [restoredSource, { label: 'notes.md' }] },
+  ]
+
+  // Act
+  const leftovers = recordedLeftoverGroups(
+    [2],
+    groups,
+    new Set([restoredSource]),
+  )
 
   // Assert
   assert.deepEqual(leftovers, [])

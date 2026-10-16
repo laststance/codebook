@@ -6797,9 +6797,9 @@ export class StudyWorkspace {
         await this.waitForRecordingWindow(signal, lifetime)
       // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them, with the captured-source tabs of that session, before it creates any. A tab the editor keeps does not stop the entry; the next selection names a kept pane.
       if (firstOpen) {
-        await this.closeLeftoverTabs()
-        // The empty Application group an earlier window left after a reload is retired, on its record's proof only, before any pane is placed (finding 590).
+        // The groups an earlier window created and left after a reload are retired, on its record's proof only, before any pane is placed (finding 590), and before that window's restored captured source closes: an editor that removes emptied groups would otherwise shrink the recorded grid (finding 599).
         await this.retireLeftoverApplicationGroup(signal)
+        await this.closeLeftoverTabs()
         this.assertLifetime(lifetime)
         signal?.throwIfAborted()
         const firstInput = vscode.window.tabGroups.all.find(
@@ -12688,23 +12688,24 @@ export class StudyWorkspace {
   }
 
   /**
-   * Writes the record of the groups Codebook created that a reload would leave empty, at the main layout it confirmed last ({@link layoutReceipt}): every group the record names that stands in that layout, and the Study Context's created group, each by its column there, with that layout's group count and the layout itself (finding 599). {@link layoutReceipt} calls it for every confirmed layout, {@link rememberApplicationGroupMarker} once a reservation starts the record and {@link rememberCreatedContextGroup} once the Context's created group is known.
-   * Only a reader that keeps a record writes one, and a confirmed layout in which none of its groups stands removes it, so the record never outlives the groups it names. A layout the learner changed without a confirmation is never written: the proof after a reload then fails.
-   * @example this.recordStudyGroups() // => { version: 2, columns: [1, 3], groupCount: 3, … } once a Study select gave the Context a group at column 3
+   * Writes the record of the groups Codebook created that a reload would leave empty, at the main layout it confirmed last ({@link layoutReceipt}): every group the record names that stands in that layout, the Study Context's created group and the created Source group, each by its column there, with that layout's group count and the layout itself (finding 599). {@link layoutReceipt} calls it for every confirmed layout, {@link rememberApplicationGroupMarker} once a reservation claims the Application's group and {@link rememberCreatedContextGroup} once the Context's created group is known.
+   * A confirmed layout that holds a group Codebook created writes the record, with or without a reservation; one in which none stands removes this reader's record, so the record never outlives the groups it names, and writes nothing for a reader without one. A layout the learner changed without a confirmation is never written: the proof after a reload then fails.
+   * @example this.recordStudyGroups() // => { version: 2, columns: [2, 3], groupCount: 3, … } once a Study Open beside one learner group created the Source and Context groups
    */
   private recordStudyGroups(): void {
     const receipt = this.layoutReceipt
-    // No confirmed layout, or no record to follow: only the reservation of the Application's group starts one.
-    if (!receipt || !this.recordedStudyGroups.length) return
+    // Only a confirmed layout is recorded.
+    if (!receipt) return
     const named = receipt.groups.flatMap(({ group, column }) => {
       const identity = this.recordableStudyGroup(group)
       return identity ? [{ identity, column }] : []
     })
     const layout: unknown = JSON.parse(receipt.signature),
       groupCount = editorLayoutGroupCount(layout)
-    // None of the recorded groups stands in this layout: the record goes with them.
+    // No group Codebook created stands in this layout: a record of this reader's goes with its groups, and a reader without one writes nothing, so an earlier window's record stays for this window's cold entry.
     if (!named.length || groupCount === undefined) {
-      void this.clearApplicationGroupMarker()
+      if (this.recordedStudyGroups.length)
+        void this.clearApplicationGroupMarker()
       return
     }
     this.recordedStudyGroups = named.map(({ identity }) => identity)
@@ -12723,7 +12724,7 @@ export class StudyWorkspace {
    * Names a group of a confirmed layout that the Application group record keeps; asked by {@link recordStudyGroups} for each group of that layout.
    * @param group - A group of the confirmed layout.
    * @returns
-   * - The group's identity for a group the record already names, or the Study Context's created group ({@link isCreatedContextGroup})
+   * - The group's identity for a group the record already names, the Study Context's created group ({@link isCreatedContextGroup}) or the created Source group ({@link sourceDerivedGroup})
    * - `undefined` for every other group, a learner's group above all
    * @example this.recordableStudyGroup(contextGroup) // => the identity of the Context's created group
    */
@@ -12731,6 +12732,7 @@ export class StudyWorkspace {
     const identity = this.editorGroupIdentities.get(group)
     return identity &&
       (this.recordedStudyGroups.includes(identity) ||
+        identity === this.sourceDerivedGroup?.identity ||
         this.isCreatedContextGroup(group))
       ? identity
       : undefined
@@ -12789,7 +12791,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Retires the empty groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, and the Study Context's created group when the record names it; {@link open} calls it at a cold entry before {@link ensureApp} places the Application, which would otherwise stand in that unproven group.
+   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link open} calls it at a cold entry before {@link ensureApp} places the Application, which would otherwise stand in that unproven group, and before {@link closeLeftoverTabs} closes the restored captured source, whose group an editor that removes emptied groups would take away from the recorded grid. A Source group that holds only that restored tab is retired with it.
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
    * @param signal - The entry's cancellation.
    * @throws When the editor refuses a close, or the grid does not lose exactly that group.
@@ -12806,8 +12808,9 @@ export class StudyWorkspace {
     const leftovers = recordedLeftoverGroups(
       record.columns,
       vscode.window.tabGroups.all,
+      new Set(this.leftoverTabs()),
     )
-    // No empty group at a recorded column, or one the editor cannot focus: no native effect is issued.
+    // No leftover group at a recorded column, or one the editor cannot focus: no native effect is issued.
     if (!leftovers.length) return
     await this.withLayout(signal, (_lifetime, assertCurrent) =>
       this.retireProvenLeftoverGroups(record, leftovers, assertCurrent, signal),
@@ -12895,9 +12898,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Finds the group at the marker's column when {@link isApplicationGroupMarkerProven} proves it is an empty group Codebook created and recorded; {@link retireProvenLeftoverGroup} asks once that group has the keyboard, and again after the unlock, before the close.
+   * Finds the group at the marker's column when {@link isApplicationGroupMarkerProven} proves it is a leftover group Codebook created and recorded, empty but for the earlier session's own leftover tabs ({@link leftoverTabs}); {@link retireProvenLeftoverGroup} asks once that group has the keyboard, and again after the unlock, before the close.
    * @param marker - The group's recorded column, with the group count and layout of the grid it must stand in.
-   * @returns The proven group, or `undefined` when the group at that column is missing or holds a tab, or the layout read differs from the expected grid (also a read the chat part answered).
+   * @returns The proven group, or `undefined` when the group at that column is missing or holds a tab other than such a leftover, or the layout read differs from the expected grid (also a read the chat part answered).
    * @example const group = await this.provenLeftoverGroup(marker)
    */
   private async provenLeftoverGroup(
@@ -12907,9 +12910,19 @@ export class StudyWorkspace {
       'vscode.getEditorLayout',
     )
     const group = vscode.window.tabGroups.all.find(
-      (candidate) => candidate.viewColumn === marker.column,
-    )
-    return group && isApplicationGroupMarkerProven(marker, group, layout)
+        (candidate) => candidate.viewColumn === marker.column,
+      ),
+      leftover = new Set(this.leftoverTabs())
+    // The earlier session's own leftover tabs (its restored captured source) count for nothing: they leave with the group.
+    return group &&
+      isApplicationGroupMarkerProven(
+        marker,
+        {
+          viewColumn: group.viewColumn,
+          tabs: group.tabs.filter((tab) => !leftover.has(tab)),
+        },
+        layout,
+      )
       ? group
       : undefined
   }
