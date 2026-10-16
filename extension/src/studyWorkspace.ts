@@ -12647,33 +12647,56 @@ export class StudyWorkspace {
       )
     )
       return
-    await this.withLayout(signal, async (_lifetime, assertCurrent) => {
-      const groupsBefore = vscode.window.tabGroups.all.length
-      // Layout reads answer for the part that has the keyboard (a focused chat part answers for itself), and the editor unlocks only that group: the group at the record's column takes the keyboard before the proof.
-      await vscode.commands.executeCommand(focusCommand)
-      assertCurrent()
-      if (!(await this.provenLeftoverGroup(marker))) return
-      await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
-      const group = await this.provenLeftoverGroup(marker)
-      if (!group || !(await vscode.window.tabGroups.close(group, true)))
-        throw new Error(
-          'The editor refused to retire the empty Application group an earlier window left.',
-        )
-      await waitUntil(
-        () => vscode.window.tabGroups.all.length === groupsBefore - 1,
-        'leftover Application group removal',
-        PRESENTATION_READY_TIMEOUT_MS,
+    await this.withLayout(signal, (_lifetime, assertCurrent) =>
+      this.retireProvenLeftoverGroup(
+        marker,
+        focusCommand,
+        assertCurrent,
         signal,
+      ),
+    )
+  }
+
+  /**
+   * Retires the leftover Application group inside the layout queue once {@link retireLeftoverApplicationGroup} found a record that may prove it: focuses the record's column, proves the group, unlocks it, proves it again, closes it, confirms that the grid lost exactly that group and forgets the record.
+   * @param marker - The record of the claimed group.
+   * @param focusCommand - The command that gives the group at the record's column the keyboard.
+   * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
+   * @param signal - The entry's cancellation.
+   * @throws When the editor refuses the close, or the grid does not lose exactly that group.
+   * @example await this.retireProvenLeftoverGroup(marker, 'workbench.action.focusFirstEditorGroup', assertCurrent, signal)
+   */
+  private async retireProvenLeftoverGroup(
+    marker: ApplicationGroupMarker,
+    focusCommand: string,
+    assertCurrent: () => void,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const groupsBefore = vscode.window.tabGroups.all.length
+    // Layout reads answer for the part that has the keyboard (a focused chat part answers for itself), and the editor unlocks only that group: the group at the record's column takes the keyboard before the proof.
+    await vscode.commands.executeCommand(focusCommand)
+    assertCurrent()
+    if (!(await this.provenLeftoverGroup(marker))) return
+    await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
+    const group = await this.provenLeftoverGroup(marker)
+    if (!group || !(await vscode.window.tabGroups.close(group, true)))
+      throw new Error(
+        'The editor refused to retire the empty Application group an earlier window left.',
       )
-      const layout = await vscode.commands.executeCommand<unknown>(
-        'vscode.getEditorLayout',
+    await waitUntil(
+      () => vscode.window.tabGroups.all.length === groupsBefore - 1,
+      'leftover Application group removal',
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    )
+    const layout = await vscode.commands.executeCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    if (editorLayoutGroupCount(layout) !== marker.groupCount - 1)
+      throw new Error(
+        'The removal of the Application group an earlier window left could not be confirmed.',
       )
-      if (editorLayoutGroupCount(layout) !== marker.groupCount - 1)
-        throw new Error(
-          'The removal of the Application group an earlier window left could not be confirmed.',
-        )
-      await this.clearApplicationGroupMarker()
-    })
+    await this.clearApplicationGroupMarker()
   }
 
   /**
