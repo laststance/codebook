@@ -5751,6 +5751,56 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
+// Value: protects=the learner whose Return to current pause, pressed in the Study pane while it had the keyboard, is refused after the live arrangement already closed that pane (here the editor rejects the new Application group): the keyboard the closed pane had would be on no element, so the Return's end still gives the active editor group the keyboard and tells once where it is, as the Return that succeeds does; fails_when=only a Return that succeeds settles the learner's place (the refusal skips settleLearnersReturnKeyboard), so after the refusal the keyboard stays on the page body and nothing is told; why_new=Cycle 0046 row 629 (row 624's refusal branch had no test); seam=the workspace harness in VS Code's and Cursor's models, failNextCommand (the editor rejects workbench.action.newGroupAbove), the Study pane's pane-focus report, the pane's return-current action, keyboardOnBody, the command log and the information messages
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`Return to current pause pressed in the Study pane in ${host} and refused after it closed that pane gives the active editor group the keyboard and says so once`, async () => {
+    // Arrange: the learner reads a saved item while a run is current, and the Study pane has the keyboard; the editor will reject the Application's new group.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    if (host === 'Cursor') harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      await harness.reader.select('repository/workspace/overview')
+      await harness.reader.action('focus-context')
+      harness.receiveContext({ type: 'pane-focus', focused: true })
+      const messagesBefore = harness.informationMessages.length,
+        commandsBefore = harness.commands.length
+      harness.failNextCommand('workbench.action.newGroupAbove')
+
+      // Act: the learner presses Return to current pause in the Study pane.
+      let refusal: unknown
+      await harness.reader
+        .action('return-current', true)
+        .catch((error: unknown) => {
+          refusal = error
+        })
+
+      // Assert: the Return was refused after the Study pane closed; the active editor group got the keyboard as the last command, and the sentence says so once.
+      assert.deepEqual(
+        {
+          refusal: String(refusal),
+          studyPaneOpen: Boolean(harness.reader['contextPanel']),
+          lastCommand: harness.commands.slice(commandsBefore).at(-1),
+          keyboardOnBody: harness.keyboardOnBody(),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          refusal: 'Error: Native layout command failed',
+          studyPaneOpen: false,
+          lastCommand: 'workbench.action.focusActiveEditorGroup',
+          keyboardOnBody: false,
+          messages: [
+            'Return to current pause closed the Study pane, which had the keyboard, to arrange the live run. The active editor group has the keyboard now (the Application pane’s, once it is placed). Click where you want to type.',
+          ],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the learner who presses Return to current pause in the Observed moments view of the bottom panel, which outlives the Study pane the live arrangement closes: that view gets its keyboard back with its own focus command (VS Code 1.140.0 workbench.desktop.main.js 1639:157156: the view's focus command opens it with the focus unless asked to keep it), and nothing is told; fails_when=in Cursor's model the Application group's preparation focused the first editor group, which took the view's keyboard, and the Return gives it back to no one, so it ends on the page body without a word; why_new=Cycle 0046 row 624 (the Return control the learner pressed still exists there); seam=the workspace harness in VS Code's and Cursor's models, the bottom view's pane-focus report, focusView (a view that is no editor has the keyboard), viewFocusCommands and the information messages
 for (const host of ['VS Code', 'Cursor'] as const)
   test(`Return to current pause pressed in the Observed moments view in ${host} gives that view its keyboard back and tells nothing`, async () => {
