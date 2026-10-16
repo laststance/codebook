@@ -174,7 +174,9 @@ import {
   type ViewportDeliveryLog,
 } from './utils/describeViewportDelivery'
 import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
+import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
+import { editorSelectionState } from './utils/editorSelectionState'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
@@ -603,6 +605,23 @@ export class StudyWorkspace {
   private sourceIdentity?: vscode.TextEditorDecorationType
   private readonly runtimeSourcePaths = new Set<string>()
   private app?: vscode.WebviewPanel
+  /** First-group source retained across initial pane registration; preparation uses it only to prove native main-part focus, never to infer keyboard ownership. */
+  private applicationPreparationSource?: vscode.TextEditor
+  /** Main-group receipt shared by explicit entry, live acquisition and replay; only a newly allocated group may be locked or retired. */
+  private applicationGroup?: {
+    identity: symbol
+    layout: unknown
+    count: number
+    /** A retained panel may share an original group after Return; that group is never an allocated cleanup target. */
+    parked?: boolean
+    /** Explicit reentry preserves later learner placement without granting hidden background reveals or allocated-group cleanup. */
+    manual?: boolean
+    /** An accepted move may still owe retirement of its former, newly allocated empty group. */
+    retiringIdentity?: symbol
+  }
+  /** Restricts native identity shifts to the exact issued allocation or allocated-group removal. */
+  private applicationGroupChange?:
+    { kind: 'insert' } | { kind: 'remove'; identity: symbol }
   private initialAppPlacement?: {
     panel: vscode.WebviewPanel
     column: vscode.ViewColumn | undefined
@@ -678,13 +697,15 @@ export class StudyWorkspace {
   }
   private closing = false
   private closingPromise?: Promise<void>
-  private arranging?: Promise<void>
+  private arranging?: Promise<unknown>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
   /** The main editor's layout as it stood before the first arrangement of the Open that opened this reader, with the learner's tabs of each of its groups ({@link noteLayoutBeforeOpen}); {@link giveLayoutOfBeforeOpenBack} applies it at the end of {@link close} when the groups are still those. `undefined` while the reader is closed, and when a close gave it back or found other groups. */
   private layoutBeforeOpen?: { layout: unknown; groups: string[][] }
   /** Stable identity of the Context group an accepted native reservation actually created; only this group can retire at recording/live entry. */
   private readerCreatedContextGroup?: symbol
+  /** Actual source-derived reservation retired by {@link retireSourceDerivedGroup}; an original or replacement learner group never inherits it. */
+  private sourceDerivedGroup?: { identity: symbol; column: vscode.ViewColumn }
   /** A Context destination absent immediately before panel creation; {@link sealCreatedContextPanelGroup} seals its identity only after confirmed native placement. */
   private pendingCreatedContextColumn?: vscode.ViewColumn
   /** Identity and panel lifetime of the pending created group; native replacement invalidates these before a retry can seal another group at the same column. */
@@ -836,7 +857,7 @@ export class StudyWorkspace {
     mainCount: number
     overlappingPanes: Map<
       string,
-      { column: vscode.ViewColumn; tabCount: number }
+      { column: vscode.ViewColumn; tabCount: number; previewCount: number }
     >
   }
   private presentationMovedFocus = false
@@ -868,16 +889,40 @@ export class StudyWorkspace {
 
   /** Keeps live explanation in native chat when {@link open} arranges app/source; replay retains its summary. @example this.studyLayout() */
   private studyLayout() {
-    return this.liveComposition || this.summaryComposition
-      ? LIVE_EDITOR_LAYOUT
+    return this.usesPreparedApplicationLayout()
+      ? (this.applicationGroup?.layout ?? LIVE_EDITOR_LAYOUT)
       : STUDY_PRESENTATIONS[this.presentationMode].layout
   }
 
   /** Bounds layout effects to the current feature's main panes, never a separate chat part. @example this.studyGroupCount() // 2 during live explanation */
   private studyGroupCount(): number {
-    return this.liveComposition || this.summaryComposition
-      ? LIVE_EDITOR_GROUP_COUNT
+    return this.usesPreparedApplicationLayout()
+      ? (this.applicationGroup?.count ?? LIVE_EDITOR_GROUP_COUNT)
       : STUDY_EDITOR_GROUP_COUNT
+  }
+
+  /**
+   * Keeps original groups beside a prepared App during cold Study entry; {@link studyLayout} and {@link studyGroupCount} share this ownership check.
+   * @returns Whether native preparation still owns the default Study layout, or the active feature already uses that native composition.
+   * @example this.usesPreparedApplicationLayout() // true for an unchanged MCP-first App allocation
+   */
+  private usesPreparedApplicationLayout(): boolean {
+    return (
+      this.liveComposition ||
+      this.summaryComposition ||
+      Boolean(
+        this.presentationMode === 'study-workspace' &&
+        this.applicationGroup &&
+        this.applicationGroup.count >= STUDY_EDITOR_GROUP_COUNT &&
+        !this.applicationGroup.parked &&
+        vscode.window.tabGroups.all.some(
+          (group) =>
+            this.editorGroupIdentities.get(group) ===
+              this.applicationGroup?.identity &&
+            group.viewColumn === this.app?.viewColumn,
+        ),
+      )
+    )
   }
 
   /** Projects mode control independently of content/playback revisions; MCP reads never open the reader. @example workspace.presentationState().presentationId */
@@ -1298,7 +1343,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a live explanation or a replay owns the layout; asked by {@link assertCompositionAllows} before it weighs the requested mode, and by {@link assertSelectionOutlastsClose} before it asks for a focus to keep.
+   * Says whether live explanation or replay owns the layout; {@link assertCompositionAllows}, {@link assertSelectionOutlastsClose} and {@link hasRetainedStudyTopology} use this shared mode boundary.
    * @returns `true` during a live or a summary composition, `false` while the reader shows its own Study panes or none.
    * @example
    * ```ts
@@ -4430,7 +4475,8 @@ export class StudyWorkspace {
         await this.initialize()
         assertCurrent()
         assertRetainedPlacement?.()
-        if (!this.opened) {
+        const opening = !this.opened
+        if (opening) {
           // Found before the open creates any pane, so the refusal leaves the window as it was.
           const unkept = this.unkeptPreview()
           if (unkept)
@@ -4445,15 +4491,29 @@ export class StudyWorkspace {
         }
         assertCurrent()
         // The open entered a live run or a recording and arranged its two panes: no Study pane exists whose render the transfer below waits for.
-        if (this.liveComposition || this.summaryComposition) {
+        if (
+          this.liveComposition ||
+          this.summaryComposition ||
+          (opening &&
+            input.mode === this.presentationMode &&
+            this.usesPreparedApplicationLayout())
+        ) {
           // A recording's source is shown by the recording's own load, which the open only began: the selection waits for it instead of refusing while it is opening.
           if (this.summaryComposition) {
             await this.settleOwnedPlayback(signal)
             assertCurrent()
           }
           const entered = this.confirmEnteredComposition(input)
+          // A cold default Study already arranged around its prepared App; keep every original group instead of reapplying the three-leaf legacy placement.
+          if (!this.liveComposition && !this.summaryComposition) {
+            const assertEntry = this.retainPresentationPlacement()
+            await this.savePresentationPreference(input.mode, transition.id)
+            assertCurrent()
+            assertEntry()
+          }
           await returnForeignFocus?.().catch(() => undefined)
-          return entered
+          assertCurrent()
+          return { ...entered, preference: this.presentationState().preference }
         }
         assertRetainedPlacement ??= this.retainPresentationPlacement()
         this.presentationPoseRequest = undefined
@@ -4699,8 +4759,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Ends a selection whose {@link open} entered a live run or a recording, the way the live branch of {@link admitPresentation} ends one on an open reader; called by {@link performPresentation}, which would otherwise wait for a Study pane that this arrangement does not have.
-   * @param input - The admitted request; beside a live explanation or a replay only the Study workspace can be selected.
+   * Confirms the actual arrangement {@link open} completed for {@link performPresentation}, including a cold default Study retaining its prepared App and original groups.
+   * @param input - The admitted request for the Study workspace.
    * @returns The state of the arranged live or replay panes, confirmed.
    * @throws `PRESENTATION_UNAVAILABLE` for another mode, and when the arrangement the open made holds no layout receipt or its source is not shown.
    * @example
@@ -5656,7 +5716,7 @@ export class StudyWorkspace {
           .filter((tab) => matches(tab, role.kind))
         if (tabs.length !== 1)
           throw new Error('The current presentation tab is not unique.')
-        // Only this owned same-column creation may temporarily duplicate an otherwise unique pinned role.
+        // The retained predecessor can be a moved preview; only this owned creation adds one pinned replacement.
         if (role.previousColumn === role.column)
           for (const kind of [
             role.kind,
@@ -5664,7 +5724,8 @@ export class StudyWorkspace {
           ]) {
             editorScope?.overlappingPanes.set(`webview:${kind}`, {
               column: role.column,
-              tabCount: expectedPinnedTabCounts.get(role.region)!,
+              tabCount: tabs.length + 1,
+              previewCount: tabs.filter((tab) => tab.isPreview).length,
             })
           }
         // Actual layout transactions need fresh documents; same-column reuse can omit native inner-focus delivery.
@@ -6465,10 +6526,10 @@ export class StudyWorkspace {
   }
 
   readonly presentation: StudyPresentation = {
-    createViewport: (runId, record, fail, scenario) => {
+    createViewport: async (runId, record, fail, scenario, signal) => {
       // A new run may replace a closed reader, but an open recording keeps its independently selected film.
       if (!this.opened) this.leavePlayback()
-      const panel = this.ensureApp(),
+      const panel = await this.prepareApplicationGroup(signal),
         leaseId = randomUUID()
       this.leaseId = leaseId
       panel.title = `codebook · Application ${runId.slice(0, 8)}`
@@ -6482,6 +6543,11 @@ export class StudyWorkspace {
         scenario,
         {
           panel,
+          assertCanReveal: (current) => {
+            if (this.leaseId !== leaseId)
+              throw new Error('The Application lease was replaced.')
+            this.assertApplicationReveal(current)
+          },
           // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
           comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
           tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
@@ -6631,7 +6697,7 @@ export class StudyWorkspace {
     const firstOpen = !this.opened
     let unarrangedApp: vscode.WebviewPanel | undefined
     // An entry takes the keyboard from no editor part that holds it (an agent chat): what a measurement borrows goes back at the end. A selection or restore returns it itself, after its own last layout read.
-    const returnForeignFocus =
+    let returnForeignFocus =
       origin === 'presentation'
         ? undefined
         : this.retainForeignTabFocus(undefined)
@@ -6646,6 +6712,9 @@ export class StudyWorkspace {
       await this.initialize()
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
+      // A recorded entry waits before any owned App allocation, while live/background acquisition keeps its immediate focus guard.
+      if (this.recordingActive)
+        await this.waitForRecordingWindow(signal, lifetime)
       // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them, with the captured-source tabs of that session, before it creates any. A tab the editor keeps does not stop the entry; the next selection names a kept pane.
       if (firstOpen) {
         await this.closeLeftoverTabs()
@@ -6704,6 +6773,9 @@ export class StudyWorkspace {
                 ),
             )
           : undefined
+      // Keep proved creation ownership if scope measurement fails after Context disposal but before queued retirement.
+      if (retiredContextGroup)
+        this.rememberCreatedContextGroup(retiredContextGroup.viewColumn)
       if (compositionChanged) {
         this.layoutReceipt = undefined
         this.presentationConfirmed = false
@@ -6729,7 +6801,18 @@ export class StudyWorkspace {
       this.installReaders()
       // A first entry that is refused before anything was arranged closes the Application pane it created.
       const createsApp = firstOpen && !this.app
-      this.ensureApp()
+      if (this.liveComposition || this.summaryComposition)
+        await this.prepareApplicationGroup(
+          signal,
+          retiredContextGroup,
+          true,
+          returnForeignFocus
+            ? (): void => {
+                returnForeignFocus = undefined
+              }
+            : undefined,
+        )
+      else this.ensureApp()
       if (createsApp) unarrangedApp = this.app
       await this.settleInitialApp(signal, lifetime)
       // A learner move after failed entry releases our unfinished placement, even when the same app panel survives.
@@ -6760,8 +6843,7 @@ export class StudyWorkspace {
               'The learner layout changed during feature entry; its current arrangement was preserved. Retry explicitly.',
             )
           }
-          // The learner's own layout, measured before this Open arranges anything, is what a Close gives back.
-          if (firstOpen) this.noteLayoutBeforeOpen(grid.layout, grid.groups)
+          this.noteLayoutAtFirstOpen(firstOpen, grid)
           needsInitialReservation = this.needsInitialPaneReservation(
             grid.groups.length,
             compositionChanged,
@@ -6794,9 +6876,10 @@ export class StudyWorkspace {
       const compositionReservation =
         !this.liveComposition &&
         (compositionChanged || !firstOpen) &&
-        needsInitialReservation &&
         this.repositoryLayoutOrigin
-          ? this.layoutReceipt
+          ? needsInitialReservation
+            ? this.layoutReceipt
+            : reentry
           : undefined
       // A cancelled reservation can already have created every main pane; finish its retained app move on explicit retry too.
       if (
@@ -6847,12 +6930,22 @@ export class StudyWorkspace {
       await this.refresh(signal)
       signal?.throwIfAborted()
       // Explicit entry fronts a covered source without queueing behind a still-loading Wiki selection.
+      const sourcePlacement =
+        compositionReservation && this.layoutReceipt?.mode === 'study-reentry'
+          ? this.layoutReceipt
+          : (reentry ??
+            (this.applicationGroup &&
+            this.layoutReceipt?.mode === 'study-reentry'
+              ? this.layoutReceipt
+              : undefined))
       await this.renderSelection(
         true,
         (origin === 'study' && !this.loading && !this.sourceReady()) ||
-          reentry?.sourceTargetColumn !== undefined,
+          sourcePlacement?.sourceTargetColumn !== undefined,
         signal,
-        reentry ? { kind: 'reentry', receipt: reentry } : undefined,
+        sourcePlacement
+          ? { kind: 'reentry', receipt: sourcePlacement }
+          : undefined,
       )
       // Study embeds outline and moment controls; keep the learner's side and bottom panels as arranged.
       this.assertLifetime(lifetime)
@@ -6860,7 +6953,8 @@ export class StudyWorkspace {
       // Settled Study or observation entry fronts its app; a newer Open cannot front a still-loading old selection.
       if (
         ((origin === 'study' && !this.loading) ||
-          (origin === 'repository' && !this.recordingActive)) &&
+          (origin === 'repository' &&
+            (!this.recordingActive || this.applicationGroup?.manual))) &&
         request === this.readerOpenNumber &&
         historyRequest === this.historyRequest
       ) {
@@ -6934,7 +7028,11 @@ export class StudyWorkspace {
           signal,
         )
       }
-      if (this.recordingActive && (firstOpen || !this.replayViewport)) {
+      // Article Return retains the viewport but clears its frame; explicit reentry must present that committed moment again.
+      if (
+        this.recordingActive &&
+        (firstOpen || !this.replayViewport || this.playback?.state().cleared)
+      ) {
         const pendingBefore = this.playback?.state().presentationRevision
         this.playback?.reveal()
         const pending = this.playback?.state().presentationRevision
@@ -6954,6 +7052,37 @@ export class StudyWorkspace {
       signal?.throwIfAborted()
       // A two-group entry can create Context directly without an earlier reservation; seal that separate creation receipt after placement.
       if (this.layoutReceipt) this.sealCreatedContextPanelGroup()
+      // Cold MCP preparation can donate its allocated group to the source-derived Context; retain that creation owner before releasing the App allocation.
+      if (
+        this.layoutReceipt &&
+        !this.liveComposition &&
+        !this.summaryComposition &&
+        this.applicationGroup &&
+        !this.applicationGroup.parked &&
+        this.contextPanel
+      ) {
+        const contextColumn = this.contextPanel.viewColumn,
+          allocatedIdentity = this.applicationGroup.identity
+        const contextGroup = vscode.window.tabGroups.all.find(
+          (group) =>
+            group.viewColumn === contextColumn &&
+            this.editorGroupIdentities.get(group) === allocatedIdentity &&
+            this.hasSingleContextPane(group),
+        )
+        if (contextGroup) {
+          this.rememberCreatedContextGroup(contextGroup.viewColumn)
+          this.applicationGroup = undefined
+        }
+      }
+      // A confirmed source-derived arrangement ends the old borrowed parking receipt, never the retained panel or either viewport.
+      if (
+        this.layoutReceipt &&
+        !this.liveComposition &&
+        !this.summaryComposition &&
+        this.applicationGroup?.parked &&
+        !this.applicationGroup.retiringIdentity
+      )
+        this.applicationGroup = undefined
       // The arrangement above leaves a layout it owns as it is; "Open Study Workspace" on an open reader still gives an Application group that sits at the height of its tab row its height back.
       if (!firstOpen && origin === 'study' && this.layoutReceipt) {
         await this.reapplyConfirmedLayout(this.layoutReceipt, true)
@@ -6984,26 +7113,7 @@ export class StudyWorkspace {
         this.publish()
       }
       if (this.summaryComposition) {
-        // Open replay clicked while another window has the desktop focus opens the summary once this window gains focus.
-        if (!vscode.window.state.focused)
-          await waitUntil(
-            () => {
-              this.assertLifetime(lifetime)
-              return vscode.window.state.focused
-            },
-            'Codebook work window focus',
-            RECORDING_WINDOW_FOCUS_WAIT_MS,
-            signal,
-          ).catch(() => {
-            signal?.throwIfAborted()
-            this.assertLifetime(lifetime)
-            throw new StudyError(
-              'PRESENTATION_UNAVAILABLE',
-              `Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for ${RECORDING_WINDOW_FOCUS_WAIT_MS / MILLISECONDS_PER_SECOND} s. Click in this editor window, then choose Open replay again.`,
-            )
-          })
-        this.assertLifetime(lifetime)
-        signal?.throwIfAborted()
+        await this.waitForRecordingWindow(signal, lifetime)
         await this.showLearningSummary(
           signal,
           origin !== 'repository' && (firstOpen || compositionChanged),
@@ -7039,6 +7149,38 @@ export class StudyWorkspace {
       if (request === this.readerOpenNumber) this.releaseSourceEntry()
       signal?.removeEventListener('abort', cancel)
     }
+  }
+
+  /**
+   * Waits for this recording's work window before native preparation and again before Summary; {@link open} preserves the existing bounded recovery.
+   * @param signal - The recorded entry's cancellation, including Close and a newer selection.
+   * @param lifetime - The reader opening that must still own the wait.
+   * @throws The existing presentation-unavailable notice after the unchanged ten-second bound, or the caller's cancellation/lifetime failure.
+   * @example await this.waitForRecordingWindow(signal, lifetime)
+   */
+  private async waitForRecordingWindow(
+    signal: AbortSignal | undefined,
+    lifetime: number,
+  ): Promise<void> {
+    if (!vscode.window.state.focused)
+      await waitUntil(
+        () => {
+          this.assertLifetime(lifetime)
+          return vscode.window.state.focused
+        },
+        'Codebook work window focus',
+        RECORDING_WINDOW_FOCUS_WAIT_MS,
+        signal,
+      ).catch(() => {
+        signal?.throwIfAborted()
+        this.assertLifetime(lifetime)
+        throw new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          `Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for ${RECORDING_WINDOW_FOCUS_WAIT_MS / MILLISECONDS_PER_SECOND} s. Click in this editor window, then choose Open replay again.`,
+        )
+      })
+    this.assertLifetime(lifetime)
+    signal?.throwIfAborted()
   }
 
   /**
@@ -7806,6 +7948,7 @@ export class StudyWorkspace {
       applicationPanel?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
+      await this.releaseApplicationGroup()
       // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
       await this.giveLayoutOfBeforeOpenBack()
       // Explicit Close and owned-editor disposal retain their existing keyboard return and notice, also after native panel fields cleared.
@@ -7829,6 +7972,7 @@ export class StudyWorkspace {
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.readerCreatedContextGroup = undefined
+      this.sourceDerivedGroup = undefined
       this.pendingCreatedContextColumn = undefined
       this.pendingCreatedContextGroup = undefined
       this.pendingCreatedContextPanel = undefined
@@ -8026,6 +8170,7 @@ export class StudyWorkspace {
     )
       return
     panel.dispose()
+    await this.releaseApplicationGroup()
     if (heldKeyboard) await this.settleKeyboardAfterRunClosedPane()
   }
 
@@ -8151,8 +8296,16 @@ export class StudyWorkspace {
     giveKeyboardBackToChat: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
   ): Promise<boolean> {
     if (!this.hasEnlargementToEndAtClose()) return false
+    // Native group creation/removal already ends maximization; its newer layout must not be expanded again or replaced by the old reading sizes.
+    if (await this.nativeGroupChangeEndedRead()) {
+      this.maximizedByRead = false
+      this.groupSizesBeforeExpand = undefined
+    }
     // The editor's Expand ends a maximization whatever its state, and leaves every other group at its minimum size: it is run only where the editor will not end the maximization by itself.
-    if (!this.editorEndsReadMaximizationAtClose())
+    if (
+      this.hasEnlargementToEndAtClose() &&
+      !this.editorEndsReadMaximizationAtClose()
+    )
       await this.expandToEndMaximization().catch(() => undefined)
     this.maximizedByRead = false
     // Where an Expand of the reader's resized the groups, at the Read, at the Enlarge or just now, they get their sizes back before the panes are closed.
@@ -8163,6 +8316,35 @@ export class StudyWorkspace {
     return !(await this.returnsKeyboardToChatAfterSideBars(
       giveKeyboardBackToChat,
     ))
+  }
+
+  /**
+   * Detects a native group change that already ended Read/Enlarge maximization; {@link endEnlargementAtClose} then preserves the learner's new grid.
+   * @returns True only when a stable current main grid has a different group count from the remembered expanded layout.
+   * @example if (await this.nativeGroupChangeEndedRead()) this.groupSizesBeforeExpand = undefined
+   */
+  private async nativeGroupChangeEndedRead(): Promise<boolean> {
+    const beforeCount = editorLayoutGroupCount(this.groupSizesBeforeExpand)
+    if (beforeCount === undefined) return false
+    const groups = vscode.window.tabGroups.all.map((group) => ({
+      group,
+      column: group.viewColumn,
+    }))
+    // Unchanged native group identities need no extra read; an added main group and a closed foreign group can keep the same total count.
+    if (
+      this.layoutReceipt &&
+      this.sameEditorGroups(
+        this.layoutReceipt.groups,
+        vscode.window.tabGroups.all,
+      )
+    )
+      return false
+    const layout = await this.readEditorLayout()
+    return (
+      this.sameEditorGroups(groups, vscode.window.tabGroups.all) &&
+      this.isMainEditorLayout(layout) &&
+      editorLayoutGroupCount(layout) !== beforeCount
+    )
   }
 
   /**
@@ -8282,7 +8464,7 @@ export class StudyWorkspace {
 
   /**
    * Notes the main editor's layout and the learner's tabs of each group before an Open arranges anything; called by {@link open} with its first measurement of the main editor, for a reader that was closed.
-   * The Study arrangement applies its layout to the learner's own groups when there are no more than it needs, so two groups side by side become the two rows of the left column, and unequal groups become equal; after a Close they stayed so (two groups of 659 and 440 px side by side were two rows of 70 and 617 px after Open and Close; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). The first note of an open reader is kept: an Open that failed half way and is repeated measures groups that hold the reader's panes already. A main editor with one group is not noted: it has no split and no size that could differ afterwards.
+   * The first note is kept through failed entries and feature switches, including a single original group that has no split to restore. Otherwise later reader-created groups could become the supposed original layout. A Close restores only an original split whose learner tabs and native scope still match.
    * @param layout - The main editor's layout as {@link readMainEditorGrid} measured it.
    * @param groups - The main editor's groups in the order of that layout.
    * @example if (firstOpen) this.noteLayoutBeforeOpen(grid.layout, grid.groups)
@@ -8291,12 +8473,26 @@ export class StudyWorkspace {
     layout: unknown,
     groups: readonly vscode.TabGroup[],
   ): void {
-    // A single group has neither a split nor a size to give back.
-    if (groups.length < 2) return
+    // Remember even a single original group so a later feature switch cannot mistake reader-created splits for the original layout.
     this.layoutBeforeOpen ??= {
       layout,
       groups: groups.map((group) => this.learnersTabKeysOf(group)),
     }
+  }
+
+  /**
+   * Notes the learner's own layout, what a Close gives back, from the first measurement of a first Open; called by {@link open} inside its first layout step.
+   * An App group Codebook already allocated (an MCP-first or retained preparation) is part of that measurement, so it is not the learner's layout and stays unnoted; {@link reserveApplicationGroup} noted the layout before its own allocation.
+   * @param firstOpen - Whether this Open opens a reader that was closed.
+   * @param grid - The main editor as {@link readMainEditorGrid} measured it.
+   * @example this.noteLayoutAtFirstOpen(firstOpen, grid) // notes nothing while an allocated App group exists
+   */
+  private noteLayoutAtFirstOpen(
+    firstOpen: boolean,
+    grid: { layout: unknown; groups: readonly vscode.TabGroup[] },
+  ): void {
+    if (firstOpen && !this.applicationGroup)
+      this.noteLayoutBeforeOpen(grid.layout, grid.groups)
   }
 
   /**
@@ -8397,7 +8593,10 @@ export class StudyWorkspace {
       this.clearPendingContextCreation()
   }
 
-  /** Clears only pending creation permission, preserving accepted panels and the original layout; disposal and failed identity sealing call this. @example this.clearPendingContextCreation() */
+  /**
+   * Clears only pending creation permission, preserving accepted panels and the original layout; disposal and failed identity sealing call this.
+   * @example this.clearPendingContextCreation()
+   */
   private clearPendingContextCreation(): void {
     this.pendingCreatedContextColumn = undefined
     this.pendingCreatedContextGroup = undefined
@@ -8430,7 +8629,8 @@ export class StudyWorkspace {
   private async giveLayoutOfBeforeOpenBack(): Promise<void> {
     const before = this.layoutBeforeOpen
     this.layoutBeforeOpen = undefined
-    if (!before || this.disposed) return
+    // A single original group has no split to restore, but its retained origin prevented later preparation from replacing this note.
+    if (!before || before.groups.length < 2 || this.disposed) return
     await this.closedPanesGone()
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
@@ -9707,14 +9907,18 @@ export class StudyWorkspace {
       }
       return this.replayViewport
     }
-    const panel = this.ensureApp()
+    const panel = await this.prepareApplicationGroup(signal)
     panel.title = 'codebook · Recorded application'
     const viewport = new BrowserViewport(
       this.selection.studyId!,
       (type, detail) => this.recordReplayDelivery(type, detail),
       () => this.playback?.hide(),
       'normal',
-      { panel, released() {} },
+      {
+        panel,
+        released() {},
+        assertCanReveal: (current) => this.assertApplicationReveal(current),
+      },
       undefined,
       'recording',
     )
@@ -10821,10 +11025,15 @@ export class StudyWorkspace {
           placement?.kind === 'arrange' ? placement.column : undefined
         // Reentry cannot overwrite a learner move during source I/O; only explicit Arrange retains an unconditional target.
         if (placement?.kind === 'reentry') {
-          const receipt = placement.receipt,
-            layout = await vscode.commands.executeCommand<unknown>(
-              'vscode.getEditorLayout',
-            )
+          const receipt = placement.receipt
+          let layout: unknown
+          // Explicit reentry may begin in a separate chat part; validate its source destination against the actual main grid.
+          await this.withLayout(signal, async (_lifetime, assertCurrent) => {
+            const grid = await this.readMainEditorGrid(signal, assertCurrent)
+            assertCurrent()
+            grid.assertUnchanged()
+            layout = grid.layout
+          })
           signal?.throwIfAborted()
           if (
             revision !== this.revision ||
@@ -11643,6 +11852,1853 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Reserves one new locked main group before live/replay App acquisition; explicit entry and the viewport factory share this layout-serialized path.
+   * @param signal - Cancellation of the reader entry or runtime preparation.
+   * @param retiredContextGroup - An empty group created for the reader's prior Context, never a learner group.
+   * @param manualEntry - Explicit Open may reconcile a parked App's later manual placement; background acquisition cannot borrow focus for it.
+   * @param cancelEntryFocusReturn - Supplied when {@link open} owns the final foreign focus return; retire that older return when later learner input wins.
+   * @returns The registered App in its new owned group, or its learner-chosen group on explicit manual reentry; original groups remain separate.
+   * @throws When native scope, original groups or current lifetime cannot be retained safely.
+   * @example const panel = await this.prepareApplicationGroup(signal)
+   */
+  private async prepareApplicationGroup(
+    signal?: AbortSignal,
+    retiredContextGroup?: vscode.TabGroup,
+    manualEntry = false,
+    cancelEntryFocusReturn?: () => void,
+  ): Promise<vscode.WebviewPanel> {
+    signal?.throwIfAborted()
+    this.assertLifetime(this.lifetime)
+    // A first acquisition cannot register beside an earlier host's leftover pane.
+    if (!this.app && this.deadPaneTabs().length)
+      await this.retirePreviousApplicationPanes(signal)
+    const existing = this.existingApplicationForPreparation(
+      manualEntry,
+      retiredContextGroup,
+    )
+    if (existing) return existing
+    const preparation = await this.withLayout(
+      signal,
+      async (lifetime, assertCurrent) =>
+        await this.prepareApplicationLayout(signal, {
+          lifetime,
+          assertCurrent,
+          retiredContextGroup,
+          cancelEntryFocusReturn,
+        }),
+    )
+    // Native command discovery remains outside the queue so Close can drain accepted placement.
+    await preparation.restoreFocus?.()
+    return preparation.panel
+  }
+
+  /**
+   * Chooses the no-layout reuse or manual-placement refusal before {@link prepareApplicationGroup} enters its native queue.
+   * @param manualEntry - Whether the caller explicitly authorizes reconciliation of a learner's App placement.
+   * @param retiredContextGroup - A prior Context whose retirement still requires queued preparation.
+   * @returns A completed retained App, or undefined when the existing queue must prepare it.
+   * @throws When background acquisition would reconcile a manual placement without explicit entry.
+   * @example const panel = this.existingApplicationForPreparation(manualEntry, retiredContextGroup)
+   */
+  private existingApplicationForPreparation(
+    manualEntry: boolean,
+    retiredContextGroup?: vscode.TabGroup,
+  ): vscode.WebviewPanel | undefined {
+    // A valid existing owner needs no layout acquisition; renderer work may already be draining inside that queue.
+    const readyOwner = this.applicationGroup
+    const retained =
+      readyOwner?.layout === undefined
+        ? undefined
+        : this.preparedApplicationPanel(readyOwner)
+    if (retained && !retiredContextGroup) return retained
+    if (this.applicationGroup?.manual && !manualEntry)
+      throw new Error(
+        'The manually placed Application needs an explicit Study entry before capture.',
+      )
+    return undefined
+  }
+
+  /**
+   * Removes stale host panes before {@link prepareApplicationGroup} starts a first acquisition.
+   * @param signal - Cancellation of the entry that owns this cleanup.
+   * @throws When the reader lifetime changes, the entry is cancelled or a stale native pane refuses to close.
+   * @example await this.retirePreviousApplicationPanes(signal)
+   */
+  private async retirePreviousApplicationPanes(
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const lifetime = this.lifetime
+    await this.initialize()
+    this.assertLifetime(lifetime)
+    signal?.throwIfAborted()
+    const closed = await this.closeLeftoverTabs()
+    this.assertLifetime(lifetime)
+    signal?.throwIfAborted()
+    if (closed.deadPaneKept)
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'Close the leftover Codebook panes, then retry the live explanation.',
+      )
+  }
+
+  /**
+   * Reconciles existing owners or selects the single fresh allocation path for {@link prepareApplicationGroup} inside its layout queue.
+   * @param signal - The existing preparation cancellation.
+   * @param input - Current queue lifetime/guard and the caller's Context retirement and focus-return authority.
+   * @returns The retained panel and any focus return that must run after the queue releases.
+   * @throws When native scope, ownership or accepted-effect recovery cannot be retained.
+   * @example const prepared = await this.prepareApplicationLayout(signal, input)
+   */
+  private async prepareApplicationLayout(
+    signal: AbortSignal | undefined,
+    input: {
+      lifetime: number
+      assertCurrent: () => void
+      retiredContextGroup?: vscode.TabGroup
+      cancelEntryFocusReturn?: () => void
+    },
+  ): Promise<{
+    panel: vscode.WebviewPanel
+    restoreFocus?: () => Promise<void>
+  }> {
+    const { assertCurrent, retiredContextGroup } = input
+    if (!vscode.window.state.focused)
+      throw new Error(
+        'Focus this Codebook window before preparing its Application group.',
+      )
+    const retiredIdentity = this.preparationContextIdentity(retiredContextGroup)
+    if (retiredIdentity) {
+      await this.retiredStudyPaneClosed(signal)
+      assertCurrent()
+      const empty = this.emptyNativeGroup(retiredIdentity)
+      // A leading Context retirement shifts the created Source too; reuse the issued-removal identity guard and drain the accepted close.
+      if (empty) await this.retireEmptyOwnedGroup(retiredIdentity)
+      assertCurrent()
+    }
+    // A native App close ends that panel, not the open reader; retire only its empty owned group before explicit reacquisition.
+    if (this.applicationGroup && !this.app) {
+      await this.releaseApplicationGroup()
+      assertCurrent()
+    }
+    // A verified Return parked only the panel; its borrowed original group is not the next App allocation.
+    const parked = this.applicationGroup
+    if (parked?.parked) {
+      const panel = await this.prepareParkedApplication(
+        parked,
+        signal,
+        assertCurrent,
+      )
+      if (panel) return { panel }
+    }
+    return this.completeApplicationPreparation(signal, input, retiredIdentity)
+  }
+
+  /**
+   * Finishes retained-owner reconciliation or delegates the one fresh allocation after {@link prepareApplicationLayout} drains prior panes.
+   * @param signal - The original entry cancellation.
+   * @param input - The same queue lifetime/current guard and final-focus authority.
+   * @param retiredIdentity - The Context identity whose removal requires a fresh retained-layout receipt.
+   * @returns The same App and any deferred focus return; no second layout queue is entered.
+   * @throws The existing source-retirement, ownership or allocation failure.
+   * @example return this.completeApplicationPreparation(signal, input, retiredIdentity)
+   */
+  private async completeApplicationPreparation(
+    signal: AbortSignal | undefined,
+    input: Pick<
+      Parameters<StudyWorkspace['prepareApplicationLayout']>[1],
+      'lifetime' | 'assertCurrent' | 'cancelEntryFocusReturn'
+    >,
+    retiredIdentity: symbol | undefined,
+  ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
+    const { lifetime, assertCurrent, cancelEntryFocusReturn } = input
+    const owned = this.applicationGroup,
+      retained = owned && this.preparedApplicationPanel(owned)
+    if (!owned || !retained) {
+      return this.reserveApplicationGroup(
+        signal,
+        lifetime,
+        assertCurrent,
+        cancelEntryFocusReturn,
+      )
+    }
+    // A completed retained layout needs no native work unless its Context was retired.
+    if (!retiredIdentity && owned.layout !== undefined)
+      return { panel: retained }
+    let grid = await this.readMainEditorGrid(signal, assertCurrent)
+    assertCurrent()
+    grid.assertUnchanged()
+    // A cancelled source copy can leave the new App alive; finish only that retained preparation on explicit retry.
+    if (await this.retireSourceDerivedGroup(grid.groups, assertCurrent)) {
+      grid = await this.readMainEditorGrid(signal, assertCurrent)
+      assertCurrent()
+      grid.assertUnchanged()
+    }
+    this.rememberRetainedApplication(owned, retained, grid)
+    return { panel: retained }
+  }
+
+  /**
+   * Reconciles a parked owner for {@link prepareApplicationLayout} before it chooses reuse or a fresh allocation.
+   * @param parked - The owner captured before any pending allocated-group retirement.
+   * @param signal - Cancellation of this explicit entry.
+   * @param assertCurrent - Rejects newer entry/lifetime intent after accepted retirement drains.
+   * @returns The manually placed App, or undefined after releasing only its borrowed ownership receipt.
+   * @throws When another owner replaces this one or manual placement cannot be confirmed.
+   * @example const panel = await this.prepareParkedApplication(parked, signal, assertCurrent)
+   */
+  private async prepareParkedApplication(
+    parked: NonNullable<StudyWorkspace['applicationGroup']>,
+    signal: AbortSignal | undefined,
+    assertCurrent: () => void,
+  ): Promise<vscode.WebviewPanel | undefined> {
+    if (parked.retiringIdentity)
+      await this.retireEmptyOwnedGroup(parked.retiringIdentity)
+    assertCurrent()
+    if (this.applicationGroup !== parked)
+      throw new Error('Application ownership changed before reentry.')
+    if (parked.manual && this.app) {
+      const panel = this.app,
+        grid = await this.readMainEditorGrid(signal, assertCurrent)
+      grid.assertUnchanged()
+      assertCurrent()
+      this.rememberManualApplication(parked, panel, grid)
+      return panel
+    }
+    this.applicationGroup = undefined
+    return undefined
+  }
+
+  /**
+   * Performs the one new-group allocation transaction selected by {@link prepareApplicationLayout}; its placement flag and failure cleanup cover every issued native effect.
+   * @param signal - Cancellation of this preparation.
+   * @param lifetime - The queue's captured reader lifetime.
+   * @param assertCurrent - Rejects later intent after accepted native effects drain.
+   * @param cancelEntryFocusReturn - The caller owns the final handoff when this callback is present.
+   * @returns The prepared App and its guarded focus return, still deferred outside the native queue.
+   * @throws The original preparation or cleanup error without adopting a foreign group.
+   * @example const prepared = await this.reserveApplicationGroup(signal, lifetime, assertCurrent)
+   */
+  private async reserveApplicationGroup(
+    signal: AbortSignal | undefined,
+    lifetime: number,
+    assertCurrent: () => void,
+    cancelEntryFocusReturn?: () => void,
+  ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
+    let restorePreparationFocus: (() => Promise<void>) | undefined
+    const existingPanel = this.app,
+      returnFocus = this.captureApplicationPreparationReturn(
+        existingPanel,
+        cancelEntryFocusReturn,
+      )
+    if (existingPanel) await this.settleInitialApp(signal, lifetime)
+    const grid = await this.readMainEditorGrid(signal, assertCurrent)
+    assertCurrent()
+    grid.assertUnchanged()
+    this.noteLayoutBeforeOpen(grid.layout, grid.groups)
+    const originals = vscode.window.tabGroups.all.map((group) => ({
+      identity: this.editorGroupIdentities.get(group),
+      column: group.viewColumn,
+    }))
+    let allocated: symbol | undefined,
+      createdPanel: vscode.WebviewPanel | undefined
+    const wasPlacing = this.placingPresentation
+    this.placingPresentation = true
+    try {
+      const sourceFocus = await this.focusApplicationSourceGroup(
+        grid.groups.length,
+        assertCurrent,
+        cancelEntryFocusReturn,
+      )
+      this.applicationGroupChange = { kind: 'insert' }
+      try {
+        sourceFocus.assertRetained()
+        await vscode.commands.executeCommand('workbench.action.newGroupAbove')
+      } finally {
+        sourceFocus.dispose()
+        this.applicationGroupChange = undefined
+      }
+      const { group, identity } = this.newApplicationGroup(originals)
+      allocated = identity
+      assertCurrent()
+      this.assertApplicationLockTarget(group, originals)
+      await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
+      assertCurrent()
+      this.claimApplicationAllocation(identity, grid.groups.length + 1)
+      const panel = this.ensureApp()
+      if (!existingPanel) createdPanel = panel
+      // Move only the owned panel; none of the original groups or their lock states is modified.
+      if (panel.viewColumn !== vscode.ViewColumn.One)
+        panel.reveal(vscode.ViewColumn.One, true)
+      await this.settleInitialApp(signal, lifetime)
+      // Move Source only after App leaves its old group, so native preview replacement cannot dispose the retained renderer.
+      const retiredSource = await this.retireSourceDerivedGroup(
+        vscode.window.tabGroups.all.filter(
+          (group) => group.viewColumn <= grid.groups.length + 1,
+        ),
+        assertCurrent,
+      )
+      const expectedCount = grid.groups.length + (retiredSource ? 0 : 1)
+      const assertPlaced = this.retainPresentationPlacement()
+      const layout = await vscode.commands.executeCommand<unknown>(
+        'vscode.getEditorLayout',
+      )
+      // Retain accepted native placement for a later Return even when this entry was cancelled; Close and newer input still revoke its proof.
+      this.assertLifetime(lifetime)
+      assertPlaced()
+      this.rememberPreparedApplication(panel, identity, layout, expectedCount)
+      assertCurrent()
+      // Live Return already owns its final chat handoff; preparation must not add an earlier, unguarded one.
+      if (!this.returningCurrent && !cancelEntryFocusReturn) {
+        const selections = JSON.stringify(
+          vscode.window.activeTextEditor?.selections,
+        )
+        const stillCurrent = (): boolean => {
+          try {
+            assertCurrent()
+            assertPlaced()
+            return (
+              vscode.window.state.focused &&
+              JSON.stringify(vscode.window.activeTextEditor?.selections) ===
+                selections
+            )
+          } catch {
+            return false
+          }
+        }
+        restorePreparationFocus = async (): Promise<void> => {
+          if (!stillCurrent()) return
+          await returnFocus(signal, stillCurrent, assertPlaced)
+          assertCurrent()
+        }
+      }
+      assertCurrent()
+      return { panel, restoreFocus: restorePreparationFocus }
+    } catch (error) {
+      await this.retireFailedApplicationPreparation(allocated, createdPanel)
+      throw error
+    } finally {
+      this.placingPresentation = wasPlacing
+    }
+  }
+
+  /**
+   * Captures the original focus-return targets for {@link reserveApplicationGroup} before any preparation effect, and the order in which a later return tries them.
+   * @param existingPanel - App captured at transaction entry, when one already exists.
+   * @param cancelEntryFocusReturn - A caller-owned final return suppresses a second fallback target.
+   * @returns The focus return: it gives focus back to a foreign tab when one held it, otherwise to a focused Codebook panel, otherwise to the captured native focus. The caller still validates current input after placement.
+   * @example
+   * const returnFocus = this.captureApplicationPreparationReturn(existingPanel, cancelEntryFocusReturn)
+   * await returnFocus(signal, stillCurrent, assertPlaced) // after the guarded placement
+   */
+  private captureApplicationPreparationReturn(
+    existingPanel: vscode.WebviewPanel | undefined,
+    cancelEntryFocusReturn?: () => void,
+  ): (
+    signal: AbortSignal | undefined,
+    stillCurrent: () => boolean,
+    assertPlaced: () => void,
+  ) => Promise<void> {
+    const focusedPanel = [existingPanel, this.contextPanel].find(
+        (panel) => panel?.active,
+      ),
+      giveBack = this.retainForeignTabFocus(undefined),
+      restoreFocus =
+        focusedPanel || cancelEntryFocusReturn
+          ? undefined
+          : this.capturePresentationFocus(undefined)
+    return async (signal, stillCurrent, assertPlaced): Promise<void> => {
+      if (giveBack) await giveBack(true, stillCurrent)
+      else if (focusedPanel)
+        await this.focusPresentationPanel(focusedPanel, signal)
+      else await restoreFocus?.(signal, assertPlaced)
+    }
+  }
+
+  /**
+   * Drains only failed preparation's owned cleanup for {@link reserveApplicationGroup} before its placement flag is restored and its error escapes.
+   * @param allocated - The actually observed new allocation identity; absence supplies no cleanup authority.
+   * @param createdPanel - The panel created by this transaction, never a retained or replacement panel.
+   * @throws The existing native cleanup failure; no subsequent native effect follows this helper's return.
+   * @example await this.retireFailedApplicationPreparation(allocated, createdPanel)
+   */
+  private async retireFailedApplicationPreparation(
+    allocated: symbol | undefined,
+    createdPanel: vscode.WebviewPanel | undefined,
+  ): Promise<void> {
+    // Raw accepted creation settles before this cleanup; never close a nonempty or adopted learner group.
+    if (createdPanel && this.app === createdPanel) {
+      createdPanel.dispose()
+      await this.closedPanesGone('codebook.scopedBrowser')
+    }
+    // No allocation means no cleanup authority; two unknown identities never prove ownership.
+    const empty = this.emptyNativeGroup(allocated)
+    if (empty) await vscode.window.tabGroups.close(empty, true)
+    this.releaseFailedApplicationOwner(allocated, empty)
+  }
+
+  /**
+   * Claims only the newly locked empty group for {@link reserveApplicationGroup} before panel registration can wait.
+   * @param identity - The new group's observed identity, already retained for failure cleanup.
+   * @param count - Main groups after the issued insertion, before source retirement.
+   * @throws When native focus or contents changed while the lock command was pending.
+   * @example this.claimApplicationAllocation(identity, grid.groups.length + 1)
+   */
+  private claimApplicationAllocation(identity: symbol, count: number): void {
+    const currentGroup = vscode.window.tabGroups.all.find(
+      (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+    )
+    if (
+      currentGroup !== vscode.window.tabGroups.activeTabGroup ||
+      currentGroup.tabs.length
+    )
+      throw new Error(
+        'The new Application group was adopted before registration.',
+      )
+    // Own the allocation before panel registration can wait; a cancelled move of an existing reader App must remain recoverable.
+    this.applicationGroup = {
+      identity,
+      layout: undefined,
+      count,
+    }
+  }
+
+  /**
+   * Resolves only the existing Context creation identity for {@link prepareApplicationLayout}; an active Context is never inferred as retired.
+   * @param retiredContextGroup - The caller's already disposed Context group, when available.
+   * @returns Its retained identity or the known empty orphan's identity.
+   * @example const identity = this.preparationContextIdentity(retiredContextGroup)
+   */
+  private preparationContextIdentity(
+    retiredContextGroup?: vscode.TabGroup,
+  ): symbol | undefined {
+    const contextToRetire =
+      retiredContextGroup ??
+      (!this.contextPanel
+        ? vscode.window.tabGroups.all.find(
+            (group) => !group.tabs.length && this.isCreatedContextGroup(group),
+          )
+        : undefined)
+    return contextToRetire && this.editorGroupIdentities.get(contextToRetire)
+  }
+
+  /**
+   * Records a learner's current App placement for {@link prepareApplicationLayout} without allocating or changing its borrowed group.
+   * @param parked - The current parked owner.
+   * @param panel - The same retained App.
+   * @param grid - The newly measured main scope.
+   * @throws When the panel or its unique native tab cannot be identified there.
+   * @example this.rememberManualApplication(parked, panel, grid)
+   */
+  private rememberManualApplication(
+    parked: NonNullable<StudyWorkspace['applicationGroup']>,
+    panel: vscode.WebviewPanel,
+    grid: Awaited<ReturnType<StudyWorkspace['readMainEditorGrid']>>,
+  ): void {
+    const tab = this.uniqueApplicationTab(),
+      currentGroup =
+        tab &&
+        grid.groups.find(
+          (group) =>
+            group.viewColumn === panel.viewColumn && group.tabs.includes(tab),
+        ),
+      identity = currentGroup && this.editorGroupIdentities.get(currentGroup)
+    if (this.app !== panel || !identity)
+      throw new Error(
+        'The manually placed Application cannot be identified in the current main editor.',
+      )
+    // This remains a borrowed manual group: preserve its lock, geometry and tabs without new allocation.
+    parked.identity = identity
+    parked.layout = grid.layout
+    parked.count = grid.groups.length
+  }
+
+  /**
+   * Records the retained allocation after {@link prepareApplicationLayout} drains Context/Source retirement.
+   * @param owned - The owner captured before those effects.
+   * @param retained - The same App panel.
+   * @param grid - The verified post-retirement main layout.
+   * @throws If another owner or panel replaced either captured value.
+   * @example this.rememberRetainedApplication(owned, retained, grid)
+   */
+  private rememberRetainedApplication(
+    owned: NonNullable<StudyWorkspace['applicationGroup']>,
+    retained: vscode.WebviewPanel,
+    grid: Awaited<ReturnType<StudyWorkspace['readMainEditorGrid']>>,
+  ): void {
+    // Retiring our old Context changes the main count; never retain the pre-retirement grid as the new live target.
+    if (this.applicationGroup !== owned || this.app !== retained)
+      throw new Error(
+        'Application ownership changed during Context retirement.',
+      )
+    this.rememberApplicationGroup(
+      owned.identity,
+      grid.layout,
+      grid.groups.length,
+    )
+  }
+
+  /**
+   * Identifies the newly created empty allocation for {@link reserveApplicationGroup} before cleanup authority is recorded.
+   * @param originals - Group identities and columns captured before the issued insertion.
+   * @returns The new first group and its existing observed identity.
+   * @throws When count, emptiness or provenance differs from the issued creation.
+   * @example const allocation = this.newApplicationGroup(originals)
+   */
+  private newApplicationGroup(
+    originals: readonly {
+      identity: symbol | undefined
+      column: vscode.ViewColumn
+    }[],
+  ): { group: vscode.TabGroup; identity: symbol } {
+    const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
+      ),
+      identity = group && this.editorGroupIdentities.get(group)
+    if (
+      !group ||
+      !identity ||
+      group.tabs.length ||
+      originals.some((original) => original.identity === identity) ||
+      vscode.window.tabGroups.all.length !== originals.length + 1
+    )
+      throw new Error(
+        'The editor did not create one empty owned Application group.',
+      )
+    return { group, identity }
+  }
+
+  /**
+   * Validates original-group survival and current native input for {@link reserveApplicationGroup} immediately before locking its new group.
+   * @param group - The newly observed empty allocation.
+   * @param originals - The pre-insertion identity/column snapshot.
+   * @throws When original groups or native focus changed.
+   * @example this.assertApplicationLockTarget(group, originals)
+   */
+  private assertApplicationLockTarget(
+    group: vscode.TabGroup,
+    originals: readonly {
+      identity: symbol | undefined
+      column: vscode.ViewColumn
+    }[],
+  ): void {
+    // Every previous group must survive at its shifted column, including auxiliary chat parts.
+    if (
+      !originals.every((original) =>
+        vscode.window.tabGroups.all.some(
+          (candidate) =>
+            this.editorGroupIdentities.get(candidate) === original.identity &&
+            candidate.viewColumn === original.column + 1,
+        ),
+      )
+    )
+      throw new Error(
+        'Original editor groups changed while preparing the Application.',
+      )
+    if (
+      vscode.window.tabGroups.activeTabGroup !== group ||
+      !vscode.window.state.focused
+    )
+      throw new Error(
+        'Native focus changed before the new Application group could be locked.',
+      )
+  }
+
+  /**
+   * Commits the accepted layout and owned initial move for {@link reserveApplicationGroup} before cancelled intent is rejected.
+   * @param panel - The current registered App.
+   * @param identity - The allocated group's observed identity.
+   * @param layout - The actual native reply checked by the caller's placement guard.
+   * @param expectedCount - Main groups after Source retirement.
+   * @throws When the count or App destination does not match.
+   * @example this.rememberPreparedApplication(panel, identity, layout, expectedCount)
+   */
+  private rememberPreparedApplication(
+    panel: vscode.WebviewPanel,
+    identity: symbol,
+    layout: unknown,
+    expectedCount: number,
+  ): void {
+    if (
+      editorLayoutGroupCount(layout) !== expectedCount ||
+      panel.viewColumn !== vscode.ViewColumn.One
+    )
+      throw new Error(
+        'The dedicated Application layout could not be confirmed.',
+      )
+    this.rememberApplicationGroup(identity, layout, expectedCount)
+    // Preparation's verified move is still our initial placement; only a later manual move releases that receipt at Open.
+    if (this.initialAppPlacement?.panel === panel)
+      this.initialAppPlacement.column = panel.viewColumn
+  }
+
+  /**
+   * Finds a known empty group for preparation cleanup and retirement without treating two missing identities as ownership.
+   * @param identity - An already observed group identity, or undefined before allocation.
+   * @returns Its current empty group, if any.
+   * @example const empty = this.emptyNativeGroup(allocated)
+   */
+  private emptyNativeGroup(
+    identity: symbol | undefined,
+  ): vscode.TabGroup | undefined {
+    if (identity === undefined) return undefined
+    return vscode.window.tabGroups.all.find(
+      (group) =>
+        this.editorGroupIdentities.get(group) === identity &&
+        !group.tabs.length,
+    )
+  }
+
+  /**
+   * Releases only the failed transaction's current owner after {@link reserveApplicationGroup} drains its existing cleanup path.
+   * @param allocated - The transaction's known allocation identity.
+   * @param empty - The known empty group whose close was attempted, when present.
+   * @example this.releaseFailedApplicationOwner(allocated, empty)
+   */
+  private releaseFailedApplicationOwner(
+    allocated: symbol | undefined,
+    empty: vscode.TabGroup | undefined,
+  ): void {
+    if (this.applicationGroup?.identity === allocated && (empty || !this.app))
+      this.applicationGroup = undefined
+  }
+
+  /**
+   * Retains only a newly reserved Source group; source-derived arrangement calls this before its first native source insertion.
+   * @param previousCount - Main groups measured immediately before the accepted reservation.
+   * @example this.noteCreatedSourceGroup(grid.groups.length)
+   */
+  private noteCreatedSourceGroup(previousCount: number): void {
+    if (this.liveComposition || this.summaryComposition) return
+    const column = STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
+    if (column <= previousCount) return
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
+    const identity = group && this.editorGroupIdentities.get(group)
+    if (identity && group && !group.tabs.length)
+      this.sourceDerivedGroup = { identity, column }
+  }
+
+  /**
+   * Removes the reader-created Source split after {@link prepareApplicationGroup} moves App, retaining the current document in the original first group.
+   * @param groups - Freshly measured main groups; only an unchanged clean owned source group may close.
+   * @param assertCurrent - Preparation lifetime/cancellation check after each accepted native effect.
+   * @returns Whether the old source group was removed and the main grid needs remeasurement.
+   * @throws When native input changes or the accepted copy/close cannot be confirmed.
+   * @example if (await this.retireSourceDerivedGroup(grid.groups, assertCurrent)) grid = await this.readMainEditorGrid(signal, assertCurrent)
+   */
+  private async retireSourceDerivedGroup(
+    groups: readonly vscode.TabGroup[],
+    assertCurrent: () => void,
+  ): Promise<boolean> {
+    const retirement = this.sourceGroupRetirement(groups)
+    if (!retirement) return false
+    const { owned, original, currentSource } = retirement
+    const originalIdentity = this.editorGroupIdentities.get(original),
+      initialEditor = vscode.window.activeTextEditor,
+      initialInput = JSON.stringify(
+        vscode.window.tabGroups.activeTabGroup.activeTab?.input,
+      ),
+      initialGroup = this.editorGroupIdentities.get(
+        vscode.window.tabGroups.activeTabGroup,
+      ),
+      assertPlacement = this.retainPresentationPlacement(false),
+      copiedDocument = currentSource?.document
+    let inputChanged = false
+    /**
+     * Says whether an editor is the issued copy of the current document in the original group, the one active-editor change this retirement may cause.
+     * @param editor - The editor the host reports as active now, if any.
+     * @returns `true` for that copy; `false` for another document, another group and no editor.
+     * @example isIssuedCopy(vscode.window.activeTextEditor) // => true right after the copy is shown
+     */
+    const isIssuedCopy = (editor: vscode.TextEditor | undefined): boolean =>
+      editor?.document === copiedDocument &&
+      editor?.viewColumn === original.viewColumn
+    const subscriptions = [
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        if (event.kind !== undefined && LEARNER_SELECTION_KINDS.has(event.kind))
+          inputChanged = true
+      }),
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor !== initialEditor && !isIssuedCopy(editor))
+          inputChanged = true
+      }),
+      vscode.window.onDidChangeWindowState((state) => {
+        if (!state.focused) inputChanged = true
+      }),
+    ]
+    try {
+      const sourceToCopy = this.sourceToCopyForRetirement(
+        original,
+        currentSource,
+      )
+      if (sourceToCopy) {
+        const version = sourceToCopy.document.version,
+          selections = sourceToCopy.selections,
+          shown = await vscode.window.showTextDocument(sourceToCopy.document, {
+            viewColumn: original.viewColumn,
+            preserveFocus: initialEditor !== sourceToCopy,
+            preview: false,
+          })
+        assertCurrent()
+        assertPlacement()
+        this.assertRetiredSourceCopy(sourceToCopy, shown, version, {
+          inputChanged,
+          initialGroup,
+          initialInput,
+          originalIdentity,
+        })
+        shown.selections = selections
+      }
+      // An already accepted copy needs no second reveal over a later draft when explicit preparation retries.
+      if (currentSource)
+        this.sourceGroup = vscode.window.tabGroups.all.find(
+          (group) => this.editorGroupIdentities.get(group) === originalIdentity,
+        )
+      const current = vscode.window.tabGroups.all.find(
+        (group) => this.editorGroupIdentities.get(group) === owned.identity,
+      )
+      assertCurrent()
+      if (!current || !this.isRetirableSourceGroup(owned, current)) return false
+      const previous = this.applicationGroupChange
+      this.applicationGroupChange = { kind: 'remove', identity: owned.identity }
+      try {
+        await this.closeKnownNativeGroup(current, owned.identity, {
+          refusal: 'The reader-created source group could not close.',
+          pending: 'reader-created source group removal',
+        })
+      } finally {
+        this.applicationGroupChange = previous
+      }
+      if (this.sourceDerivedGroup === owned) this.sourceDerivedGroup = undefined
+      assertCurrent()
+      this.assertRetirementInput(!inputChanged)
+      return true
+    } finally {
+      for (const subscription of subscriptions) subscription.dispose()
+    }
+  }
+
+  /**
+   * Selects only an uncopied source for {@link retireSourceDerivedGroup}, so an explicit retry never reveals it again over later input.
+   * @param original - The retained destination group, including any copy already accepted there.
+   * @param source - The actual visible captured source, absent only for an empty retiring group.
+   * @returns That editor when its URI is missing from the destination; otherwise undefined.
+   * @example const source = this.sourceToCopyForRetirement(original, currentSource)
+   */
+  private sourceToCopyForRetirement(
+    original: vscode.TabGroup,
+    source: vscode.TextEditor | undefined,
+  ): vscode.TextEditor | undefined {
+    if (!source) return undefined
+    const uri = source.document.uri.toString()
+    if (original.tabs.some((tab) => this.textTabUri(tab) === uri))
+      return undefined
+    return source
+  }
+
+  /**
+   * Checks the accepted copy's original input facts for {@link retireSourceDerivedGroup} before it restores selections or closes a group.
+   * @param source - The same source whose version was captured immediately before copying.
+   * @param shown - The editor returned by that accepted native copy.
+   * @param version - The source version before the native call.
+   * @param before - The existing sticky input flag, original active input and destination identity.
+   * @throws The existing retirement error when source bytes, window or native input changed.
+   * @example this.assertRetiredSourceCopy(source, shown, version, before)
+   */
+  private assertRetiredSourceCopy(
+    source: vscode.TextEditor,
+    shown: vscode.TextEditor,
+    version: number,
+    before: {
+      inputChanged: boolean
+      initialGroup: symbol | undefined
+      initialInput: string | undefined
+      originalIdentity: symbol | undefined
+    },
+  ): void {
+    const activeGroup = vscode.window.tabGroups.activeTabGroup,
+      keepsInitialInput =
+        this.editorGroupIdentities.get(activeGroup) === before.initialGroup &&
+        JSON.stringify(activeGroup.activeTab?.input) === before.initialInput,
+      copiedInput =
+        this.editorGroupIdentities.get(activeGroup) ===
+          before.originalIdentity && vscode.window.activeTextEditor === shown
+    this.assertRetirementInput(
+      !before.inputChanged &&
+        vscode.window.state.focused &&
+        (keepsInitialInput || copiedInput) &&
+        source.document.version === version,
+    )
+  }
+
+  /**
+   * Preserves the same input-loss error at both accepted-effect checks in {@link retireSourceDerivedGroup}.
+   * @param retained - Whether that boundary still satisfies its caller's original input facts.
+   * @throws When later input revoked source-group retirement.
+   * @example this.assertRetirementInput(!inputChanged)
+   */
+  private assertRetirementInput(retained: boolean): void {
+    if (!retained)
+      throw new Error(
+        'Native input changed during source-group retirement; the newer choice was preserved.',
+      )
+  }
+
+  /**
+   * Finds the existing Source retirement candidate for {@link retireSourceDerivedGroup} before it subscribes or issues native effects.
+   * @param groups - The main groups already measured by App preparation.
+   * @returns Existing ownership, destination and visible source, or undefined for an adopted, moved, missing or already-original group.
+   * @example const retirement = this.sourceGroupRetirement(grid.groups)
+   */
+  private sourceGroupRetirement(groups: readonly vscode.TabGroup[]):
+    | {
+        owned: NonNullable<StudyWorkspace['sourceDerivedGroup']>
+        original: vscode.TabGroup
+        currentSource: vscode.TextEditor | undefined
+      }
+    | undefined {
+    const owned = this.sourceDerivedGroup,
+      original = groups.find(
+        (group) =>
+          group.viewColumn ===
+          STUDY_PRESENTATIONS['study-workspace'].sourceColumn,
+      ),
+      source = groups.find(
+        (group) =>
+          owned && this.editorGroupIdentities.get(group) === owned.identity,
+      )
+    if (!owned || !original || !source || source === original) return undefined
+    if (!this.isRetirableSourceGroup(owned, source)) return undefined
+    const currentSource = vscode.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === source.viewColumn &&
+        editor.document.uri.toString() === this.sourceUri?.toString(),
+    )
+    // A nonempty source group needs its actual visible editor before a copy can retain the document and selection.
+    if (source.tabs.length && !currentSource) return undefined
+    return { owned, original, currentSource }
+  }
+
+  /**
+   * Checks the same untouched Source contents before and after {@link retireSourceDerivedGroup}'s native copy.
+   * @param owned - The existing creation receipt; this check grants no new ownership.
+   * @param group - The group already resolved by that receipt's identity.
+   * @returns Whether the original column contains only clean unpinned captured-source tabs, including an empty group.
+   * @example this.isRetirableSourceGroup(owned, current)
+   */
+  private isRetirableSourceGroup(
+    owned: NonNullable<StudyWorkspace['sourceDerivedGroup']>,
+    group: vscode.TabGroup,
+  ): boolean {
+    return (
+      group.viewColumn === owned.column &&
+      group.tabs.every(
+        (tab) =>
+          !tab.isPinned && !tab.isDirty && this.ownsCapturedSourceTab(tab),
+      )
+    )
+  }
+
+  /**
+   * Proves main-part focus before App allocation; {@link prepareApplicationGroup} borrows the retained original source when Cursor cannot report its pane focus.
+   * @param mainCount - The measured main-group count before allocation; a non-text primary is admissible only when this stable grid accounts for every native group.
+   * @param assertCurrent - The queue's lifetime/cancellation guard, also checked after accepted native focus drains.
+   * @param cancelEntryFocusReturn - Revokes the caller's older foreign focus return after newer input.
+   * @returns A native-source guard the caller checks immediately before allocation and disposes after that accepted command settles.
+   * @throws When first-group identity, original document or newer native input cannot be preserved safely.
+   * @example await this.focusApplicationSourceGroup(grid.groups.length, assertCurrent)
+   */
+  private async focusApplicationSourceGroup(
+    mainCount: number,
+    assertCurrent: () => void,
+    cancelEntryFocusReturn?: () => void,
+  ): Promise<{ assertRetained(): void; dispose(): void }> {
+    const primary = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === vscode.ViewColumn.One,
+    )
+    if (!primary)
+      throw new Error(
+        'The first main editor group is unavailable. Focus a source file and retry.',
+      )
+    const sourceReceipt = this.applicationPrimaryInput(
+      primary,
+      mainCount,
+      cancelEntryFocusReturn,
+    )
+    try {
+      await vscode.commands.executeCommand(
+        'workbench.action.focusFirstEditorGroup',
+      )
+      assertCurrent()
+      sourceReceipt?.assertRetained()
+      const borrow = this.preparationSourceToBorrow(primary)
+      // A known existing source, rather than a guessed pane focus, supplies the main-part acknowledgement beside Cursor chat.
+      if (
+        !this.hasMainEditorFocus(vscode.ViewColumn.One) &&
+        !sourceReceipt &&
+        borrow
+      ) {
+        const { retained, sourceTab } = borrow
+        const assertGroups = this.retainPresentationPlacement(false),
+          version = retained.document.version,
+          selections = JSON.stringify(retained.selections),
+          retainedUri = retained.document.uri.toString()
+        let acquired = false,
+          departed = false
+        const changes = [
+          vscode.window.onDidChangeActiveTextEditor((editor) => {
+            // Entering the borrowed source acquires it; any later change away from it is the learner's departure.
+            if (this.isFirstGroupEditorOf(editor, retainedUri)) acquired = true
+            else if (acquired) departed = true
+          }),
+          vscode.window.onDidChangeTextEditorSelection((event) => {
+            if (
+              event.kind === vscode.TextEditorSelectionChangeKind.Mouse ||
+              event.kind === vscode.TextEditorSelectionChangeKind.Keyboard
+            )
+              departed = true
+          }),
+          vscode.window.onDidChangeWindowState((state) => {
+            if (!state.focused) departed = true
+          }),
+        ]
+        try {
+          const shown = await vscode.window.showTextDocument(
+            retained.document,
+            {
+              viewColumn: vscode.ViewColumn.One,
+              preserveFocus: false,
+              preview: sourceTab.isPreview,
+            },
+          )
+          assertCurrent()
+          assertGroups()
+          this.assertBorrowedPreparationSource(retained, shown, {
+            departed,
+            version,
+            selections,
+          })
+        } finally {
+          for (const change of changes) change.dispose()
+        }
+      }
+      if (
+        !this.hasApplicationPreparationFocus(primary, mainCount, sourceReceipt)
+      )
+        throw new Error(
+          'Focus the first main source group before preparing the Application.',
+        )
+      const assertPlaced = this.retainPresentationPlacement(!sourceReceipt)
+      return {
+        assertRetained: (): void => {
+          try {
+            assertCurrent()
+            sourceReceipt?.assertRetained()
+            assertPlaced()
+            if (sourceReceipt && !sourceReceipt.acknowledged())
+              throw new Error(
+                'The prepared main source no longer owns its native focus acknowledgement.',
+              )
+          } catch (error) {
+            cancelEntryFocusReturn?.()
+            throw error
+          }
+        },
+        dispose: (): void => {
+          sourceReceipt?.dispose()
+        },
+      }
+    } catch (error) {
+      sourceReceipt?.dispose()
+      throw error
+    }
+  }
+
+  /**
+   * Resolves the existing source/tab pair that {@link focusApplicationSourceGroup} may borrow when the native main-part report is absent.
+   * @param primary - The original first group; the retained source must still have a tab there.
+   * @returns The retained source and its actual tab, or undefined without both; an active unrelated tab is never substituted.
+   * @example const borrow = this.preparationSourceToBorrow(primary)
+   */
+  private preparationSourceToBorrow(primary: vscode.TabGroup) {
+    const retained = this.applicationPreparationSource
+    if (!retained) return undefined
+    const sourceTab = primary.tabs.find(
+      (tab) => this.textTabUri(tab) === retained.document.uri.toString(),
+    )
+    return sourceTab ? { retained, sourceTab } : undefined
+  }
+
+  /**
+   * Validates the native source borrow in {@link focusApplicationSourceGroup} before that transaction releases its input listeners.
+   * @param retained - The original source whose bytes must not change during the native call.
+   * @param shown - The returned editor whose selections must match the original input.
+   * @param before - Sticky departure state and source version/selections captured before borrowing focus.
+   * @throws The existing preparation error if the source, selection, window or main input changed.
+   * @example this.assertBorrowedPreparationSource(retained, shown, before)
+   */
+  private assertBorrowedPreparationSource(
+    retained: vscode.TextEditor,
+    shown: vscode.TextEditor,
+    before: { departed: boolean; version: number; selections: string },
+  ): void {
+    if (
+      before.departed ||
+      !vscode.window.state.focused ||
+      retained.document.version !== before.version ||
+      JSON.stringify(shown.selections) !== before.selections ||
+      vscode.window.activeTextEditor?.document.uri.toString() !==
+        retained.document.uri.toString() ||
+      vscode.window.activeTextEditor.viewColumn !== vscode.ViewColumn.One
+    )
+      throw new Error(
+        'Native source input changed during Application preparation; the newer choice was preserved.',
+      )
+  }
+
+  /**
+   * Captures primary-input authority for {@link focusApplicationSourceGroup} before its native focus command.
+   * @param primary - The measured first main group before focus is borrowed.
+   * @param mainCount - Main-group count; an opaque input is admissible only when no separate editor part exists.
+   * @param cancelEntryFocusReturn - Retires the caller's older focus return when the retained guard observes newer input.
+   * @returns The existing sticky input receipt, or undefined when this primary cannot acknowledge focus.
+   * @example const input = this.applicationPrimaryInput(primary, mainCount)
+   */
+  private applicationPrimaryInput(
+    primary: vscode.TabGroup,
+    mainCount: number,
+    cancelEntryFocusReturn?: () => void,
+  ): ReturnType<StudyWorkspace['retainPreparationPrimaryInput']> | undefined {
+    const input = primary.activeTab?.input,
+      primarySource = this.primarySourceEditor(primary)
+    // Text needs its actual editor; opaque input needs one fully measured editor part.
+    return primarySource ||
+      (!(input instanceof vscode.TabInputText) &&
+        mainCount === vscode.window.tabGroups.all.length)
+      ? this.retainPreparationPrimaryInput(
+          primarySource,
+          primary,
+          cancelEntryFocusReturn,
+        )
+      : undefined
+  }
+
+  /**
+   * Finds the visible source behind the first group's selected text tab for {@link ensureApp} and {@link applicationPrimaryInput}.
+   * @param primary - The already identified main first group, or undefined before one exists.
+   * @returns Its matching visible editor; this lookup alone supplies no native keyboard acknowledgement.
+   * @example const source = this.primarySourceEditor(primary)
+   */
+  private primarySourceEditor(
+    primary: vscode.TabGroup | undefined,
+  ): vscode.TextEditor | undefined {
+    const uri = this.textTabUri(primary?.activeTab)
+    if (uri === undefined) return undefined
+    return vscode.window.visibleTextEditors.find((editor) =>
+      this.isFirstGroupEditorOf(editor, uri),
+    )
+  }
+
+  /**
+   * Tells that a text editor is the first main group's editor of a document: the source the App preparation borrows and the focus report it accepts; asked by {@link primarySourceEditor}, {@link retainPreparationPrimaryInput}, {@link focusApplicationSourceGroup} and {@link readMainEditorGrid}.
+   * @param editor - A text editor, such as the active one, if the editor reports one.
+   * @param uri - The document's URI as text.
+   * @returns `true` when `editor` is in the first group and shows that document; `false` for another group, another document and no editor.
+   * @example this.isFirstGroupEditorOf(vscode.window.activeTextEditor, primaryEditor.document.uri.toString())
+   */
+  private isFirstGroupEditorOf(
+    editor: vscode.TextEditor | undefined,
+    uri: string,
+  ): boolean {
+    return (
+      editor?.viewColumn === vscode.ViewColumn.One &&
+      editor.document.uri.toString() === uri
+    )
+  }
+
+  /**
+   * Confirms the native focus result for {@link focusApplicationSourceGroup} before it returns an allocation guard.
+   * @param primary - The original first group, required by the empty single-part fallback.
+   * @param mainCount - Main groups measured before the issued focus command.
+   * @param sourceReceipt - The exact source or opaque-tab acknowledgement retained across that command.
+   * @returns Whether a current native report, retained acknowledgement or unchanged empty primary proves the destination.
+   * @example this.hasApplicationPreparationFocus(primary, mainCount, input)
+   */
+  private hasApplicationPreparationFocus(
+    primary: vscode.TabGroup,
+    mainCount: number,
+    sourceReceipt:
+      ReturnType<StudyWorkspace['retainPreparationPrimaryInput']> | undefined,
+  ): boolean {
+    return (
+      this.hasMainEditorFocus(vscode.ViewColumn.One) ||
+      Boolean(sourceReceipt?.acknowledged()) ||
+      (mainCount === vscode.window.tabGroups.all.length &&
+        primary === vscode.window.tabGroups.activeTabGroup &&
+        !primary.activeTab)
+    )
+  }
+
+  /**
+   * Retains primary native input across {@link focusApplicationSourceGroup}'s command and its caller's allocation admission.
+   * @param editor - The visible primary source, or undefined only for an opaque primary of a proved single editor part.
+   * @param primary - Its original native group, including Cursor wrapper continuity.
+   * @param cancelEntryFocusReturn - Revokes the entry's older return on a changed source/window/group.
+   * @returns A source acknowledgement and sticky later-input guard, retained until the caller checks allocation admission and its native command settles.
+   * @throws From the guard when source bytes, selections, native tab/group, window or later learner input change.
+   * @example const receipt = this.retainPreparationPrimaryInput(editor, primary); receipt.assertRetained(); receipt.dispose()
+   */
+  private retainPreparationPrimaryInput(
+    editor: vscode.TextEditor | undefined,
+    primary: vscode.TabGroup,
+    cancelEntryFocusReturn?: () => void,
+  ) {
+    const uri = editor?.document.uri.toString(),
+      selectionState = editorSelectionState(editor),
+      identity = this.editorGroupIdentities.get(primary),
+      namedGroup = vscode.window.tabGroups.activeTabGroup,
+      namedIdentity = this.editorGroupIdentities.get(namedGroup),
+      namedTab = namedGroup.activeTab,
+      initialEditor = vscode.window.activeTextEditor,
+      assertGroups = this.retainPresentationPlacement(false),
+      primaryTabKey = this.readingTabKey(primary, primary.activeTab),
+      primaryInput = JSON.stringify(primary.activeTab?.input),
+      namedTabKey = this.readingTabKey(namedGroup, namedTab),
+      primaryWebview =
+        primary.activeTab?.input instanceof vscode.TabInputWebview
+          ? primary.activeTab.input.viewType
+          : undefined,
+      primaryCloseRevision =
+        primaryWebview && this.webviewCloseRevisions.get(primaryWebview)
+    const matches = (current: vscode.TextEditor | undefined): boolean =>
+      uri !== undefined
+        ? this.isFirstGroupEditorOf(current, uri)
+        : current === initialEditor
+    if (identity === undefined)
+      throw new Error(
+        'The original primary source group cannot be identified safely.',
+      )
+    let acquired = editor ? matches(initialEditor) : namedIdentity === identity,
+      departed = false
+    // The opaque destination requires both its original input and its unchanged webview lifetime.
+    const matchesPrimaryInput = (
+      current: vscode.TabGroup,
+      currentIdentity: symbol | undefined,
+      currentKey: string | undefined,
+    ): boolean =>
+      currentIdentity === identity &&
+      currentKey === primaryTabKey &&
+      JSON.stringify(current.activeTab?.input) === primaryInput &&
+      (!primaryWebview ||
+        this.webviewCloseRevisions.get(primaryWebview) === primaryCloseRevision)
+    // A proved single-part opaque tab has no text-focus echo; its exact existing tab remains the allocation authority, including away-and-back changes.
+    const observeOpaqueFocus = (): void => {
+      if (editor) return
+      const current = vscode.window.tabGroups.activeTabGroup,
+        currentIdentity = this.editorGroupIdentities.get(current),
+        currentKey = this.readingTabKey(current, current.activeTab),
+        atPrimary = matchesPrimaryInput(current, currentIdentity, currentKey),
+        atOrigin =
+          currentIdentity === namedIdentity &&
+          currentKey === namedTabKey &&
+          current.activeTab === namedTab
+      // Only the issued origin-to-primary handoff is allowed; an intermediate tab or a later departure stays revoked.
+      if (!atPrimary && (acquired || !atOrigin)) departed = true
+      acquired ||= atPrimary
+    }
+    /** Says whether the host reports another source than the one it named before the command: a learner choice. @example focusesAnotherSource(undefined) // => false */
+    const focusesAnotherSource = (
+      current: vscode.TextEditor | undefined,
+    ): boolean => Boolean(current && current !== initialEditor)
+    /** Observes the active editor on the text path: the issued focus may enter its original source; another source or a later departure never renews that permission. @example observeSourceFocus(vscode.window.activeTextEditor) */
+    const observeSourceFocus = (
+      current: vscode.TextEditor | undefined,
+    ): void => {
+      if (matches(current)) acquired = true
+      else if (acquired || focusesAnotherSource(current)) departed = true
+    }
+    /** Observes the active editor on the opaque path: focusing an opaque tab may clear the host's last text-editor receipt, but another newly focused source is a learner choice. @example observeOpaqueEditor(undefined) */
+    const observeOpaqueEditor = (
+      current: vscode.TextEditor | undefined,
+    ): void => {
+      if (focusesAnotherSource(current)) departed = true
+      observeOpaqueFocus()
+    }
+    const subscriptions = [
+      vscode.window.tabGroups.onDidChangeTabs(observeOpaqueFocus),
+      vscode.window.tabGroups.onDidChangeTabGroups(observeOpaqueFocus),
+      // The receipt's path is fixed when it is taken: a visible source, or an opaque tab without a text editor.
+      vscode.window.onDidChangeActiveTextEditor(
+        editor ? observeSourceFocus : observeOpaqueEditor,
+      ),
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        if (event.kind !== undefined && LEARNER_SELECTION_KINDS.has(event.kind))
+          departed = true
+      }),
+      vscode.window.onDidChangeWindowState((state) => {
+        if (!state.focused) departed = true
+      }),
+    ]
+    return {
+      assertRetained: (): void => {
+        try {
+          assertGroups()
+          observeOpaqueFocus()
+          const current = vscode.window.tabGroups.all.find(
+            (group) => this.editorGroupIdentities.get(group) === identity,
+          )
+          if (
+            departed ||
+            !vscode.window.state.focused ||
+            !this.retainsPreparationSource(current, editor, uri, selectionState)
+          )
+            throw new Error(
+              'The primary source changed during Application preparation; the newer learner input was preserved.',
+            )
+        } catch (error) {
+          cancelEntryFocusReturn?.()
+          throw error
+        }
+      },
+      acknowledged: (): boolean => {
+        // No other editor part exists on the opaque path; the unchanged primary tab supplies its native destination without a guessed text editor.
+        if (!editor)
+          return (
+            this.editorGroupIdentities.get(
+              vscode.window.tabGroups.activeTabGroup,
+            ) === identity
+          )
+        const focused = vscode.window.activeTextEditor
+        if (
+          !matches(focused) ||
+          editorSelectionState(focused) !== selectionState
+        )
+          return false
+        const current = vscode.window.tabGroups.activeTabGroup,
+          currentIdentity = this.editorGroupIdentities.get(current)
+        // Cursor can keep naming the same chat tab after reporting the explicitly focused primary source.
+        return (
+          currentIdentity === identity ||
+          Boolean(
+            namedIdentity !== undefined &&
+            currentIdentity === namedIdentity &&
+            this.hasSameNativeTab(namedTab, current.activeTab),
+          )
+        )
+      },
+      dispose: (): void => {
+        for (const subscription of subscriptions) subscription.dispose()
+      },
+    }
+  }
+
+  /**
+   * Checks the captured source/selection facts for {@link retainPreparationPrimaryInput}'s final guard; sticky opaque-tab departure remains with its observer.
+   * @param current - The group resolved from the original primary identity.
+   * @param editor - The captured text editor, or undefined for the separately guarded opaque path.
+   * @param uri - The original source URI, when the capture has a text editor.
+   * @param selectionState - Immutable original document version and selections.
+   * @returns Whether the same primary column still carries those original source/input facts.
+   * @example this.retainsPreparationSource(current, editor, uri, selectionState)
+   */
+  private retainsPreparationSource(
+    current: vscode.TabGroup | undefined,
+    editor: vscode.TextEditor | undefined,
+    uri: string | undefined,
+    selectionState: string,
+  ): boolean {
+    return (
+      editorSelectionState(editor) === selectionState &&
+      current?.viewColumn === vscode.ViewColumn.One &&
+      (!editor || this.textTabUri(current?.activeTab) === uri)
+    )
+  }
+
+  /**
+   * Retains actual prepared topology and an explicit source-placement receipt; {@link prepareApplicationGroup} calls this after allocation or owned Context retirement.
+   * @param identity - The existing map's identity of the newly allocated App group.
+   * @param layout - The verified main-editor grid after the accepted native effects.
+   * @param count - Its measured main-group count, including all surviving original groups.
+   * @example this.rememberApplicationGroup(identity, layout, 3)
+   */
+  private rememberApplicationGroup(
+    identity: symbol,
+    layout: unknown,
+    count: number,
+  ): void {
+    this.applicationGroup = { identity, layout, count }
+    this.applicationPreparationSource = undefined
+    // Only explicit entry may relocate a source shifted by our insertion; background refresh retains its current native input.
+    const panes = this.studyPanePositions()
+    const sourceNeedsReentry =
+      panes.sourceColumn !== undefined &&
+      (panes.sourceColumn !==
+        STUDY_PRESENTATIONS['study-workspace'].sourceColumn ||
+        !this.sourceReady())
+    // The verified main-part membership remains useful before the first source exists; readiness still requires the actual source and renderer.
+    this.layoutReceipt = {
+      mode: sourceNeedsReentry ? 'study-reentry' : 'study',
+      signature: JSON.stringify(layout),
+      groups: vscode.window.tabGroups.all.map((group) => ({
+        group,
+        column: group.viewColumn,
+      })),
+      panes,
+      sourceTargetColumn: sourceNeedsReentry
+        ? STUDY_PRESENTATIONS['study-workspace'].sourceColumn
+        : undefined,
+    }
+  }
+
+  /**
+   * Checks panel/group retention for {@link prepareApplicationGroup}; each caller decides whether a pending allocation is admissible at its layout boundary.
+   * @param owned - The current App owner read synchronously by the caller, without an intervening await.
+   * @returns The retained panel, or undefined when explicit preparation must finish its placement.
+   * @throws For an unacknowledged manual move or a replaced allocated group.
+   * @example const retained = this.preparedApplicationPanel(owned)
+   */
+  private preparedApplicationPanel(
+    owned: NonNullable<StudyWorkspace['applicationGroup']>,
+  ): vscode.WebviewPanel | undefined {
+    const panel = this.app
+    if (!panel) return undefined
+    const retained = vscode.window.tabGroups.all.find(
+      (group) => this.editorGroupIdentities.get(group) === owned.identity,
+    )
+    const isInOwnedGroup = retained?.viewColumn === panel.viewColumn
+    // Parked panes need a fresh allocation unless an explicit entry retained a later manual layout.
+    if (owned.parked) {
+      // An unacknowledged learner move cannot become a fresh background allocation; explicit Open reconciles it first.
+      if (!owned.manual && !isInOwnedGroup)
+        throw new Error(
+          'The Application group changed. Open Study explicitly to retain its manual placement.',
+        )
+      return owned.manual && isInOwnedGroup ? panel : undefined
+    }
+    // A manual move is never repaired by background capture; explicit recovery owns that choice.
+    if (!isInOwnedGroup)
+      throw new Error(
+        'The Application group changed. Use Codebook: Focus Application or Restore layout explicitly.',
+      )
+    return panel
+  }
+
+  /**
+   * Finds the single native App tab for {@link prepareApplicationGroup} and {@link assertApplicationReveal}, which must refuse duplicate renderers.
+   * @returns The sole matching tab, or undefined when no App or multiple App tabs exist.
+   * @example const tab = this.uniqueApplicationTab()
+   */
+  private uniqueApplicationTab(): vscode.Tab | undefined {
+    const tabs = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter((tab) =>
+        this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser'),
+      )
+    return tabs.length === 1 ? tabs[0] : undefined
+  }
+
+  /**
+   * Resolves the current allocated renderer's group for {@link assertApplicationReveal}; borrowed parked groups cannot authorize background placement.
+   * @param panel - The actual renderer supplied by its current live or replay lease.
+   * @returns Its unchanged allocated group, or undefined after replacement, parking or a manual move.
+   * @example const group = this.allocatedGroupForApplication(panel)
+   */
+  private allocatedGroupForApplication(
+    panel: vscode.WebviewPanel,
+  ): vscode.TabGroup | undefined {
+    const owned = this.applicationGroup
+    if (this.app !== panel || !owned || owned.parked) return undefined
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === panel.viewColumn,
+    )
+    // Preserve the first-column admission: another same-column group cannot rescue a mismatched native receipt.
+    return group && this.editorGroupIdentities.get(group) === owned.identity
+      ? group
+      : undefined
+  }
+
+  /**
+   * Prevents background native reveals over a later tab or moved group; current live/replay leases call this after their keyboard answer.
+   * @param panel - The exact current renderer, including an admitted panel replacement.
+   * @throws Before a foreign tab, closed owner or manually moved App could be covered.
+   * @example this.assertApplicationReveal(panel)
+   */
+  private assertApplicationReveal(panel: vscode.WebviewPanel): void {
+    const group = this.allocatedGroupForApplication(panel)
+    // Native tabs expose a view type, not a panel handle; only one current native tab can identify this renderer.
+    const applicationTab = this.uniqueApplicationTab()
+    if (
+      !group ||
+      !applicationTab ||
+      !group.tabs.includes(applicationTab) ||
+      // A hidden sole owned tab covers no native input; any other selected or ambiguous tab remains protected.
+      (group.activeTab !== applicationTab &&
+        (group.activeTab !== undefined || group.tabs.length !== 1))
+    )
+      throw new Error(
+        'Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+      )
+  }
+
+  /**
+   * Retires only an empty group this reader allocated after its last App owner closes; Close and runtime-only retirement call this before restoring layout.
+   * @example await this.releaseApplicationGroup()
+   */
+  private async releaseApplicationGroup(): Promise<void> {
+    const owned = this.applicationGroup
+    if (!owned) return
+    // A borrowed parking group keeps its original identity and tabs even at final Close.
+    if (owned.parked) {
+      if (owned.retiringIdentity)
+        await this.retireEmptyOwnedGroup(owned.retiringIdentity)
+      if (this.applicationGroup === owned) this.applicationGroup = undefined
+      return
+    }
+    await this.closedPanesGone('codebook.scopedBrowser')
+    // An intervening acquisition or a learner's adopted nonempty group is never this cleanup's target.
+    if (owned !== this.applicationGroup || this.app) return
+    const empty = this.emptyNativeGroup(owned.identity)
+    if (empty) await this.retireEmptyOwnedGroup(owned.identity)
+    if (owned === this.applicationGroup) this.applicationGroup = undefined
+  }
+
+  /**
+   * Retires only a verified empty created group; Context retirement, Return and final App cleanup share the issued-removal identity boundary.
+   * @param identity - The allocation identity retained by this reader, never a borrowed parking group.
+   * @returns Whether the allocation is gone; a newly adopted nonempty group stays intact.
+   * @throws When the host refuses an empty-group close or never publishes its accepted removal.
+   * @example await this.retireEmptyOwnedGroup(owned.identity)
+   */
+  private async retireEmptyOwnedGroup(identity: symbol): Promise<boolean> {
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+    )
+    if (!group) return true
+    if (group.tabs.length) return false
+    const previous = this.applicationGroupChange
+    const removal: NonNullable<StudyWorkspace['applicationGroupChange']> = {
+      kind: 'remove',
+      identity,
+    }
+    this.applicationGroupChange = removal
+    try {
+      await this.closeKnownNativeGroup(group, identity, {
+        refusal: 'The editor refused to retire an empty Codebook group.',
+        pending: 'owned Codebook group removal',
+      })
+      return true
+    } finally {
+      if (this.applicationGroupChange === removal)
+        this.applicationGroupChange = previous
+    }
+  }
+
+  /**
+   * Drains the accepted close for {@link retireEmptyOwnedGroup} and {@link retireSourceDerivedGroup} while each caller retains its own removal receipt and input guard.
+   * @param group - The current group whose ownership and contents the caller has just validated.
+   * @param identity - That group's existing identity; disappearance, not a command reply alone, completes retirement.
+   * @param reason - Existing caller-specific refusal and pending-operation descriptions.
+   * @throws When the native close is refused or its removal is not published within the existing presentation bound.
+   * @example await this.closeKnownNativeGroup(group, identity, reason)
+   */
+  private async closeKnownNativeGroup(
+    group: vscode.TabGroup,
+    identity: symbol,
+    reason: { refusal: string; pending: string },
+  ): Promise<void> {
+    if (!(await vscode.window.tabGroups.close(group, true)))
+      throw new Error(reason.refusal)
+    await waitUntil(
+      () =>
+        !vscode.window.tabGroups.all.some(
+          (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+        ),
+      reason.pending,
+      PRESENTATION_READY_TIMEOUT_MS,
+    )
+  }
+
+  /**
+   * Parks the retained App and releases its allocated group before {@link restoreRepositoryLayout} restores original article leaves.
+   * @param saved - The original article groups and geometry captured before reservation.
+   * @param grid - Current measured main scope, including the newly allocated App group.
+   * @param assertCurrent - The Return's lifetime, selection and lease guard before new effects.
+   * @param retainInput - Keeps the native-input guard alive through final grid confirmation and releases it on every outcome.
+   * @returns Whether this Return normalized the added allocation; ordinary/manual layouts remain untouched.
+   * @throws For changed original identities, failed native registration or a revoked Return after accepted work drains.
+   * @example await this.parkApplicationForRepository(saved, grid, assertCurrent)
+   */
+  private async parkApplicationForRepository(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    grid: Awaited<ReturnType<StudyWorkspace['readMainEditorGrid']>>,
+    assertCurrent: () => void,
+    retainInput: (
+      guard: ReturnType<StudyWorkspace['retainArticleReturnInput']>,
+    ) => void,
+  ): Promise<boolean> {
+    const lifetime = this.lifetime,
+      plan = this.applicationParkingPlan(saved, grid.groups)
+    if (!plan) return false
+    const {
+      owned,
+      panel,
+      allocationIdentity,
+      destination,
+      destinationIdentity,
+    } = plan
+    grid.assertUnchanged()
+    assertCurrent()
+    if (!owned.parked) this.assertApplicationReveal(panel)
+    retainInput(this.retainArticleReturnInput(panel, destinationIdentity))
+    // Validate the newly retained input before issuing the first native move, including an already inactive window.
+    assertCurrent()
+    const previousChange = this.applicationGroupChange
+    const removal: NonNullable<StudyWorkspace['applicationGroupChange']> = {
+      kind: 'remove',
+      identity: allocationIdentity,
+    }
+    this.applicationGroupChange = removal
+    // Parking never transfers cleanup authority to an original group; only the former allocation may still need retirement.
+    const parked: NonNullable<StudyWorkspace['applicationGroup']> = owned.parked
+      ? owned
+      : {
+          identity: destinationIdentity,
+          layout: grid.layout,
+          count: grid.groups.length,
+          parked: true,
+          retiringIdentity: allocationIdentity,
+        }
+    try {
+      this.applicationGroup = parked
+      // Moving the keyboard-owning App must carry its input out of the emptied group; an inactive App preserves the current input.
+      if (!owned.parked) panel.reveal(destination.viewColumn, !panel.active)
+      await waitUntil(
+        () => {
+          if (this.app !== panel)
+            throw new Error('The Application closed during article Return.')
+          const actual = vscode.window.tabGroups.all.find(
+            (group) =>
+              this.editorGroupIdentities.get(group) === destinationIdentity,
+          )
+          return (
+            actual !== undefined &&
+            actual.viewColumn === panel.viewColumn &&
+            actual.tabs.some((tab) =>
+              this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser'),
+            )
+          )
+        },
+        'retained Application parking registration',
+        PRESENTATION_READY_TIMEOUT_MS,
+      )
+      await this.recordParkedApplication(
+        parked,
+        panel,
+        destinationIdentity,
+        lifetime,
+        assertCurrent,
+      )
+      assertCurrent()
+      // A newer native choice revokes this unissued close; an already accepted close still drains before rejection.
+      if (!(await this.retireEmptyOwnedGroup(allocationIdentity)))
+        throw new Error(
+          'The Application allocation was adopted during article Return.',
+        )
+      parked.retiringIdentity = undefined
+      const layout = await this.recordParkedApplication(
+        parked,
+        panel,
+        destinationIdentity,
+        lifetime,
+        assertCurrent,
+      )
+      if (editorLayoutGroupCount(layout) !== saved.groups.length)
+        throw new Error(
+          'The original article groups could not be measured after Application removal.',
+        )
+      if (
+        !this.originalArticleGroups(
+          saved,
+          vscode.window.tabGroups.all,
+          0,
+          false,
+        )
+      )
+        throw new Error(
+          'Original article group identity changed during Return.',
+        )
+      assertCurrent()
+      this.repositoryLayoutRestored = undefined
+      return true
+    } finally {
+      if (this.applicationGroupChange === removal)
+        this.applicationGroupChange = previousChange
+    }
+  }
+
+  /**
+   * Finds a safe original-group destination before {@link parkApplicationForRepository} issues any native move.
+   * @param saved - Original article groups retained before Study entry.
+   * @param groups - Current main groups from the caller's guarded layout read.
+   * @returns The current owner and destination, or undefined when manual/adopted topology must remain untouched.
+   * @example const plan = this.applicationParkingPlan(saved, grid.groups)
+   */
+  private applicationParkingPlan(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    groups: readonly vscode.TabGroup[],
+  ) {
+    const owned = this.applicationGroup,
+      panel = this.app
+    if (!owned || !panel) return undefined
+    const allocationIdentity = this.applicationAllocationToPark(
+      owned,
+      panel,
+      groups,
+      saved.groups.length,
+    )
+    if (!allocationIdentity) return undefined
+    const originals = this.originalArticleGroups(
+      saved,
+      groups,
+      vscode.ViewColumn.One,
+      true,
+    )
+    if (!originals) return undefined
+    const activeColumn =
+        vscode.window.activeTextEditor?.viewColumn ??
+        vscode.window.tabGroups.activeTabGroup.viewColumn,
+      destination = originals.find((group) =>
+        owned.parked
+          ? this.editorGroupIdentities.get(group) === owned.identity &&
+            group.viewColumn === panel.viewColumn
+          : group.viewColumn !== activeColumn,
+      )
+    if (!destination) return undefined
+    const destinationIdentity = this.editorGroupIdentities.get(destination)
+    if (!destinationIdentity) return undefined
+    return {
+      owned,
+      panel,
+      allocationIdentity,
+      destination,
+      destinationIdentity,
+    }
+  }
+
+  /**
+   * Resolves the same original article groups before and after {@link parkApplicationForRepository}'s one-group contraction.
+   * @param saved - The original group identities and columns captured before Study entry.
+   * @param groups - Current main groups before insertion is removed, or all native groups afterward.
+   * @param columnShift - The one inserted App column before removal; zero after it drains.
+   * @param requireUnique - Preparation rejects duplicate identity matches; final confirmation preserves its original first-match policy.
+   * @returns Original groups in their saved order, or undefined when identity, cardinality or column validation fails.
+   * @example const originals = this.originalArticleGroups(saved, groups, vscode.ViewColumn.One, true)
+   */
+  private originalArticleGroups(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    groups: readonly vscode.TabGroup[],
+    columnShift: number,
+    requireUnique: boolean,
+  ): vscode.TabGroup[] | undefined {
+    const originals: vscode.TabGroup[] = []
+    // Each original keeps its own identity and expected shifted column; no nearby substitute is adopted.
+    for (const original of saved.groups) {
+      const identity = this.editorGroupIdentities.get(original.group)
+      if (!identity) return undefined
+      const matches = groups.filter(
+        (group) => this.editorGroupIdentities.get(group) === identity,
+      )
+      if (requireUnique && matches.length !== 1) return undefined
+      const actual = matches[0]
+      if (actual?.viewColumn !== original.column + columnShift) return undefined
+      originals.push(actual)
+    }
+    return originals
+  }
+
+  /**
+   * Admits only the owned live allocation or its empty pending retirement for {@link applicationParkingPlan}.
+   * @param owned - The current App owner, captured synchronously by the caller.
+   * @param panel - The current retained App, never a replacement renderer.
+   * @param groups - The measured main groups including the added allocation.
+   * @param originalCount - Main groups in the original article layout.
+   * @returns The known allocation identity, or undefined when topology or its contents were adopted.
+   * @example const identity = this.applicationAllocationToPark(owned, panel, groups, saved.groups.length)
+   */
+  private applicationAllocationToPark(
+    owned: NonNullable<StudyWorkspace['applicationGroup']>,
+    panel: vscode.WebviewPanel,
+    groups: readonly vscode.TabGroup[],
+    originalCount: number,
+  ): symbol | undefined {
+    const allocationIdentity = this.applicationAllocationIdentity(owned)
+    if (!allocationIdentity) return undefined
+    const allocated = groups.find(
+      (group) => this.editorGroupIdentities.get(group) === allocationIdentity,
+    )
+    // A partial Return may resume its known empty allocation; no adopted or manually moved group is contracted.
+    if (
+      !allocated ||
+      allocated.viewColumn !== vscode.ViewColumn.One ||
+      groups.length !== originalCount + 1
+    )
+      return undefined
+    const validAllocation = owned.parked
+      ? allocated.tabs.length === 0
+      : this.isUnsharedApplicationGroup(allocated, panel)
+    if (!validAllocation) return undefined
+    return allocationIdentity
+  }
+
+  /**
+   * Identifies pending allocated work for {@link restoreRepositoryLayout} and {@link applicationAllocationToPark} without adopting a borrowed parking group.
+   * @param owned - The caller's current App owner; absence supplies no allocation authority.
+   * @returns The allocated or still-retiring group identity, otherwise undefined after parking completes.
+   * @example const identity = this.applicationAllocationIdentity(this.applicationGroup)
+   */
+  private applicationAllocationIdentity(
+    owned: StudyWorkspace['applicationGroup'],
+  ): symbol | undefined {
+    if (!owned) return undefined
+    return owned.parked ? owned.retiringIdentity : owned.identity
+  }
+
+  /**
+   * Checks sole-App contents for {@link applicationAllocationToPark}; shared learner groups must never be contracted.
+   * @param group - The already identified allocation in the measured main scope.
+   * @param panel - App whose current native column must match that allocation.
+   * @returns Whether this exact column contains just the Codebook App tab.
+   * @example this.isUnsharedApplicationGroup(allocated, panel)
+   */
+  private isUnsharedApplicationGroup(
+    group: vscode.TabGroup,
+    panel: vscode.WebviewPanel,
+  ): boolean {
+    return (
+      group.viewColumn === panel.viewColumn &&
+      group.tabs.length === 1 &&
+      this.isCodebookPaneInput(group.tabs[0]!.input, 'codebook.scopedBrowser')
+    )
+  }
+
+  /**
+   * Records each accepted App move/removal for {@link parkApplicationForRepository} before cancellation can reject the Return.
+   * @param parked - The same owner throughout this Return's native transaction.
+   * @param panel - The retained renderer whose destination must still match.
+   * @param destinationIdentity - Original group allowed to receive this App.
+   * @param lifetime - Reader lifetime captured before any move.
+   * @param assertCurrent - Preserves an input-revocation error when the passive layout read is refused.
+   * @returns The actual accepted main layout, retained for a later explicit recovery.
+   * @throws When the lifetime, owner, panel or original destination no longer matches.
+   * @example const layout = await this.recordParkedApplication(parked, panel, identity, lifetime, assertCurrent)
+   */
+  private async recordParkedApplication(
+    parked: NonNullable<StudyWorkspace['applicationGroup']>,
+    panel: vscode.WebviewPanel,
+    destinationIdentity: symbol,
+    lifetime: number,
+    assertCurrent: () => void,
+  ): Promise<unknown> {
+    const layout = await this.readPassivePresentationLayout()
+    this.assertLifetime(lifetime)
+    // A revoked passive read preserves its input error and the pending allocation for explicit recovery.
+    if (!layout) assertCurrent()
+    const actual = vscode.window.tabGroups.all.find(
+      (group) => this.editorGroupIdentities.get(group) === destinationIdentity,
+    )
+    if (
+      !layout ||
+      this.applicationGroup !== parked ||
+      this.app !== panel ||
+      actual?.viewColumn !== panel.viewColumn
+    )
+      throw new Error('Application ownership changed during article Return.')
+    parked.layout = layout
+    parked.count = editorLayoutGroupCount(layout) ?? parked.count
+    this.layoutReceipt = {
+      mode: 'study-reentry',
+      signature: JSON.stringify(layout),
+      groups: vscode.window.tabGroups.all.map((group) => ({
+        group,
+        column: group.viewColumn,
+      })),
+      panes: this.studyPanePositions(),
+    }
+    this.presentationConfirmed = false
+    return layout
+  }
+
+  /**
+   * Preserves native input through Return's issued shifts and reentry drains; {@link parkApplicationForRepository} and {@link captureRepositoryLayout} release their own guarded boundary.
+   * @param panel - The exact App whose own movement may retain its current keyboard input.
+   * @param destinationIdentity - The only original group permitted to receive that panel during this Return.
+   * @returns A sticky input guard and its listener cleanup; later learner input revokes every unissued effect.
+   * @example const input = this.retainArticleReturnInput(panel, destinationIdentity); input.assertRetained(); input.dispose()
+   */
+  private retainArticleReturnInput(
+    panel: vscode.WebviewPanel,
+    destinationIdentity: symbol,
+  ) {
+    const initialGroup = vscode.window.tabGroups.activeTabGroup,
+      groupIdentity = this.editorGroupIdentities.get(initialGroup),
+      tabInput = JSON.stringify(initialGroup.activeTab?.input),
+      movingFocusedPanel = panel.active,
+      editor = movingFocusedPanel ? undefined : vscode.window.activeTextEditor,
+      inputState = editorInputState(editor)
+    // Only this App's original-to-destination move may carry panel input through Return.
+    const keepsPanelInput = (
+      group: vscode.TabGroup,
+      currentIdentity: symbol | undefined,
+    ): boolean =>
+      movingFocusedPanel &&
+      panel.active &&
+      this.app === panel &&
+      (currentIdentity === groupIdentity ||
+        currentIdentity === destinationIdentity) &&
+      this.isCodebookPaneInput(group.activeTab?.input, 'codebook.scopedBrowser')
+    let revoked = false
+    const observe = (): void => {
+      const group = vscode.window.tabGroups.activeTabGroup,
+        currentIdentity = this.editorGroupIdentities.get(group),
+        currentEditor =
+          movingFocusedPanel && panel.active
+            ? undefined
+            : vscode.window.activeTextEditor
+      // Logical identities admit only the issued shift; a different file, selection, tab or window permanently retires this Return.
+      revoked ||=
+        !vscode.window.state.focused ||
+        (!keepsPanelInput(group, currentIdentity) &&
+          (currentIdentity !== groupIdentity ||
+            JSON.stringify(group.activeTab?.input) !== tabInput)) ||
+        editorInputState(currentEditor) !== inputState
+    }
+    const subscriptions = [
+      vscode.window.onDidChangeActiveTextEditor(observe),
+      vscode.window.tabGroups.onDidChangeTabs(observe),
+      vscode.window.tabGroups.onDidChangeTabGroups(observe),
+      vscode.window.onDidChangeWindowState(observe),
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        if (event.kind !== undefined && LEARNER_SELECTION_KINDS.has(event.kind))
+          revoked = true
+        observe()
+      }),
+    ]
+    return {
+      assertRetained(): void {
+        observe()
+        if (revoked)
+          throw new Error(
+            'Native input changed during article Return; the newer learner focus was preserved.',
+          )
+      },
+      dispose(): void {
+        for (const subscription of subscriptions) subscription.dispose()
+      },
+    }
+  }
+
   /** Retains new app placement for {@link open}, including panels created earlier by an MCP-first runtime. @example this.ensureApp() */
   private ensureApp(): vscode.WebviewPanel {
     if (this.app) return this.app
@@ -11670,6 +13726,11 @@ export class StudyWorkspace {
     const focusedEditor = vscode.window.activeTextEditor,
       focusedSource = focusedEditor?.document.uri.toString(),
       focusedSourceColumn = focusedEditor?.viewColumn
+    const sourceBeforeApp = this.primarySourceEditor(
+      vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === vscode.ViewColumn.One,
+      ),
+    )
     const focusedGroupIdentity = this.editorGroupIdentities.get(focusedGroup)
     const focusedWebview =
       focusedTab?.input instanceof vscode.TabInputWebview
@@ -11787,6 +13848,11 @@ export class StudyWorkspace {
       for (const change of changes) change.dispose()
       throw error
     }
+    this.applicationPreparationSource =
+      sourceBeforeApp ??
+      (focusedSourceColumn === vscode.ViewColumn.One
+        ? focusedEditor
+        : undefined)
     this.bindApplicationPanel(panel)
     // MCP can create the app before Open reserves its destination; retain that unfinished placement across callers.
     this.initialAppPlacement = {
@@ -11911,7 +13977,10 @@ export class StudyWorkspace {
     return panel
   }
 
-  /** Binds the current application owner for cold entry or handoff; retired pane events cannot control replay. @example this.bindApplicationPanel(replacement) */
+  /**
+   * Binds the current application owner for cold entry or handoff; retired pane events cannot control replay.
+   * @example this.bindApplicationPanel(replacement)
+   */
   private bindApplicationPanel(panel: vscode.WebviewPanel): void {
     this.app = panel
     this.lastApplicationKey = undefined
@@ -11920,9 +13989,13 @@ export class StudyWorkspace {
     panel.onDidDispose(() => {
       if (this.app !== panel) return
       this.presentationTransition?.cancellation.abort(
-        new Error('The current application pane was closed.'),
+        new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          'The current application pane was closed.',
+        ),
       )
       this.app = undefined
+      this.applicationPreparationSource = undefined
       this.replayApplicationCovered = false
       // A renderer created for the next pane performs its own first reveal, so a reveal owed to this pane is dropped with it.
       this.dropReplayViewport()
@@ -12049,7 +14122,10 @@ export class StudyWorkspace {
     signal?.throwIfAborted()
   }
 
-  /** Creates context controls without embedding executable runtime data into HTML. @example this.ensureContext() */
+  /**
+   * Creates context controls without embedding executable runtime data into HTML.
+   * @example this.ensureContext()
+   */
   private ensureContext(): void {
     const title = this.recordingActive ? 'Learning summary' : 'codebook · Study'
     if (this.contextPanel) {
@@ -12092,7 +14168,10 @@ export class StudyWorkspace {
       this.clearPendingContextCreation()
   }
 
-  /** Binds a fresh explanation document for cold entry or handoff without accepting retired controls or receipts. @example this.bindContextPanel(replacement) */
+  /**
+   * Binds a fresh explanation document for cold entry or handoff without accepting retired controls or receipts.
+   * @example this.bindContextPanel(replacement)
+   */
   private bindContextPanel(panel: vscode.WebviewPanel): void {
     this.contextPanel = panel
     this.bindPendingContextCreation()
@@ -12758,11 +14837,18 @@ export class StudyWorkspace {
     return source.text
   }
 
-  /** Serializes native layout ownership across entry, Return and Close; accepted host effects drain before newer intents. @example await this.withLayout(signal, async () => {}) */
-  private async withLayout(
+  /**
+   * Serializes native layout ownership across entry, Return and Close; accepted host effects drain before newer intents.
+   * @param signal - Cancellation checked before admission and after an earlier operation drains.
+   * @param operation - The sole operation admitted under this reader lifetime and navigation identity.
+   * @returns Its result after the same pending promise drains and relinquishes the queue.
+   * @throws The operation failure, cancellation or superseding lifetime/navigation error.
+   * @example const panel = await this.withLayout(signal, async () => this.ensureApp())
+   */
+  private async withLayout<Result>(
     signal: AbortSignal | undefined,
-    operation: (lifetime: number, assertCurrent: () => void) => Promise<void>,
-  ): Promise<void> {
+    operation: (lifetime: number, assertCurrent: () => void) => Promise<Result>,
+  ): Promise<Result> {
     const lifetime = this.lifetime,
       navigation = this.repositoryNavigation
     const assertCurrent = (): void => {
@@ -12780,7 +14866,7 @@ export class StudyWorkspace {
     }
     const pending = (this.arranging = operation(lifetime, assertCurrent))
     try {
-      await pending
+      return await pending
     } finally {
       if (this.arranging === pending) this.arranging = undefined
     }
@@ -12957,14 +15043,19 @@ export class StudyWorkspace {
         !editor &&
         firstInput instanceof vscode.TabInputWebview &&
         identifiableFirst &&
-        !(
-          namedInput instanceof vscode.TabInputWebview &&
-          isCodebookPaneViewType(
-            namedInput.viewType,
-            'codebook.scopedBrowser',
-            'codebook.studyContext',
-          )
-        )
+        // Owned insertion can leave Cursor naming the App group after chat input was restored; visible captured source still proves the explicit measurement target.
+        (Boolean(
+          this.applicationGroup &&
+          this.app?.viewColumn === vscode.ViewColumn.One,
+        ) ||
+          !(
+            namedInput instanceof vscode.TabInputWebview &&
+            isCodebookPaneViewType(
+              namedInput.viewType,
+              'codebook.scopedBrowser',
+              'codebook.studyContext',
+            )
+          ))
           ? vscode.window.visibleTextEditors.find(
               (value) =>
                 value.viewColumn === sourceColumn &&
@@ -12984,19 +15075,6 @@ export class StudyWorkspace {
       let didLearnerChangePrimaryTab = false
       const namedColumn = vscode.window.tabGroups.activeTabGroup.viewColumn
       /**
-       * Tells that a text editor is the first group's editor of the primary editor's document; asked by {@link primaryEditorReported} about the active text editor.
-       * @param focused - The active text editor, if the editor reports one.
-       * @param primary - The text editor the first group showed before the focus command.
-       * @returns `true` when `focused` is in the first group and shows the document of `primary`.
-       * @example isFirstGroupEditorOf(vscode.window.activeTextEditor, primaryEditor)
-       */
-      const isFirstGroupEditorOf = (
-        focused: vscode.TextEditor | undefined,
-        primary: vscode.TextEditor,
-      ): boolean =>
-        focused?.viewColumn === vscode.ViewColumn.One &&
-        focused.document.uri.toString() === primary.document.uri.toString()
-      /**
        * Cursor reports the first group's text editor as the active text editor after the focus command and keeps naming the group it named before (the chat's) as the active tab group until a tab or group changes: that report is the main editor's focus too. Asked by the wait for the primary focus below.
        * @returns `true` when the active text editor is the first group's and the editor still names the other group it named before the command.
        * @example firstFocused() || primaryEditorReported() || sourceEditorReported()
@@ -13005,7 +15083,10 @@ export class StudyWorkspace {
         const focused = vscode.window.activeTextEditor
         return Boolean(
           primaryEditor &&
-          isFirstGroupEditorOf(focused, primaryEditor) &&
+          this.isFirstGroupEditorOf(
+            focused,
+            primaryEditor.document.uri.toString(),
+          ) &&
           namedColumn !== vscode.ViewColumn.One &&
           vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn,
         )
@@ -13367,8 +15448,15 @@ export class StudyWorkspace {
       undefined,
       beforeScopeFocus,
     )
-    const parsed = editorLayoutSchema.safeParse(grid.layout)
-    if (this.liveComposition || this.summaryComposition)
+    const parsed = editorLayoutSchema.safeParse(grid.layout),
+      isNativeComposition = this.hasComposition()
+    if (isNativeComposition && this.applicationGroup)
+      return (
+        grid.groups.length === this.applicationGroup.count &&
+        grid.preservesOtherParts(this.applicationGroup.count) &&
+        isProportionalEditorLayout(this.applicationGroup.layout, grid.layout)
+      )
+    if (isNativeComposition)
       return (
         grid.groups.length === LIVE_EDITOR_GROUP_COUNT &&
         grid.preservesOtherParts(LIVE_EDITOR_GROUP_COUNT) &&
@@ -13423,158 +15511,255 @@ export class StudyWorkspace {
     signal?: AbortSignal,
   ): Promise<StudyWorkspace['layoutReceipt']> {
     let reentry: StudyWorkspace['layoutReceipt']
-    await this.withLayout(signal, async (lifetime, assertCurrent) => {
-      const origin = this.repositoryOrigin,
-        navigation = this.repositoryNavigation
-      if (!origin) return
-      const grid = await this.readMainEditorGrid(signal, assertCurrent),
-        layout = grid.layout
-      if (
-        navigation !== this.repositoryNavigation ||
-        JSON.stringify(origin) !== JSON.stringify(this.repositoryOrigin) ||
-        !layout
+    const releases: (() => void)[] = [],
+      entryLifetime = this.lifetime,
+      entryRequest = this.readerOpenNumber,
+      liveViewport = this.viewport,
+      replayViewport = this.replayViewport,
+      leaseId = this.leaseId,
+      needsPlacementHold = Boolean(
+        this.repositoryLayoutRestored && !this.hasComposition(),
       )
-        return
-      const pending = this.layoutReceipt,
-        saved = this.repositoryLayoutOrigin
-      // Retrying cancelled reentry retains its article origin, rather than adopting our partially expanded grid as learner layout.
+    let input:
+      ReturnType<StudyWorkspace['retainArticleReturnInput']> | undefined
+    const assertEntry = (): void => {
+      this.assertLifetime(entryLifetime)
+      signal?.throwIfAborted()
+      input?.assertRetained()
       if (
-        pending?.mode === 'study-reentry' &&
-        saved &&
-        JSON.stringify(layout) === pending.signature &&
-        this.sameEditorGroups(pending.groups, vscode.window.tabGroups.all) &&
-        this.sameStudyPanePositions(pending.panes, pending.sourceTargetColumn)
-      ) {
-        this.repositoryLayoutOrigin = { ...saved, origin, navigation }
-        this.repositoryLayoutRestored = undefined
-        reentry = pending.pendingPanes
-          ? await this.finishRepositoryPaneRestoration(
-              pending,
-              lifetime,
-              assertCurrent,
-            )
-          : pending
-        return
-      }
-      const groups = grid.groups.map((group) => ({
-          group,
-          column: group.viewColumn,
-        })),
-        restored = this.repositoryLayoutRestored
-      this.repositoryLayoutOrigin = {
-        origin,
-        navigation,
-        layout,
-        groups,
-        preservesOtherParts: grid.preservesOtherParts,
-      }
-      this.repositoryLayoutRestored = undefined
-      // A manual resize, group change or pane move releases the placement effects of the last Return.
-      if (
-        !restored ||
-        JSON.stringify(layout) !== restored.signature ||
-        !this.sameEditorGroups(restored.groups, vscode.window.tabGroups.all) ||
-        !this.sameStudyPanePositions(restored.after)
+        entryRequest !== this.readerOpenNumber ||
+        liveViewport !== this.viewport ||
+        replayViewport !== this.replayViewport ||
+        leaseId !== this.leaseId
       )
-        return
-      const restoredGroupCount = editorLayoutGroupCount(restored.studyLayout)
-      if (restoredGroupCount === undefined)
-        throw new Error('The saved main editor layout is invalid.')
-      // A different feature composition must reserve its own destinations, never inherit the previous reader's pane ownership.
-      if (restoredGroupCount !== this.studyGroupCount()) return
-      // Reserve destinations before moving retained panels when their old main columns now name another part.
-      if (
-        grid.groups.length < restoredGroupCount &&
-        grid.groups.length < vscode.window.tabGroups.all.length
-      ) {
-        await vscode.commands.executeCommand(
-          'vscode.setEditorLayout',
-          restored.studyLayout,
+        throw new Error(
+          'The Application owner changed during evidence reentry.',
         )
-        this.assertLifetime(lifetime)
-        const groups = vscode.window.tabGroups.all.map((group) => ({
+    }
+    try {
+      if (needsPlacementHold) {
+        const focusedIdentity = this.editorGroupIdentities.get(
+          vscode.window.tabGroups.activeTabGroup,
+        )
+        if (this.app && focusedIdentity)
+          input = this.retainArticleReturnInput(this.app, focusedIdentity)
+        const placementSignal = signal ?? new AbortController().signal
+        assertEntry()
+        // Drain accepted paints outside layout; neither a closed owner nor newer input can acquire the queued mutation.
+        for (const viewport of new Set([liveViewport, replayViewport])) {
+          if (!viewport) continue
+          releases.push(await viewport.holdPlacement(placementSignal))
+          assertEntry()
+        }
+        assertEntry()
+      }
+      await this.withLayout(signal, async (lifetime, assertQueuedCurrent) => {
+        const assertCurrent = (): void => {
+          assertQueuedCurrent()
+          if (needsPlacementHold) assertEntry()
+        }
+        assertCurrent()
+        // Initial input remains guarded through queueing; only this admitted owner may borrow focus for its scope measurement.
+        input?.dispose()
+        input = undefined
+        const origin = this.repositoryOrigin,
+          navigation = this.repositoryNavigation
+        if (!origin) return
+        const grid = await this.readMainEditorGrid(signal, assertCurrent),
+          layout = grid.layout
+        if (
+          navigation !== this.repositoryNavigation ||
+          JSON.stringify(origin) !== JSON.stringify(this.repositoryOrigin) ||
+          !layout
+        )
+          return
+        const pending = this.layoutReceipt,
+          saved = this.repositoryLayoutOrigin
+        // Retrying cancelled reentry retains its article origin, rather than adopting our partially expanded grid as learner layout.
+        if (
+          pending?.mode === 'study-reentry' &&
+          saved &&
+          JSON.stringify(layout) === pending.signature &&
+          this.sameEditorGroups(pending.groups, vscode.window.tabGroups.all) &&
+          this.sameStudyPanePositions(pending.panes, pending.sourceTargetColumn)
+        ) {
+          this.repositoryLayoutOrigin = { ...saved, origin, navigation }
+          this.repositoryLayoutRestored = undefined
+          reentry = pending.pendingPanes
+            ? await this.finishRepositoryPaneRestoration(
+                pending,
+                lifetime,
+                assertCurrent,
+              )
+            : pending
+          return
+        }
+        const groups = grid.groups.map((group) => ({
             group,
             column: group.viewColumn,
           })),
-          panes = this.studyPanePositions()
+          restored = this.repositoryLayoutRestored
+        this.repositoryLayoutOrigin = {
+          origin,
+          navigation,
+          layout,
+          groups,
+          preservesOtherParts: grid.preservesOtherParts,
+        }
+        this.repositoryLayoutRestored = undefined
+        // A manual resize, group change or pane move releases the placement effects of the last Return.
+        if (
+          !restored ||
+          JSON.stringify(layout) !== restored.signature ||
+          !this.sameEditorGroups(
+            restored.groups,
+            vscode.window.tabGroups.all,
+          ) ||
+          !this.sameStudyPanePositions(restored.after)
+        ) {
+          const parked = this.applicationGroup
+          if (parked?.parked && !parked.retiringIdentity) {
+            parked.manual = true
+            parked.layout = layout
+            parked.count = grid.groups.length
+            this.layoutReceipt = undefined
+            this.presentationConfirmed = false
+          }
+          return
+        }
+        // Equal group counts do not make a native-only recording's grid a source-derived arrangement.
+        const targetLayout =
+            !this.liveComposition &&
+            !this.summaryComposition &&
+            !restored.before.context
+              ? this.studyLayout()
+              : restored.studyLayout,
+          restoredGroupCount = editorLayoutGroupCount(targetLayout)
+        if (restoredGroupCount === undefined)
+          throw new Error('The saved main editor layout is invalid.')
+        // A different feature composition must reserve its own destinations, never inherit the previous reader's pane ownership.
+        if (restoredGroupCount !== this.studyGroupCount()) return
+        const contextColumn =
+          STUDY_PRESENTATIONS[this.presentationMode].contextColumn
+        // Reentry can reserve Context before its panel exists; record only a newly created destination from this actual main grid.
+        const noteContextReservation = (): void => {
+          if (grid.preservesOtherParts(restoredGroupCount))
+            this.noteCreatedSourceGroup(grid.groups.length)
+          if (
+            !this.liveComposition &&
+            !this.summaryComposition &&
+            contextColumn > grid.groups.length &&
+            grid.preservesOtherParts(restoredGroupCount)
+          ) {
+            const created = vscode.window.tabGroups.all.find(
+              (group) => group.viewColumn === contextColumn,
+            )
+            if (created && !created.tabs.length) {
+              this.pendingCreatedContextColumn = contextColumn
+              this.pendingCreatedContextGroup =
+                this.editorGroupIdentities.get(created)
+            }
+          }
+        }
+        // Reserve destinations before moving retained panels when their old main columns now name another part.
+        if (
+          grid.groups.length < restoredGroupCount &&
+          grid.groups.length < vscode.window.tabGroups.all.length
+        ) {
+          await vscode.commands.executeCommand(
+            'vscode.setEditorLayout',
+            targetLayout,
+          )
+          noteContextReservation()
+          this.assertLifetime(lifetime)
+          const groups = vscode.window.tabGroups.all.map((group) => ({
+              group,
+              column: group.viewColumn,
+            })),
+            panes = this.studyPanePositions()
+          const preparedLayout = await vscode.commands.executeCommand<unknown>(
+            'vscode.getEditorLayout',
+          )
+          this.assertLifetime(lifetime)
+          if (
+            !isProportionalEditorLayout(targetLayout, preparedLayout) ||
+            !this.sameEditorGroups(groups, vscode.window.tabGroups.all) ||
+            !this.sameStudyPanePositions(panes) ||
+            !grid.preservesOtherParts(restoredGroupCount)
+          )
+            throw new Error(
+              'The main editor destinations could not be restored safely.',
+            )
+          // Cancellation may retain accepted grid effects, but must defer unissued pane moves until an explicit retry.
+          this.layoutReceipt = {
+            mode: 'study-reentry',
+            signature: JSON.stringify(preparedLayout),
+            groups,
+            panes,
+            pendingPanes: restored.before,
+            sourceTargetColumn:
+              restored.before.sourceColumn !== restored.after.sourceColumn
+                ? restored.before.sourceColumn
+                : undefined,
+          }
+          assertCurrent()
+          reentry = await this.finishRepositoryPaneRestoration(
+            this.layoutReceipt,
+            lifetime,
+            assertCurrent,
+          )
+          return
+        }
+        if (restored.before.appColumn !== restored.after.appColumn)
+          this.app?.reveal(restored.before.appColumn, true)
+        if (restored.before.contextColumn !== restored.after.contextColumn)
+          this.contextPanel?.reveal(restored.before.contextColumn, true)
+        // Restore a previously verified grid; arbitrary post-reveal geometry cannot establish Codebook ownership.
+        await vscode.commands.executeCommand(
+          'vscode.setEditorLayout',
+          targetLayout,
+        )
+        noteContextReservation()
+        this.assertLifetime(lifetime)
+        const preparedGroups = vscode.window.tabGroups.all.map((group) => ({
+          group,
+          column: group.viewColumn,
+        }))
+        const panes = {
+          ...restored.before,
+          sourceGroup: restored.after.sourceGroup,
+          sourceColumn: restored.after.sourceColumn,
+        }
         const preparedLayout = await vscode.commands.executeCommand<unknown>(
           'vscode.getEditorLayout',
         )
         this.assertLifetime(lifetime)
+        // Cancellation ends the intent after its accepted pane effects are recorded; Close or manual changes cannot acquire them.
         if (
-          !isProportionalEditorLayout(restored.studyLayout, preparedLayout) ||
-          !this.sameEditorGroups(groups, vscode.window.tabGroups.all) ||
-          !this.sameStudyPanePositions(panes) ||
-          !grid.preservesOtherParts(restoredGroupCount)
-        )
-          throw new Error(
-            'The main editor destinations could not be restored safely.',
-          )
-        // Cancellation may retain accepted grid effects, but must defer unissued pane moves until an explicit retry.
-        this.layoutReceipt = {
-          mode: 'study-reentry',
-          signature: JSON.stringify(preparedLayout),
-          groups,
-          panes,
-          pendingPanes: restored.before,
-          sourceTargetColumn:
-            restored.before.sourceColumn !== restored.after.sourceColumn
-              ? restored.before.sourceColumn
-              : undefined,
+          isProportionalEditorLayout(targetLayout, preparedLayout) &&
+          this.sameEditorGroups(preparedGroups, vscode.window.tabGroups.all) &&
+          this.sameStudyPanePositions(panes)
+        ) {
+          this.layoutReceipt = reentry = {
+            mode: 'study-reentry',
+            signature: JSON.stringify(preparedLayout),
+            groups: preparedGroups,
+            panes,
+            sourceTargetColumn:
+              restored.before.sourceColumn !== restored.after.sourceColumn
+                ? restored.before.sourceColumn
+                : undefined,
+          }
         }
         assertCurrent()
-        reentry = await this.finishRepositoryPaneRestoration(
-          this.layoutReceipt,
-          lifetime,
-          assertCurrent,
-        )
-        return
-      }
-      if (restored.before.appColumn !== restored.after.appColumn)
-        this.app?.reveal(restored.before.appColumn, true)
-      if (restored.before.contextColumn !== restored.after.contextColumn)
-        this.contextPanel?.reveal(restored.before.contextColumn, true)
-      // Restore a previously verified grid; arbitrary post-reveal geometry cannot establish Codebook ownership.
-      await vscode.commands.executeCommand(
-        'vscode.setEditorLayout',
-        restored.studyLayout,
-      )
-      this.assertLifetime(lifetime)
-      const preparedGroups = vscode.window.tabGroups.all.map((group) => ({
-        group,
-        column: group.viewColumn,
-      }))
-      const panes = {
-        ...restored.before,
-        sourceGroup: restored.after.sourceGroup,
-        sourceColumn: restored.after.sourceColumn,
-      }
-      const preparedLayout = await vscode.commands.executeCommand<unknown>(
-        'vscode.getEditorLayout',
-      )
-      this.assertLifetime(lifetime)
-      // Cancellation ends the intent after its accepted pane effects are recorded; Close or manual changes cannot acquire them.
-      if (
-        isProportionalEditorLayout(restored.studyLayout, preparedLayout) &&
-        this.sameEditorGroups(preparedGroups, vscode.window.tabGroups.all) &&
-        this.sameStudyPanePositions(panes)
-      ) {
-        this.layoutReceipt = reentry = {
-          mode: 'study-reentry',
-          signature: JSON.stringify(preparedLayout),
-          groups: preparedGroups,
-          panes,
-          sourceTargetColumn:
-            restored.before.sourceColumn !== restored.after.sourceColumn
-              ? restored.before.sourceColumn
-              : undefined,
-        }
-      }
-      assertCurrent()
-      if (navigation !== this.repositoryNavigation)
-        throw new Error('Evidence navigation was superseded.')
-    })
-    return reentry
+        if (navigation !== this.repositoryNavigation)
+          throw new Error('Evidence navigation was superseded.')
+      })
+      return reentry
+    } finally {
+      input?.dispose()
+      for (const release of releases) release()
+    }
   }
 
   /** Finishes retained pane moves only after {@link captureRepositoryLayout} has reserved their main-grid destinations. @example await this.finishRepositoryPaneRestoration(receipt, lifetime, assertCurrent) */
@@ -13628,65 +15813,213 @@ export class StudyWorkspace {
     signal: AbortSignal,
     focus?: RepositoryLayoutFocus,
   ): Promise<void> {
-    await this.withLayout(signal, async (lifetime, assertCurrent) => {
-      // Actual Return must validate its original focus after queueing, before any early exit or native operation.
-      focus?.begin()
-      const start = this.articleReturnStart(selection)
-      if (!start) return
-      const { saved, receipt } = start
-      const grid = await this.readMainEditorGrid(
-          signal,
-          assertCurrent,
-          focus?.acquireSourceFocus,
-        ),
-        layout = grid.layout
-      const groups = vscode.window.tabGroups.all,
-        retained = grid.groups.filter((group) =>
-          saved.groups.some((entry) => entry.column === group.viewColumn),
-        )
-      // Only Codebook-created groups may contract; an added learner tab must keep its current group.
-      const extraGroups = grid.groups.filter(
-        (group) => !retained.includes(group),
-      )
-      const ownsExtraTabs = extraGroups.every((group) =>
-        group.tabs.every(
-          (tab) =>
-            this.ownsCapturedSourceTab(tab) ||
-            (tab.input instanceof vscode.TabInputWebview &&
-              isCodebookPaneViewType(
-                tab.input.viewType,
-                'codebook.scopedBrowser',
-                'codebook.studyContext',
-              )),
-        ),
-      )
-      if (
-        !this.holdsArticleReturn(saved, receipt, {
-          layout,
-          groups,
-          retained,
-          ownsExtraTabs,
-          mainGroups: grid.groups,
-        })
-      ) {
-        this.layoutReceipt = undefined
-        return
-      }
-      const before = this.studyPanesBeforeReturn(receipt)
-      this.layoutReceipt = undefined
-      await vscode.commands.executeCommand(
-        'vscode.setEditorLayout',
-        saved.layout,
-      )
-      // Retain accepted placement effects even after cancellation, so a newer evidence visit can reverse them safely.
-      const after = this.studyPanePositions()
-      const restoredLayout = await vscode.commands.executeCommand<unknown>(
-        'vscode.getEditorLayout',
-      )
+    const releases: (() => void)[] = [],
+      lifetime = this.lifetime,
+      liveViewport = this.viewport,
+      replayViewport = this.replayViewport,
+      leaseId = this.leaseId,
+      selectedReader = JSON.stringify(this.selection),
+      film = this.recordingActive ? this.playback?.bundle() : undefined,
+      wasPlacing = this.placingPresentation
+    let returnInput:
+      ReturnType<StudyWorkspace['retainArticleReturnInput']> | undefined
+    const assertRetained = (): void => {
       this.assertLifetime(lifetime)
-      this.settleArticleReturn(saved, restoredLayout, layout, before, after)
-      assertCurrent()
-    })
+      signal.throwIfAborted()
+      returnInput?.assertRetained()
+      if (
+        liveViewport !== this.viewport ||
+        replayViewport !== this.replayViewport ||
+        leaseId !== this.leaseId ||
+        selectedReader !== JSON.stringify(this.selection) ||
+        (film && film !== this.playback?.bundle())
+      )
+        throw new Error(
+          'The selected Application owner changed during article Return.',
+        )
+    }
+    let retainedFocus = focus?.retainCurrentFocus?.()
+    try {
+      if (this.applicationAllocationIdentity(this.applicationGroup)) {
+        // Cancel only the selected replay's pending paint, retaining its already committed film.
+        if (this.recordingActive && this.playback) {
+          this.playback.hide()
+          await this.settleOwnedPlayback(signal)
+          assertRetained()
+          retainedFocus?.assertRetained()
+        }
+        // Both attached leases must drain outside the layout queue; neither can paint a parked native panel.
+        for (const viewport of new Set([liveViewport, replayViewport])) {
+          if (!viewport) continue
+          releases.push(await viewport.holdPlacement(signal))
+          assertRetained()
+          retainedFocus?.assertRetained()
+        }
+      }
+      retainedFocus?.dispose()
+      retainedFocus = undefined
+      await this.withLayout(
+        signal,
+        async (queuedLifetime, assertQueuedCurrent) => {
+          const assertCurrent = (): void => {
+            assertQueuedCurrent()
+            assertRetained()
+          }
+          assertCurrent()
+          this.placingPresentation = true
+          // Actual Return must validate its original focus after queueing, before any early exit or native operation.
+          focus?.begin()
+          const start = this.articleReturnStart(selection)
+          if (!start) return
+          const { saved } = start
+          const measured = await this.readMainEditorGrid(
+            signal,
+            assertCurrent,
+            focus?.acquireSourceFocus,
+          )
+          const studyLayout = measured.layout,
+            before = this.studyPanesBeforeReturn(start.receipt)
+          const { receipt, grid } = await this.parkApplicationBeforeReturn(
+            saved,
+            start.receipt,
+            measured,
+            signal,
+            assertCurrent,
+            (guard) => {
+              returnInput = guard
+            },
+          )
+          const layout = grid.layout
+          const groups = vscode.window.tabGroups.all,
+            retained = grid.groups.filter((group) =>
+              saved.groups.some((entry) => entry.column === group.viewColumn),
+            )
+          // Only Codebook-created groups may contract; an added learner tab must keep its current group.
+          const extraGroups = grid.groups.filter(
+            (group) => !retained.includes(group),
+          )
+          const ownsExtraTabs = extraGroups.every((group) =>
+            group.tabs.every(
+              (tab) =>
+                this.ownsCapturedSourceTab(tab) ||
+                (tab.input instanceof vscode.TabInputWebview &&
+                  isCodebookPaneViewType(
+                    tab.input.viewType,
+                    'codebook.scopedBrowser',
+                    'codebook.studyContext',
+                  )),
+            ),
+          )
+          if (
+            !this.holdsArticleReturn(saved, receipt, {
+              layout,
+              groups,
+              retained,
+              ownsExtraTabs,
+              mainGroups: grid.groups,
+            })
+          ) {
+            this.layoutReceipt = undefined
+            return
+          }
+          this.layoutReceipt = undefined
+          await vscode.commands.executeCommand(
+            'vscode.setEditorLayout',
+            saved.layout,
+          )
+          // Retain accepted placement effects even after cancellation, so a newer evidence visit can reverse them safely.
+          const after = this.studyPanePositions()
+          const restoredLayout = await vscode.commands.executeCommand<unknown>(
+            'vscode.getEditorLayout',
+          )
+          this.assertLifetime(queuedLifetime)
+          this.settleArticleReturn(
+            saved,
+            restoredLayout,
+            studyLayout,
+            before,
+            after,
+          )
+          assertCurrent()
+        },
+      )
+    } finally {
+      retainedFocus?.dispose()
+      returnInput?.dispose()
+      this.placingPresentation = wasPlacing
+      for (const release of releases) release()
+    }
+  }
+
+  /**
+   * Checks the Study-layout prerequisite for {@link restoreRepositoryLayout}; {@link parkApplicationForRepository} keeps its own allocation and input checks.
+   * @param saved - The original article origin this Return owns.
+   * @param receipt - The current Study placement or accepted partial Return receipt.
+   * @param grid - The freshly measured main scope, including its outside-part guard.
+   * @returns Whether current layout evidence permits the existing parking transaction to validate its native owner.
+   * @example this.hasApplicationParkingLayout(saved, receipt, grid)
+   */
+  private hasApplicationParkingLayout(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    grid: Awaited<ReturnType<StudyWorkspace['readMainEditorGrid']>>,
+  ): boolean {
+    return (
+      this.isStudyLayoutUnchanged(saved, receipt, {
+        layout: grid.layout,
+        groups: vscode.window.tabGroups.all,
+      }) &&
+      (this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn) ||
+        Boolean(
+          this.applicationGroup?.parked &&
+          this.applicationGroup.retiringIdentity,
+        )) &&
+      saved.preservesOtherParts(grid.groups.length)
+    )
+  }
+
+  /**
+   * Parks the selected App for an actual Return when the unchanged Study receipt and every preserved outside part authorize it, then measures the main editor again; one step of {@link restoreRepositoryLayout}'s queued Return.
+   * @param saved - The original article origin this Return owns.
+   * @param receipt - The current Study placement or accepted partial Return receipt.
+   * @param grid - The main scope measured at the start of the queued Return.
+   * @param signal - Cancellation of this Return.
+   * @param assertCurrent - The queued Return's lifetime, selection and lease guard.
+   * @param retainInput - Keeps an accepted move's native-input guard alive until the Return ends ({@link parkApplicationForRepository}).
+   * @returns The receipt and grid the Return continues with: those of the parked layout when the App moved, otherwise the ones it was given.
+   * @throws When the accepted move lost its layout receipt, and from the parking transaction itself.
+   * @example const { receipt, grid } = await this.parkApplicationBeforeReturn(saved, start.receipt, measured, signal, assertCurrent, retainInput)
+   */
+  private async parkApplicationBeforeReturn(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    grid: Awaited<ReturnType<StudyWorkspace['readMainEditorGrid']>>,
+    signal: AbortSignal,
+    assertCurrent: () => void,
+    retainInput: Parameters<StudyWorkspace['parkApplicationForRepository']>[3],
+  ): Promise<{
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>
+    grid: Awaited<ReturnType<StudyWorkspace['readMainEditorGrid']>>
+  }> {
+    // Parking is authorized only by the unchanged measured Study receipt and all preserved outside parts.
+    if (
+      !this.hasApplicationParkingLayout(saved, receipt, grid) ||
+      !(await this.parkApplicationForRepository(
+        saved,
+        grid,
+        assertCurrent,
+        retainInput,
+      ))
+    )
+      return { receipt, grid }
+    assertCurrent()
+    const parkedReceipt = this.layoutReceipt
+    if (!parkedReceipt)
+      throw new Error('The accepted Application move lost its layout receipt.')
+    return {
+      receipt: parkedReceipt,
+      grid: await this.readMainEditorGrid(signal, assertCurrent),
+    }
   }
 
   /**
@@ -13826,14 +16159,17 @@ export class StudyWorkspace {
   /**
    * Gives the Study pane positions an actual Return remembers as the ones before it; read by {@link restoreRepositoryLayout} just before it releases the receipt and sets the article grid.
    * @param receipt - The Study receipt the Return leaves.
-   * @returns The destination a cancelled reservation had verified, otherwise the positions the panes have now.
+   * @returns The pane and source destinations a cancelled reservation had verified, otherwise the positions the panes have now.
    * @example const before = this.studyPanesBeforeReturn(receipt)
    */
   private studyPanesBeforeReturn(
     receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
   ): ReturnType<StudyWorkspace['studyPanePositions']> {
-    // A cancelled reservation has not moved Context yet; retain its previously verified Study destination for the next visit.
-    return receipt.pendingPanes ?? this.studyPanePositions()
+    // Source can still await display after the native grid and App move; retain that verified destination through another Return.
+    const before = receipt.pendingPanes ?? this.studyPanePositions()
+    return receipt.sourceTargetColumn === undefined
+      ? before
+      : { ...before, sourceColumn: receipt.sourceTargetColumn }
   }
 
   /**
@@ -14101,6 +16437,8 @@ export class StudyWorkspace {
         this.pendingCreatedContextGroup =
           created && this.editorGroupIdentities.get(created)
       }
+      if (mode === 'study' && grid.preservesOtherParts(groupCount))
+        this.noteCreatedSourceGroup(grid.groups.length)
       // The arrangement's sizes are the groups' own from here on: nothing an Expand of the reader's took is owed any more.
       this.groupSizesBeforeExpand = undefined
       // Drain the accepted batch after navigation abort, then let only a newer intent change the layout again.
@@ -14306,7 +16644,12 @@ export class StudyWorkspace {
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
   private observeEditorGroups(event?: vscode.TabGroupChangeEvent): void {
     const current = vscode.window.tabGroups.all,
-      previous = this.observedEditorGroups
+      previous = this.observedEditorGroups,
+      issuedColumnShift = this.issuedApplicationColumnShift(
+        event,
+        current,
+        previous,
+      )
     // Actual Return retains verified main scope while its Study receipt is released; later wrapper refreshes must preserve that boundary too.
     const signature =
       this.layoutReceipt?.signature ?? this.repositoryLayoutRestored?.signature
@@ -14460,6 +16803,20 @@ export class StudyWorkspace {
     const emptySurvivor = (
       group: vscode.TabGroup,
     ): (typeof previous)[number] | undefined => {
+      // Only this issued insertion may retain an empty survivor through a one-column shift; manual group moves remain unowned.
+      if (
+        issuedColumnShift !== undefined &&
+        !group.tabs.length &&
+        hasRecognizedReplacement()
+      ) {
+        const shifted = previous.filter(
+          (entry) =>
+            entry.column + issuedColumnShift === group.viewColumn &&
+            !entry.group.tabs.length &&
+            !event?.closed.includes(entry.group),
+        )
+        return shifted.length === 1 ? shifted[0] : undefined
+      }
       if (
         !replacedEveryGroupInPlace() ||
         group.tabs.length ||
@@ -14474,6 +16831,17 @@ export class StudyWorkspace {
         continue
       }
       if (this.editorGroupIdentities.has(group)) continue
+      // The issued first source insertion may replace its empty wrapper; a real opened/replaced group was handled above.
+      const createdSourceIdentity = this.createdSourceWrapperIdentity(
+        group,
+        event,
+        current,
+        previous,
+      )
+      if (createdSourceIdentity) {
+        this.editorGroupIdentities.set(group, createdSourceIdentity)
+        continue
+      }
       const emptyMatch = emptySurvivor(group)
       if (emptyMatch) {
         this.editorGroupIdentities.set(
@@ -14497,7 +16865,12 @@ export class StudyWorkspace {
         match &&
         candidates.filter((replacement) => replacement.matches.includes(match))
           .length === 1 &&
-        match.column === group.viewColumn
+        (match.column === group.viewColumn ||
+          this.movedByIssuedShift(
+            issuedColumnShift,
+            match.column,
+            group.viewColumn,
+          ))
       this.editorGroupIdentities.set(
         group,
         retained
@@ -14505,10 +16878,133 @@ export class StudyWorkspace {
           : Symbol(),
       )
     }
+    this.followCreatedSourceGroup(current, issuedColumnShift)
     this.observedEditorGroups = current.map((group) => ({
       group,
       column: group.viewColumn,
     }))
+  }
+
+  /**
+   * Names the column shift that Codebook's own App-group insertion or removal caused, the one group move through which {@link observeEditorGroups} keeps identities.
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @returns
+   * - `ViewColumn.One` (one column right) for the issued insertion of the empty App group at the first column
+   * - `-ViewColumn.One` (one column left) for the issued removal of the owned App group
+   * - `undefined` for every other change, including a learner's own group moves
+   * @example this.issuedApplicationColumnShift(event, current, previous) // => 1 while `newGroupAbove` is issued
+   */
+  private issuedApplicationColumnShift(
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: StudyWorkspace['observedEditorGroups'],
+  ): number | undefined {
+    const change = this.applicationGroupChange
+    const insertsOwnedGroup = Boolean(
+      change?.kind === 'insert' &&
+      current.length === previous.length + 1 &&
+      event?.opened.length === 1 &&
+      event.opened[0]?.viewColumn === vscode.ViewColumn.One &&
+      event.opened[0].tabs.length === 0,
+    )
+    const removesOwnedGroup = Boolean(
+      change?.kind === 'remove' &&
+      current.length === previous.length - 1 &&
+      event?.closed.length === 1 &&
+      event.closed[0] &&
+      this.editorGroupIdentities.get(event.closed[0]) === change.identity,
+    )
+    if (insertsOwnedGroup) return vscode.ViewColumn.One
+    return removesOwnedGroup ? -vscode.ViewColumn.One : undefined
+  }
+
+  /**
+   * Says whether a group moved by exactly the issued column shift; asked by {@link observeEditorGroups} and {@link followCreatedSourceGroup}, which keep an identity or a receipt only through that shift.
+   * @param shift - The shift of {@link issuedApplicationColumnShift}, if any.
+   * @param from - The group's column before the event.
+   * @param to - Its column now.
+   * @returns `true` when a shift was issued and it explains the move; `false` without one.
+   * @example this.movedByIssuedShift(1, 2, 3) // => true
+   */
+  private movedByIssuedShift(
+    shift: number | undefined,
+    from: vscode.ViewColumn,
+    to: vscode.ViewColumn,
+  ): boolean {
+    return shift !== undefined && from + shift === to
+  }
+
+  /**
+   * Finds the created Source group whose empty wrapper the issued first source insertion replaced; asked by {@link observeEditorGroups} for every group that is neither opened nor known.
+   * @param group - The current group that is not yet known.
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @returns The created Source group's identity when the event only changed groups and `group` stands in that empty group's column holding exactly the pending source document; otherwise `undefined`.
+   * @example this.createdSourceWrapperIdentity(group, event, current, previous) // => the receipt's identity after the first source insertion
+   */
+  private createdSourceWrapperIdentity(
+    group: vscode.TabGroup,
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: StudyWorkspace['observedEditorGroups'],
+  ): symbol | undefined {
+    const createdSource = this.sourceDerivedGroup
+    // Only a change of the same groups can replace a wrapper; an opened or closed group never inherits an identity.
+    if (
+      !createdSource ||
+      !event ||
+      event.opened.length ||
+      event.closed.length ||
+      current.length !== previous.length
+    )
+      return undefined
+    const wasEmptySource = previous.some(
+      (entry) =>
+        this.editorGroupIdentities.get(entry.group) ===
+          createdSource.identity &&
+        entry.column === group.viewColumn &&
+        !entry.group.tabs.length,
+    )
+    const showsPendingSource =
+      group.tabs.length === 1 &&
+      group.tabs[0]?.input instanceof vscode.TabInputText &&
+      group.tabs[0].input.uri.toString() ===
+        this.pendingSourceDisplay?.uri.toString()
+    return wasEmptySource && showsPendingSource
+      ? createdSource.identity
+      : undefined
+  }
+
+  /**
+   * Keeps the created Source group's receipt only through the issued column shift; called by {@link observeEditorGroups} after it named every current group. A learner's move and a real replacement retire the receipt.
+   * @param current - The editor's groups now, with their identities already named.
+   * @param issuedColumnShift - The shift of {@link issuedApplicationColumnShift}, if any.
+   * @example this.followCreatedSourceGroup(current, issuedColumnShift)
+   */
+  private followCreatedSourceGroup(
+    current: readonly vscode.TabGroup[],
+    issuedColumnShift: number | undefined,
+  ): void {
+    const createdSource = this.sourceDerivedGroup
+    if (!createdSource) return
+    const sourceGroup = current.find(
+      (group) =>
+        this.editorGroupIdentities.get(group) === createdSource.identity,
+    )
+    if (sourceGroup?.viewColumn === createdSource.column) return
+    if (
+      sourceGroup &&
+      this.movedByIssuedShift(
+        issuedColumnShift,
+        createdSource.column,
+        sourceGroup.viewColumn,
+      )
+    )
+      createdSource.column = sourceGroup.viewColumn
+    else this.sourceDerivedGroup = undefined
   }
 
   /**
@@ -14524,6 +17020,25 @@ export class StudyWorkspace {
       candidate.isDirty === tab.isDirty &&
       candidate.isPreview === tab.isPreview &&
       candidate.isPinned === tab.isPinned
+    )
+  }
+
+  /**
+   * Confirms a named native tab across wrapper refreshes for {@link retainPreparationPrimaryInput}'s source acknowledgement.
+   * @param before - The tab the host named before borrowing primary-source input.
+   * @param after - The tab the host still names after the source reports focus.
+   * @returns Whether both tabs exist and keep their label, flags and exact serialized native input.
+   * @example this.hasSameNativeTab(namedTab, current.activeTab)
+   */
+  private hasSameNativeTab(
+    before: vscode.Tab | undefined,
+    after: vscode.Tab | undefined,
+  ): boolean {
+    return Boolean(
+      before &&
+      after &&
+      this.hasSameTabState(before, after) &&
+      JSON.stringify(before.input) === JSON.stringify(after.input),
     )
   }
 
@@ -14636,10 +17151,11 @@ export class StudyWorkspace {
           before.viewColumn === overlap.column &&
           after.viewColumn === overlap.column &&
           count === overlap.tabCount &&
-          before.tabs.every(
-            (tab) => key(tab, before.tabs) !== value || !tab.isPreview,
-          ) &&
-          after.tabs.every((tab) => key(tab) !== value || !tab.isPreview) &&
+          before.tabs.filter(
+            (tab) => key(tab, before.tabs) === value && tab.isPreview,
+          ).length === overlap.previewCount &&
+          after.tabs.filter((tab) => key(tab) === value && tab.isPreview)
+            .length === overlap.previewCount &&
           vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
             .filter((tab) => key(tab) === value).length === overlap.tabCount,

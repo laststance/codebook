@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import {
   workspaceHarness,
   configuredWorkspaceHarness,
@@ -685,6 +687,10 @@ test('Living book adopts an MCP-first application into its reserved main pane be
     )
   try {
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
     // Act
     await reader.open()
     // Assert
@@ -694,10 +700,32 @@ test('Living book adopts an MCP-first application into its reserved main pane be
     assert.equal(reader.presentationState().layoutConfirmed, true)
     assert.equal(harness.groups.length, 4)
     assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true)
-    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+    assert.equal(harness.groups[1]!.tabs.includes(draft.tab), true)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
     assert.equal(harness.runtimes.length, 0)
+    // The same renderer must also survive the source-derived-to-Live handoff; its former allocation is now Context's created group.
+    const state = reader.presentationState()
+    await reader.returnToCurrent({
+      presentationId: state.presentationId,
+      expectedRevision: state.reader.contentRevision,
+    })
+    assert.equal(harness.nativePanels().includes(application), true)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.sourceColumn(), 2)
+    assert.equal(reader.presentationState().layoutConfirmed, true)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.groups[1]!.tabs.includes(draft.tab), true)
+    assert.equal(harness.groups[2]!.tabs.includes(chat.tab), true)
+    // End this owned runtime lease before closing its reader; a live lease intentionally keeps its Application available.
+    viewport.close()
+    await reader.close()
+    assert.equal(harness.groups.length, 2)
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+    assert.equal(harness.groups[1]!.tabs.includes(chat.tab), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(draft.tab.isDirty, true)
   } finally {
     viewport.close()
     await reader.dispose()
@@ -743,29 +771,123 @@ test('MCP-first Study preserves a newer chat tab choice during application regis
     chat = harness.openWiki(1)
   const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser')
   const reader = harness.createReader(),
-    viewport = await reader.presentation.createViewport(
+    acquiring = reader.presentation.createViewport(
       'mcp-chat-run',
       () => {},
       () => {},
       'normal',
+    ),
+    refused = assert.rejects(
+      Promise.resolve(acquiring),
+      /Native panes or learner focus changed/,
     )
   try {
+    // The factory now drains actual registration before returning its lease; intervene while that native response is pending.
+    await waitUntil(
+      () => harness.panelColumn('codebook.scopedBrowser') === 1,
+      'the pending native Application registration',
+    )
     // Act: the learner visits another existing tab before the Application finishes registering.
     harness.focusExistingWebviewTab(other.nativeTab)
     harness.focusExistingWebviewTab(chat.nativeTab)
     registerPanel()
     // Assert: returning to the original tab cannot make the later Application selection owned.
-    await assert.rejects(reader.open(), /Native panes or learner focus changed/)
+    await refused
     assert.equal(harness.groups[0]!.tabs.includes(other.nativeTab), true)
     assert.equal(harness.groups[0]!.tabs.includes(chat.nativeTab), true)
     assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
+    assert.equal(harness.counts().panels, 2)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), undefined)
   } finally {
     registerPanel()
-    viewport.close()
+    await refused.catch(() => undefined)
     await reader.dispose()
     await harness.close()
   }
 })
+
+for (const phase of [
+  'native response',
+  'caller admission',
+  'window round trip',
+  'Close',
+] as const)
+  test(`MCP-first opaque primary preserves later input at ${phase} without allocating App`, async () => {
+    // Arrange: identical webview types share one native group, so a later tab roundtrip cannot be inferred from the final type alone.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const other = harness.openWiki(1),
+      original = harness.openWiki(1),
+      reader = harness.createReader(),
+      focus = reader['focusApplicationSourceGroup'],
+      focusPrimary = focus.bind(reader),
+      commandsBefore = harness.commands.length
+    let held:
+        ReturnType<typeof harness.holdNextPrimaryFocusResponse> | undefined,
+      outcome: Promise<void> | undefined,
+      closing: Promise<void> | undefined
+    reader['focusApplicationSourceGroup'] = async (...arguments_) => {
+      if (phase !== 'caller admission')
+        held = harness.holdNextPrimaryFocusResponse()
+      const receipt = await focusPrimary(...arguments_)
+      if (phase === 'caller admission') {
+        harness.focusExistingWebviewTab(other.nativeTab)
+        harness.focusExistingWebviewTab(original.nativeTab)
+      }
+      return receipt
+    }
+    try {
+      // Act: newer native input or Close wins while the issued primary-focus response drains, and also in the caller's await gap.
+      outcome = assert.rejects(
+        Promise.resolve(
+          reader.presentation.createViewport(
+            'opaque-input-run',
+            () => {},
+            () => {},
+            'normal',
+          ),
+        ),
+        /closed|primary source changed|Native pane/i,
+      )
+      if (phase !== 'caller admission') {
+        await waitUntil(() => Boolean(held), 'opaque primary focus response')
+        assert.ok(held)
+        await held.started
+        if (phase === 'Close') closing = reader.close()
+        else if (phase === 'window round trip') {
+          harness.changeWindowFocus(false)
+          harness.changeWindowFocus(true)
+        } else {
+          harness.focusExistingWebviewTab(other.nativeTab)
+          harness.focusExistingWebviewTab(original.nativeTab)
+        }
+        held.release()
+      }
+      await outcome
+      await closing
+
+      // Assert
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .includes('workbench.action.newGroupAbove'),
+        false,
+      )
+      assert.equal(harness.counts().panels, 2)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), undefined)
+      assert.equal(harness.groups.length, 1)
+      assert.equal(harness.groups[0]!.tabs.includes(other.nativeTab), true)
+      assert.equal(harness.groups[0]!.tabs.includes(original.nativeTab), true)
+      assert.equal(harness.groups[0]!.activeTab, original.nativeTab)
+    } finally {
+      held?.release()
+      await outcome?.catch(() => undefined)
+      await closing
+      reader['focusApplicationSourceGroup'] = focus
+      await reader.dispose()
+      await harness.close()
+    }
+  })
 
 test('Living book preserves a learner move of its MCP-first application before the initial Open', async () => {
   // Arrange
@@ -787,18 +909,18 @@ test('Living book preserves a learner move of its MCP-first application before t
       () => {},
       'normal',
     )
-  harness.movePanel('codebook.scopedBrowser', 1)
+  harness.movePanel('codebook.scopedBrowser', 4)
   try {
     // Act
     await reader.open()
     // Assert
-    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 4)
     assert.equal(harness.panelColumn('codebook.studyContext'), 1)
     assert.equal(harness.sourceColumn(), 3)
-    assert.equal(harness.groups.length, 4)
-    assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true)
+    assert.equal(harness.groups.length, 5)
+    assert.equal(harness.groups[4]!.tabs.includes(chat.tab), true)
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
-    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+    assert.equal(harness.groups[1]!.tabs.includes(draft.tab), true)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
     assert.equal(harness.runtimes.length, 0)
   } finally {

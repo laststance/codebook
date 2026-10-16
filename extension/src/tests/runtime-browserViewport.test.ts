@@ -50,12 +50,17 @@ function viewportPanel() {
     disposal = new Set<() => void>()
   const posted = new Set<(message: Record<string, unknown>) => void>()
   let panelDisposals = 0
+  let nativeInput: 'source' | 'app' | 'body' | 'chat' = 'app'
   const reveals: { preserveFocus: boolean | undefined }[] = []
   const panel = {
     visible: true,
     viewColumn: 1,
     reveal(_column?: number, preserveFocus?: boolean): void {
       reveals.push({ preserveFocus })
+      if (_column !== undefined) panel.viewColumn = _column
+      // Revealing over a focused native file removes that input even when focus is preserved.
+      if (!preserveFocus) nativeInput = 'app'
+      else if (nativeInput === 'source') nativeInput = 'body'
       panel.visible = true
       for (const callback of visibility) callback()
     },
@@ -102,6 +107,15 @@ function viewportPanel() {
     messages,
     /** How each reveal of the panel treated the keyboard focus, in order. */
     reveals,
+    nativeInput: () => nativeInput,
+    focusChat(): void {
+      nativeInput = 'chat'
+    },
+    focusNativeSource(): void {
+      nativeInput = 'source'
+      panel.visible = false
+      for (const callback of visibility) callback()
+    },
     disposals: () => panelDisposals,
     callbacks: () => ({
       receivers: [...receivers],
@@ -160,6 +174,11 @@ async function viewportHarness(
   },
   /** What the lease's owner answers when the viewport asks it, before the pane covers the paused file, whether the pane is to come without the keyboard: `true` (it gave the keyboard to the chat), `false` (to nobody), `'fails'` (its answer rejects) or `'held'` (it does not answer until the test calls `answerOwner`, and never if the test does not). Left out, the lease has no such owner. */
   ownerReturnsKeyboard?: boolean | 'fails' | 'held',
+  /** Models native ownership admission and any focus effect of an asynchronous keyboard answer. */
+  revealAdmission?: {
+    assertCanReveal(panel: ReturnType<typeof viewportPanel>['panel']): void
+    beforeOwnerAnswer?(): void
+  },
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -238,6 +257,7 @@ async function viewportHarness(
       lease: leased
         ? {
             panel,
+            assertCanReveal: revealAdmission?.assertCanReveal,
             released(): void {
               leaseReleases++
             },
@@ -249,6 +269,7 @@ async function viewportHarness(
               : {
                   async comesWithoutKeyboard(): Promise<boolean> {
                     revealsWhenOwnerAsked.push(renderer.reveals.length)
+                    revealAdmission?.beforeOwnerAnswer?.()
                     if (ownerReturnsKeyboard === 'fails')
                       throw new Error('The chat could not be focused.')
                     if (ownerReturnsKeyboard === 'held')
@@ -2054,6 +2075,190 @@ test('a reveal of the Application pane that is aborted while its owner is asked 
   assert.equal(outcome, 'Error: The presentation was replaced.')
   assert.deepEqual(harness.reveals, [])
   assert.equal(harness.keyboardTakes(), 0)
+  harness.viewport.close()
+})
+
+test('moving the App group during a keyboard answer preserves native source input and refuses the late reveal', async () => {
+  // Arrange
+  const renderer = viewportPanel(),
+    harness = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'live',
+      renderer,
+      { focusEditorOnBreak: false },
+      'held',
+      {
+        assertCanReveal(current) {
+          assert.equal(current, renderer.panel)
+          if (current.viewColumn !== 1)
+            throw new Error(
+              'Application ownership changed; use Focus Application.',
+            )
+        },
+      },
+    )
+  renderer.focusNativeSource()
+  let outcome: string | undefined
+  const revealing = harness.viewport.reveal(new AbortController().signal).then(
+    () => {
+      outcome = 'displayed'
+    },
+    (error: unknown) => {
+      outcome = String(error)
+    },
+  )
+  await waitUntil(
+    () => harness.revealsWhenOwnerAsked().length === 1,
+    'owner asked',
+    2_000,
+  )
+
+  // Act
+  renderer.panel.viewColumn = 2
+  harness.answerOwner(true)
+  await waitUntil(
+    () => outcome !== undefined || harness.reveals.length > 0,
+    'reveal or refusal',
+    2_000,
+  )
+  // The original implementation is allowed to finish its real handshake, so RED is an ownership assertion rather than a timeout.
+  if (harness.reveals.length)
+    harness.ready('11111111-1111-1111-1111-111111111111')
+  await revealing
+
+  // Assert
+  assert.equal(renderer.nativeInput(), 'source')
+  assert.equal(
+    outcome,
+    'Error: Application ownership changed; use Focus Application.',
+  )
+  assert.deepEqual(harness.reveals, [])
+  assert.equal(harness.keyboardTakes(), 0)
+  assert.equal(
+    harness.messages.some((message) => message.type === 'requestReady'),
+    false,
+  )
+  harness.viewport.close()
+})
+
+test('an already unsafe App reveal never asks a keyboard owner that would move source input into chat', async () => {
+  // Arrange
+  const renderer = viewportPanel(),
+    harness = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'live',
+      renderer,
+      { focusEditorOnBreak: false },
+      'held',
+      {
+        assertCanReveal() {
+          throw new Error(
+            'Application ownership changed; use Focus Application.',
+          )
+        },
+        beforeOwnerAnswer() {
+          renderer.focusChat()
+        },
+      },
+    )
+  renderer.focusNativeSource()
+  let outcome: string | undefined
+
+  // Act
+  const revealing = harness.viewport.reveal(new AbortController().signal).then(
+    () => {
+      outcome = 'displayed'
+    },
+    (error: unknown) => {
+      outcome = String(error)
+    },
+  )
+  await waitUntil(
+    () => outcome !== undefined || harness.revealsWhenOwnerAsked().length > 0,
+    'admission or keyboard owner',
+    2_000,
+  )
+  if (harness.revealsWhenOwnerAsked().length) harness.answerOwner(true)
+  await revealing
+
+  // Assert
+  assert.equal(renderer.nativeInput(), 'source')
+  assert.equal(
+    outcome,
+    'Error: Application ownership changed; use Focus Application.',
+  )
+  assert.deepEqual(harness.revealsWhenOwnerAsked(), [])
+  assert.deepEqual(harness.reveals, [])
+  assert.equal(
+    harness.messages.some((message) => message.type === 'requestReady'),
+    false,
+  )
+  harness.viewport.close()
+})
+
+test('a failed App keyboard answer cannot bypass final ownership refusal or hide native source input', async () => {
+  // Arrange
+  const renderer = viewportPanel(),
+    harness = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'live',
+      renderer,
+      { focusEditorOnBreak: false },
+      'fails',
+      {
+        assertCanReveal(current) {
+          if (current.viewColumn !== 1)
+            throw new Error(
+              'Application ownership changed; use Focus Application.',
+            )
+        },
+        beforeOwnerAnswer() {
+          renderer.panel.viewColumn = 2
+        },
+      },
+    )
+  renderer.focusNativeSource()
+  let outcome: string | undefined
+
+  // Act
+  const revealing = harness.viewport.reveal(new AbortController().signal).then(
+    () => {
+      outcome = 'displayed'
+    },
+    (error: unknown) => {
+      outcome = String(error)
+    },
+  )
+  await waitUntil(
+    () => outcome !== undefined || harness.reveals.length > 0,
+    'reveal or refusal',
+    2_000,
+  )
+  if (harness.reveals.length)
+    harness.ready('11111111-1111-1111-1111-111111111111')
+  await revealing
+
+  // Assert
+  assert.equal(renderer.nativeInput(), 'source')
+  assert.equal(
+    outcome,
+    'Error: Application ownership changed; use Focus Application.',
+  )
+  assert.deepEqual(harness.reveals, [])
+  assert.equal(harness.keyboardTakes(), 0)
+  // Explicit native App focus can recover; the following handshake needs no unsafe background reveal.
+  renderer.panel.reveal(1, false)
+  const recovered = harness.viewport.reveal(new AbortController().signal)
+  harness.ready('22222222-2222-2222-2222-222222222222')
+  await recovered
+  assert.equal(renderer.nativeInput(), 'app')
+  assert.deepEqual(harness.reveals, [{ preserveFocus: false }])
   harness.viewport.close()
 })
 

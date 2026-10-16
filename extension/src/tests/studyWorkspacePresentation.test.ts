@@ -3407,7 +3407,7 @@ test('closing the reader while a selection waits for the editor after closing a 
 })
 
 // Value: protects=the dead panes of an earlier host are closed by the first selection although a run already created this host's Application panel; fails_when=the dead-pane reader answers none as soon as this host owns a panel, so the selection meets two Application tabs; why_new=Cycle 0044 0037-D3: the only test with a panel created first had no dead pane; seam=leaveDeadCodebookPane
-test('the first presentation selection closes the old host’s dead panes when a run created this host’s Application panel before the reader was opened', async () => {
+test('the first presentation selection closes the old host’s dead panes when a run created this host’s Application panel before the reader was opened', async (context) => {
   // Arrange: the old host's panes are in columns 1 and 3; an agent run then creates this host's Application panel, and the learner's draft has focus in column 3.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
@@ -3417,13 +3417,30 @@ test('the first presentation selection closes the old host’s dead panes when a
     ),
     deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
   const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
-  const viewport = await harness.reader.presentation.createViewport(
-    'run-before-reader',
-    () => {},
-    () => {},
-    'normal',
+  const createPanel = harness.editor.window.createWebviewPanel
+  context.mock.method(
+    harness.editor.window,
+    'createWebviewPanel',
+    (...arguments_: Parameters<typeof createPanel>) => {
+      // Native registration requires the earlier host's tabs gone before the new pane is created.
+      if (arguments_[0] === 'codebook.scopedBrowser') {
+        const tabs = harness.groups.flatMap((group) => group.tabs)
+        assert.equal(tabs.includes(deadApplication), false)
+        assert.equal(tabs.includes(deadStudy), false)
+      }
+      return createPanel(...arguments_)
+    },
   )
+  let viewport:
+    | Awaited<ReturnType<typeof harness.reader.presentation.createViewport>>
+    | undefined
   try {
+    viewport = await harness.reader.presentation.createViewport(
+      'run-before-reader',
+      () => {},
+      () => {},
+      'normal',
+    )
     const state = harness.reader.presentationState()
     // Act
     const selected = await harness.reader.changePresentation({
@@ -3441,7 +3458,194 @@ test('the first presentation selection closes the old host’s dead panes when a
     assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
     assert.equal(tabs.includes(draft.tab), true)
   } finally {
-    viewport.close()
+    context.mock.restoreAll()
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+for (const laterChoice of ['new source', 'Close'] as const)
+  test(`cold prepared Study preserves ${laterChoice} while its preference write drains`, async () => {
+    // Arrange: native App preparation preserves three original groups, so cold selection confirms that actual four-group layout.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+    const viewport = await harness.reader.presentation.createViewport(
+      'prepared-preference',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const held = harness.holdPresentationPreference(),
+      state = harness.reader.presentationState()
+    let outcome: Promise<void> | undefined, closing: Promise<void> | undefined
+    try {
+      const selection = harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select',
+      })
+      outcome = assert.rejects(selection, /closed|changed|not confirmed/i)
+      await held.started
+      const commandsBefore = harness.commands.length
+
+      // Act: the accepted preference write must drain, but cannot certify the old UI after newer input or Close.
+      const draft =
+        laterChoice === 'new source'
+          ? harness.focusMutableDraft('later-choice.txt', 3)
+          : undefined
+      if (laterChoice === 'Close') closing = harness.reader.close()
+      held.release()
+      await outcome
+      await closing
+
+      // Assert
+      if (draft) {
+        assert.equal(
+          harness.focusedSource()?.document.uri.toString(),
+          draft.document.uri.toString(),
+        )
+        assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        assert.equal(draft.tab.isDirty, true)
+        assert.equal(
+          harness.commands
+            .slice(commandsBefore)
+            .includes('vscode.setEditorLayout'),
+          false,
+        )
+      } else {
+        assert.equal(harness.reader.inspect().opened, false)
+        assert.equal(harness.counts().panels, 0)
+      }
+    } finally {
+      held.release()
+      await outcome?.catch(() => undefined)
+      await closing
+      viewport.close()
+      await harness.close()
+    }
+  })
+
+test('MCP-first acquisition preserves a refused stale pane without allocating another Application', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const dead = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1, {
+      refuseClose: true,
+    }),
+    draft = harness.focusMutableDraft('retained-draft.txt', 2),
+    commandsBefore = harness.commands.length
+  try {
+    // Act
+    await assert.rejects(
+      Promise.resolve(
+        harness.reader.presentation.createViewport(
+          'refused-stale-pane',
+          () => {},
+          () => {},
+          'normal',
+        ),
+      ),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'Close the leftover Codebook panes, then retry the live explanation.',
+      },
+    )
+
+    // Assert
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.newGroupAbove'),
+      false,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(dead)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(draft.tab)),
+      true,
+    )
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(draft.tab.isDirty, true)
+  } finally {
+    harness.acceptDeadPaneClose()
+    await harness.close()
+  }
+})
+
+test('Close during MCP-first stale-pane retirement prevents a later Application allocation', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const dead = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1),
+    draft = harness.focusMutableDraft('retained-draft.txt', 2),
+    nativeClose = harness.editor.window.tabGroups.close,
+    commandsBefore = harness.commands.length
+  let release = (): void => {},
+    closingOldPane = false,
+    outcome: Promise<void> | undefined
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  context.mock.method(
+    harness.editor.window.tabGroups,
+    'close',
+    async (...arguments_: Parameters<typeof nativeClose>) => {
+      const result = await nativeClose(...arguments_)
+      // Hold only the first accepted native close response; Close's own later cleanup remains runnable.
+      if (!closingOldPane) {
+        closingOldPane = true
+        await held
+      }
+      return result
+    },
+  )
+  try {
+    outcome = assert.rejects(
+      Promise.resolve(
+        harness.reader.presentation.createViewport(
+          'closing-stale-pane',
+          () => {},
+          () => {},
+          'normal',
+        ),
+      ),
+      /closed/i,
+    )
+    await waitUntil(() => closingOldPane, 'the accepted stale-pane retirement')
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(dead)),
+      false,
+    )
+
+    // Act
+    await harness.reader.close()
+    release()
+    await outcome
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.newGroupAbove'),
+      false,
+    )
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(draft.tab.isDirty, true)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(draft.tab)),
+      true,
+    )
+  } finally {
+    release()
+    await outcome?.catch(() => undefined)
+    context.mock.restoreAll()
     await harness.close()
   }
 })
@@ -4342,11 +4546,11 @@ for (const reader of ['closed', 'open'] as const)
       assert.equal(selected.panes.appColumn, 1)
       assert.equal(selected.panes.sourceColumn, 2)
       assert.equal(readerSeams(harness).isLiveArrangement(), true)
-      assert.equal(chatGroup?.viewColumn, 3)
+      assert.equal(chatGroup?.viewColumn, 4)
       assert.equal(chatGroup?.activeTab, chat.tab)
       // The chat has the keyboard again through Cursor's own command; the focus command of the chat's column, which would open a new empty group in the main editor, was not run.
       assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
-      assert.equal(harness.groups.length, 3)
+      assert.equal(harness.groups.length, 4)
       assert.equal(chat.focused(), true)
     } finally {
       await harness.close()
@@ -4381,7 +4585,7 @@ test("a restore of the live panes that the editor fails after the arrangement to
     // Assert
     assert.equal(chat.focused(), true)
     assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
-    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.groups.length, 4)
     assert.equal(
       harness.reader.presentationState().reason,
       'Error: Native layout command failed',
@@ -4476,9 +4680,9 @@ for (const action of ['select', 'restore'] as const)
     })
 
 for (const reader of ['closed', 'open'] as const)
-  // Value: protects=an agent's presentation select during its own paused run in the state of a real Cursor chat submission (the chat input holds the keyboard, the editor names the file the debugger opened in the Application's group, no text editor is active) ending with the live panes confirmed and the keyboard back in the chat; fails_when=the selection is refused for the text tab without an active text editor, or the keyboard stays on that file after the measurement focused the first editor group; why_new=Cycle 0045 cause 12 (a) (N14-b2: the debugger's source shared group 1 with the Application pane and every presentation call was refused); seam=workspace harness with the controlled runtime, a separate editor part that holds the keyboard and the fake editor's group object replacement
+  // Value: protects=an agent's presentation select during its own paused run in the state of a real Cursor chat submission (the chat input holds the keyboard, the editor names a file in an original main group, no text editor is active) ending with the live panes confirmed and the keyboard back in the chat; fails_when=the selection is refused for the text tab without an active text editor, or the keyboard stays on that file after the measurement focused the first editor group; why_new=Cycle 0045 cause 12 (a) (N14-b2: the debugger's source shared group 1 with the Application pane and every presentation call was refused); seam=workspace harness with the controlled runtime, a separate editor part that holds the keyboard and the fake editor's group object replacement
   test(`a presentation ${reader === 'open' ? 'restore' : 'select'} during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
-    // Arrange: the debugger's file is a tab of the first group; the chat's own editor part holds the keyboard, so the editor names that file's tab and no active text editor.
+    // Arrange: the original second main group holds the named file before or after App allocation; the chat's own editor part holds the keyboard, so the editor names that file's tab and no active text editor.
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
     const chat = harness.addSeparateEditorPart()
@@ -4486,14 +4690,17 @@ for (const reader of ['closed', 'open'] as const)
     try {
       await pauseLiveRun(harness)
       if (reader === 'open') await harness.reader.open()
-      const debuggerFile = harness.focusMutableDraft('login-form.tsx', 1)
+      const namedFile = harness.focusMutableDraft(
+        'login-form.tsx',
+        reader === 'open' ? 3 : 2,
+      )
       chat.focus()
       const state = harness.reader.presentationState()
       const stateBefore = {
         chatHasKeyboard: chat.focused(),
-        activeTabIsDebuggerFile:
+        activeTabIsNamedFile:
           harness.editor.window.tabGroups.activeTabGroup.activeTab ===
-          debuggerFile.tab,
+          namedFile.tab,
         hasActiveTextEditor:
           harness.editor.window.activeTextEditor !== undefined,
       }
@@ -4511,7 +4718,7 @@ for (const reader of ['closed', 'open'] as const)
       )
       assert.deepEqual(stateBefore, {
         chatHasKeyboard: true,
-        activeTabIsDebuggerFile: true,
+        activeTabIsNamedFile: true,
         hasActiveTextEditor: false,
       })
       assert.equal(state.state, reader)
@@ -4523,15 +4730,17 @@ for (const reader of ['closed', 'open'] as const)
       assert.equal(readerSeams(harness).isLiveArrangement(), true)
       assert.equal(
         harness.groups
-          .find((group) => group.viewColumn === 1)
-          ?.tabs.includes(debuggerFile.tab),
+          .find((group) => group.viewColumn === 3)
+          ?.tabs.includes(namedFile.tab),
         true,
       )
       assert.deepEqual(harness.tabCloseRequests(), [])
-      assert.equal(chatGroup?.viewColumn, 3)
+      assert.equal(namedFile.document.getText(), 'Original learner draft.\n')
+      assert.equal(namedFile.tab.isDirty, true)
+      assert.equal(chatGroup?.viewColumn, 4)
       // The chat has the keyboard again through Cursor's own command; the focus command of the chat's column, which would open a new empty group in the main editor, was not run.
       assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
-      assert.equal(harness.groups.length, 3)
+      assert.equal(harness.groups.length, 4)
       assert.equal(chat.focused(), true)
     } finally {
       await harness.close()
@@ -5178,9 +5387,11 @@ test("a selection made on a closed reader that holds a recording arranges the re
     assert.equal(selected.panes.sourceColumn, 2)
     assert.equal(selected.panes.contextColumn, undefined)
     assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(learnerFile.document.getText(), 'Original learner draft.\n')
+    assert.equal(learnerFile.tab.isDirty, true)
     assert.equal(
       harness.groups
-        .find((group) => group.viewColumn === 1)
+        .find((group) => group.viewColumn === 2)
         ?.tabs.includes(learnerFile.tab),
       true,
     )
@@ -5285,7 +5496,7 @@ for (const named of ["the chat's group", 'the captured source'] as const)
     const chat = harness.addSeparateEditorPart()
     harness.leavePaneFocusUnreportedBesideChat()
     try {
-      harness.focusMutableDraft('actions.ts', 1)
+      const original = harness.focusMutableDraft('actions.ts', 1)
       if (named === "the chat's group") {
         await harness.reader.open()
         chat.focusTab()
@@ -5336,7 +5547,11 @@ for (const named of ["the chat's group", 'the captured source'] as const)
       )
       assert.equal(before.layoutConfirmed, true)
       assert.equal(before.panes.contextColumn, 3)
-      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(
+        harness.controller.state().readiness,
+        'ready',
+        harness.controller.state().reason,
+      )
       assert.equal(harness.controller.state().reason, undefined)
       assert.equal(opened.state, 'open')
       assert.equal(opened.reader.contentTab, 'recording')
@@ -5345,20 +5560,24 @@ for (const named of ["the chat's group", 'the captured source'] as const)
       assert.equal(opened.panes.appColumn, 1)
       assert.equal(opened.panes.sourceColumn, 2)
       assert.equal(opened.panes.contextColumn, undefined)
-      // Two groups of the main editor and the chat's, none of them empty.
+      // Dedicated App preparation retains both original main groups and the auxiliary chat.
       assert.deepEqual(
         harness.groups.map((group) => [group.viewColumn, group.tabs.length]),
         [
-          [1, 3],
-          [2, 1],
-          [3, 1],
+          [1, 1],
+          [2, 3],
+          [3, 0],
+          [4, 1],
         ],
       )
-      // The measurement entered the main editor through the captured source's text editor, not through the first group's pane, and the chat has the keyboard again through Cursor's own command.
-      assert.deepEqual(
-        harness.commands.slice(commandsBefore).filter(isKeyboardCommand),
-        ['composer.focusComposer'],
+      // Explicit reservation may borrow native source, then returns input through Cursor's own chat command.
+      assert.equal(
+        harness.commands.slice(commandsBefore).filter(isKeyboardCommand).at(-1),
+        'composer.focusComposer',
       )
+      assert.equal(harness.groups[1]!.tabs.includes(original.tab), true)
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
+      assert.equal(original.tab.isDirty, true)
       assert.equal(chat.focused(), true)
     } finally {
       await harness.close()

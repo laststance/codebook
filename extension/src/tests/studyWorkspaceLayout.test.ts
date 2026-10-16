@@ -28,7 +28,7 @@ import {
 for (const recording of [false, true])
   test(`Wiki ${recording ? 'recording' : 'observation'} reentry restores Study after an empty chat wrapper refresh following actual Return`, async () => {
     // Arrange
-    const harness = await articleRecordingLayoutHarness()
+    const harness = await articleRecordingLayoutHarness(true, true)
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
     const chat = harness.addSeparateEditorPart(),
       draft = harness.focusMutableDraft()
@@ -55,7 +55,14 @@ for (const recording of [false, true])
       assert.deepEqual(
         harness.editorLayout(),
         recording
-          ? { orientation: 0, groups: [{ size: 1 }, { size: 1 }, { size: 1 }] }
+          ? {
+              orientation: 0,
+              groups: [
+                { size: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+                { size: 1 },
+                { size: 1 },
+              ],
+            }
           : {
               orientation: 0,
               groups: [
@@ -64,14 +71,17 @@ for (const recording of [false, true])
               ],
             },
       )
-      // The existing third main group belongs to the learner; the sidebar does not authorize removing it.
-      assert.equal(
-        harness.reader.presentationState().layoutConfirmed,
-        !recording,
-      )
+      // The dedicated App splits the first main group and preserves the learner's third group.
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true)
       if (recording) {
         assert.equal(harness.controller.state().readiness, 'ready')
         assert.equal(harness.controller.state().mode, 'paused')
+        assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+        assert.equal(harness.groups[0]!.locked, true)
+        assert.equal(
+          harness.groups.find((group) => group.viewColumn === 4)!.tabs.length,
+          0,
+        )
       }
       assert.deepEqual(harness.groups.at(-1)!.tabs, [])
       assert.deepEqual(chat.layout(), {
@@ -80,7 +90,7 @@ for (const recording of [false, true])
       })
       assert.equal(draft.document.getText(), 'Original learner draft.\n')
       assert.equal(
-        harness.groups[0]!.tabs.some(
+        harness.groups[recording ? 1 : 0]!.tabs.some(
           (tab) =>
             'uri' in tab.input &&
             tab.input.uri.toString() === draft.document.uri.toString(),
@@ -95,7 +105,7 @@ for (const recording of [false, true])
 for (const change of ['replace', 'unannounced', 'move', 'ambiguous'] as const)
   test(`Wiki recording reentry preserves the reading grid after an empty other-part ${change} following actual Return`, async () => {
     // Arrange
-    const harness = await articleRecordingLayoutHarness()
+    const harness = await articleRecordingLayoutHarness(true, true)
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
     const chat = harness.addSeparateEditorPart(),
       draft = harness.focusMutableDraft()
@@ -120,6 +130,10 @@ for (const change of ['replace', 'unannounced', 'move', 'ambiguous'] as const)
         change === 'replace' || change === 'unannounced' ? change : 'empty',
         true,
       )
+      const foreignGroups = harness.groups.filter(
+        (group) => group.viewColumn > 3,
+      )
+      assert.equal(foreignGroups.length, change === 'ambiguous' ? 2 : 1)
       const opening = harness.reader.openRepositoryEvidence(
         harness.binding,
         true,
@@ -132,17 +146,41 @@ for (const change of ['replace', 'unannounced', 'move', 'ambiguous'] as const)
       else await opening
       await harness.controller.settle()
       // Assert
-      assert.deepEqual(harness.editorLayout(), {
-        orientation: 0,
-        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
-      })
+      // A main-part layout cannot merge an empty group belonging to another editor part.
+      assert.equal(
+        foreignGroups.every((group) => harness.groups.includes(group)),
+        true,
+      )
+      assert.deepEqual(
+        harness.editorLayout(),
+        change === 'move'
+          ? { orientation: 0, groups: [{ size: 1 }, { size: 1 }, { size: 1 }] }
+          : {
+              orientation: 0,
+              groups: [
+                { size: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+                { size: 1 },
+                { size: 1 },
+              ],
+            },
+      )
       assert.equal(
         harness.commands.filter(
           (command) => command === 'vscode.setEditorLayout',
         ).length,
-        mutations,
+        mutations + (change === 'move' ? 0 : 1),
       )
-      assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+      assert.equal(
+        harness.reader.presentationState().layoutConfirmed,
+        change !== 'move',
+      )
+      if (change !== 'move') {
+        assert.equal(harness.controller.state().readiness, 'ready')
+        assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+        assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+        assert.equal(harness.sourceColumn(), 2)
+        assert.equal(harness.summary.visible, true)
+      }
       assert.deepEqual(chat.layout(), {
         orientation: 1,
         groups: [{ size: 743 }],
@@ -157,7 +195,7 @@ for (const recording of [false, true])
   for (const mainGroups of [2, 3])
     test(`explicit Study after actual Wiki Return restores its verified ${mainGroups}-group origin following ${recording ? 'recording' : 'observation'} entry`, async () => {
       // Arrange
-      const harness = await articleRecordingLayoutHarness()
+      const harness = await articleRecordingLayoutHarness(true, true)
       if (mainGroups === 3)
         harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
       const chat = harness.addSeparateEditorPart(),
@@ -173,13 +211,24 @@ for (const recording of [false, true])
         await harness.reader.action('return-wiki')
         // Act
         await harness.reader.open()
+        await harness.controller.settle()
         // Assert
         assert.deepEqual(
           harness.editorLayout(),
           recording
             ? mainGroups === 2
-              ? { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] }
-              : { orientation: 0, groups: [{}, {}, {}] }
+              ? {
+                  orientation: 1,
+                  groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+                }
+              : {
+                  orientation: 0,
+                  groups: [
+                    { size: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+                    { size: 1 },
+                    { size: 1 },
+                  ],
+                }
             : {
                 orientation: 0,
                 groups: [
@@ -188,10 +237,7 @@ for (const recording of [false, true])
                 ],
               },
         )
-        assert.equal(
-          harness.reader.presentationState().layoutConfirmed,
-          !recording || mainGroups === 2,
-        )
+        assert.equal(harness.reader.presentationState().layoutConfirmed, true)
         assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
         assert.equal(harness.sourceColumn(), 2)
         assert.equal(
@@ -202,7 +248,7 @@ for (const recording of [false, true])
         assert.equal(
           harness.groups
             .find(
-              (group) => group.viewColumn === (recording ? mainGroups + 1 : 4),
+              (group) => group.viewColumn === (recording ? mainGroups + 2 : 4),
             )!
             .tabs.includes(chat.tab),
           true,
@@ -212,6 +258,36 @@ for (const recording of [false, true])
           groups: [{ size: 743 }],
         })
         assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        assert.equal(draft.tab.isDirty, true)
+        if (recording) {
+          assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+          assert.equal(harness.controller.state().readiness, 'ready')
+          assert.equal(harness.controller.state().presentedMs, 100)
+          assert.equal(harness.controller.state().cleared, false)
+          // A later explicit Return retires only the added App group and restores every original split.
+          await harness.reader.action('return-wiki')
+          assert.deepEqual(
+            harness.editorLayout(),
+            mainGroups === 2
+              ? { orientation: 1, groups: [{ size: 161 }, { size: 162 }] }
+              : {
+                  orientation: 0,
+                  groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+                },
+          )
+          assert.equal(
+            harness.groups
+              .find((group) => group.viewColumn === 1)!
+              .tabs.includes(draft.tab),
+            true,
+          )
+          assert.equal(
+            harness.groups
+              .find((group) => group.viewColumn === mainGroups + 1)!
+              .tabs.includes(chat.tab),
+            true,
+          )
+        }
       } finally {
         await harness.close()
       }
@@ -265,10 +341,17 @@ for (const cursor of [false, true])
   for (const shuffled of [false, true])
     test(`${cursor ? 'Cursor' : 'VS Code'} Wiki and recording round trips preserve the separate chat part and original two-row article with ${shuffled ? 'reordered' : 'ordered'} API groups`, async () => {
       // Arrange
-      const harness = await articleRecordingLayoutHarness(),
+      const harness = await articleRecordingLayoutHarness(true, true),
         chat = harness.addSeparateEditorPart()
-      if (cursor) harness.useCursorGroupWrappers(true)
-      const draft = harness.focusMutableDraft()
+      if (cursor) {
+        harness.useCursorGroupWrappers(true)
+        harness.replaceGroupObjectsOnTabChanges()
+      }
+      const draft = harness.focusMutableDraft(),
+        notes = harness.focusMutableDraft('article-notes.txt', 2)
+      // This lock belongs to the learner before App reservation; Return may never toggle it.
+      harness.groups.find((group) => group.viewColumn === 2)!.locked = true
+      harness.focusExistingSource(draft.editor)
       if (shuffled) harness.groups.reverse()
       try {
         // Act
@@ -279,6 +362,14 @@ for (const cursor of [false, true])
           harness.origin,
         )
         await harness.controller.settle()
+        const viewport = harness.viewportInstances.find(
+            (candidate) => candidate.mode === 'recording',
+          ),
+          film = harness.controller.bundle(),
+          runtimesBeforeReturn = harness.runtimes.length
+        assert.ok(viewport)
+        assert.ok(film)
+        const application = viewport.panel
         await harness.reader.action('return-wiki')
         // Assert
         assert.deepEqual(harness.editorLayout(), {
@@ -299,6 +390,28 @@ for (const cursor of [false, true])
           true,
         )
         assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        assert.equal(notes.document.getText(), 'Original learner draft.\n')
+        assert.equal(notes.tab.isDirty, true)
+        assert.equal(
+          harness.groups
+            .find((group) => group.viewColumn === 2)!
+            .tabs.some(
+              (tab) =>
+                'uri' in tab.input &&
+                tab.input.uri.toString() === notes.document.uri.toString(),
+            ),
+          true,
+        )
+        assert.equal(
+          harness.groups.find((group) => group.viewColumn === 2)!.locked,
+          true,
+        )
+        assert.equal(harness.reader['app'], application)
+        // A retained viewport must still accept and release its existing placement contract after Return.
+        const releaseRetainedViewport = await viewport.holdPlacement()
+        releaseRetainedViewport()
+        assert.equal(harness.controller.bundle(), film)
+        assert.equal(harness.runtimes.length, runtimesBeforeReturn)
         await harness.reader.openRepositoryEvidence(
           harness.binding,
           true,
@@ -308,13 +421,23 @@ for (const cursor of [false, true])
         await harness.controller.settle()
         assert.equal(harness.controller.state().readiness, 'ready')
         assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+        assert.equal(harness.reader['app'], application)
+        assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+        assert.equal(notes.document.getText(), 'Original learner draft.\n')
+        assert.equal(notes.tab.isDirty, true)
+        assert.equal(harness.runtimes.length, runtimesBeforeReturn)
+        // Reentry adds only the new App group: both original groups and the original learner lock still survive.
+        assert.equal(
+          harness.groups.find((group) => group.viewColumn === 3)!.locked,
+          true,
+        )
         assert.equal(harness.sourceColumn(), 2)
         assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
         assert.equal(harness.summary.visible, true)
-        assert.equal(harness.groups.length, 3)
+        assert.equal(harness.groups.length, 4)
         assert.equal(
           harness.groups
-            .find((group) => group.viewColumn === 3)!
+            .find((group) => group.viewColumn === 4)!
             .tabs.includes(chat.tab),
           true,
         )
@@ -328,10 +451,220 @@ for (const cursor of [false, true])
       }
     })
 
+for (const stage of ['App move', 'App group close'])
+  for (const later of ['cancellation', 'newer source', 'Close'])
+    test(`article Return drains its accepted ${stage} after ${later} and preserves the retained renderer or newer input`, async () => {
+      // Arrange
+      const harness = await articleRecordingLayoutHarness(true, true),
+        cancellation = new AbortController()
+      let release = (): void => {},
+        releaseInitialRead = (): void => {}
+      try {
+        await harness.reader.openRepositoryEvidence(
+          harness.binding,
+          true,
+          undefined,
+          harness.origin,
+        )
+        await harness.controller.settle()
+        const application = harness.reader['app'],
+          film = harness.controller.bundle(),
+          held =
+            stage === 'App move'
+              ? harness.holdNextCommand('vscode.getEditorLayout')
+              : harness.holdNextTabCloseResponse()
+        release = held.release
+        // Act
+        const returning = harness.reader.arrangeRepository(
+            cancellation.signal,
+            harness.origin,
+          ),
+          rejected = assert.rejects(
+            returning,
+            /abort|closed|native input|focus/i,
+          )
+        await held.started
+        if (stage === 'App move') {
+          const moved = harness.holdNextCommand('vscode.getEditorLayout')
+          releaseInitialRead = held.release
+          release = moved.release
+          held.release()
+          await moved.started
+          // The second read follows the actual same-panel move, before the allocated empty group is retired.
+          assert.equal(harness.panelColumn('codebook.scopedBrowser'), 3)
+        }
+        const mutations = harness.commands.filter(
+          (command) => command === 'vscode.setEditorLayout',
+        ).length
+        const newer =
+          later === 'newer source'
+            ? harness.focusMutableDraft(
+                'newer-return-draft.txt',
+                stage === 'App move' ? 2 : 1,
+              )
+            : undefined
+        const closing = later === 'Close' ? harness.reader.close() : undefined
+        if (later === 'cancellation') cancellation.abort()
+        release()
+        await rejected
+        await closing
+        // Assert
+        // Close may restore its own original geometry; a surviving Return must issue no additional layout after revocation.
+        if (later !== 'Close')
+          assert.equal(
+            harness.commands.filter(
+              (command) => command === 'vscode.setEditorLayout',
+            ).length,
+            mutations,
+          )
+        if (later === 'Close') {
+          assert.equal(harness.reader.inspect().opened, false)
+          assert.equal(harness.counts().panels, 0)
+          assert.equal(harness.reader['repositoryLayoutRestored'], undefined)
+        } else {
+          assert.equal(harness.reader['app'], application)
+          assert.equal(harness.controller.bundle(), film)
+          assert.equal(harness.groups.length, stage === 'App move' ? 3 : 2)
+          const viewport = harness.viewportInstances.find(
+            (candidate) => candidate.mode === 'recording',
+          )!
+          const releasePlacement = await viewport.holdPlacement()
+          releasePlacement()
+          if (newer) {
+            assert.equal(harness.editor.window.activeTextEditor, newer.editor)
+            assert.equal(newer.document.getText(), 'Original learner draft.\n')
+            assert.equal(newer.tab.isDirty, true)
+            assert.equal(harness.keyboardOnBody(), false)
+          }
+          await harness.reader.arrangeRepository(
+            new AbortController().signal,
+            harness.origin,
+          )
+          assert.deepEqual(harness.editorLayout(), {
+            orientation: 1,
+            groups: [{ size: 161 }, { size: 162 }],
+          })
+        }
+      } finally {
+        releaseInitialRead()
+        release()
+        await harness.close()
+      }
+    })
+
+test('article Return in an inactive window refuses before moving its retained Application or closing a group', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const application = harness.reader['app'],
+      film = harness.controller.bundle(),
+      reveals = harness.panelReveals().length
+    harness.changeWindowFocus(false)
+    // Act
+    await assert.rejects(
+      harness.reader.arrangeRepository(
+        new AbortController().signal,
+        harness.origin,
+      ),
+      /native input|focus/i,
+    )
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.reader['app'], application)
+    assert.equal(harness.controller.bundle(), film)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.panelReveals().length, reveals)
+    const viewport = harness.viewportInstances.find(
+      (candidate) => candidate.mode === 'recording',
+    )!
+    const releasePlacement = await viewport.holdPlacement()
+    releasePlacement()
+    harness.changeWindowFocus(true)
+    await harness.reader.arrangeRepository(
+      new AbortController().signal,
+      harness.origin,
+    )
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 161 }, { size: 162 }],
+    })
+  } finally {
+    harness.changeWindowFocus(true)
+    await harness.close()
+  }
+})
+
+// Value: protects=repeated Return on borrowed groups; fails_when=parking is mistaken for allocation; why_new=shared query must preserve completed retirement; seam=existing viewport port; no_claim=controlled native model only.
+test('repeating article Return preserves its borrowed App group without draining the retained renderer again', async (context) => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true),
+    draft = harness.focusMutableDraft('retained-return-input.ts', 1)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    await harness.reader.action('return-wiki')
+    // The fixture does not run the Wiki's final focus handoff; select actual native source input before the repeated Return.
+    harness.focusExistingSource(draft.editor)
+    assert.equal(harness.keyboardOnBody(), false)
+    const viewport = harness.viewportInstances.find(
+        (candidate) => candidate.mode === 'recording',
+      ),
+      application = harness.reader['app'],
+      film = harness.controller.bundle(),
+      commands = harness.commands.length,
+      reveals = harness.panelReveals().length,
+      activeGroup = harness.editor.window.tabGroups.activeTabGroup
+    assert.ok(viewport)
+    context.mock.method(viewport, 'holdPlacement', async () => {
+      throw new Error(
+        'A borrowed original group must not acquire another renderer drain.',
+      )
+    })
+
+    // Act
+    await assert.doesNotReject(
+      harness.reader.arrangeRepository(
+        new AbortController().signal,
+        harness.origin,
+      ),
+    )
+
+    // Assert
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 161 }, { size: 162 }],
+    })
+    assert.equal(harness.groups.length, 2)
+    assert.equal(harness.reader['app'], application)
+    assert.equal(harness.controller.bundle(), film)
+    assert.equal(harness.commands.length, commands)
+    assert.equal(harness.panelReveals().length, reveals)
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup, activeGroup)
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(draft.tab.isDirty, true)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 for (const next of ['Return', 'retry', 'Close'] as const)
   test(`${next} after interrupted main-part reservation preserves the original article, chat and draft`, async () => {
     // Arrange
-    const harness = await articleRecordingLayoutHarness(),
+    const harness = await articleRecordingLayoutHarness(true, true),
       chat = harness.addSeparateEditorPart(),
       draft = harness.focusMutableDraft()
     harness.useCursorGroupWrappers(true)
@@ -347,7 +680,7 @@ for (const next of ['Return', 'retry', 'Close'] as const)
       await harness.controller.settle()
       await harness.reader.action('return-wiki')
       const cancellation = new AbortController(),
-        layout = harness.holdNextCommand('vscode.setEditorLayout')
+        layout = harness.holdNextCommand('workbench.action.newGroupAbove')
       releaseLayout = layout.release
       const opening = harness.reader.openRepositoryEvidence(
           harness.binding,
@@ -361,7 +694,22 @@ for (const next of ['Return', 'retry', 'Close'] as const)
       releaseReceipt = receipt.release
       layout.release()
       await receipt.started
-      // Act: the main grid is accepted, but its restoration receipt is still pending.
+      // Act: native group creation is accepted, but its preparation receipt is still pending.
+      assert.equal(harness.controller.state().readiness, 'loading')
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(harness.groups.length, 4)
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 2)!
+          .tabs.includes(draft.tab),
+        true,
+      )
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 4)!
+          .tabs.includes(chat.tab),
+        true,
+      )
       if (next !== 'Close') cancellation.abort()
       const closing = next === 'Close' ? harness.reader.close() : undefined
       receipt.release()
@@ -393,17 +741,173 @@ for (const next of ['Return', 'retry', 'Close'] as const)
         assert.equal(harness.sourceColumn(), 2)
         assert.equal(harness.controller.state().readiness, 'ready')
         assert.equal(harness.reader.inspect().view!.errors.length, 0)
+        assert.equal(harness.displayedImage(), harness.png.toString('base64'))
       }
       assert.equal(harness.groups.at(-1)!.tabs.includes(chat.tab), true)
       assert.deepEqual(chat.layout(), {
         orientation: 1,
         groups: [{ size: 743 }],
       })
-      assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === (next === 'Close' ? 1 : 2))!
+          .tabs.includes(draft.tab),
+        true,
+      )
       assert.equal(draft.document.getText(), 'Original learner draft.\n')
     } finally {
       releaseLayout()
       releaseReceipt()
+      await harness.close()
+    }
+  })
+
+for (const later of ['source', 'window'] as const)
+  test(`later ${later} input during the accepted App reservation read prevents obsolete entry effects`, async () => {
+    // Arrange: hold the real allocation receipt while the same recording reenters from its article.
+    const harness = await articleRecordingLayoutHarness(true, true)
+    const chat = harness.addSeparateEditorPart(),
+      original = harness.focusMutableDraft()
+    harness.useCursorGroupWrappers(true)
+    let releaseAllocation = (): void => {},
+      releaseReceipt = (): void => {}
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      await harness.reader.action('return-wiki')
+      const allocation = harness.holdNextCommand(
+        'workbench.action.newGroupAbove',
+      )
+      releaseAllocation = allocation.release
+      const opening = harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      const rejected = assert.rejects(opening)
+      await allocation.started
+      const receipt = harness.holdNextCommand('vscode.getEditorLayout')
+      releaseReceipt = receipt.release
+      allocation.release()
+      await receipt.started
+      assert.equal(harness.controller.state().readiness, 'loading')
+      assert.equal(harness.groups.length, 4)
+      const revealsBefore = harness.panelReveals().length,
+        layoutsBefore = harness.commands.filter(
+          (command) => command === 'vscode.setEditorLayout',
+        ).length
+
+      // Act: later native input, without cancellation, independently invalidates the pending entry.
+      const newer =
+        later === 'source'
+          ? harness.focusMutableDraft('newer-during-app-receipt.txt', 2)
+          : undefined
+      if (later === 'window') harness.changeWindowFocus(false)
+      receipt.release()
+      await rejected
+
+      // Assert: neither an old reveal nor a layout effect follows the learner's choice.
+      assert.equal(harness.panelReveals().length, revealsBefore)
+      assert.equal(
+        harness.commands.filter(
+          (command) => command === 'vscode.setEditorLayout',
+        ).length,
+        layoutsBefore,
+      )
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 2)!
+          .tabs.includes(original.tab),
+        true,
+      )
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 4)!
+          .tabs.includes(chat.tab),
+        true,
+      )
+      if (newer) {
+        assert.equal(harness.editor.window.activeTextEditor, newer.editor)
+        assert.equal(newer.document.getText(), 'Original learner draft.\n')
+        assert.equal(newer.tab.isDirty, true)
+        assert.equal(harness.keyboardOnBody(), false)
+      } else assert.equal(harness.editor.window.state.focused, false)
+    } finally {
+      releaseAllocation()
+      releaseReceipt()
+      harness.changeWindowFocus(true)
+      await harness.close()
+    }
+  })
+
+for (const cursor of [false, true])
+  test(`${cursor ? 'Cursor' : 'VS Code'} article Return retains input when the Application itself was focused`, async () => {
+    // Arrange: the actual replay is visible and its existing explicit App action owns the keyboard.
+    const harness = await articleRecordingLayoutHarness(true, true)
+    const chat = harness.addSeparateEditorPart(),
+      draft = harness.focusMutableDraft()
+    if (cursor) harness.useCursorGroupWrappers(true)
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      await harness.reader.action('focus-app')
+      const application = harness.reader['app']
+      assert.equal(application?.active, true)
+
+      // Act
+      await harness.reader.action('return-wiki')
+
+      // Assert: the same App moves without leaving native input on the page body.
+      assert.equal(harness.reader['app'], application)
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.deepEqual(harness.editorLayout(), {
+        orientation: 1,
+        groups: [{ size: 161 }, { size: 162 }],
+      })
+      assert.equal(harness.groups.length, 3)
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 1)!
+          .tabs.includes(draft.tab),
+        true,
+      )
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 3)!
+          .tabs.includes(chat.tab),
+        true,
+      )
+      assert.equal(draft.document.getText(), 'Original learner draft.\n')
+      assert.equal(draft.tab.isDirty, true)
+      assert.deepEqual(chat.layout(), {
+        orientation: 1,
+        groups: [{ size: 743 }],
+      })
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+      assert.equal(harness.controller.state().presentedMs, 100)
+      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.sourceColumn(), 2)
+    } finally {
       await harness.close()
     }
   })
@@ -647,7 +1151,7 @@ for (const change of [
 for (const move of ['source', 'application'])
   test(`the next evidence visit preserves a manual ${move} move made after actual article Return`, async () => {
     // Arrange
-    const harness = await articleRecordingLayoutHarness()
+    const harness = await articleRecordingLayoutHarness(true, true)
     try {
       await harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -657,8 +1161,11 @@ for (const move of ['source', 'application'])
       )
       await harness.controller.settle()
       await harness.reader.action('return-wiki')
-      if (move === 'source') harness.moveSource(1)
-      else harness.movePanel('codebook.scopedBrowser', 2)
+      // Return now parks App2 beside Source1; choose a genuinely different native column before reentry.
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
+      assert.equal(harness.sourceColumn(), 1)
+      if (move === 'source') harness.moveSource(2)
+      else harness.movePanel('codebook.scopedBrowser', 1)
       const mutations = harness.commands.filter(
         (command) => command === 'vscode.setEditorLayout',
       ).length
@@ -672,6 +1179,7 @@ for (const move of ['source', 'application'])
       await harness.controller.settle()
       // Assert
       assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.displayedImage(), harness.png.toString('base64'))
       assert.deepEqual(harness.editorLayout(), {
         orientation: 1,
         groups: [{ size: 161 }, { size: 162 }],
@@ -680,7 +1188,7 @@ for (const move of ['source', 'application'])
         move === 'source'
           ? harness.sourceColumn()
           : harness.panelColumn('codebook.scopedBrowser'),
-        move === 'source' ? 1 : 2,
+        move === 'source' ? 2 : 1,
       )
       assert.equal(
         harness.commands.filter(
@@ -688,14 +1196,114 @@ for (const move of ['source', 'application'])
         ).length,
         mutations,
       )
+      assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+      // A successful explicit entry grants no permission for a later background reveal over a learner draft.
+      const film = harness.controller.bundle(),
+        draft = harness.focusMutableDraft(
+          'later-manual-draft.txt',
+          harness.panelColumn('codebook.scopedBrowser'),
+        ),
+        viewport = harness.viewportInstances
+          .filter((candidate) => candidate.mode === 'recording')
+          .at(-1)!,
+        reveals = harness.panelReveals().length
+      await assert.rejects(
+        viewport.reveal(new AbortController().signal),
+        /Application ownership changed/,
+      )
+      assert.equal(harness.panelReveals().length, reveals)
+      assert.equal(harness.editor.window.activeTextEditor, draft.editor)
+      assert.equal(draft.document.getText(), 'Original learner draft.\n')
+      assert.equal(draft.tab.isDirty, true)
+      assert.equal(harness.controller.bundle(), film)
     } finally {
       await harness.close()
     }
   })
 
+test('background acquisition preserves a manual App move made after Wiki Return until explicit Study reentry', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    await harness.reader.action('return-wiki')
+    harness.movePanel('codebook.scopedBrowser', 1)
+    const application = harness.reader['app'],
+      film = harness.controller.bundle(),
+      reveals = harness.panelReveals().length,
+      commands = harness.commands.length
+    // Act
+    await assert.rejects(
+      Promise.resolve(
+        harness.reader.presentation.createViewport(
+          'late-manual-acquisition',
+          () => {},
+          () => {},
+          'normal',
+        ),
+      ),
+      /Application group changed|manually placed Application/,
+    )
+    // Assert
+    assert.equal(harness.groups.length, 2)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.reader['app'], application)
+    assert.equal(harness.controller.bundle(), film)
+    assert.equal(harness.panelReveals().length, reveals)
+    assert.equal(harness.commands.length, commands)
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+    // A second learner move also retires the acknowledged manual registration; factories still cannot borrow focus to repair it.
+    harness.movePanel('codebook.scopedBrowser', 2)
+    const laterReveals = harness.panelReveals().length,
+      laterCommands = harness.commands.length
+    await assert.rejects(
+      Promise.resolve(
+        harness.reader.presentation.createViewport(
+          'later-manual-acquisition',
+          () => {},
+          () => {},
+          'normal',
+        ),
+      ),
+      /manually placed Application/,
+    )
+    assert.equal(harness.panelReveals().length, laterReveals)
+    assert.equal(harness.commands.length, laterCommands)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
+    assert.equal(harness.groups.length, 2)
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
+    assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+  } finally {
+    await harness.close()
+  }
+})
+
 test('actual Return cannot consume another article origin when its native layout is still owned', async () => {
   // Arrange
-  const harness = await articleRecordingLayoutHarness()
+  const harness = await articleRecordingLayoutHarness(true, true)
   try {
     await harness.reader.openRepositoryEvidence(
       harness.binding,
@@ -712,7 +1320,7 @@ test('actual Return cannot consume another article origin when its native layout
     // Assert
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 0.5 }, { size: 0.5 }],
+      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
     })
     await harness.reader.action('return-wiki')
     assert.deepEqual(harness.editorLayout(), {
@@ -785,7 +1393,7 @@ test('a queued actual article Return preserves a later learner draft focus witho
 
 test('cancelling actual Return during its ownership read preserves Study and permits a later explicit Return', async () => {
   // Arrange
-  const harness = await articleRecordingLayoutHarness(),
+  const harness = await articleRecordingLayoutHarness(true, true),
     cancellation = new AbortController()
   let release = (): void => {}
   try {
@@ -811,7 +1419,7 @@ test('cancelling actual Return during its ownership read preserves Study and per
     // Assert
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 0.5 }, { size: 0.5 }],
+      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
     })
     await harness.reader.action('return-wiki')
     assert.deepEqual(harness.editorLayout(), {
@@ -826,7 +1434,7 @@ test('cancelling actual Return during its ownership read preserves Study and per
 
 test('a new evidence visit drains a cancelled Return layout before restoring its two main replay panes', async () => {
   // Arrange
-  const harness = await articleRecordingLayoutHarness(),
+  const harness = await articleRecordingLayoutHarness(true, true),
     cancellation = new AbortController()
   let release = (): void => {}
   try {
@@ -859,9 +1467,11 @@ test('a new evidence visit drains a cancelled Return layout before restoring its
     await harness.controller.settle()
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+    assert.equal(harness.controller.state().presentedMs, 100)
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 0.5 }, { size: 0.5 }],
+      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
     })
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     assert.equal(harness.sourceColumn(), 2)
@@ -885,13 +1495,19 @@ test('Close drains an accepted article Return without retaining a layout origin 
       harness.origin,
     )
     await harness.controller.settle()
-    const draft = harness.addForeignDraft(),
+    // App owns the new first group; the learner's original first group now stands in column two.
+    const draft = harness.addForeignDraft(2),
       held = harness.holdNextCommand('vscode.setEditorLayout')
     release = held.release
     // Act
     const returning = harness.reader.action('return-wiki'),
       rejected = assert.rejects(returning, /closed/)
     await held.started
+    assert.equal(harness.reader.inspect().opened, true)
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(draft))?.viewColumn,
+      1,
+    )
     const closing = harness.reader.close()
     held.release()
     await rejected
@@ -912,9 +1528,56 @@ test('Close drains an accepted article Return without retaining a layout origin 
   }
 })
 
+test('article Return preserves a dirty draft that adopted the newly allocated App group', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const draft = harness.focusMutableDraft('adopted-app-notes.txt', 1),
+      application = harness.reader['app'],
+      film = harness.controller.bundle(),
+      layout = harness.editorLayout(),
+      reveals = harness.panelReveals().length,
+      mutations = harness.commands.filter(
+        (command) => command === 'vscode.setEditorLayout',
+      ).length
+
+    // Act
+    await harness.reader.action('return-wiki')
+
+    // Assert: moving App out would make this learner-owned group eligible for accidental contraction.
+    assert.equal(harness.reader['app'], application)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.groups.length, 3)
+    assert.deepEqual(harness.editorLayout(), layout)
+    assert.equal(harness.panelReveals().length, reveals)
+    assert.equal(
+      harness.commands.filter((command) => command === 'vscode.setEditorLayout')
+        .length,
+      mutations,
+    )
+    assert.equal(harness.controller.bundle(), film)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(draft.tab.isDirty, true)
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      draft.document.uri.toString(),
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('a manual application move during the restored-layout receipt remains authoritative on the next evidence visit', async () => {
   // Arrange
-  const harness = await articleRecordingLayoutHarness()
+  const harness = await articleRecordingLayoutHarness(true, true)
   let releaseLayout = (): void => {},
     releaseReceipt = (): void => {}
   try {
@@ -928,15 +1591,18 @@ test('a manual application move during the restored-layout receipt remains autho
     const layout = harness.holdNextCommand('vscode.setEditorLayout')
     releaseLayout = layout.release
     // Act
-    const returning = harness.reader.action('return-wiki')
+    const returning = harness.reader.action('return-wiki'),
+      rejected = assert.rejects(returning, /native input|focus/i)
     await layout.started
     const receipt = harness.holdNextCommand('vscode.getEditorLayout')
     releaseReceipt = receipt.release
     layout.release()
     await receipt.started
-    harness.movePanel('codebook.scopedBrowser', 2)
+    // The accepted Return parked App2; a real learner move to1 revokes the old Return before its receipt is adopted.
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
+    harness.movePanel('codebook.scopedBrowser', 1)
     receipt.release()
-    await returning
+    await rejected
     await harness.reader.openRepositoryEvidence(
       harness.binding,
       true,
@@ -946,7 +1612,8 @@ test('a manual application move during the restored-layout receipt remains autho
     await harness.controller.settle()
     // Assert
     assert.equal(harness.controller.state().readiness, 'ready')
-    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
+    assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
       groups: [{ size: 161 }, { size: 162 }],
@@ -1076,8 +1743,10 @@ for (const region of ['application', 'context', 'source'])
         harness.origin,
       )
       await source.started
-      if (region === 'source') harness.moveSource(1)
-      else
+      if (region === 'source') {
+        assert.equal(harness.sourceColumn(), 1)
+        harness.moveSource(3)
+      } else
         harness.movePanel(
           region === 'application'
             ? 'codebook.scopedBrowser'
@@ -1099,7 +1768,7 @@ for (const region of ['application', 'context', 'source'])
                 ? 'codebook.scopedBrowser'
                 : 'codebook.studyContext',
             ),
-        region === 'application' ? 2 : 1,
+        region === 'source' ? 3 : region === 'application' ? 2 : 1,
       )
       assert.equal(
         harness.reader.inspect().view?.model.observation?.id,
@@ -1425,6 +2094,17 @@ test('observation a source move during reentry loading overrides the previously 
     await harness.controller.settle()
     await harness.reader.action('return-wiki')
     assert.equal(harness.sourceColumn(), 2)
+    // The native contraction moves the existing text editor along with its tab before another manual move.
+    assert.deepEqual(
+      harness.editor.window.visibleTextEditors
+        .filter(
+          (editor) =>
+            editor.document.uri.toString() ===
+            harness.reader.inspect().sourceUri,
+        )
+        .map((editor) => editor.viewColumn),
+      [2],
+    )
     const source = harness.holdNextSource()
     releaseSource = source.release
     // Act
@@ -1542,6 +2222,7 @@ test('a manual pane move during a cancelled reentry layout read never becomes a 
     releasePrepared = prepared.release
     before.release()
     await prepared.started
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     harness.movePanel('codebook.scopedBrowser', 2)
     cancellation.abort()
     prepared.release()
@@ -1552,7 +2233,14 @@ test('a manual pane move during a cancelled reentry layout read never becomes a 
     await harness.reader.action('return-wiki')
     // Assert
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
-    assert.equal(harness.groups.length, 2)
+    assert.equal(harness.groups.length, 3)
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 0,
+      groups: [
+        { size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.45 },
+      ],
+    })
     assert.equal(
       harness.commands.filter((command) => command === 'vscode.setEditorLayout')
         .length,
@@ -1747,7 +2435,7 @@ test('observation source placement accepted before cancellation survives Return 
 for (const cursor of [false, true])
   test(`${cursor ? 'Cursor: ' : ''}cancelling an accepted known Study grid restoration retains the original pane locations for Return and retry`, async () => {
     // Arrange
-    const harness = await articleRecordingLayoutHarness(),
+    const harness = await articleRecordingLayoutHarness(true, true),
       cancellation = new AbortController()
     if (cursor) harness.useCursorGroupWrappers()
     let release = (): void => {}
@@ -1777,6 +2465,10 @@ for (const cursor of [false, true])
       await rejected
       await harness.reader.action('return-wiki')
       assert.equal(harness.groups.length, 2)
+      assert.deepEqual(harness.editorLayout(), {
+        orientation: 1,
+        groups: [{ size: 161 }, { size: 162 }],
+      })
       await harness.reader.openRepositoryEvidence(
         harness.binding,
         false,
@@ -1787,6 +2479,9 @@ for (const cursor of [false, true])
       assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
       assert.equal(harness.sourceColumn(), 2)
       assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+      const image = harness.reader.inspect().view?.model.image
+      assert.equal(image?.status, 'captured')
+      assert.equal(image?.base64, harness.png.toString('base64'))
       assert.equal(
         harness.reader.inspect().view?.model.observation?.id,
         harness.binding.observationId,
@@ -1924,7 +2619,8 @@ test('Cursor group contraction preserves pre-merge identities so the next eviden
 for (const recording of [false, true])
   test(`Cursor two-event contraction preserves error-free Return and correct main panes and summary on ${recording ? 'recording' : 'observation'} reentry`, async () => {
     // Arrange
-    const harness = await articleRecordingLayoutHarness()
+    const harness = await articleRecordingLayoutHarness(true, true)
+    const originalDraft = harness.focusMutableDraft('second-original.txt', 2)
     harness.useCursorGroupWrappers(true)
     try {
       // Observation entry creates the third main pane whose contraction this test exercises.
@@ -1972,7 +2668,10 @@ for (const recording of [false, true])
       assert.deepEqual(
         harness.editorLayout(),
         recording
-          ? { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] }
+          ? {
+              orientation: 1,
+              groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+            }
           : {
               orientation: 0,
               groups: [
@@ -1994,7 +2693,18 @@ for (const recording of [false, true])
       assert.ok(source && 'uri' in source)
       assert.equal(source.uri.toString(), harness.reader.inspect().sourceUri)
       if (recording) {
-        assert.equal(context, undefined)
+        assert.equal(
+          harness.groups
+            .find((group) => group.viewColumn === 3)!
+            .tabs.includes(originalDraft.tab),
+          true,
+        )
+        assert.equal(
+          originalDraft.document.getText(),
+          'Original learner draft.\n',
+        )
+        assert.equal(originalDraft.tab.isDirty, true)
+        assert.equal(harness.displayedImage(), harness.png.toString('base64'))
         assert.equal(harness.summary.visible, true)
       } else {
         assert.ok(context && 'viewType' in context)
@@ -2016,10 +2726,11 @@ test('Cursor preserves a uniquely added learner text tab while returning to the 
       harness.origin,
     )
     await harness.controller.settle()
-    const previous = harness.groups[0]!,
+    const previous = harness.groups.find((group) => group.viewColumn === 2)!,
       previousTabs = [...previous.tabs]
     // Act
-    harness.resyncEditorGroups('append')
+    // Add to the original first group, shifted behind App1; the allocation-adoption negative is tested separately.
+    harness.resyncEditorGroups('append', false, false, 2)
     await harness.reader.action('return-wiki')
     // Assert
     assert.deepEqual(previous.tabs, previousTabs)
@@ -2129,6 +2840,12 @@ for (const cursor of [false, true])
           .slice(reveals)
           .filter((reveal) => reveal.kind === 'codebook.scopedBrowser'),
         [
+          // R3 Return parked App2; explicit source-derived entry first restores its owned App1 destination.
+          {
+            kind: 'codebook.scopedBrowser',
+            column: 1,
+            preserveFocus: true,
+          },
           {
             kind: 'codebook.scopedBrowser',
             column: undefined,
@@ -2146,6 +2863,227 @@ for (const cursor of [false, true])
       assert.equal(draft.isDirty, true)
       assert.equal(harness.runtimes[0]!.dispatches, 1)
     } finally {
+      await harness.close()
+    }
+  })
+
+for (const cursor of [false, true])
+  test(`${cursor ? 'Cursor' : 'VS Code'} recording reentry after a source-derived observation keeps original drafts and reserves its own Application again`, async () => {
+    // Arrange
+    const harness = await articleRecordingLayoutHarness(true, true),
+      first = harness.focusMutableDraft('first-original.txt', 1),
+      second = harness.focusMutableDraft('second-original.txt', 2)
+    if (cursor) {
+      harness.useCursorGroupWrappers(true)
+      harness.replaceGroupObjectsOnTabChanges()
+    }
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      const application = harness.reader['app'],
+        runtimes = harness.runtimes.length
+      await harness.reader.action('return-wiki')
+      // Act
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        false,
+        undefined,
+        harness.origin,
+      )
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(harness.sourceColumn(), 2)
+      assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      // Assert
+      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.reader['app'], application)
+      assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(harness.sourceColumn(), 2)
+      assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.equal(harness.groups.length, 3)
+      assert.equal(
+        harness.groups.find((group) => group.viewColumn === 1)!.locked,
+        true,
+      )
+      assert.equal(
+        harness.groups.find((group) => group.viewColumn === 1)!.tabs.length,
+        1,
+      )
+      for (const draft of [first, second]) {
+        assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        assert.equal(draft.tab.isDirty, true)
+        assert.equal(
+          harness.groups.some((group) =>
+            group.tabs.some(
+              (tab) =>
+                'uri' in tab.input &&
+                tab.input.uri.toString() === draft.document.uri.toString(),
+            ),
+          ),
+          true,
+        )
+      }
+      assert.equal(harness.runtimes.length, runtimes)
+    } finally {
+      await harness.close()
+    }
+  })
+
+for (const later of ['finish', 'newer source', 'queued source', 'Close'])
+  test(`source-derived reentry drains its retained live renderer outside the layout queue after ${later}`, async () => {
+    // Arrange
+    const harness = await articleRecordingLayoutHarness(true, true)
+    let releaseHold = (): void => {},
+      releaseQueue = (): void => {},
+      queuedRead: Promise<void> | undefined,
+      viewport:
+        | Awaited<ReturnType<typeof harness.reader.presentation.createViewport>>
+        | undefined
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      viewport = await harness.reader.presentation.createViewport(
+        'independent-live-renderer',
+        () => {},
+        () => {},
+        'normal',
+      )
+      await harness.controller.settle()
+      await harness.reader.action('return-wiki')
+      const application = harness.reader['app'],
+        hold = viewport.holdPlacement,
+        events = harness.viewportEvents.length,
+        commands = harness.commands.filter(
+          (command) => command === 'vscode.setEditorLayout',
+        ).length
+      let entered!: () => void,
+        enteredCount = 0
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        waiting = new Promise<void>((resolve) => {
+          releaseHold = resolve
+        })
+      viewport.holdPlacement = async (signal) => {
+        const release = await hold.call(viewport, signal)
+        enteredCount++
+        entered()
+        await waiting
+        return release
+      }
+      // Keep an actual native read pending in the existing owner, without changing any source or layout result.
+      if (later === 'queued source') {
+        const command = harness.holdNextCommand('vscode.getEditorLayout')
+        releaseQueue = command.release
+        queuedRead = harness.reader['withLayout'](undefined, async () => {
+          await harness.editor.commands.executeCommand('vscode.getEditorLayout')
+        })
+        await command.started
+      }
+      // Act
+      const opening = harness.reader.openRepositoryEvidence(
+          harness.binding,
+          false,
+          undefined,
+          harness.origin,
+        ),
+        outcome = opening.then(
+          () => undefined,
+          (error: unknown) => error,
+        )
+      await Promise.race([
+        started,
+        outcome.then((error) =>
+          assert.equal(
+            enteredCount,
+            1,
+            `Entry completed before its renderer drain: ${String(error)}`,
+          ),
+        ),
+      ])
+      // This accepted renderer drain cannot own layout: otherwise Close or a queued native effect would deadlock behind it.
+      if (later === 'queued source')
+        assert.notEqual(harness.reader['arranging'], undefined)
+      else assert.equal(harness.reader['arranging'], undefined)
+      assert.equal(
+        harness.commands.filter(
+          (command) => command === 'vscode.setEditorLayout',
+        ).length,
+        commands,
+      )
+      let draft: ReturnType<typeof harness.focusMutableDraft> | undefined
+      if (later === 'queued source') {
+        releaseHold()
+        // One task boundary lets the renderer response settle and the next owner wait behind the still-pending native read.
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        draft = harness.focusMutableDraft('newer-during-layout-queue.txt', 1)
+        releaseQueue()
+        await queuedRead
+      } else if (later === 'newer source')
+        draft = harness.focusMutableDraft('newer-during-renderer-drain.txt', 1)
+      if (later === 'Close') await harness.reader.close()
+      releaseHold()
+      const error = await outcome
+      // Assert
+      if (later === 'finish') {
+        assert.equal(error, undefined)
+        assert.equal(harness.reader['app'], application)
+        assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+        assert.equal(harness.sourceColumn(), 2)
+        assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+        const image = harness.reader.inspect().view?.model.image
+        assert.equal(image?.status, 'captured')
+        assert.equal(image?.base64, harness.png.toString('base64'))
+      } else {
+        assert.match(String(error), /closed|native input|focus|superseded/i)
+        if (draft) {
+          assert.equal(harness.editor.window.activeTextEditor, draft.editor)
+          assert.equal(draft.document.getText(), 'Original learner draft.\n')
+          assert.equal(draft.tab.isDirty, true)
+          assert.equal(harness.panelColumn('codebook.scopedBrowser'), 2)
+          assert.equal(
+            harness.commands.filter(
+              (command) => command === 'vscode.setEditorLayout',
+            ).length,
+            commands,
+          )
+        } else assert.equal(harness.reader.inspect().opened, false)
+      }
+      // The exact live placement hold must release after success, refusal and Close.
+      assert.deepEqual(
+        harness.viewportEvents
+          .slice(events)
+          .filter((event) => event === 'hold:live' || event === 'release:live'),
+        ['hold:live', 'release:live'],
+      )
+      if (later !== 'Close') {
+        const releasePlacement = await viewport.holdPlacement(
+          new AbortController().signal,
+        )
+        releasePlacement()
+      }
+    } finally {
+      releaseHold()
+      releaseQueue()
+      await queuedRead?.catch(() => undefined)
+      viewport?.close()
       await harness.close()
     }
   })

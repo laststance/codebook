@@ -480,12 +480,27 @@ for (const recording of [false, true])
         ),
         rejected = assert.rejects(pending, /abort/i)
       await source.started
-      const commands = [...harness.commands]
+      const commands = [...harness.commands],
+        sourceShows = harness.textDocumentShows(),
+        paneReveals = harness.panelReveals()
       cancellation.abort()
       source.release()
       await rejected
+      // Drain the owned recorded continuation before asserting that no late native effect occurred.
+      await harness.controller.settle()
       // Assert
-      assert.equal(harness.groups[0]!.tabs.length, 0)
+      assert.deepEqual(
+        harness.groups
+          .flatMap((group) => group.tabs)
+          .filter(
+            (tab) =>
+              tab.input instanceof harness.editor.TabInputText &&
+              tab.input.uri.scheme === 'codebook-source',
+          ),
+        [],
+      )
+      assert.deepEqual(harness.textDocumentShows(), sourceShows)
+      assert.deepEqual(harness.panelReveals(), paneReveals)
       assert.deepEqual(harness.commands, commands)
       assert.equal(harness.reader.inspect().opened, false)
       assert.equal(harness.runtimes[0]!.dispatches, 1)

@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
 import {
   configuredWorkspaceHarness,
   recordedReaderHarness,
@@ -55,20 +57,72 @@ test('the first presentation selection keeps a debugger preview of a cited works
 test('Open replay clicked while another window has the desktop focus opens the recording once the work window gains focus', async () => {
   // Arrange
   const harness = await recordedReaderHarness()
+  let focusTimer: ReturnType<typeof setTimeout> | undefined,
+    beforeFocus: { panels: number; groupCreations: number } | undefined
   try {
     await harness.reader.close()
     harness.changeWindowFocus(false)
+    const commandsBefore = harness.commands.length
 
     // Act
     await harness.reader.openRecording(harness.studyId)
-    setTimeout(() => harness.changeWindowFocus(true), 200)
+    focusTimer = setTimeout(() => {
+      beforeFocus = {
+        panels: harness.nativePanels().length,
+        groupCreations: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => command === 'workbench.action.newGroupAbove')
+          .length,
+      }
+      harness.changeWindowFocus(true)
+    }, 200)
     await harness.controller.settle()
 
     // Assert
+    assert.deepEqual(beforeFocus, { panels: 0, groupCreations: 0 })
     assert.equal(harness.controller.state().readiness, 'ready')
     assert.equal(harness.controller.state().reason, undefined)
     assert.equal(harness.summary.visible, true)
   } finally {
+    clearTimeout(focusTimer)
+    harness.changeWindowFocus(true)
+    await harness.close()
+  }
+})
+
+test('Close while recorded entry waits for its work window prevents later App creation', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.changeWindowFocus(false)
+    const commandsBefore = harness.commands.length
+    await harness.reader.openRecording(harness.studyId)
+    enableFakeClock(context)
+    await advanceClock(context, 200)
+    assert.equal(harness.controller.state().readiness, 'loading')
+    assert.equal(harness.nativePanels().length, 0)
+
+    // Act
+    const closing = harness.reader.close()
+    await advanceClockUntilSettled(context, closing, 40_000)
+    await closing
+    harness.changeWindowFocus(true)
+    await advanceClockUntilSettled(context, harness.controller.settle(), 40_000)
+    resetFakeClock(context)
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(harness.nativePanels().length, 0)
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.newGroupAbove'),
+      false,
+    )
+    assert.equal(harness.summary.visible, false)
+  } finally {
+    resetFakeClock(context)
     harness.changeWindowFocus(true)
     await harness.close()
   }
@@ -264,10 +318,12 @@ test("Open replay with the learner's file in front of the live Application pane 
     // Assert
     assert.equal(harness.controller.state().reason, undefined)
     assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(learnerFile.document.getText(), 'Original learner draft.\n')
+    assert.equal(learnerFile.tab.isDirty, true)
     assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
     assert.equal(
       harness.groups
-        .find((group) => group.viewColumn === 1)
+        .find((group) => group.viewColumn === 2)
         ?.tabs.includes(learnerFile.tab),
       true,
     )
@@ -834,8 +890,12 @@ for (const arrangement of ['live', 'replay'] as const)
     const recorded =
       arrangement === 'replay' ? await recordedReaderHarness(true) : undefined
     const harness = recorded ?? (await workspaceHarness())
-    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 161 }, { size: 162 }],
+    })
     let live: { close(): void } | undefined
+    let restoreNativeClose = (): void => {}
     try {
       if (recorded) {
         await recorded.reader.openRecording(recorded.studyId)
@@ -868,17 +928,35 @@ for (const arrangement of ['live', 'replay'] as const)
       }
       const commandsBefore = harness.commands.length
 
+      // Observe the restored Study grid before owned tabs disappear; final origin restoration cannot hide a missed Read/Enlarge cleanup.
+      const nativeClose = harness.editor.window.tabGroups.close
+      let layoutAtFirstNativeClose: unknown
+      harness.editor.window.tabGroups.close = (...arguments_) => {
+        layoutAtFirstNativeClose ??= structuredClone(harness.editorLayout())
+        return nativeClose(...arguments_)
+      }
+      restoreNativeClose = (): void => {
+        harness.editor.window.tabGroups.close = nativeClose
+      }
+
       // Act
       await harness.reader.close()
 
       // Assert: the Read resized the groups; the Close ended the maximization and then applied the layout of before the Read.
+      assert.deepEqual(layoutAtFirstNativeClose, {
+        orientation: 1,
+        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      })
       assert.deepEqual(beforeRead, {
         orientation: 1,
-        groups: [{ size: 0.5 }, { size: 0.5 }],
+        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
       })
       assert.deepEqual(duringRead, {
         maximized: true,
-        layout: { orientation: 1, groups: [{ size: 0.8 }, { size: 0.2 }] },
+        layout: {
+          orientation: 1,
+          groups: [{ size: 0.8 }, { size: 0.1 }, { size: 0.1 }],
+        },
       })
       assert.deepEqual(
         {
@@ -899,23 +977,28 @@ for (const arrangement of ['live', 'replay'] as const)
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
+            'vscode.setEditorLayout',
           ],
           maximized: false,
-          layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+          layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
           learnersTabs: [1, 1],
         },
       )
     } finally {
+      restoreNativeClose()
       live?.close()
       await harness.close()
     }
   })
 
 // Value: protects=the sizes of the learner's own editor groups after a Read and a Restore in the live arrangement beside a third group of the learner's, where the Restore arranges nothing because it preserves the learner's groups: the groups have the sizes they had before the Read; fails_when=the Restore ends the Read with the editor's Expand and relies on its arrangement for the sizes, which it does not apply there, so the learner's groups stay at the expanded sizes; why_new=Cycle 0046 row 328 (a Restore ends a Read too, and gives sizes back only where it arranges); seam=the workspace harness with the controlled runtime, a native layout of three rows, the arrange action, the reader's layout line, command log and layout read
-test("a Restore after a Read in the live arrangement beside a third group of the learner's gives every group the size it had before the Read, also where it arranges nothing", async () => {
+test("a Restore after a Read in the live arrangement beside a later group of the learner's gives every group the size it had before the Read, also where it arranges nothing", async () => {
   // Arrange: the learner has three editor groups, one above the other; a live run puts its panes into the first two, and the learner reads the application enlarged.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }, { size: 163 }],
+  })
   let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
@@ -932,6 +1015,18 @@ test("a Restore after a Read in the live arrangement beside a third group of the
       () => {},
       'normal',
     )
+    // A later native group is outside the prepared App owner; Restore must preserve it and give back the pre-Read sizes without arranging.
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [
+        { size: 80.5 },
+        { size: 80.5 },
+        { size: 162 },
+        { size: 163 },
+        { size: 164 },
+      ],
+    })
+    const learner = harness.focusMutableDraft('added-group-notes.txt', 5)
     await harness.reader.action('read-app')
     const duringRead = await harness.editor.commands.executeCommand(
       'vscode.getEditorLayout',
@@ -941,9 +1036,23 @@ test("a Restore after a Read in the live arrangement beside a third group of the
     await harness.reader.action('arrange')
 
     // Assert
+    assert.equal(learner.document.getText(), 'Original learner draft.\n')
+    assert.equal(learner.tab.isDirty, true)
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 5)
+        ?.tabs.includes(learner.tab),
+      true,
+    )
     assert.deepEqual(duringRead, {
       orientation: 1,
-      groups: [{ size: 0.8 }, { size: 0.1 }, { size: 0.1 }],
+      groups: [
+        { size: 0.8 },
+        { size: 0.05 },
+        { size: 0.05 },
+        { size: 0.05 },
+        { size: 0.05 },
+      ],
     })
     assert.deepEqual(
       {
@@ -956,7 +1065,13 @@ test("a Restore after a Read in the live arrangement beside a third group of the
         maximized: false,
         layout: {
           orientation: 1,
-          groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+          groups: [
+            { size: 80.5 },
+            { size: 80.5 },
+            { size: 162 },
+            { size: 163 },
+            { size: 164 },
+          ],
         },
       },
     )
@@ -970,7 +1085,10 @@ test("a Restore after a Read in the live arrangement beside a third group of the
 test("a Restore of a Read in the live arrangement that the learner's change of focus stops applies no layout, and the Close afterwards gives the learner's groups the sizes they had before the Read", async () => {
   // Arrange: the learner has two editor groups; a live run puts its panes into them, and the learner reads the application enlarged. The editor holds the Expand of the Restore that follows.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }],
+  })
   let live: { close(): void } | undefined
   let release = (): void => {}
   try {
@@ -1009,7 +1127,7 @@ test("a Restore of a Read in the live arrangement that the learner's change of f
     await held.started
 
     // Act: the learner goes to a draft of their own while the maximization ends; the Restore is refused; then the learner closes the Study workspace.
-    harness.focusMutableDraft()
+    const learner = harness.focusMutableDraft('later-source.txt', 2)
     held.release()
     const restore = await restoring
     const afterRestore = {
@@ -1023,14 +1141,25 @@ test("a Restore of a Read in the live arrangement that the learner's change of f
     await harness.reader.close()
 
     // Assert
+    assert.equal(learner.document.getText(), 'Original learner draft.\n')
+    assert.equal(learner.tab.isDirty, true)
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 1)
+        ?.tabs.includes(learner.tab),
+      true,
+    )
     assert.equal(restore, 'refused')
     assert.deepEqual(afterRestore, {
       layoutsApplied: 0,
-      layout: { orientation: 1, groups: [{ size: 0.8 }, { size: 0.2 }] },
+      layout: {
+        orientation: 1,
+        groups: [{ size: 0.8 }, { size: 0.1 }, { size: 0.1 }],
+      },
     })
     assert.deepEqual(
       await harness.editor.commands.executeCommand('vscode.getEditorLayout'),
-      { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+      { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
     )
   } finally {
     release()
@@ -1043,8 +1172,12 @@ test("a Restore of a Read in the live arrangement that the learner's change of f
 test("Close Study Workspace after a Read of the application and then of the captured source in the live arrangement leaves the learner's two editor groups at the sizes they had before the first Read", async () => {
   // Arrange: the learner has two editor groups; a live run puts its panes into them.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }],
+  })
   let live: { close(): void } | undefined
+  let restoreNativeClose = (): void => {}
   try {
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
@@ -1064,10 +1197,25 @@ test("Close Study Workspace after a Read of the application and then of the capt
     await harness.reader.action('read-source')
     const duringSecondRead = harness.maximizedEditorGroup()
 
+    // Observe the restored Study grid before owned tabs disappear; final origin restoration cannot hide a missed Read/Enlarge cleanup.
+    const nativeClose = harness.editor.window.tabGroups.close
+    let layoutAtFirstNativeClose: unknown
+    harness.editor.window.tabGroups.close = (...arguments_) => {
+      layoutAtFirstNativeClose ??= structuredClone(harness.editorLayout())
+      return nativeClose(...arguments_)
+    }
+    restoreNativeClose = (): void => {
+      harness.editor.window.tabGroups.close = nativeClose
+    }
+
     // Act
     await harness.reader.close()
 
     // Assert
+    assert.deepEqual(layoutAtFirstNativeClose, {
+      orientation: 1,
+      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+    })
     assert.equal(duringSecondRead, true)
     assert.deepEqual(
       {
@@ -1078,10 +1226,11 @@ test("Close Study Workspace after a Read of the application and then of the capt
       },
       {
         maximized: false,
-        layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
       },
     )
   } finally {
+    restoreNativeClose()
     live?.close()
     await harness.close()
   }
@@ -1148,7 +1297,10 @@ test('Close Study Workspace after a Read in the live arrangement whose captured 
 test('Close Study Workspace after a Read during which the learner opened another editor group applies no layout of before the Read: the three groups stay', async () => {
   // Arrange: the learner has two editor groups; a live run puts its panes into them, the learner reads the application enlarged and then opens a third group below.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }],
+  })
   let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
@@ -1166,10 +1318,13 @@ test('Close Study Workspace after a Read during which the learner opened another
       'normal',
     )
     await harness.reader.action('read-app')
+    assert.equal(harness.groups.length, 3)
+    // The new fourth group is a genuine learner addition beside App and both original groups.
     await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
       orientation: 1,
-      groups: [{ size: 0.4 }, { size: 0.3 }, { size: 0.3 }],
+      groups: [{ size: 0.3 }, { size: 0.25 }, { size: 0.25 }, { size: 0.2 }],
     })
+    assert.equal(harness.groups.length, 4)
     const commandsBefore = harness.commands.length
 
     // Act
@@ -1185,6 +1340,16 @@ test('Close Study Workspace after a Read during which the learner opened another
         state: harness.reader.presentationState().state,
       },
       { layoutsApplied: 0, groups: 3, state: 'closed' },
+    )
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.25 }, { size: 0.25 }, { size: 0.2 }],
+    })
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.minimizeOtherEditors'),
+      false,
     )
   } finally {
     live?.close()
@@ -1254,7 +1419,10 @@ test("Close Study Workspace after a Read in the live arrangement while Cursor's 
 test("a Read in the live arrangement that the editor refuses after its Expand ran leaves the learner's editor groups at the sizes they had before", async () => {
   // Arrange: the learner has two editor groups; a live run puts its panes into them; the editor refuses the maximize toggle of the next Read.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }],
+  })
   let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
@@ -1290,7 +1458,10 @@ test("a Read in the live arrangement that the editor refuses after its Expand ra
       },
       {
         maximized: false,
-        layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        layout: {
+          orientation: 1,
+          groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+        },
       },
     )
   } finally {
@@ -1306,8 +1477,12 @@ for (const arrangement of ['live', 'replay'] as const)
     const recorded =
       arrangement === 'replay' ? await recordedReaderHarness(true) : undefined
     const harness = recorded ?? (await workspaceHarness())
-    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 161 }, { size: 162 }],
+    })
     let live: { close(): void } | undefined
+    let restoreNativeClose = (): void => {}
     try {
       if (recorded) {
         await recorded.reader.openRecording(recorded.studyId)
@@ -1337,13 +1512,31 @@ for (const arrangement of ['live', 'replay'] as const)
       }
       const commandsBefore = harness.commands.length
 
+      // Observe the restored Study grid before owned tabs disappear; final origin restoration cannot hide a missed Read/Enlarge cleanup.
+      const nativeClose = harness.editor.window.tabGroups.close
+      let layoutAtFirstNativeClose: unknown
+      harness.editor.window.tabGroups.close = (...arguments_) => {
+        layoutAtFirstNativeClose ??= structuredClone(harness.editorLayout())
+        return nativeClose(...arguments_)
+      }
+      restoreNativeClose = (): void => {
+        harness.editor.window.tabGroups.close = nativeClose
+      }
+
       // Act
       await harness.reader.close()
 
       // Assert
+      assert.deepEqual(layoutAtFirstNativeClose, {
+        orientation: 1,
+        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      })
       assert.deepEqual(duringEnlarge, {
         maximized: true,
-        layout: { orientation: 1, groups: [{ size: 0.8 }, { size: 0.2 }] },
+        layout: {
+          orientation: 1,
+          groups: [{ size: 0.8 }, { size: 0.1 }, { size: 0.1 }],
+        },
       })
       assert.deepEqual(
         {
@@ -1364,23 +1557,28 @@ for (const arrangement of ['live', 'replay'] as const)
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
+            'vscode.setEditorLayout',
           ],
           maximized: false,
-          layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+          layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
           learnersTabs: [1, 1],
         },
       )
     } finally {
+      restoreNativeClose()
       live?.close()
       await harness.close()
     }
   })
 
 // Value: protects=the sizes of the learner's own editor groups after Enlarge application and a Restore in the live arrangement beside a third group of the learner's, where the Restore arranges nothing: the groups have the sizes they had before the Enlarge; fails_when=the Enlarge keeps no sizes, the Restore ends the maximization with the editor's Expand and applies no arrangement there, so the groups stay at the expanded sizes; why_new=Cycle 0046 row 334; seam=the workspace harness with the controlled runtime, a native layout of three rows, the arrange action, command log and layout read
-test("a Restore after Enlarge application in the live arrangement beside a third group of the learner's gives every group the size it had before the Enlarge, also where it arranges nothing", async () => {
+test("a Restore after Enlarge application in the live arrangement beside a later group of the learner's gives every group the size it had before the Enlarge, also where it arranges nothing", async () => {
   // Arrange: the learner has three editor groups, one above the other; a live run puts its panes into the first two, and the learner enlarges the application.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }, { size: 163 }],
+  })
   let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
@@ -1397,6 +1595,18 @@ test("a Restore after Enlarge application in the live arrangement beside a third
       () => {},
       'normal',
     )
+    // A later native group is outside the prepared App owner; Restore must preserve it and give back the pre-Read sizes without arranging.
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [
+        { size: 80.5 },
+        { size: 80.5 },
+        { size: 162 },
+        { size: 163 },
+        { size: 164 },
+      ],
+    })
+    const learner = harness.focusMutableDraft('added-group-notes.txt', 5)
     await harness.reader.action('enlarge-app')
     const duringEnlarge = await harness.editor.commands.executeCommand(
       'vscode.getEditorLayout',
@@ -1406,9 +1616,23 @@ test("a Restore after Enlarge application in the live arrangement beside a third
     await harness.reader.action('arrange')
 
     // Assert
+    assert.equal(learner.document.getText(), 'Original learner draft.\n')
+    assert.equal(learner.tab.isDirty, true)
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 5)
+        ?.tabs.includes(learner.tab),
+      true,
+    )
     assert.deepEqual(duringEnlarge, {
       orientation: 1,
-      groups: [{ size: 0.8 }, { size: 0.1 }, { size: 0.1 }],
+      groups: [
+        { size: 0.8 },
+        { size: 0.05 },
+        { size: 0.05 },
+        { size: 0.05 },
+        { size: 0.05 },
+      ],
     })
     assert.deepEqual(
       {
@@ -1421,7 +1645,13 @@ test("a Restore after Enlarge application in the live arrangement beside a third
         maximized: false,
         layout: {
           orientation: 1,
-          groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+          groups: [
+            { size: 80.5 },
+            { size: 80.5 },
+            { size: 162 },
+            { size: 163 },
+            { size: 164 },
+          ],
         },
       },
     )
@@ -1500,8 +1730,12 @@ for (const order of [
   test(`Close Study Workspace after ${order.name} in the live arrangement leaves the learner's two editor groups at the sizes they had before the first of them`, async () => {
     // Arrange: the learner has two editor groups; a live run puts its panes into them.
     const harness = await workspaceHarness()
-    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 161 }, { size: 162 }],
+    })
     let live: { close(): void } | undefined
+    let restoreNativeClose = (): void => {}
     try {
       const receipt = harness.service.start({
         instanceId: harness.service.instanceId,
@@ -1521,10 +1755,25 @@ for (const order of [
       await harness.reader.action(order.second)
       const commandsBefore = harness.commands.length
 
+      // Observe the restored Study grid before owned tabs disappear; final origin restoration cannot hide a missed Read/Enlarge cleanup.
+      const nativeClose = harness.editor.window.tabGroups.close
+      let layoutAtFirstNativeClose: unknown
+      harness.editor.window.tabGroups.close = (...arguments_) => {
+        layoutAtFirstNativeClose ??= structuredClone(harness.editorLayout())
+        return nativeClose(...arguments_)
+      }
+      restoreNativeClose = (): void => {
+        harness.editor.window.tabGroups.close = nativeClose
+      }
+
       // Act
       await harness.reader.close()
 
       // Assert
+      assert.deepEqual(layoutAtFirstNativeClose, {
+        orientation: 1,
+        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      })
       assert.deepEqual(
         {
           gridCommands: harness.commands
@@ -1543,12 +1792,14 @@ for (const order of [
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
+            'vscode.setEditorLayout',
           ],
           maximized: false,
-          layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+          layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
         },
       )
     } finally {
+      restoreNativeClose()
       live?.close()
       await harness.close()
     }
@@ -1618,7 +1869,10 @@ test('Close Study Workspace after a Read of the explanation and then Enlarge app
 test("Enlarge application in the live arrangement that the editor refuses after its Expand ran leaves the learner's editor groups at the sizes they had before", async () => {
   // Arrange: the learner has two editor groups; a live run puts its panes into them; the editor refuses the maximize toggle of the next Enlarge.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }],
+  })
   let live: { close(): void } | undefined
   try {
     const receipt = harness.service.start({
@@ -1654,7 +1908,10 @@ test("Enlarge application in the live arrangement that the editor refuses after 
       },
       {
         maximized: false,
-        layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        layout: {
+          orientation: 1,
+          groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+        },
       },
     )
   } finally {
@@ -1667,7 +1924,10 @@ test("Enlarge application in the live arrangement that the editor refuses after 
 test("a Restore after Enlarge application that arranges nothing applies no layout once the learner changed the focus during its layout read, and the Close afterwards gives the learner's groups the sizes they had before the Enlarge", async () => {
   // Arrange: the learner has three editor groups; a live run puts its panes into the first two, and the learner enlarges the application. The editor holds the layout read of the arrangement, and then the one that follows it.
   const harness = await workspaceHarness()
-  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 161 }, { size: 162 }, { size: 163 }],
+  })
   let live: { close(): void } | undefined
   let release = (): void => {}
   try {
@@ -1685,6 +1945,17 @@ test("a Restore after Enlarge application that arranges nothing applies no layou
       () => {},
       'normal',
     )
+    // A later native group is outside the prepared App owner; Restore must preserve it and give back the pre-Read sizes without arranging.
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [
+        { size: 80.5 },
+        { size: 80.5 },
+        { size: 162 },
+        { size: 163 },
+        { size: 164 },
+      ],
+    })
     await harness.reader.action('enlarge-app')
     const state = harness.reader.presentationState()
     const arrangementRead = harness.holdNextCommand('vscode.getEditorLayout')
@@ -1708,8 +1979,15 @@ test("a Restore after Enlarge application that arranges nothing applies no layou
     // A Restore that reads no second layout ends here by itself, and the assertions below say so.
     await Promise.race([giveBackRead.started, restoring])
 
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => command === 'vscode.setEditorLayout').length,
+      0,
+    )
+
     // Act: the learner goes to a draft of their own while the editor answers; the Restore is refused; then the learner closes the Study workspace.
-    harness.focusMutableDraft()
+    const learner = harness.focusMutableDraft('later-source.txt', 2)
     giveBackRead.release()
     const restore = await restoring
     const layoutsAppliedByRestore = harness.commands
@@ -1718,13 +1996,24 @@ test("a Restore after Enlarge application that arranges nothing applies no layou
     await harness.reader.close()
 
     // Assert
+    assert.equal(learner.document.getText(), 'Original learner draft.\n')
+    assert.equal(learner.tab.isDirty, true)
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 1)
+        ?.tabs.includes(learner.tab),
+      true,
+    )
     assert.deepEqual(
       { restore, layoutsAppliedByRestore },
       { restore: 'refused', layoutsAppliedByRestore: 0 },
     )
     assert.deepEqual(
       await harness.editor.commands.executeCommand('vscode.getEditorLayout'),
-      { orientation: 1, groups: [{ size: 1 }, { size: 1 }, { size: 1 }] },
+      {
+        orientation: 1,
+        groups: [{ size: 80.5 }, { size: 162 }, { size: 163 }, { size: 164 }],
+      },
     )
   } finally {
     release()
@@ -2552,7 +2841,9 @@ for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
 
         // Assert
         const state = harness.reader.presentationState(),
-          firstGroup = harness.groups.find((group) => group.viewColumn === 1)!,
+          firstGroup = harness.groups.find(
+            (group) => group.viewColumn === (entry === 'Open replay' ? 2 : 1),
+          )!,
           chatGroup = harness.groups.find((group) =>
             group.tabs.includes(chat.tab),
           )
@@ -2574,13 +2865,24 @@ for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
           state.panes.contextColumn,
           entry === 'Open replay' ? undefined : 3,
         )
-        // No tab was closed: the learner's file and the settings page are still tabs of the first group.
+        // Replay's App allocation shifts the original group; its dirty file and settings remain together in that original group.
         assert.equal(firstGroup.tabs.includes(learnerFile.tab), true)
         assert.equal(firstGroup.tabs.includes(settings), true)
+        assert.equal(
+          learnerFile.document.getText(),
+          'Original learner draft.\n',
+        )
+        assert.equal(learnerFile.tab.isDirty, true)
         assert.deepEqual(harness.tabCloseRequests(), [])
         // The measurement borrowed the keyboard for the main editor; the chat has it again through Cursor's own command, and no editor group was opened for that.
-        assert.equal(chatGroup?.viewColumn, entry === 'Open replay' ? 3 : 4)
-        assert.equal(harness.groups.length, entry === 'Open replay' ? 3 : 4)
+        assert.equal(chatGroup?.viewColumn, 4)
+        assert.equal(harness.groups.length, 4)
+        assert.equal(
+          harness.commands.filter(
+            (command) => command === 'workbench.action.newGroupAbove',
+          ).length,
+          entry === 'Open replay' ? 1 : 0,
+        )
         assert.equal(
           harness.commands
             .filter((command) =>
@@ -2597,6 +2899,99 @@ for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
       }
     })
 }
+
+for (const phase of [
+  'native response',
+  'caller admission',
+  'same-source key',
+  'window round trip',
+  'Close',
+] as const)
+  test(`recorded App preparation preserves newer source input at ${phase} before allocating its native group`, async () => {
+    // Arrange: both source tabs exist before entry, so an away-and-back choice changes no group or document identity.
+    const harness = await recordedReaderHarness()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const original = harness.focusMutableDraft('original-primary.ts', 1),
+      other = harness.focusMutableDraft('other-primary.ts', 1)
+    harness.focusExistingSource(original.editor)
+    chat.focusTab()
+    const focus = harness.reader['focusApplicationSourceGroup'],
+      focusPrimary = focus.bind(harness.reader),
+      commandsBefore = harness.commands.length
+    let held:
+        ReturnType<typeof harness.holdNextPrimaryFocusResponse> | undefined,
+      opening: Promise<void> | undefined,
+      closing: Promise<void> | undefined
+    harness.reader['focusApplicationSourceGroup'] = async (...arguments_) => {
+      if (phase !== 'caller admission')
+        held = harness.holdNextPrimaryFocusResponse()
+      const receipt = await focusPrimary(...arguments_)
+      if (phase === 'caller admission') {
+        harness.focusExistingSource(other.editor)
+        harness.focusExistingSource(original.editor)
+      }
+      return receipt
+    }
+    try {
+      // Act: hold the native response or change input in the caller's await gap; Close must also drain that response without allocation.
+      opening = harness.reader
+        .openRecording(harness.studyId)
+        .then(() => harness.controller.settle())
+      if (phase !== 'caller admission') {
+        await waitUntil(() => Boolean(held), 'App preparation primary focus')
+        assert.ok(held)
+        await held.started
+        if (phase === 'Close') closing = harness.reader.close()
+        else if (phase === 'same-source key')
+          harness.workInActiveTextEditor('keyboard')
+        else if (phase === 'window round trip') {
+          harness.changeWindowFocus(false)
+          harness.changeWindowFocus(true)
+        } else {
+          harness.focusExistingSource(other.editor)
+          harness.focusExistingSource(original.editor)
+        }
+        held.release()
+      }
+      await opening
+      await closing
+
+      // Assert
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .includes('workbench.action.newGroupAbove'),
+        false,
+      )
+      assert.equal(harness.nativePanels().length, 0)
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
+      assert.equal(other.document.getText(), 'Original learner draft.\n')
+      if (phase === 'Close')
+        assert.equal(harness.reader.inspect().opened, false)
+      else {
+        assert.equal(harness.controller.state().readiness, 'failed')
+        assert.match(
+          harness.controller.state().reason ?? '',
+          /primary source changed/,
+        )
+        assert.equal(
+          harness.focusedSource()?.document.uri.toString(),
+          original.document.uri.toString(),
+        )
+      }
+    } finally {
+      held?.release()
+      await opening
+      await closing
+      harness.reader['focusApplicationSourceGroup'] = focus
+      await harness.close()
+    }
+  })
 
 // Value: protects=cold Study entry when VS Code retains an unchanged background text-editor receipt; fails_when=Application registration waits for that receipt to disappear although its native tab is active and visible; why_new=Cycle0046 native283 held auth.ts/column2 while Application was active in column1; seam=the confirmed independent native tab and text-editor receipts, retained until Open completes.
 for (const receiptLocation of [

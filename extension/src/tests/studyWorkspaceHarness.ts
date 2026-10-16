@@ -295,8 +295,14 @@ export async function workspaceHarness(
     isDirty?: boolean
     isPinned?: boolean
   }
-  const groups: { viewColumn: number; tabs: Tab[]; activeTab?: Tab }[] = [
+  const groups: {
+    viewColumn: number
+    tabs: Tab[]
+    activeTab?: Tab
+    locked?: boolean
+  }[] = [
     { viewColumn: 2, tabs: [] },
+    { viewColumn: 1, tabs: [] },
   ]
   let activeTabGroup = groups[0]!
   let separateEditorPart:
@@ -309,6 +315,7 @@ export async function workspaceHarness(
     | undefined
   let separatePartLayoutReport: unknown
   type SourceEditor = {
+    group?: (typeof groups)[number]
     document: { uri: Uri; getText(): string }
     readonly viewColumn: number
     setDecorations(decoration?: unknown, ranges?: readonly unknown[]): void
@@ -384,7 +391,7 @@ export async function workspaceHarness(
   ): SourceEditor => ({
     document,
     get viewColumn() {
-      return reportedColumn ?? group.viewColumn
+      return reportedColumn ?? this.group?.viewColumn ?? group.viewColumn
     },
     setDecorations(
       decoration?: unknown,
@@ -402,7 +409,7 @@ export async function workspaceHarness(
         })
         return
       }
-      decoratedColumns.push(reportedColumn ?? group.viewColumn)
+      decoratedColumns.push(this.viewColumn)
       decoratedRangeCounts.push(ranges.length)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
@@ -616,7 +623,8 @@ export async function workspaceHarness(
   /** The editor area in which the fake editor answers a layout given in proportions as pixels; see `answerProportionsAsPixels`. `undefined`: such a layout is kept as it was given. */
   let proportionsAnsweredInPx: { width: number; height: number } | undefined
   let hideGridWhileMaximized = false
-  let editorLayout: unknown = { orientation: 0, groups: [{}] }
+  // The legacy fixture keeps an empty App destination beside source; both groups must exist before MCP-first preparation measures them.
+  let editorLayout: unknown = { orientation: 0, groups: [{}, {}] }
   let nextMovedPanelLayout: unknown
   let nativeLayout = false,
     cursorGroupWrappers = false,
@@ -791,7 +799,6 @@ export async function workspaceHarness(
     { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined
   const receivers = new Map<string, (message: unknown) => void>()
   let automaticContextReceipt = false,
-    contextCoversSource = false,
     displayedImage: string | undefined,
     sourceColumn = 2
   let nextImage: { wait: Promise<void>; entered(): void } | undefined
@@ -800,11 +807,13 @@ export async function workspaceHarness(
    * The view columns, the tabs and the keyboard focus stay, and every holder of a group object is pointed at the new one. The Tab objects are kept: Cursor replaces them too and reports a tab of unknown input with `input` undefined.
    * @param closed - Groups the same change closed; they are reported as closed and get no new object.
    * @param opened - The group the same change opened; it is reported as opened and keeps its object.
+   * @param notify - False snapshots the next model before an empty group's first source tab changes, then the completed change emits normally.
    * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
    */
   function replaceGroupObjects(
     closed: typeof groups = [],
     opened?: (typeof groups)[number],
+    notify = true,
   ): void {
     if (!replacesGroupObjectsOnTabChanges) return
     const replacements = new Map(
@@ -821,11 +830,12 @@ export async function workspaceHarness(
       separateEditorPart.group = replaced(separateEditorPart.group)
     for (const editor of visibleSourceEditors)
       editor.group = replaced(editor.group)
-    changedGroups({
-      opened: opened ? [opened] : [],
-      closed,
-      changed: [...replacements.values()],
-    })
+    if (notify)
+      changedGroups({
+        opened: opened ? [opened] : [],
+        closed,
+        changed: [...replacements.values()],
+      })
   }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
@@ -875,6 +885,86 @@ export async function workspaceHarness(
     }
     changedGroups({ opened: [group], closed: [], changed: retained })
     return group
+  }
+
+  /**
+   * Inserts the native empty group used by App preparation, preserving old tabs and their group objects; the newGroupAbove command calls it after focusing the first main group.
+   * @example insertNativeAppGroup() // former main column one becomes column two, with its tabs intact
+   */
+  function insertNativeAppGroup(): void {
+    assert.equal(activeTabGroup.viewColumn, 1)
+    assert.equal(Boolean(separateEditorPart?.focused), false)
+    const aboveFirstLeaf = (node: unknown, orientation: number): unknown => {
+      if (
+        node &&
+        typeof node === 'object' &&
+        'groups' in node &&
+        Array.isArray(node.groups)
+      ) {
+        const [first, ...rest] = node.groups
+        // Split only the first leaf; every other original sibling retains its size and position.
+        if (
+          orientation === 1 &&
+          first &&
+          typeof first === 'object' &&
+          !('groups' in first)
+        )
+          return {
+            ...node,
+            groups: [
+              { size: typeof first.size === 'number' ? first.size / 2 : 0.5 },
+              {
+                ...first,
+                size: typeof first.size === 'number' ? first.size / 2 : 0.5,
+              },
+              ...rest,
+            ],
+          }
+        return {
+          ...node,
+          groups: [aboveFirstLeaf(first, 1 - orientation), ...rest],
+        }
+      }
+      return {
+        ...(node && typeof node === 'object' ? node : {}),
+        groups: [{ size: 0.5 }, { size: 0.5 }],
+      }
+    }
+    const orientation =
+      editorLayout &&
+      typeof editorLayout === 'object' &&
+      'orientation' in editorLayout
+        ? Number(editorLayout.orientation)
+        : 0
+    editorLayout = aboveFirstLeaf(editorLayout, orientation)
+    const rootChildren = layoutChildren(editorLayout),
+      soleChildren =
+        rootChildren?.length === 1 ? layoutChildren(rootChildren[0]) : undefined
+    // Native editor grids do not retain a redundant root around a single split branch.
+    if (soleChildren)
+      editorLayout = { orientation: 1 - orientation, groups: soleChildren }
+    // Native group insertion renumbers every later main and auxiliary column without replacing their documents.
+    for (const group of groups) group.viewColumn++
+    // The current native source shifts with its surviving group, including the public test receipt.
+    sourceColumn++
+    const created: (typeof groups)[number] = { viewColumn: 1, tabs: [] }
+    groups.unshift(created)
+    for (const current of panels)
+      current.viewColumn = groups.find((group) =>
+        group.tabs.includes(current.nativeTab),
+      )?.viewColumn
+    activeTabGroup = created
+    innerFocusedPanel = undefined
+    keyboardInView = false
+    keyboardOnBody = true
+    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([], created)
+    else
+      changedGroups({
+        opened: [created],
+        closed: [],
+        changed: groups.filter((group) => group !== created),
+      })
+    activeTextEditorChanged(undefined)
   }
   /** Counts native layout leaves so shrinking a grid merges only its removed groups in these tests. @example nativeGroupCount({ groups: [{}, {}] }) // 2 */
   function nativeGroupCount(value: unknown): number {
@@ -1229,6 +1319,19 @@ export async function workspaceHarness(
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
   }
+  /** Models native debug opens skipping a locked App group; pause and Call Stack fixtures use an existing unlocked main group, without affecting explicit learner moves. @param requested - Native debug's preferred group. @returns An unlocked main column. @example nativeDebugColumn(1) // => 2 when App group one is locked */
+  function nativeDebugColumn(requested: number): number {
+    if (!groups.find((group) => group.viewColumn === requested)?.locked)
+      return requested
+    const unlocked = groups
+      .filter((group) => group !== separateEditorPart?.group && !group.locked)
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)[0]
+    assert.ok(
+      unlocked,
+      'This native routing fixture requires an unlocked main group',
+    )
+    return unlocked.viewColumn
+  }
   /**
    * Removes an emptied native group for {@link closeTabs} and pane disposal, modelling the host's editor-part focus restoration.
    * @param emptied - The current group whose last tab closed.
@@ -1260,6 +1363,8 @@ export async function workspaceHarness(
     groups.splice(groups.indexOf(emptied), 1)
     for (const remaining of groups)
       if (remaining.viewColumn > emptied.viewColumn) remaining.viewColumn--
+    // Removing an earlier native group renumbers the source receipt too; it is not another source reveal.
+    if (sourceColumn > emptied.viewColumn) sourceColumn--
     for (const retained of panels)
       retained.viewColumn = groups.find((candidate) =>
         candidate.tabs.includes(retained.nativeTab),
@@ -1307,14 +1412,7 @@ export async function workspaceHarness(
       // The group shows another editor, or none, once the tab it showed is closed.
       if (active && tabs.includes(active)) returnHiddenEditorArea()
       // The editor activates the neighbouring tab when the active one closes.
-      if (
-        active &&
-        tabs.includes(active) &&
-        (modelsNativeTabCloseFocus ||
-          leftoverCapturedTabs.has(active) ||
-          deadPaneTabs.has(active) ||
-          [...panels].some((current) => current.nativeTab === active))
-      ) {
+      if (active && tabs.includes(active)) {
         group.activeTab = group.tabs.at(-1)
         closedActiveLeftover = true
         // False on a nonempty group activates its replacement editor even when another file or a view held the keyboard.
@@ -1686,7 +1784,8 @@ export async function workspaceHarness(
           )
           for (const group of groups) {
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
-            if (group.activeTab === nativeTab) group.activeTab = undefined
+            if (group.activeTab === nativeTab)
+              group.activeTab = group.tabs.at(-1)
           }
           const group = nativeGroup(value.viewColumn ?? 1)
           revealIntoHiddenEditorArea(
@@ -1830,8 +1929,6 @@ export async function workspaceHarness(
           if (!wasInFront) replaceGroupObjects()
           for (const listener of viewChanged) listener()
         }
-        if (contextCoversSource && kind === 'codebook.studyContext')
-          groups[0]!.activeTab = undefined
       },
       onDidDispose(callback: () => void) {
         disposed.push(callback)
@@ -1877,7 +1974,8 @@ export async function workspaceHarness(
           )
           for (const group of groups) {
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
-            if (group.activeTab === nativeTab) group.activeTab = undefined
+            if (group.activeTab === nativeTab)
+              group.activeTab = group.tabs.at(-1)
           }
           // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
           if (closeDisposedPanelTabsDuringLayoutRead) {
@@ -2024,6 +2122,7 @@ export async function workspaceHarness(
       private readonly lease: {
         panel: ReturnType<typeof panel>
         released(): void
+        assertCanReveal?(current: ReturnType<typeof panel>): void
         comesWithoutKeyboard?(): Promise<boolean>
         tookKeyboardFromEditor?(): void
       },
@@ -2070,6 +2169,11 @@ export async function workspaceHarness(
       }
       // Like the real viewport, a pinned live lease returns without touching the panel, and only a renderer detached by a handoff writes its document again.
       if (!this.historical) {
+        // Native visibility changes use the same final lease admission as the production viewport.
+        if (!this.panel.visible) {
+          this.lease.assertCanReveal?.(this.panel)
+          this.panel.reveal(this.panel.viewColumn, true)
+        }
         if (!this.rendererAttached)
           this.panel.webview.html = this.rendererDocument
         // A document another writer put into the panel never answers the readiness request.
@@ -2114,8 +2218,12 @@ export async function workspaceHarness(
      */
     async revealOverPausedFile(): Promise<void> {
       assert.equal(this.closed, false)
+      if (this.panel.visible) return
+      // The real viewport rejects an already unsafe target before its owner can move keyboard focus.
+      this.lease.assertCanReveal?.(this.panel)
       const keeps = (await this.lease.comesWithoutKeyboard?.()) ?? false
-      this.panel.reveal(undefined, keeps)
+      this.lease.assertCanReveal?.(this.panel)
+      this.panel.reveal(this.panel.viewColumn, keeps)
       if (!keeps) this.lease.tookKeyboardFromEditor?.()
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
@@ -2501,6 +2609,14 @@ export async function workspaceHarness(
               activeTextEditorChanged(sourceFocusOnArrange)
             return
           }
+          if (name === 'workbench.action.newGroupAbove') {
+            insertNativeAppGroup()
+            return
+          }
+          if (name === 'workbench.action.lockEditorGroup') {
+            activeTabGroup.locked = true
+            return
+          }
           if (
             name === 'workbench.action.keepEditor' &&
             activeTabGroup.activeTab
@@ -2645,7 +2761,11 @@ export async function workspaceHarness(
               previousGroup = activeTabGroup,
               primaryGroup = groups.find((group) => group.viewColumn === 1)!
             const primaryEditor = visibleSourceEditors.find(
-              (editor) => editor.group === primaryGroup,
+              (editor) =>
+                editor.group === primaryGroup &&
+                primaryGroup.activeTab?.input instanceof TabInputText &&
+                editor.document.uri.toString() ===
+                  primaryGroup.activeTab.input.uri.toString(),
             )
             // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
             if (
@@ -2660,26 +2780,27 @@ export async function workspaceHarness(
               separateEditorPart.focused = false
               if (primaryGroup.activeTab?.input instanceof TabInputText)
                 activeTextEditorChanged(focusedSourceEditor())
-              return undefined
-            }
-            // Native text and tab-group notifications have no cross-event ordering guarantee.
-            if (primaryNotificationOrder === 'editor first') {
-              partialFocusEditor = { value: primaryEditor }
+            } else {
+              // Native text and tab-group notifications have no cross-event ordering guarantee.
+              if (primaryNotificationOrder === 'editor first') {
+                partialFocusEditor = { value: primaryEditor }
+                activeTextEditorChanged(primaryEditor)
+              }
+              if (primaryNotificationOrder === 'group first')
+                partialFocusEditor = { value: previousEditor }
+              activeTabGroup = primaryGroup
+              if (deferPrimaryFocusEcho)
+                pendingPrimaryFocusEcho = activeTabGroup
+              if (separateEditorPart) separateEditorPart.focused = false
+              if (primaryNotificationOrder !== 'together')
+                changedGroups({
+                  opened: [],
+                  closed: [],
+                  changed: [previousGroup, primaryGroup],
+                })
+              partialFocusEditor = undefined
               activeTextEditorChanged(primaryEditor)
             }
-            if (primaryNotificationOrder === 'group first')
-              partialFocusEditor = { value: previousEditor }
-            activeTabGroup = primaryGroup
-            if (deferPrimaryFocusEcho) pendingPrimaryFocusEcho = activeTabGroup
-            if (separateEditorPart) separateEditorPart.focused = false
-            if (primaryNotificationOrder !== 'together')
-              changedGroups({
-                opened: [],
-                closed: [],
-                changed: [previousGroup, primaryGroup],
-              })
-            partialFocusEditor = undefined
-            activeTextEditorChanged(primaryEditor)
             // The command effect may precede its RPC response; newer learner input must not become the operation's baseline.
             const response = nextPrimaryFocusResponse
             nextPrimaryFocusResponse = undefined
@@ -2749,6 +2870,7 @@ export async function workspaceHarness(
             return layout
           }
           if (name === 'vscode.setEditorLayout') {
+            const previousMainGroupCount = nativeGroupCount(editorLayout)
             explicitEditorLayout = true
             maximizedEditorGroup = false
             // The public layout command changes the active part even while TabGroups still reports the old main active group.
@@ -2784,8 +2906,13 @@ export async function workspaceHarness(
                 }
               : structuredClone(settledLayout)
             settlementPending = transientLayout
-            if (nativeLayout) {
-              const count = nativeGroupCount(layout)
+            // Native applyLayout preserves group identities when only their geometry changes, including every other editor part.
+            if (
+              nativeLayout &&
+              nativeGroupCount(layout) !== previousMainGroupCount
+            ) {
+              const count = nativeGroupCount(layout),
+                activeColumnBeforeMerge = activeTabGroup.viewColumn
               for (let column = 1; column <= count; column++)
                 nativeGroup(column, true)
               let removed = groups.filter(
@@ -2820,6 +2947,23 @@ export async function workspaceHarness(
               }
               const destination = nativeGroup(count)
               for (const group of removed) {
+                // A native contraction carries each editor with its actual tab, preserving other copies and selections.
+                for (const editor of new Set([
+                  ...visibleSourceEditors,
+                  lastSourceEditor,
+                ]))
+                  if (
+                    editor &&
+                    (editor.group?.viewColumn ?? editor.viewColumn) ===
+                      group.viewColumn &&
+                    group.tabs.some(
+                      (tab) =>
+                        tab.input instanceof TabInputText &&
+                        tab.input.uri.toString() ===
+                          editor.document.uri.toString(),
+                    )
+                  )
+                    editor.group = destination
                 destination.tabs.push(...group.tabs)
                 if (group.activeTab) destination.activeTab = group.activeTab
                 for (const view of panels)
@@ -2861,15 +3005,46 @@ export async function workspaceHarness(
               )
               if (separateEditorPart)
                 separateEditorPart.group.viewColumn = count + 1
+              // Cursor can replace wrappers again after the merge; native input and visible editors follow those surviving groups.
+              activeTabGroup =
+                groups.find(
+                  (group) =>
+                    group.viewColumn ===
+                    (removed.some(
+                      (previous) =>
+                        previous.viewColumn === activeColumnBeforeMerge,
+                    )
+                      ? count
+                      : activeColumnBeforeMerge),
+                ) ?? activeTabGroup
+              for (const editor of new Set([
+                ...visibleSourceEditors,
+                lastSourceEditor,
+              ])) {
+                if (!editor) continue
+                const surviving = groups.find(
+                  (group) =>
+                    group.viewColumn ===
+                      (editor.group?.viewColumn ?? editor.viewColumn) &&
+                    group.tabs.some(
+                      (tab) =>
+                        tab.input instanceof TabInputText &&
+                        tab.input.uri.toString() ===
+                          editor.document.uri.toString(),
+                    ),
+                )
+                if (surviving) editor.group = surviving
+              }
               if (removed.length)
                 changedGroups({
                   opened: [],
                   closed: removed,
                   changed: cursorGroupWrappers ? [...groups] : [destination],
                 })
-            } else {
+            } else if (!nativeLayout) {
               const opened: typeof groups = []
-              for (const column of [1, 3])
+              // Legacy fixtures still honor the requested leaf count; restoring two groups must not invent a phantom Context group three.
+              for (let column = 1; column <= nativeGroupCount(layout); column++)
                 if (!groups.some((group) => group.viewColumn === column)) {
                   const group = { viewColumn: column, tabs: [] }
                   groups.push(group)
@@ -3008,6 +3183,15 @@ export async function workspaceHarness(
             options?.viewColumn === undefined
               ? sourceColumn
               : nativeReaderColumn(options.viewColumn)
+          // A native full-model replacement leaves the old empty wrapper empty until the new source-tab event arrives.
+          if (
+            replacesGroupObjectsOnTabChanges &&
+            groups.some(
+              (group) =>
+                group.viewColumn === sourceColumn && !group.tabs.length,
+            )
+          )
+            replaceGroupObjects([], undefined, false)
           const group =
               groups.find(
                 (candidate) => candidate.viewColumn === sourceColumn,
@@ -3138,7 +3322,30 @@ export async function workspaceHarness(
               },
             }
           },
-          close: async (tabs: Tab[], preserveFocus?: boolean) => {
+          close: async (
+            tabs: Tab[] | (typeof groups)[number],
+            preserveFocus?: boolean,
+          ) => {
+            // The public group overload closes its tabs too; production must establish ownership before calling it.
+            if (!Array.isArray(tabs)) {
+              const column = tabs.viewColumn,
+                count = groups.length
+              if (tabs.tabs.length && !closeTabs([...tabs.tabs], preserveFocus))
+                return false
+              const remaining = groups.find(
+                (group) => group.viewColumn === column,
+              )
+              if (groups.length === count && remaining)
+                removeEmptiedGroup(remaining, preserveFocus)
+              // An accepted group close has the same delayed response boundary as an accepted tab close.
+              const held = heldTabCloseResponse
+              heldTabCloseResponse = undefined
+              if (held) {
+                held.entered()
+                await held.wait
+              }
+              return true
+            }
             tabCloseRequests.push([...tabs])
             tabCloseFocusRequests.push(Boolean(preserveFocus))
             if (rejectNextTabClose) {
@@ -3638,9 +3845,6 @@ export async function workspaceHarness(
       automaticContextReceipt = true
     },
     displayedImage: () => displayedImage,
-    coverSourceWhenContextFocused(): void {
-      contextCoversSource = true
-    },
     panelColumn: (kind: string) =>
       [...panels].find((panel) => panel.kind === kind)?.viewColumn,
     displayedSourceText: (path: string) =>
@@ -3814,12 +4018,14 @@ export async function workspaceHarness(
     },
     /** Models a learner returning to an existing source during a held presentation response. @example harness.focusExistingSource(source); */
     focusExistingSource(editor: SourceEditor): void {
-      const group = groups.find((candidate) =>
-        candidate.tabs.some(
-          (tab) =>
-            tab.input instanceof TabInputText &&
-            tab.input.uri.toString() === editor.document.uri.toString(),
-        ),
+      const group = groups.find(
+        (candidate) =>
+          candidate.viewColumn === editor.viewColumn &&
+          candidate.tabs.some(
+            (tab) =>
+              tab.input instanceof TabInputText &&
+              tab.input.uri.toString() === editor.document.uri.toString(),
+          ),
       )
       assert.ok(group)
       group.activeTab = group.tabs.find(
@@ -3828,6 +4034,11 @@ export async function workspaceHarness(
           tab.input.uri.toString() === editor.document.uri.toString(),
       )
       activeTabGroup = group
+      // Native source input selects this particular copy and leaves any previously focused view/chat.
+      lastSourceEditor = editor
+      keyboardInView = false
+      keyboardOnBody = false
+      if (separateEditorPart) separateEditorPart.focused = false
       innerFocusedPanel = undefined
       activeTextEditorChanged(editor)
       changedGroups({ opened: [], closed: [], changed: [group] })
@@ -3901,12 +4112,19 @@ export async function workspaceHarness(
       destination.activeTab = tab
       activeTabGroup = destination
       sourceColumn = column
-      lastSourceEditor = {
-        ...editor,
-        get viewColumn() {
-          return destination.viewColumn
-        },
-      }
+      const movedEditor = visibleSourceEditors.find(
+        (candidate) =>
+          candidate.group === previous &&
+          candidate.document.uri.toString() === editor.document.uri.toString(),
+      )
+      assert.ok(
+        movedEditor,
+        'A moved source must retain its registered native editor',
+      )
+      // Native getters and the emitted event must describe the same moved document and selections.
+      movedEditor.group = destination
+      editor.group = destination
+      lastSourceEditor = movedEditor
       activeTextEditorChanged(lastSourceEditor)
     },
     editorLayout: () => structuredClone(editorLayout),
@@ -4053,7 +4271,7 @@ export async function workspaceHarness(
         giveDraftKeyboard(
           openDraftTab(
             options.opensWithKeyboard.filename,
-            options.opensWithKeyboard.column,
+            nativeDebugColumn(options.opensWithKeyboard.column),
           ),
         )
       activeStackItem = {
@@ -4093,7 +4311,11 @@ export async function workspaceHarness(
       const isDoubleClick = gesture.startsWith('double-click')
       const opensPreview =
         isDoubleClick || gesture.startsWith('click-on-unopened-file')
-      const opened = openDraftTab(filename, column, opensPreview)
+      const opened = openDraftTab(
+        filename,
+        nativeDebugColumn(column),
+        opensPreview,
+      )
       if (gesture === 'navigation-command') giveDraftKeyboard(opened)
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
       else activeTextEditorChanged(focusedSourceEditor())
@@ -4126,7 +4348,7 @@ export async function workspaceHarness(
     },
     /**
      * Reports a fresh object for the active text tab before any frame, editor or selection event, for the third-sign regressions of {@link StudyWorkspace}.
-     * @param state - The current tab's preview and dirty values, and an optional replacement file or view column.
+     * @param state - The current tab's preview and dirty values, and an optional replacement file or view column. A replacement file has a matching native document/editor before this tab-only report; no active-editor callback is emitted.
      * @returns The previous tab object, whose values stay as last reported.
      * @example harness.reportActiveTextTab({ isPreview: false, isDirty: false })
      */
@@ -4138,6 +4360,18 @@ export async function workspaceHarness(
     }): Tab {
       const previous = activeTabGroup.activeTab
       assert.ok(previous?.input instanceof TabInputText)
+      // A changed file needs its actual editor too; a tab-only URI with no matching editor cannot exercise source-input protection.
+      const opened = state.filename
+        ? openDraftTab(
+            state.filename,
+            activeTabGroup.viewColumn,
+            state.isPreview,
+          )
+        : undefined
+      if (opened)
+        activeTabGroup.tabs = activeTabGroup.tabs.filter(
+          (tab) => tab !== opened.tab,
+        )
       const replacement = {
         ...previous,
         input: state.filename
@@ -4232,7 +4466,9 @@ export async function workspaceHarness(
           event: 'invalidated',
           body: { areas: ['stacks'] },
         })
-      giveDraftKeyboard(openDraftTab(paused.filename, paused.column))
+      giveDraftKeyboard(
+        openDraftTab(paused.filename, nativeDebugColumn(paused.column)),
+      )
       activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
       for (const listener of [...activeStackItemListeners]) listener()
     },
@@ -4283,7 +4519,7 @@ export async function workspaceHarness(
       filename: string,
       column: number,
     ): void {
-      openDraftTab(filename, column)
+      openDraftTab(filename, nativeDebugColumn(column))
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
       activeTextEditorChanged(focusedSourceEditor())
       activeStackItem = {
@@ -4414,6 +4650,12 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     useNativeLayout(layout: unknown): void {
+      // Replacing the fixture's native desktop closes its real pane handles and removes their old editors, rather than leaving invisible owners alive.
+      for (const current of [...panels]) current.dispose()
+      visibleSourceEditors.splice(0)
+      lastSourceEditor = undefined
+      keyboardOnBody = false
+      keyboardInView = false
       nativeLayout = true
       separateEditorPart = undefined
       const previous = [...groups]
@@ -4421,11 +4663,9 @@ export async function workspaceHarness(
       editorLayout = structuredClone(layout)
       for (let column = 1; column <= nativeGroupCount(layout); column++)
         nativeGroup(column, true)
-      groups[0]!.tabs.push({
-        input: new TabInputText(
-          Uri.file(join(harness.directory, 'article-source.ts')),
-        ),
-      })
+      // A native visible source tab always has its corresponding TextEditor, including when App later uncovers it.
+      const initialSource = openDraftTab('article-source.ts', 1)
+      initialSource.tab.isDirty = false
       groups[1]?.tabs.push({
         input: new TabInputWebview('codebook.repositoryWiki'),
       })
@@ -4717,6 +4957,7 @@ export async function workspaceHarness(
      * @param change - An optional real layout/lifecycle change accompanying the wrapper refresh.
      * @param preserveEmpty - Keep originally empty groups empty during the refresh.
      * @param preserveLabels - Keep native labels for a refresh that changes no logical tab.
+     * @param appendColumn - Native destination for the appended tab; omitted retains the first listed group's behavior.
      * @example harness.resyncEditorGroups(undefined, false, true)
      */
     resyncEditorGroups(
@@ -4730,6 +4971,7 @@ export async function workspaceHarness(
         | 'empty',
       preserveEmpty = false,
       preserveLabels = false,
+      appendColumn?: number,
     ): void {
       // Give each fake group a distinct stable input, like the actual singleton panels/native source tabs.
       for (const group of groups)
@@ -4788,10 +5030,19 @@ export async function workspaceHarness(
         groups[0]!.tabs = groups[1]!.tabs
         groups[1]!.tabs = first
       }
-      if (change === 'append')
-        groups[0]!.tabs.splice(1, 0, {
+      if (change === 'append') {
+        const destination = groups.find(
+          (group) =>
+            group.viewColumn === (appendColumn ?? groups[0]?.viewColumn),
+        )
+        assert.ok(
+          destination,
+          'The appended native tab needs an existing group',
+        )
+        destination.tabs.splice(1, 0, {
           input: new TabInputText(Uri.file('/learner-added-notes.txt')),
         })
+      }
       if (change === 'remove') groups[0]!.tabs.pop()
       if (change === 'reorder') groups[0]!.tabs.reverse()
       changedGroups({

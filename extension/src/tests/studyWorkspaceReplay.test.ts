@@ -18,6 +18,7 @@ import {
   workspaceHarness,
   recordedReaderHarness,
   configuredWorkspaceHarness,
+  articleRecordingLayoutHarness,
   readerSeams,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -416,8 +417,6 @@ test('a new historical seek refuses to recreate a learner-closed source until ex
 test('historical source capacity freezes every pinned display and permits explicit recovery after one older view is unpinned', async () => {
   // Arrange: each explicitly opened display is pinned at one captured historical point.
   const harness = await recordedReaderHarness(true, true)
-  const unconfirmedFixtureLayout =
-    'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.'
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -428,11 +427,9 @@ test('historical source capacity freezes every pinned display and permits explic
       positionMs: 100,
     })
     await harness.controller.settle()
-    // This synthetic recording has no confirmed native geometry before any pin; capacity recovery must preserve that separate warning.
-    assert.deepEqual(
-      [...harness.reader.inspect().view!.errors],
-      [unconfirmedFixtureLayout],
-    )
+    // Owned App preparation confirms this fixture's measured main layout before pinning.
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.deepEqual([...harness.reader.inspect().view!.errors], [])
     const pinned = []
     // The existing cache bound is 34 documents; a pin freezes each display's provider bytes.
     for (let index = 0; index < 34; index++) {
@@ -473,10 +470,7 @@ test('historical source capacity freezes every pinned display and permits explic
     pinned[0]!.tab.isPinned = false
     await harness.reader.action('source')
     assert.equal(readerSeams(harness).isSourceShown(), true)
-    assert.deepEqual(
-      [...harness.reader.inspect().view!.errors],
-      [unconfirmedFixtureLayout],
-    )
+    assert.deepEqual([...harness.reader.inspect().view!.errors], [])
   } finally {
     await harness.close()
   }
@@ -1956,28 +1950,66 @@ test('ordinary Study entry retains manually shared pane columns until the learne
 })
 
 test('opening a recording restores its captured source after context focus covers the manually moved source group', async () => {
-  // Arrange
-  const harness = await recordedReaderHarness()
-  harness.coverSourceWhenContextFocused()
+  // Arrange: show an actual saved observation, then put its source behind the real Context pane.
+  const harness = await articleRecordingLayoutHarness(true, true)
   try {
+    // Establish the learner's actual saved100ms replay position before reading its source-derived explanation.
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    assert.equal(harness.controller.state().presentedMs, 100)
+    await harness.reader.action('return-wiki')
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.sourceColumn(), 2)
+    harness.moveSource(3)
+    assert.equal(harness.editor.window.activeTextEditor?.viewColumn, 3)
+    assert.equal(
+      harness.editor.window.visibleTextEditors.some(
+        (editor) => editor.viewColumn === 3,
+      ),
+      true,
+    )
+    await harness.reader.action('focus-context')
+    const covered = harness.groups.find((group) => group.viewColumn === 3)!
+      .activeTab?.input
+    assert.ok(covered && 'viewType' in covered)
+    assert.equal(covered.viewType, 'codebook.studyContext')
+    assert.equal(harness.sourceColumn(), 3)
+
     // Act
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
-    // Assert
+
+    // Assert: the recording restores its own source/image and replaces Context with the summary.
     const state = harness.reader.inspect()
     assert.equal(
       state.view?.recording?.readiness,
       'ready',
       state.view?.recording?.reason,
     )
-    const input = harness.groups[0]?.activeTab?.input
+    const input = harness.groups.find((group) => group.viewColumn === 2)!
+      .activeTab?.input
     assert.ok(input && 'uri' in input)
     assert.equal(input.uri.toString(), state.sourceUri)
+    assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.equal(harness.runtimes.length, 1)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.summary.visible, true)
   } finally {
     await harness.close()
   }
 })
-
 // Value: protects=the learner who opened a workspace file in the Application group during a replay being told what happened; fails_when=the reader retires the covered moment like a missing one, so Run and Debug reads "Not recorded at this moment" and the Learning summary reads "Loading the selected observation…" for as long as the file stays in front; why_new=Cycle 0045 NF-31 as DR-19; seam=the harness's fake historical debugger keeps the label of each invalidation
 test('a workspace file opened over the recorded application is reported to Run and Debug and to the Learning summary as a covered recording, not as a missing or loading moment', async () => {
   // Arrange: a recorded stop is shown in the Application pane.

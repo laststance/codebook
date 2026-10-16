@@ -2623,12 +2623,9 @@ test('the browser-replay refusal of a Node test history offers no Retry storage 
       1_000,
     )
 
-    // Assert: the Recording's own layout notice is the other line, itself not retryable; leaving Recording by the tab retires it too.
-    assert.deepEqual(refused.errors, [
-      'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
-      refusal,
-    ])
-    assert.equal(refused.unretryableErrorCount, 2)
+    // Assert: the measured recording layout is confirmed; only the refused Node-history choice needs a notice.
+    assert.deepEqual(refused.errors, [refusal])
+    assert.equal(refused.unretryableErrorCount, 1)
     const view = harness.reader.inspect().view!
     assert.deepEqual(structuredClone(view.errors), [])
     assert.equal(view.unretryableErrorCount, 0)

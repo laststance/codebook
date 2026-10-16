@@ -31,6 +31,13 @@ export interface ViewportLease {
   panel: vscode.WebviewPanel
   released(): void
   /**
+   * Refuses unsafe native effects before asking the keyboard owner and again at {@link BrowserViewport.revealPanel}'s final reveal boundary.
+   * @param panel - The actual current renderer, including an admitted replacement from {@link BrowserViewport.rebindPanel}.
+   * @throws When the current panel, group or displayed tab no longer belongs to this presentation.
+   * @example assertCanReveal(panel) // throws before a learner's replacement tab can be hidden
+   */
+  assertCanReveal?(panel: vscode.WebviewPanel): void
+  /**
    * Asked right before the leased pane is revealed over the active text editor of its group ({@link BrowserViewport.coversActiveTextEditor}): the pane's owner says whether the pane is to come to the front without the keyboard. The owner knows what the viewport cannot read: whether the editor's debugger gave that editor the keyboard at a stop, whether it gave the keyboard back to whoever had it before the pause (a chat), whether the learner selected the frame in the Call Stack view, and whether the learner gave a sign of working in that editor, at a pause or while a session runs. The owner is asked before the reveal and not told after it, because a webview's focus cannot be awaited: it reaches the pane's frame some time after `reveal()` returned, and a focus command run right behind the reveal could be undone by it.
    * @returns `true` when the pane must not take the keyboard, `false` when it has to take it.
    */
@@ -450,6 +457,8 @@ export class BrowserViewport {
     this.suspendRenderer()
     // Refresh a visible renderer without reselecting its native tab over the learner's Study focus.
     if (!this.panel.visible) {
+      // Already unsafe ownership cannot authorize an asynchronous focus return before final admission refuses it.
+      this.assertLeaseAllowsReveal()
       const takesKeyboard = this.takesKeyboardAtReveal()
       // Only an owner that was asked is waited for: every other reveal stays in this turn.
       if (typeof takesKeyboard === 'boolean') this.revealPanel(takesKeyboard)
@@ -541,8 +550,19 @@ export class BrowserViewport {
       this.panel.reveal(vscode.ViewColumn.One, false)
       return
     }
-    this.panel.reveal(undefined, !takesKeyboard)
+    // This rejection stays outside the boolean owner's fallback and leaves no await before the native effect.
+    this.assertLeaseAllowsReveal()
+    this.panel.reveal(this.panel.viewColumn, !takesKeyboard)
     if (takesKeyboard) this.lease.tookKeyboardFromEditor?.()
+  }
+
+  /**
+   * Checks the current lease for {@link revealNow} before asking its keyboard owner and for {@link revealPanel} immediately before the native effect.
+   * @throws The owner's refusal when the current panel or group is no longer safe to reveal.
+   * @example this.assertLeaseAllowsReveal() // refuses before covering a learner's newer tab
+   */
+  private assertLeaseAllowsReveal(): void {
+    this.lease?.assertCanReveal?.(this.panel)
   }
 
   /**

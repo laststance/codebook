@@ -12,6 +12,7 @@ import type { PresentationPoseCapture } from '../presentationSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { isProportionalEditorLayout } from '../utils/isProportionalEditorLayout'
 import { settledWithin } from '../utils/settledWithin'
 import { withStorageLock } from '../utils/withStorageLock'
 
@@ -24,6 +25,7 @@ import {
 } from './studyWorkspaceHarness'
 import {
   advanceClockUntil,
+  advanceClockUntilSettled,
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
@@ -790,6 +792,66 @@ for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
     }
   })
 
+for (const changed of ['predecessor', 'replacement'] as const)
+  test(`same-column App handoff preserves the old lease when the ${changed} preview state changes during registration`, async () => {
+    // Arrange: App preparation moved its retained predecessor, which is now a native preview.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live:
+      | Awaited<
+          ReturnType<
+            NonNullable<typeof harness.reader.presentation.createViewport>
+          >
+        >
+      | undefined
+    try {
+      await harness.reader.open()
+      live = await harness.reader.presentation.createViewport(
+        'preview-change',
+        () => {},
+        () => {},
+        'normal',
+      )
+      await harness.reader.action('focus-context')
+      const state = harness.reader.presentationState(),
+        predecessor = harness
+          .nativePanels()
+          .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+      assert.equal(predecessor.nativeTab.isPreview, true)
+      let changedDuringRegistration = false
+      harness.onNextPanel('codebook.scopedBrowser', (replacement) => {
+        // A real later native flag change cannot become the creation receipt's expected cohort.
+        if (changed === 'predecessor') predecessor.nativeTab.isPreview = false
+        else replacement.nativeTab.isPreview = true
+        harness.replaceEditorGroup('wrapper', replacement.viewColumn)
+        changedDuringRegistration = true
+      })
+
+      // Act
+      await assert.rejects(
+        harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'guided-walkthrough',
+          action: 'select',
+        }),
+        { code: 'PRESENTATION_UNAVAILABLE' },
+      )
+
+      // Assert: failed creation removes its replacement and preserves the original renderer/lease and later flag.
+      assert.equal(changedDuringRegistration, true)
+      assert.equal(harness.reader['viewport'], live)
+      assert.equal(harness.reader['app'], predecessor)
+      assert.equal(predecessor.nativeTab.isPreview, changed !== 'predecessor')
+      assert.equal(harness.reader.presentationState().mode, 'study-workspace')
+      assert.equal(harness.presentationPreferences.size, 0)
+      assert.equal(harness.counts().panels, 2)
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
 for (const change of [
   'opened',
   'unannounced',
@@ -1029,21 +1091,35 @@ test('closing the adopted application during native layout rejects the transitio
         >
       | undefined
   try {
+    // A real prepared Live entry owns the App/source composition; the old synthetic idle lease now has four retained groups and correctly refuses a legacy mode change before layout.
+    await harness.reader.attach(harness.service)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
     await harness.reader.open()
     live = await harness.reader.presentation.createViewport(
-      'close-current',
+      receipt.runId,
       () => {},
       (reason) => failures.push(reason),
       'normal',
     )
+    // Explicit Restore must actually issue a native layout effect before the panel-close race.
+    harness.changeEditorLayout({
+      orientation: 0,
+      groups: [{ size: 3 }, { size: 1 }],
+    })
     const held = harness.holdNextCommand('vscode.setEditorLayout')
     release = held.release
     const state = harness.reader.presentationState()
     const changing = harness.reader.changePresentation({
       presentationId: state.presentationId,
       expectedRevision: state.presentationControlRevision,
-      mode: 'living-book',
-      action: 'select',
+      mode: 'study-workspace',
+      action: 'restore',
     })
     const rejected = assert.rejects(changing, {
       code: 'PRESENTATION_UNAVAILABLE',
@@ -1059,7 +1135,7 @@ test('closing the adopted application during native layout rejects the transitio
     // Assert
     assert.deepEqual(failures, ['Owned viewport closed before cleanup'])
     assert.equal(harness.reader['app'], undefined)
-    assert.equal(harness.counts().panels, 1)
+    assert.equal(harness.counts().panels, 0)
     assert.equal(harness.presentationPreferences.size, 0)
     assert.equal(harness.reader.presentationState().mode, 'study-workspace')
     assert.equal(harness.reader.presentationState().layoutConfirmed, false)
@@ -2460,7 +2536,7 @@ test('native disposal refuses indistinguishable rebuilt same-kind panes in its c
 for (const originalGroups of [1, 2])
   test(`recording reentry retires the reader-created Context group after wrapper refresh when ${originalGroups} learner groups existed before Open`, async () => {
     // Arrange: Context occupies a group created by Open, unlike the learner's preexisting empty third group.
-    const harness = await articleRecordingLayoutHarness()
+    const harness = await articleRecordingLayoutHarness(true, true)
     harness.useNativeLayout({
       orientation: 0,
       groups: Array.from({ length: originalGroups }, () => ({})),
@@ -2476,6 +2552,7 @@ for (const originalGroups of [1, 2])
       )
       assert.equal(harness.groups.length, 3)
       harness.resyncEditorGroups()
+      const application = harness.reader['app']
 
       // Act: recording reentry may retire only its own unchanged created group.
       await harness.reader.openRepositoryEvidence(
@@ -2486,13 +2563,34 @@ for (const originalGroups of [1, 2])
       )
       await harness.controller.settle()
 
-      // Assert: normal recording still uses two groups and keeps the learner's original source tab.
-      assert.equal(harness.groups.length, 2)
-      assert.deepEqual(harness.editorLayout(), {
-        orientation: 1,
-        groups: [{ size: 0.5 }, { size: 0.5 }],
-      })
+      // Assert: a created Source split retires; an original Wiki group survives beside the newly added App.
+      assert.equal(harness.groups.length, originalGroups === 1 ? 2 : 3)
+      assert.equal(
+        isProportionalEditorLayout(harness.editorLayout(), {
+          orientation: 1,
+          groups:
+            originalGroups === 1
+              ? [{ size: 0.5 }, { size: 0.5 }]
+              : [{ size: 0.25 }, { size: 0.25 }, { size: 0.5 }],
+        }),
+        true,
+      )
+      if (originalGroups === 2)
+        assert.equal(
+          harness.groups
+            .find((group) => group.viewColumn === 3)
+            ?.tabs.some(
+              (tab) =>
+                tab.input instanceof harness.editor.TabInputWebview &&
+                tab.input.viewType === 'codebook.repositoryWiki',
+            ),
+          true,
+        )
       assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.reader['app'], application)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(harness.sourceColumn(), 2)
+      assert.equal(harness.displayedImage(), harness.png.toString('base64'))
       assert.equal(
         harness.groups
           .flatMap((group) => group.tabs)
@@ -2505,6 +2603,371 @@ for (const originalGroups of [1, 2])
       )
       assert.equal(draft.document.getText(), 'Original learner draft.\n')
     } finally {
+      await harness.close()
+    }
+  })
+
+for (const laterChoice of [
+  'pinned capture',
+  'dirty draft',
+  'replacement group',
+])
+  test(`recording keeps a reader-created source group after the learner adds a ${laterChoice}`, async () => {
+    // Arrange
+    const harness = await articleRecordingLayoutHarness(true, true)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.replaceGroupObjectsOnTabChanges()
+    const original = harness.focusMutableDraft('auth.ts', 1)
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        false,
+        undefined,
+        harness.origin,
+      )
+      const source = harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.viewColumn === 2,
+      )
+      assert.ok(source)
+      const sourceUri = source.document.uri.toString(),
+        sourceText = source.document.getText()
+      let draft: ReturnType<typeof harness.focusMutableDraft> | undefined
+      if (laterChoice === 'pinned capture') {
+        const tab = harness.groups
+          .find((group) => group.viewColumn === 2)
+          ?.tabs.find(
+            (tab) =>
+              tab.input instanceof harness.editor.TabInputText &&
+              tab.input.uri.toString() === sourceUri,
+          )
+        assert.ok(tab)
+        tab.isPinned = true
+      } else if (laterChoice === 'dirty draft') {
+        draft = harness.focusMutableDraft('source-notes.txt', 2)
+        harness.focusExistingSource(source)
+      } else harness.replaceEditorGroup('opened', 2)
+
+      // Act
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+
+      // Assert: App adds a group, while the adopted/replaced original Source group survives in column three.
+      assert.equal(harness.groups.length, 3)
+      assert.equal(harness.controller.state().readiness, 'ready')
+      assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
+      if (laterChoice === 'pinned capture') {
+        assert.equal(
+          harness.groups
+            .find((group) => group.viewColumn === 3)
+            ?.tabs.some(
+              (tab) =>
+                tab.isPinned &&
+                tab.input instanceof harness.editor.TabInputText &&
+                tab.input.uri.toString() === sourceUri,
+            ),
+          true,
+        )
+        assert.equal(source.document.getText(), sourceText)
+      }
+      if (draft) {
+        assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        // Context retirement rebuilds Cursor's wrappers before App insertion; use the current native group rather than an old editor object.
+        assert.equal(
+          harness.groups.find((group) =>
+            group.tabs.some(
+              (tab) =>
+                tab.input instanceof harness.editor.TabInputText &&
+                tab.input.uri.toString() === draft.document.uri.toString(),
+            ),
+          )?.viewColumn,
+          3,
+        )
+      }
+    } finally {
+      await harness.close()
+    }
+  })
+
+for (const laterChoice of ['new source', 'new source with chat', 'Close'])
+  test(`recording source-group retirement stops after ${laterChoice} while its native copy waits`, async () => {
+    // Arrange: hold only the actual native copy response, after the same document has appeared in its new group.
+    const harness = await articleRecordingLayoutHarness(true, true)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.replaceGroupObjectsOnTabChanges()
+    const original = harness.focusMutableDraft('auth.ts', 1)
+    const chat =
+      laterChoice === 'new source with chat'
+        ? harness.addSeparateEditorPart()
+        : undefined
+    const show = harness.editor.window.showTextDocument
+    let release = (): void => {},
+      entered = (): void => {},
+      opening: Promise<unknown> | undefined,
+      closing: Promise<void> | undefined
+    const held = new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        false,
+        undefined,
+        harness.origin,
+      )
+      chat?.focusTab()
+      const sourceUri = harness.reader.inspect().sourceUri,
+        commandsBeforeRecording = harness.commands.length
+      harness.editor.window.showTextDocument = async (document, options) => {
+        const shown = await show(document, options)
+        if (
+          shown.document.uri.toString() === sourceUri &&
+          options?.viewColumn === 2 &&
+          harness.commands
+            .slice(commandsBeforeRecording)
+            .includes('workbench.action.newGroupAbove')
+        ) {
+          entered()
+          await held
+        }
+        return shown
+      }
+      opening = harness.reader
+        .openRepositoryEvidence(
+          harness.binding,
+          true,
+          undefined,
+          harness.origin,
+        )
+        .then(
+          () => 'opened',
+          (error: unknown) => String(error),
+        )
+      assert.equal(
+        await Promise.race([
+          started.then(() => 'copy reached'),
+          opening.then(String),
+        ]),
+        'copy reached',
+      )
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 3)
+          ?.tabs.some(
+            (tab) =>
+              tab.input instanceof harness.editor.TabInputText &&
+              tab.input.uri.toString() === sourceUri,
+          ),
+        true,
+      )
+
+      // Act
+      const draft =
+        laterChoice !== 'Close'
+          ? harness.focusMutableDraft('later-choice.txt', 2)
+          : undefined
+      if (laterChoice === 'Close') closing = harness.reader.close()
+      release()
+      const result = await opening
+      await closing
+
+      // Assert: the old entry cannot succeed or close a source group after losing its input/lifetime authority.
+      assert.notEqual(result, 'opened')
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
+      if (draft) {
+        assert.equal(
+          harness.editor.window.activeTextEditor?.document.uri.toString(),
+          draft.document.uri.toString(),
+        )
+        assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        assert.equal(harness.groups.length, chat ? 4 : 3)
+        harness.editor.window.showTextDocument = show
+        await harness.reader.openRepositoryEvidence(
+          harness.binding,
+          true,
+          undefined,
+          harness.origin,
+        )
+        await harness.controller.settle()
+        assert.equal(harness.controller.state().readiness, 'ready')
+        assert.equal(harness.groups.length, chat ? 3 : 2)
+        assert.equal(draft.document.getText(), 'Original learner draft.\n')
+      } else assert.equal(harness.reader.inspect().opened, false)
+    } finally {
+      release()
+      await opening
+      await closing
+      harness.editor.window.showTextDocument = show
+      await harness.close()
+    }
+  })
+
+for (const refusedClose of [false, true])
+  test(`recording retry retires its created Context group after newer input interrupts native scope measurement${refusedClose ? ' and the native close is refused once' : ''}`, async (context) => {
+    // Arrange: this hold is the actual scope borrow before App allocation, not the later source copy.
+    const harness = await articleRecordingLayoutHarness(true, true)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.replaceGroupObjectsOnTabChanges()
+    const original = harness.focusMutableDraft('auth.ts', 1),
+      chat = harness.addSeparateEditorPart(),
+      show = harness.editor.window.showTextDocument
+    let release = (): void => {},
+      entered = (): void => {},
+      opening: Promise<string> | undefined
+    const held = new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+    try {
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        false,
+        undefined,
+        harness.origin,
+      )
+      chat.focusTab()
+      const sourceUri = harness.reader.inspect().sourceUri,
+        commandsBefore = harness.commands.length
+      harness.editor.window.showTextDocument = async (document, options) => {
+        const shown = await show(document, options)
+        if (
+          shown.document.uri.toString() === sourceUri &&
+          options?.viewColumn === 2
+        ) {
+          entered()
+          await held
+        }
+        return shown
+      }
+      opening = harness.reader
+        .openRepositoryEvidence(
+          harness.binding,
+          true,
+          undefined,
+          harness.origin,
+        )
+        .then(
+          () => 'opened',
+          (error: unknown) => String(error),
+        )
+      assert.equal(
+        await Promise.race([started.then(() => 'scope reached'), opening]),
+        'scope reached',
+      )
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .includes('workbench.action.newGroupAbove'),
+        false,
+      )
+      const draft = harness.focusMutableDraft('later-scope-choice.txt', 2)
+      enableFakeClock(context)
+      release()
+      await advanceClockUntilSettled(context, opening, 6_000)
+      assert.notEqual(await opening, 'opened')
+      resetFakeClock(context)
+      harness.editor.window.showTextDocument = show
+      assert.equal(
+        harness.groups.find((group) => group.viewColumn === 3)?.tabs.length,
+        0,
+      )
+      const closedColumns: number[] = [],
+        changed = harness.editor.window.tabGroups.onDidChangeTabGroups(
+          (event) => {
+            closedColumns.push(...event.closed.map((group) => group.viewColumn))
+          },
+        )
+      try {
+        if (refusedClose) {
+          const nativeClose = harness.editor.window.tabGroups.close,
+            beforeRetry = harness.commands.length
+          let refused = false
+          harness.editor.window.tabGroups.close = async (
+            tabs,
+            preserveFocus,
+          ) => {
+            if (
+              !Array.isArray(tabs) &&
+              tabs.viewColumn === 3 &&
+              !tabs.tabs.length
+            ) {
+              refused = true
+              return false
+            }
+            return nativeClose(tabs, preserveFocus)
+          }
+          try {
+            await assert.rejects(
+              harness.reader.openRepositoryEvidence(
+                harness.binding,
+                true,
+                undefined,
+                harness.origin,
+              ),
+            )
+            assert.equal(refused, true)
+            assert.equal(
+              harness.commands
+                .slice(beforeRetry)
+                .includes('workbench.action.newGroupAbove'),
+              false,
+            )
+            assert.deepEqual(closedColumns, [])
+          } finally {
+            harness.editor.window.tabGroups.close = nativeClose
+          }
+        }
+        // Act: Context was already disposed, but its proved empty group is still this reader's to retire on retry.
+        await harness.reader.openRepositoryEvidence(
+          harness.binding,
+          true,
+          undefined,
+          harness.origin,
+        )
+        await harness.controller.settle()
+
+        // Assert: the adopted Source group and chat survive; only the old empty Context closes.
+        assert.deepEqual(closedColumns, [3])
+        assert.equal(harness.groups.length, 4)
+        assert.equal(harness.controller.state().readiness, 'ready')
+        assert.equal(harness.displayedImage(), harness.png.toString('base64'))
+        assert.equal(original.document.getText(), 'Original learner draft.\n')
+        assert.equal(draft.document.getText(), 'Original learner draft.\n')
+        // The old editor object may still name its pre-retirement wrapper; the current native group owns this preserved document.
+        assert.equal(
+          harness.groups.find((group) =>
+            group.tabs.some(
+              (tab) =>
+                tab.input instanceof harness.editor.TabInputText &&
+                tab.input.uri.toString() === draft.document.uri.toString(),
+            ),
+          )?.viewColumn,
+          3,
+        )
+        assert.equal(
+          harness.groups
+            .find((group) => group.viewColumn === 4)
+            ?.tabs.includes(chat.tab),
+          true,
+        )
+      } finally {
+        changed.dispose()
+      }
+    } finally {
+      release()
+      resetFakeClock(context)
+      await opening
+      harness.editor.window.showTextDocument = show
       await harness.close()
     }
   })
@@ -2563,11 +3026,11 @@ test('an empty learner third group added after the first Open note remains after
 
     // Assert: actual reservation measured three learner groups, so Context borrowed the third.
     assert.equal(changed, true)
-    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.groups.length, 4)
     assert.deepEqual(harness.editorLayout(), {
       orientation: 0,
       groups: [
-        { size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.55, groups: [{ size: 0.25 }, { size: 0.25 }, { size: 0.5 }] },
         { size: 0.45 },
       ],
     })
@@ -2624,7 +3087,7 @@ test('a learner replacement of the pending created Context group cannot inherit 
       firstResult,
       /Native pane, group or focus changed while presentation waited/,
     )
-    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.groups.length, 4)
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
     held?.release()
@@ -3634,7 +4097,9 @@ test('a run that ends with its Application pane active sends no keyboard command
   const settleKeyboard = harness.reader[
     'settleKeyboardAfterRunClosedPane'
   ].bind(harness.reader)
-  let settling: Promise<void> | undefined
+  let settling: Promise<void> | undefined,
+    departedWithPendingTab = false,
+    removeDisposalObserver = (): void => {}
   let markSettlingStarted = (): void => {}
   const settlingStarted = new Promise<void>((resolve) => {
     markSettlingStarted = resolve
@@ -3646,7 +4111,7 @@ test('a run that ends with its Application pane active sends no keyboard command
     return settling
   }
   try {
-    harness.focusMutableDraft('learner-file.ts', 1)
+    const learnerFile = harness.focusMutableDraft('learner-file.ts', 1)
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
@@ -3660,10 +4125,21 @@ test('a run that ends with its Application pane active sends no keyboard command
       () => {},
       'normal',
     )
-    harness.reader['app']!.reveal(undefined, false)
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    application.reveal(undefined, false)
+    const disposal = application.onDidDispose(() => {
+      // Native disposal precedes its deferred tab close and the allocation drain.
+      departedWithPendingTab = harness.groups.some((group) =>
+        group.tabs.includes(application.nativeTab),
+      )
+      harness.changeWindowFocus(false)
+    })
+    removeDisposalObserver = (): void => disposal.dispose()
     const commandsBefore = harness.commands.length
 
-    // Act: end the run, lose window focus while its tab remains, then deliver the native close.
+    // Act: end the run; actual native disposal triggers departure while its tab is still pending.
     live.close()
     assert.equal(
       await settledWithin(settlingStarted, 2_000),
@@ -3671,10 +4147,11 @@ test('a run that ends with its Application pane active sends no keyboard command
       'The original run-end keyboard continuation did not start',
     )
     assert.ok(settling, 'The run did not start its keyboard continuation')
-    assert.equal(harness.groups[0]!.tabs.length, 3)
-    harness.changeWindowFocus(false)
-    harness.closePendingDisposedPanelTabs()
+    assert.equal(departedWithPendingTab, true)
+    assert.equal(harness.editor.window.state.focused, false)
     await settling
+    assert.equal(learnerFile.document.getText(), 'Original learner draft.\n')
+    assert.equal(learnerFile.tab.isDirty, true)
 
     // Assert: after the actual continuation settled, no later keyboard operation or notice ran.
     assert.deepEqual(
@@ -3688,6 +4165,8 @@ test('a run that ends with its Application pane active sends no keyboard command
       { panels: 0, focusCommands: [], notices: [] },
     )
   } finally {
+    removeDisposalObserver()
+    harness.changeWindowFocus(true)
     harness.reader['settleKeyboardAfterRunClosedPane'] = settleKeyboard
     await harness.close()
   }

@@ -19,6 +19,7 @@ import {
   recordedReaderHarness,
   openRetainedStudy,
 } from './studyWorkspaceHarness'
+import { commitNextStop } from './utils/configuredServiceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
   advanceClock,
@@ -2764,7 +2765,7 @@ test('starting live explanation retires only its previous empty explanation grou
     assert.equal(harness.groups.at(-1)!.tabs[0], chat.tab)
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 0.5 }, { size: 0.5 }],
+      groups: [{ size: 0.25 }, { size: 0.25 }],
     })
     assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
   } finally {
@@ -2795,7 +2796,7 @@ test('a normal chat run retires the explanation pane without reopening the reade
     assert.equal(harness.groups.at(-1)!.tabs[0], chat.tab)
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 0.5 }, { size: 0.5 }],
+      groups: [{ size: 0.25 }, { size: 0.25 }],
     })
     assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
   } finally {
@@ -2889,14 +2890,12 @@ test('live entry preserves a learner document sharing the former explanation gro
     assert.equal(harness.groups[2]!.tabs.includes(draft.tab), true)
     assert.equal(draft.document.getText(), 'Keep my unsaved notes.')
     assert.equal(draft.tab.isDirty, true)
-    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, false)
-    assert.ok(
-      harness.reader
-        .inspect()
-        .view!.errors.some((error) =>
-          error.includes('Existing editor groups were preserved'),
-        ),
+    assert.equal(
+      harness.focusedSource()?.document.uri.toString(),
+      draft.document.uri.toString(),
     )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
   } finally {
     await harness.close()
   }
@@ -4310,20 +4309,22 @@ for (const host of ['Visual Studio Code', 'Cursor'] as const)
       const sentencesAfterPause = harness.informationMessages.map(
         (message) => message.message,
       )
+      const revealsBefore = harness.panelReveals().length
       await harness.revealApplicationPaneOverPausedFile()
-      const revealsOfApplicationPane = harness
-        .panelReveals()
-        .filter((reveal) => reveal.kind === 'codebook.scopedBrowser')
 
       // Assert: the sentence follows the capture, and is shown once in an editor session for both panes together.
       assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
         { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false },
       ])
-      assert.deepEqual(revealsOfApplicationPane.at(-1), {
-        kind: 'codebook.scopedBrowser',
-        column: undefined,
-        preserveFocus: false,
-      })
+      // The captured source already took the keyboard; an App that stayed visible needs no second native reveal.
+      assert.equal(harness.panelReveals().length, revealsBefore)
+      assert.equal(
+        harness
+          .focusedSource()
+          ?.document.uri.path.endsWith('/Captured-theme.ts'),
+        true,
+      )
+      assert.equal(harness.keyboardOnBody(), false)
       assert.deepEqual(sentencesAfterPause, [
         'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
       ])
@@ -4335,9 +4336,9 @@ for (const host of ['Visual Studio Code', 'Cursor'] as const)
     }
   })
 
-// Value: protects=a learner in Cursor whose Agent chat is a pane of the secondary side bar, told once where the keyboard is when the Application pane of a live run took it from the file the debugger opened at a pause, also while the Study workspace is closed and that pane is the only one; fails_when=the pane's take is not reported to the reader, or the reader tells nothing for it, so the keyboard leaves the chat input at the first pause of a run without a word (run r5a of 2026-10-05), or the sentence comes again at every pause; why_new=Cycle 0046 row 5, Cursor half: the sentence's second site (the Application pane), with the reader closed as in r5a; seam=workspace harness with the controlled runtime, the run's viewport made through the reader's presentation, focusMutableDraft, pauseDebugger, revealApplicationPaneOverPausedFile, useHostAppName, the information messages
-test('the Application pane of a live run that takes the keyboard from the file the debugger focused at a pause says once in an editor session where the keyboard is, while the Study workspace is closed in Cursor with a side-view chat', async () => {
-  // Arrange: Cursor without a chat tab in the editor area; a live run shows its Application pane and the Study workspace is not open; the debugger opened the paused file in the pane's group with the keyboard.
+// Value: protects=once-only notice for actual captured-source takeovers while an isolated App preserves native input; fails_when=source settlement omits or repeats the pause notice; why_new=Cycle 0046 row 5, reconciled with dedicated App ownership; seam=declared two-stop run, native opensWithKeyboard, real captures and reader refresh
+test('an isolated App preserves closed-reader native input and actual source replacements tell the learner once in Cursor', async () => {
+  // Arrange: a live lease exists while the reader is closed; native debug respects the locked App group.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.useHostAppName('Cursor')
@@ -4346,94 +4347,190 @@ test('the Application pane of a live run that takes the keyboard from the file t
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration: {
+        ...harness.configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 1,
+            inspections: harness.configuration.inspections,
+          },
+        ],
+      },
       key: randomUUID(),
     })
-    await harness.service.record(receipt).preparation
+    const record = harness.service.record(receipt)
+    await record.preparation
     live = await harness.reader.presentation.createViewport(
       receipt.runId,
       () => {},
       () => {},
       'normal',
     )
-    const readerState = harness.reader.presentationState().state
-    harness.focusMutableDraft('login-form.tsx', 1)
-    harness.pauseDebugger()
-
-    // Act: the pane takes the keyboard from the paused file at this pause, and again at the next one.
+    const readerState = harness.reader.presentationState().state,
+      revealsBefore = harness.panelReveals().length
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 1 },
+    })
     await harness.revealApplicationPaneOverPausedFile()
-    const sentencesAfterFirstPause = harness.informationMessages.map(
+    const closedReader = {
+      column: harness.editor.window.activeTextEditor?.viewColumn,
+      notices: harness.informationMessages.map((message) => message.message),
+    }
+
+    // Act: the actual capture opens its source; after continuation a second capture replaces the next native file.
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await harness.reader.open()
+    const afterFirstCapture = harness.informationMessages.map(
       (message) => message.message,
     )
+    await harness.runtimes[0]!.continue(
+      'browser',
+      harness.runtimes[0]!.snapshots.at(-1)!.pause,
+    )
     harness.resumeDebugger()
-    harness.focusMutableDraft('actions.ts', 1)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
+    commitNextStop(harness.runtimes[0]!)
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
-    // Assert
+    // Assert: a notice describes a real source takeover, never an already-visible App.
     assert.equal(readerState, 'closed')
-    assert.deepEqual(sentencesAfterFirstPause, [
+    assert.deepEqual(closedReader, { column: 2, notices: [] })
+    assert.deepEqual(afterFirstCapture, [
       'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
     ])
-    assert.equal(harness.informationMessages.length, 1)
+    assert.deepEqual(
+      harness.informationMessages.map((message) => message.message),
+      [
+        'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+      ],
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.toString(),
+      harness.reader.inspect().sourceUri,
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.getText(),
+      'const nextTheme = "dark";\n',
+    )
+    assert.equal(harness.keyboardOnBody(), false)
     assert.equal(harness.commands.includes('composer.focusComposer'), false)
+    assert.equal(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .some((reveal) => !reveal.preserveFocus),
+      false,
+    )
   } finally {
     live?.close()
     await harness.close()
   }
 })
 
-// Value: protects=the learner reading the notice about the keyboard at a pause once in an editor session, also after the workspace folders changed and the extension made a new reader; fails_when=the mark "told once" is kept with the reader, which a change of the workspace folders disposes, so the same sentence is told again at the next pause in one editor session; why_new=Cycle 0046 row 174 (delegated review, finding 11); seam=the workspace harness's createReader (a second reader from the same loaded module, as the extension makes one), the runs' viewports made through the readers' presentations, focusMutableDraft, pauseDebugger, revealApplicationPaneOverPausedFile
-test('the notice about the keyboard at a pause is not told again in the same editor session by the reader that replaces a disposed one after the workspace folders changed', async () => {
-  // Arrange: the first reader of the editor session told where the keyboard is when its run's Application pane took it from the paused file.
+// Value: protects=once-only pause notice across reader replacement in the same loaded editor session; fails_when=reader construction clears the shared notice mark; why_new=Cycle 0046 row 174; seam=createReader, ordinary live runs before and after disposal, captured-source settlement and preserved dirty draft
+test('actual captured-source takeovers tell the learner once across reader replacement in the same editor session', async () => {
+  // Arrange: the first reader shows one real controlled capture with a native paused file holding the keyboard.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  let replacement: ReturnType<typeof harness.createReader> | undefined
-  let live: { close(): void } | undefined
+  let replacement: ReturnType<typeof harness.createReader> | undefined,
+    live: { close(): void } | undefined
   try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
     const first = await harness.reader.presentation.createViewport(
-      randomUUID(),
+      receipt.runId,
       () => {},
       () => {},
       'normal',
     )
-    harness.focusMutableDraft('login-form.tsx', 1)
-    harness.pauseDebugger()
-    await harness.revealApplicationPaneOverPausedFile()
-    const sentencesOfFirstReader = harness.informationMessages.map(
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 1 },
+    })
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await harness.reader.open()
+    const firstNotices = harness.informationMessages.map(
       (message) => message.message,
     )
     harness.resumeDebugger()
     first.close()
-
-    // Act: the workspace folders change: the extension disposes its reader and makes a new one, whose run pauses and whose Application pane takes the keyboard the same way.
+    // Disposal preserves the learner's own focused draft; no unrelated Close keyboard notice is part of this test.
+    const draft = harness.focusMutableDraft('between-readers.txt', 2)
     await harness.reader.dispose()
+
+    // Act: the next reader belongs to the same loaded module and acquires a new live run after explicitly leaving the restored saved reading.
     replacement = harness.createReader()
+    await replacement.attach(harness.service)
+    await replacement.action('return-current')
+    const nextReceipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const nextRecord = harness.service.record(nextReceipt)
+    await nextRecord.preparation
     live = await replacement.presentation.createViewport(
-      randomUUID(),
+      nextReceipt.runId,
       () => {},
       () => {},
       'normal',
     )
-    harness.focusMutableDraft('actions.ts', 1)
-    harness.pauseDebugger()
-    await harness.revealApplicationPaneOverPausedFile()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: nextRecord.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await replacement.open()
 
-    // Assert: the pane took the keyboard again, and nothing more was told.
-    assert.deepEqual(sentencesOfFirstReader, [
+    // Assert
+    assert.deepEqual(firstNotices, [
       'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
     ])
     assert.deepEqual(
-      harness
-        .panelReveals()
-        .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser'),
-      {
-        kind: 'codebook.scopedBrowser',
-        column: undefined,
-        preserveFocus: false,
-      },
+      harness.informationMessages.map((message) => message.message),
+      [
+        'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+      ],
     )
-    assert.equal(harness.informationMessages.length, 1)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.toString(),
+      replacement.inspect().sourceUri,
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.getText(),
+      'const nextTheme = "dark";\n',
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.equal(draft.tab.isDirty, true)
   } finally {
     live?.close()
     await replacement?.dispose()
@@ -4458,7 +4555,16 @@ for (const chatState of [
       const receipt = harness.service.start({
         instanceId: harness.service.instanceId,
         profile: 'repository-browser',
-        configuration: harness.configuration,
+        configuration: {
+          ...harness.configuration,
+          additionalStops: [
+            {
+              line: 1,
+              column: 1,
+              inspections: harness.configuration.inspections,
+            },
+          ],
+        },
         key: randomUUID(),
       })
       const record = harness.service.record(receipt)
@@ -4470,20 +4576,23 @@ for (const chatState of [
         () => {},
         'normal',
       )
+      const revealsBefore = harness.panelReveals().length
       if (chatState === "the editor named the chat's group") chat.focusTab()
       else {
-        harness.focusMutableDraft('learner-notes.ts', 1)
+        harness.focusMutableDraft('learner-notes.ts', 2)
         chat.focus()
       }
       // The pause: the debugger opens the paused file in front of the source group with the keyboard, then selects the stack item.
       const held = harness.holdNextCommand('composer.focusComposer')
       release = held.release
-      harness.focusMutableDraft('actions.ts', 2)
-      harness.pauseDebugger()
+      harness.pauseDebugger({
+        focusesEditorOnBreak: true,
+        opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+      })
       const chatFocusedAtPause = chat.focused()
       const showsBefore = harness.textDocumentShows().length
 
-      // Act: the run reaches its stop and the reader shows the stop's captured source; then the run continues, pauses again, and the Application pane takes the keyboard from the next paused file.
+      // Act: capture the first pause, continue the declared run and capture the next native source.
       harness.service.action({
         instanceId: harness.service.instanceId,
         runId: record.id,
@@ -4502,21 +4611,23 @@ for (const chatState of [
           (command) => command === 'composer.focusComposer',
         ).length,
       }
+      await harness.runtimes[0]!.continue(
+        'browser',
+        harness.runtimes[0]!.snapshots.at(-1)!.pause,
+      )
       harness.resumeDebugger()
-      harness.focusMutableDraft('auth.ts', 1)
-      harness.pauseDebugger()
-      const chatFocusedAtSecondPause = chat.focused()
-      await harness.revealApplicationPaneOverPausedFile()
-      const lastRevealOfApplicationPane = harness
-        .panelReveals()
-        .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser')
-
-      // Assert: the keyboard returns before delayed capture; later source and Application reveals preserve it.
-      assert.deepEqual(lastRevealOfApplicationPane, {
-        kind: 'codebook.scopedBrowser',
-        column: undefined,
-        preserveFocus: true,
+      harness.pauseDebugger({
+        focusesEditorOnBreak: true,
+        opensWithKeyboard: { filename: 'auth.ts', column: 1 },
       })
+      commitNextStop(harness.runtimes[0]!)
+      const chatFocusedAtSecondPause = chat.focused()
+      await readerSeams(harness).refresh()
+      await harness.revealApplicationPaneOverPausedFile()
+
+      assert.equal(harness.keyboardOnBody(), false)
+      // Assert: chat returns before delayed capture; source refresh and the visible App preserve it.
+      assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
       assert.equal(chatFocusedAtPause, false)
       assert.deepEqual(showsBeforeReturn, [])
       assert.deepEqual(afterFirstPause, {
@@ -4566,14 +4677,18 @@ test("the chat that took the keyboard from the Application pane has it again at 
       () => {},
       'normal',
     )
-    const paneBeforeClick = harness.focusedPanel()
+    await harness.reader.action('focus-app')
+    const paneBeforeClick = harness.focusedPanel(),
+      revealsBefore = harness.panelReveals().length
     // The learner clicks into the chat: the tab and group events arrive while the pane's flag still reads active, and the pane's view state after them.
     const heldFlag = harness.holdPaneDeactivation('codebook.scopedBrowser')
     chat.focusTab()
     heldFlag.release()
     // The pause: the debugger opens the paused file in front of the source group with the keyboard, then selects the stack item.
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
 
     // Act: the run reaches its stop and the reader shows the stop's captured source over the paused file.
     harness.service.action({
@@ -4585,6 +4700,8 @@ test("the chat that took the keyboard from the Application pane has it again at 
     await readerSeams(harness).refresh()
 
     // Assert
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
+    assert.equal(harness.keyboardOnBody(), false)
     assert.equal(paneBeforeClick, 'codebook.scopedBrowser')
     assert.equal(chat.focused(), true)
     assert.deepEqual(
@@ -4776,35 +4893,58 @@ test("a learner in Cursor whose own debug session stops and goes on, with no liv
   }
 })
 
-// Value: protects=the keyboard of a learner who replays a recording in Cursor beside the Agent chat's tab: a stop the editor reports while the recording is open sends no keyboard to the chat; fails_when=the return made for a pause of a live run also runs for a frame the editor reports during a replay, where the historical debugger shows a recorded stop and nobody's keyboard was taken by a run; why_new=Cycle 0046 row 166 (the return's bound: only at a pause beside a live run; no test held it); seam=workspace harness with a live run's viewport, addSeparateEditorPart, focusMutableDraft, pauseDebugger, the reader's recording state, revealApplicationPaneOverPausedFile
-test("a stop the editor reports while a recording is open does not send the keyboard to Cursor's chat when the Application pane comes to the front over the paused file", async () => {
-  // Arrange: Cursor with the Agent chat as a tab of another editor part; the learner typed in the chat, a file is opened with the keyboard and the editor reports a stack frame, while the reader holds a recording open.
-  const harness = await workspaceHarness(false)
+// Value: protects=recorded playhead and external native source input when a live viewport exists beside saved history; fails_when=an external pause returns to chat despite recording being selected; why_new=Cycle 0046 row 166; seam=recordedReaderHarness, actual controller seek, live lease and native pause
+test('a stop reported beside an actual recording preserves its playhead and external source without returning to Cursor chat', async () => {
+  // Arrange: open saved history through its controller, with a separate live lease as the return guard's prerequisite.
+  const harness = await recordedReaderHarness(true, true)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.useHostAppName('Cursor')
   const chat = harness.addSeparateEditorPart()
   let live: { close(): void } | undefined
   try {
-    await harness.reader.open()
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const opened = harness.controller.state()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: opened.revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
     live = await harness.reader.presentation.createViewport(
       randomUUID(),
       () => {},
       () => {},
       'normal',
     )
+    await harness.controller.settle()
     chat.focusTab()
-    harness.focusMutableDraft('actions.ts', 1)
-    harness.pauseDebugger()
-    harness.reader['recordingActive'] = true
+    const commandsBefore = harness.commands.length
 
-    // Act
+    // Act: another real native frame opens in the unlocked source group while history stays selected.
+    harness.pauseDebugger({
+      session: 'external-live-session',
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'external-actions.ts', column: 1 },
+    })
     await harness.revealApplicationPaneOverPausedFile()
+    await delay(50)
 
     // Assert
+    assert.equal(harness.controller.state().presentedMs, 100)
     assert.equal(chat.focused(), false)
-    assert.equal(harness.commands.includes('composer.focusComposer'), false)
+    assert.equal(
+      harness.commands.slice(commandsBefore).includes('composer.focusComposer'),
+      false,
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.fsPath,
+      join(harness.directory, 'external-actions.ts'),
+    )
+    assert.equal(harness.editor.window.activeTextEditor?.viewColumn, 2)
+    assert.equal(harness.keyboardOnBody(), false)
   } finally {
-    harness.reader['recordingActive'] = false
     live?.close()
     await harness.close()
   }
@@ -4856,9 +4996,9 @@ test("a learner in Cursor who went from the chat to a file while no debug sessio
   }
 })
 
-// Value: protects=the keyboard of a learner who was typing in Cursor's Agent chat when a live run paused and its Application pane came to the front over the paused file: the chat has the keyboard and keeps it; fails_when=the pane is revealed with the keyboard and the return to the chat runs right behind that reveal, the pane's frame takes the focus a moment later (a webview's focus is a message to its frame), and the keyboard is in the pane again; why_new=Cycle 0046 row 140, item 10 (the order of a webview's focus and the command behind its reveal); seam=workspace harness with the controlled runtime, the run's viewport made through the reader's presentation, addSeparateEditorPart, focusRevealedPanesLater, focusMutableDraft, pauseDebugger, revealApplicationPaneOverPausedFile
-test("the chat that had the keyboard before a pause of a live run keeps it after the Application pane came to the front over the paused file, also when a revealed pane's focus lands late", async () => {
-  // Arrange: Cursor with the Agent chat as a tab of another editor part; a pane revealed with the keyboard takes it 30 ms after the reveal returned; the learner types in the chat and the debugger opens the paused file in the Application pane's group.
+// Value: protects=chat input after a real captured-source update when webview focus can arrive late; fails_when=an unnecessary activating App reveal steals the returned keyboard later; why_new=Cycle 0046 row 140 item 10; seam=controlled capture, native pause, delayed pane focus and actual source refresh
+test('the chat keeps the keyboard after native source capture without a delayed App focus', async () => {
+  // Arrange: Cursor chat owns the keyboard; native debug opens unlocked Source and pane focus can arrive 30 ms late.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.useHostAppName('Cursor')
@@ -4872,7 +5012,8 @@ test("the chat that had the keyboard before a pause of a live run keeps it after
       configuration: harness.configuration,
       key: randomUUID(),
     })
-    await harness.service.record(receipt).preparation
+    const record = harness.service.record(receipt)
+    await record.preparation
     await harness.reader.open()
     live = await harness.reader.presentation.createViewport(
       receipt.runId,
@@ -4880,27 +5021,29 @@ test("the chat that had the keyboard before a pause of a live run keeps it after
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     chat.focusTab()
-    harness.focusMutableDraft('actions.ts', 1)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
 
-    // Act: the pane comes to the front over the paused file; then longer than a late focus takes passes.
+    // Act: render the actual captured source and wait beyond the modeled late webview-focus delay.
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
     const chatFocusedAfterReveal = chat.focused()
     await delay(100)
 
-    // Assert: the keyboard went to the chat before the reveal, the pane was revealed without it, and no late focus took it.
+    assert.equal(harness.keyboardOnBody(), false)
+    // Assert: chat retains input and the already-visible App issues no delayed activating reveal.
     assert.equal(chatFocusedAfterReveal, true)
-    assert.deepEqual(
-      harness
-        .panelReveals()
-        .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser'),
-      {
-        kind: 'codebook.scopedBrowser',
-        column: undefined,
-        preserveFocus: true,
-      },
-    )
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     assert.equal(chat.focused(), true)
     assert.deepEqual(harness.informationMessages, [])
   } finally {
@@ -4921,7 +5064,16 @@ test("a learner in Cursor who left the chat for a file between two pauses of a l
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration: {
+        ...harness.configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 1,
+            inspections: harness.configuration.inspections,
+          },
+        ],
+      },
       key: randomUUID(),
     })
     const record = harness.service.record(receipt)
@@ -4933,9 +5085,12 @@ test("a learner in Cursor who left the chat for a file between two pauses of a l
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     chat.focusTab()
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
     harness.service.action({
       instanceId: harness.service.instanceId,
       runId: record.id,
@@ -4945,17 +5100,27 @@ test("a learner in Cursor who left the chat for a file between two pauses of a l
     await readerSeams(harness).refresh()
     const chatFocusedAfterFirstPause = chat.focused()
 
-    // Act: the session runs again and the editor reports its thread; on a held clock the learner goes to a file, and a minute later the debugger opens the next paused file and the Application pane comes to the front over it.
+    // Act: resume, choose a file, advance the held clock by a minute and capture the next native pause.
+    await harness.runtimes[0]!.continue(
+      'browser',
+      harness.runtimes[0]!.snapshots.at(-1)!.pause,
+    )
     harness.resumeDebugger()
     let clockMs = Math.floor(performance.now())
     const clock = t.mock.method(performance, 'now', () => clockMs)
-    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
     clockMs += 60_000
-    harness.focusMutableDraft('auth.ts', 1)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'auth.ts', column: 1 },
+    })
+    commitNextStop(harness.runtimes[0]!)
     clock.mock.restore()
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     // Assert: one return, at the first pause only; at the second the keyboard stays and the learner is told where it is.
     assert.equal(chatFocusedAfterFirstPause, true)
     assert.equal(chat.focused(), false)
@@ -4988,7 +5153,16 @@ test('the chat that had the keyboard before a pause of a live run has it again a
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration: {
+        ...harness.configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 1,
+            inspections: harness.configuration.inspections,
+          },
+        ],
+      },
       key: randomUUID(),
     })
     const record = harness.service.record(receipt)
@@ -5000,9 +5174,12 @@ test('the chat that had the keyboard before a pause of a live run has it again a
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     chat.focusTab()
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
     harness.service.action({
       instanceId: harness.service.instanceId,
       runId: record.id,
@@ -5012,12 +5189,22 @@ test('the chat that had the keyboard before a pause of a live run has it again a
     await readerSeams(harness).refresh()
     const chatFocusedAfterFirstStop = chat.focused()
 
-    // Act: the run continues and stops again at once: the debugger opens the next paused file with the keyboard and reports its frame, with no thread item between the two frames; the Application pane comes to the front over that file.
-    harness.focusMutableDraft('auth.ts', 1)
-    harness.pauseDebugger()
+    // Act: continue and capture the next pause, with two native frames and no intervening thread event.
+    await harness.runtimes[0]!.continue(
+      'browser',
+      harness.runtimes[0]!.snapshots.at(-1)!.pause,
+    )
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'auth.ts', column: 1 },
+    })
+    commitNextStop(harness.runtimes[0]!)
     const chatFocusedAtSecondStop = chat.focused()
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     // Assert: one return for each stop, and no sentence.
     assert.equal(chatFocusedAfterFirstStop, true)
     assert.equal(chatFocusedAtSecondStop, false)
@@ -5046,7 +5233,16 @@ test('a learner in Cursor who went from a file to the chat between two pauses of
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration: {
+        ...harness.configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 1,
+            inspections: harness.configuration.inspections,
+          },
+        ],
+      },
       key: randomUUID(),
     })
     const record = harness.service.record(receipt)
@@ -5058,12 +5254,15 @@ test('a learner in Cursor who went from a file to the chat between two pauses of
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     let clockMs = Math.floor(performance.now())
     const clock = t.mock.method(performance, 'now', () => clockMs)
-    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
     clockMs += 60_000
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
     clock.mock.restore()
     harness.service.action({
       instanceId: harness.service.instanceId,
@@ -5077,13 +5276,23 @@ test('a learner in Cursor who went from a file to the chat between two pauses of
       sentences: harness.informationMessages.length,
     }
 
-    // Act: the session runs again and the editor reports its thread; the learner clicks into the chat; then the debugger opens the next paused file and the Application pane comes to the front over it.
+    // Act: resume, move from the file to chat and capture the next native pause.
+    await harness.runtimes[0]!.continue(
+      'browser',
+      harness.runtimes[0]!.snapshots.at(-1)!.pause,
+    )
     harness.resumeDebugger()
     chat.focusTab()
-    harness.focusMutableDraft('auth.ts', 1)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'auth.ts', column: 1 },
+    })
+    commitNextStop(harness.runtimes[0]!)
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     // Assert
     assert.deepEqual(afterFirstPause, { chatFocused: false, sentences: 1 })
     assert.equal(chat.focused(), true)
@@ -5111,7 +5320,16 @@ test('a learner in Cursor who went from a file to the chat during a pause of a l
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration: {
+        ...harness.configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 1,
+            inspections: harness.configuration.inspections,
+          },
+        ],
+      },
       key: randomUUID(),
     })
     const record = harness.service.record(receipt)
@@ -5123,12 +5341,15 @@ test('a learner in Cursor who went from a file to the chat during a pause of a l
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     let clockMs = Math.floor(performance.now())
     const clock = t.mock.method(performance, 'now', () => clockMs)
-    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
     clockMs += 60_000
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
     clock.mock.restore()
     harness.service.action({
       instanceId: harness.service.instanceId,
@@ -5142,12 +5363,22 @@ test('a learner in Cursor who went from a file to the chat during a pause of a l
       sentences: harness.informationMessages.length,
     }
 
-    // Act: during that pause the learner clicks into the chat; the run continues and stops again at once, with no thread item between the two frames, and the Application pane comes to the front over the next paused file.
+    // Act: move into chat during the pause, then capture a second pause without an intervening thread event.
     chat.focusTab()
-    harness.focusMutableDraft('auth.ts', 1)
-    harness.pauseDebugger()
+    await harness.runtimes[0]!.continue(
+      'browser',
+      harness.runtimes[0]!.snapshots.at(-1)!.pause,
+    )
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'auth.ts', column: 1 },
+    })
+    commitNextStop(harness.runtimes[0]!)
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     // Assert
     assert.deepEqual(afterFirstStop, { chatFocused: false, sentences: 1 })
     assert.equal(chat.focused(), true)
@@ -5399,15 +5630,20 @@ for (const moment of [
   "while the reader's return of the keyboard to the chat is still running",
   'right after that return, before the editor reports the chat',
 ] as const)
-  // Value: protects=the keyboard of a learner who was typing in Cursor's Agent chat when a live run paused, when the Application pane comes to the front for the same stop at which the reader gives the keyboard back: the pane comes without the keyboard and no notice is told; fails_when=a return that runs, or one that is done, is answered like "the keyboard was given to nobody", so the pane is revealed with the keyboard while the chat's focus command is on its way, and the notice says that a Codebook pane has the keyboard now, which is untrue once the chat has it; why_new=Cycle 0046 row 249 (delegated review, finding 2: the answer of the pause's one return belongs to the pause and to every asker of that pause); seam=workspace harness with the controlled runtime, a live run's viewport that asks during the reader's own settle, addSeparateEditorPart, focusMutableDraft, pauseDebugger, holdNextCommand on Cursor's Focus Agent command, revealApplicationPaneOverPausedFile
-  test(`the Application pane comes to the front without the keyboard and tells nothing when its viewport asks ${moment}`, async () => {
-    // Arrange: Cursor with the Agent chat as a tab of another editor part; the learner typed in the chat when the run paused, and the debugger opened the paused file in the Application pane's group with the keyboard; the editor holds Cursor's command that focuses the chat.
+  // Value: protects=one shared chat return and no false takeover notice during actual source settlement; fails_when=another source-settlement caller ignores the pending or completed return; why_new=Cycle 0046 row 249; seam=held Composer response, passthrough source-settlement observer and public Retry
+  test(`captured-source refresh shares chat return ${moment} without another App reveal`, async () => {
+    // Arrange: native Source takes input at the pause while the actual Composer response is held.
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     harness.useHostAppName('Cursor')
     const chat = harness.addSeparateEditorPart()
     let live: { close(): void } | undefined
-    let release = (): void => {}
+    let release = (): void => {},
+      notifySourceSettling = (): void => {}
+    const sourceSettling = new Promise<void>((resolve) => {
+      notifySourceSettling = resolve
+    })
+    const settleKeyboard = harness.reader['settleKeyboardAtPause']
     try {
       const receipt = harness.service.start({
         instanceId: harness.service.instanceId,
@@ -5424,13 +5660,24 @@ for (const moment of [
         () => {},
         'normal',
       )
+      const revealsBefore = harness.panelReveals().length
+      // Observe the actual source-settlement call without replacing its result; the native chat response remains independently held.
+      harness.reader['settleKeyboardAtPause'] = async (
+        tookKeyboard,
+      ): Promise<void> => {
+        notifySourceSettling()
+        await settleKeyboard.call(harness.reader, tookKeyboard)
+      }
       chat.focusTab()
-      harness.focusMutableDraft('actions.ts', 1)
-      harness.pauseDebugger()
       const held = harness.holdNextCommand('composer.focusComposer')
       release = held.release
+      harness.pauseDebugger({
+        focusesEditorOnBreak: true,
+        opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+      })
+      const showsBefore = harness.textDocumentShows().length
 
-      // Act: the reader shows the stop's captured source and begins its return; the pane's viewport reveals the pane over the paused file for the same stop, during that return or right after it.
+      // Act: observe real source settlement while the same pause returns to chat, then exercise the pending or settled path.
       harness.service.action({
         instanceId: harness.service.instanceId,
         runId: record.id,
@@ -5439,25 +5686,37 @@ for (const moment of [
       })
       const shown = readerSeams(harness).refresh()
       await held.started
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      await sourceSettling
+      assert.equal(
+        harness.editor.window.activeTextEditor?.document.uri.scheme,
+        'codebook-source',
+      )
+      assert.equal(
+        harness.editor.window.activeTextEditor?.document.getText(),
+        'const nextTheme = "dark";\n',
+      )
+      assert.equal(harness.keyboardOnBody(), false)
       if (moment.startsWith('right after')) {
         held.release()
         await shown
+        await harness.reader.action('retry')
       }
       const revealed = harness.revealApplicationPaneOverPausedFile()
       held.release()
       await Promise.all([shown, revealed])
 
-      // Assert: one return, the pane without the keyboard, the chat with it, and no notice.
+      assert.equal(harness.keyboardOnBody(), false)
+      // Assert: the real source update shares the pause's return, while the already-visible App needs no native reveal.
+      assert.equal(harness.textDocumentShows().length > showsBefore, true)
       assert.deepEqual(
         harness
-          .panelReveals()
-          .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser'),
-        {
-          kind: 'codebook.scopedBrowser',
-          column: undefined,
-          preserveFocus: true,
-        },
+          .textDocumentShows()
+          .slice(showsBefore)
+          .map((shown) => shown.preserveFocus),
+        moment.startsWith('right after') ? [false, true] : [false],
       )
+      assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
       assert.equal(chat.focused(), true)
       assert.deepEqual(
         harness.commands.filter(
@@ -5468,13 +5727,14 @@ for (const moment of [
       assert.deepEqual(harness.informationMessages, [])
     } finally {
       release()
+      harness.reader['settleKeyboardAtPause'] = settleKeyboard
       live?.close()
       await harness.close()
     }
   })
 
-// Value: protects=the keyboard of a learner in Cursor who, after the chat got the keyboard back at a pause, clicks into a file in the Application pane's group: when the pane comes to the front over that file it takes the keyboard, so the keyboard is on an element; fails_when=the answer of the pause's return ("the chat has the keyboard") is still given after the learner chose an editor, so the pane covers the file the learner types in without taking the keyboard, which is then on no element; why_new=Cycle 0046 row 249 (the bound of the kept answer: it holds until an editor becomes active); seam=workspace harness with the controlled runtime, a live run's viewport, addSeparateEditorPart, focusMutableDraft, pauseDebugger, revealApplicationPaneOverPausedFile
-test('the Application pane takes the keyboard when it comes to the front over a file the learner clicked into after the chat got the keyboard back at that pause', async () => {
+// Value: protects=newer learner input placed explicitly in the App group after chat return; fails_when=background App display replaces that dirty input or repeats chat focus; why_new=Cycle 0046 row 249 reconciled with final App admission; seam=actual capture, explicit learner file, background refusal and public focus-app recovery
+test('a learner file explicitly placed in App after chat return rejects background replacement and permits explicit App recovery', async () => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part; the run paused, the reader showed the captured source and gave the keyboard back to the chat; then the learner clicked into a file in the Application pane's group.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
@@ -5497,9 +5757,12 @@ test('the Application pane takes the keyboard when it comes to the front over a 
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     chat.focusTab()
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
     harness.service.action({
       instanceId: harness.service.instanceId,
       runId: record.id,
@@ -5508,22 +5771,31 @@ test('the Application pane takes the keyboard when it comes to the front over a 
     })
     await readerSeams(harness).refresh()
     const chatFocusedAfterReturn = chat.focused()
-    harness.focusMutableDraft('learner-notes.ts', 1)
+    const learnerFile = harness.focusMutableDraft('learner-notes.ts', 1)
 
     // Act
-    await harness.revealApplicationPaneOverPausedFile()
+    await assert.rejects(
+      harness.revealApplicationPaneOverPausedFile(),
+      /Application ownership changed/,
+    )
 
-    // Assert: no second return; the pane has the keyboard.
+    // Assert: the learner file retains input and bytes without another chat return or App reveal.
     assert.equal(chatFocusedAfterReturn, true)
-    assert.deepEqual(
-      harness
-        .panelReveals()
-        .findLast((reveal) => reveal.kind === 'codebook.scopedBrowser'),
-      {
-        kind: 'codebook.scopedBrowser',
-        column: undefined,
-        preserveFocus: false,
-      },
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.toString(),
+      learnerFile.document.uri.toString(),
+    )
+    assert.equal(learnerFile.document.getText(), 'Original learner draft.\n')
+    assert.equal(learnerFile.tab.isDirty, true)
+    assert.equal(chat.focused(), false)
+    assert.equal(harness.keyboardOnBody(), false)
+    // Explicit recovery may front App, preserving the learner's file without another chat return.
+    await harness.reader.action('focus-app')
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerFile.tab)),
+      true,
     )
     assert.deepEqual(
       harness.commands.filter(
@@ -5812,7 +6084,16 @@ test("a learner in Cursor who went from the chat to a file during a pause of a l
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration: {
+        ...harness.configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 1,
+            inspections: harness.configuration.inspections,
+          },
+        ],
+      },
       key: randomUUID(),
     })
     const record = harness.service.record(receipt)
@@ -5824,9 +6105,12 @@ test("a learner in Cursor who went from the chat to a file during a pause of a l
       () => {},
       'normal',
     )
+    const revealsBefore = harness.panelReveals().length
     chat.focusTab()
-    harness.focusMutableDraft('actions.ts', 2)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
     harness.service.action({
       instanceId: harness.service.instanceId,
       runId: record.id,
@@ -5837,12 +6121,22 @@ test("a learner in Cursor who went from the chat to a file during a pause of a l
     const chatFocusedAfterFirstPause = chat.focused()
 
     // Act: during that pause the learner goes to a file; the run continues and pauses again, and the Application pane takes the keyboard from the next paused file.
-    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    await harness.runtimes[0]!.continue(
+      'browser',
+      harness.runtimes[0]!.snapshots.at(-1)!.pause,
+    )
     harness.resumeDebugger()
-    harness.focusMutableDraft('auth.ts', 1)
-    harness.pauseDebugger()
+    harness.pauseDebugger({
+      focusesEditorOnBreak: true,
+      opensWithKeyboard: { filename: 'auth.ts', column: 1 },
+    })
+    commitNextStop(harness.runtimes[0]!)
+    await readerSeams(harness).refresh()
     await harness.revealApplicationPaneOverPausedFile()
 
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.deepEqual(harness.panelReveals().slice(revealsBefore), [])
     // Assert: one return, at the first pause only; at the second the keyboard stays and the learner is told where it is.
     assert.equal(chatFocusedAfterFirstPause, true)
     assert.equal(chat.focused(), false)
