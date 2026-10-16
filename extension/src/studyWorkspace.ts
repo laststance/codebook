@@ -6493,20 +6493,30 @@ export class StudyWorkspace {
   private captureRepositoryKeyboardReturn(): RepositoryKeyboardReturn {
     const borrowsBefore = this.mainEditorFocusBorrows,
       giveBack = this.retainForeignTabFocus(undefined),
-      paneBefore = [this.app, this.contextPanel].find((panel) => panel?.active),
-      editorBefore = vscode.window.activeTextEditor,
-      editorStateBefore = textEditorFocusState(editorBefore)
+      isPlaceFocusedAgain = this.retainEditorKeyboardPlace()
     return async (): Promise<boolean> => {
       if (this.mainEditorFocusBorrows === borrowsBefore) return true
-      if (giveBack) return giveBack().catch(() => false)
       // Without a foreign tab the learner had a Study pane or a text editor, which the measurement focuses again only in the main editor.
-      return (
-        Boolean(paneBefore?.active) ||
-        (editorBefore !== undefined &&
-          textEditorFocusState(vscode.window.activeTextEditor) ===
-            editorStateBefore)
-      )
+      return giveBack ? giveBack().catch(() => false) : isPlaceFocusedAgain()
     }
+  }
+
+  /**
+   * Remembers the Study pane or the text editor that has the keyboard now, for {@link captureRepositoryKeyboardReturn}'s return to ask later whether the measurement of {@link readMainEditorGrid} gave it its focus back (it does so only for a place of the main editor).
+   * @returns The question: `true` while that pane is the active editor again, or while the active text editor shows the same document, selections and column as before; `false` otherwise, and when neither had the keyboard.
+   * @example const isPlaceFocusedAgain = this.retainEditorKeyboardPlace() // isPlaceFocusedAgain() => true once the measurement restored the learner's file in column 2
+   */
+  private retainEditorKeyboardPlace(): () => boolean {
+    const paneBefore = [this.app, this.contextPanel].find(
+        (panel) => panel?.active,
+      ),
+      editorBefore = vscode.window.activeTextEditor,
+      editorStateBefore = textEditorFocusState(editorBefore)
+    return (): boolean =>
+      Boolean(paneBefore?.active) ||
+      (editorBefore !== undefined &&
+        textEditorFocusState(vscode.window.activeTextEditor) ===
+          editorStateBefore)
   }
 
   /** Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. @example await this.arrangeRepositoryLayout(signal, selection) */
@@ -11753,16 +11763,18 @@ export class StudyWorkspace {
     column: vscode.ViewColumn,
   ): Promise<void> {
     const shown = uri.toString(),
-      focused = vscode.window.activeTextEditor
+      focused = vscode.window.activeTextEditor,
+      // The copy that has the keyboard stays.
+      focusedCopyColumn =
+        focused?.document.uri.toString() === shown
+          ? focused.viewColumn
+          : undefined
     const copies = vscode.window.tabGroups.all
       .filter(
         (group) =>
           group.viewColumn !== column &&
-          group.tabs.length > 1 &&
-          !(
-            focused?.viewColumn === group.viewColumn &&
-            focused.document.uri.toString() === shown
-          ),
+          group.viewColumn !== focusedCopyColumn &&
+          group.tabs.length > 1,
       )
       .flatMap((group) =>
         group.tabs.filter(
