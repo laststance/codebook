@@ -407,8 +407,10 @@ test('failed App focus grants no cleanup authority over a newly reported group w
   await harness.reader.attach(harness.service)
   readerSeams(harness).stopOwnTimer()
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
-  const source = harness.focusMutableDraft('original.txt', 1),
-    held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup')
+  const source = harness.focusMutableDraft('original.txt', 1)
+  // The learner's notes in the second group are the active editor, so the preparation focuses the first group before it allocates (row 612: an active first group is not focused at all).
+  harness.focusMutableDraft('learner-notes.txt', 2)
+  const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup')
   let preparing: Promise<unknown> | undefined
   try {
     preparing = Promise.resolve(

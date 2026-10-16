@@ -813,12 +813,17 @@ for (const phase of [
   'Close',
 ] as const)
   test(`MCP-first opaque primary preserves later input at ${phase} without allocating App`, async () => {
-    // Arrange: identical webview types share one native group, so a later tab roundtrip cannot be inferred from the final type alone.
-    const harness = await workspaceHarness(false)
-    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // Arrange: identical webview types share one native group, so a later tab roundtrip cannot be inferred from the final type alone. For the phases of the focus command's response the learner's notes in a second group are the active editor, so the preparation focuses the first group before it allocates; at the caller's admission that group is the only and active one, which is not focused at all (row 612).
+    const harness = await workspaceHarness(false),
+      focusesFirstGroup = phase !== 'caller admission'
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: focusesFirstGroup ? [{}, {}] : [{}],
+    })
     const other = harness.openWiki(1),
-      original = harness.openWiki(1),
-      reader = harness.createReader(),
+      original = harness.openWiki(1)
+    if (focusesFirstGroup) harness.focusMutableDraft('learner-notes.txt', 2)
+    const reader = harness.createReader(),
       focus = reader['focusApplicationSourceGroup'],
       focusPrimary = focus.bind(reader),
       commandsBefore = harness.commands.length
@@ -875,7 +880,7 @@ for (const phase of [
       )
       assert.equal(harness.counts().panels, 2)
       assert.equal(harness.panelColumn('codebook.scopedBrowser'), undefined)
-      assert.equal(harness.groups.length, 1)
+      assert.equal(harness.groups.length, focusesFirstGroup ? 2 : 1)
       assert.equal(harness.groups[0]!.tabs.includes(other.nativeTab), true)
       assert.equal(harness.groups[0]!.tabs.includes(original.nativeTab), true)
       assert.equal(harness.groups[0]!.activeTab, original.nativeTab)

@@ -2089,6 +2089,266 @@ test('an agent’s first run after a reload whose record no longer proves the le
   }
 })
 
+// Value: protects=the chat input's keyboard in VS Code, and in Cursor with its chat in the side bar, when an agent's run prepares the Application while the Study workspace is closed and the learner's file is the active editor of the first group: the Application gets its own locked group without any editor group's focus and no file gets the keyboard, so nothing needs to be told; fails_when=the preparation focuses the first group and its focus return shows the learner's active file with the keyboard, so the chat input the learner just typed in loses its keyboard to that file for good, without a word; why_new=Cycle 0046 row 612 (C56 run c56-1f-control: focusFirstEditorGroup, then showTextDocument(actions.ts, preserveFocus false) from restorePreparationFocus); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input, which the editor does not report), presentation.createViewport (the MCP-first preparation), keyboardInView, textDocumentShows and the information messages
+test('an agent’s run that prepares the Application while the chat view has the keyboard leaves the keyboard in the chat and focuses nothing', async () => {
+  // Arrange: the learner's actions.ts is the active editor of the first group and auth.ts stands in the second; then the learner typed the request into the chat view, which the editor does not report.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(2)
+    const auth = harness.focusMutableDraft('auth.ts', 2)
+    harness.leaveEmptyGroup(1)
+    const actions = harness.focusMutableDraft('actions.ts', 1)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: no document was shown with the keyboard and the chat view still has it; the Application stands alone in its locked group at column 1 beside the learner's two groups, and nothing is told.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.equal(harness.keyboardInView(), true)
+      assert.deepEqual(
+        harness.groups.map((group) => ({
+          column: group.viewColumn,
+          locked: Boolean(group.locked),
+          holdsActions: group.tabs.includes(actions.tab),
+          holdsAuth: group.tabs.includes(auth.tab),
+        })),
+        [
+          { column: 1, locked: true, holdsActions: false, holdsAuth: false },
+          { column: 2, locked: false, holdsActions: true, holdsAuth: false },
+          { column: 3, locked: false, holdsActions: false, holdsAuth: true },
+        ],
+      )
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat input's keyboard in VS Code when an agent's first run after Developer: Reload Window retires the earlier window's empty Application group, which the editor restored as its active group: the proof and the close of that group and the new Application group take no editor group's focus, no file gets the keyboard, and nothing needs to be told; fails_when=the leftover proof focuses the recorded column, the removal of the focused group hands the keyboard to the learner's file, and the preparation's focus return then shows that file with the keyboard; why_new=Cycle 0046 row 612 (C56 run c56-1f2: row 609's proof focusFirstEditorGroup, retainForeignTabFocus giving nothing back beside an active text editor, then showTextDocument(actions.ts, preserveFocus false)); seam=applicationGroupMarkers, leaveEmptyGroup, focusMutableDraft, the editor's focusFirstEditorGroup (the learner's last click into the empty group), focusView (the chat view's input), presentation.createViewport (the MCP-first preparation), keyboardInView, textDocumentShows and the information messages
+test('an agent’s first run after a reload retires the earlier window’s empty Application group the editor restored as active, and leaves the keyboard in the chat view', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1; after the reload it stands empty and active beside the learner's actions.ts in column 2 and auth.ts in column 3, and the learner typed the request into the chat view.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyGroup(3)
+    const auth = harness.focusMutableDraft('auth.ts', 3)
+    harness.leaveEmptyGroup(2)
+    const actions = harness.focusMutableDraft('actions.ts', 2)
+    harness.leaveEmptyGroup(1)
+    const applicationLeftover = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: no document was shown with the keyboard and the chat view still has it; the leftover is gone, the new Application group stands locked at column 1 before the learner's two groups, and nothing is told.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.equal(harness.keyboardInView(), true)
+      assert.equal(harness.groups.includes(applicationLeftover), false)
+      assert.deepEqual(
+        harness.groups.map((group) => ({
+          column: group.viewColumn,
+          locked: Boolean(group.locked),
+          holdsActions: group.tabs.includes(actions.tab),
+          holdsAuth: group.tabs.includes(auth.tab),
+        })),
+        [
+          { column: 1, locked: true, holdsActions: false, holdsAuth: false },
+          { column: 2, locked: false, holdsActions: true, holdsAuth: false },
+          { column: 3, locked: false, holdsActions: false, holdsAuth: true },
+        ],
+      )
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner in VS Code when an agent's run can place its Application only after focusing the first editor group (another group is the active one): without a fresh sign of the learner's hand in the active file the editor cannot tell whether the chat view had the keyboard, so no file is given the keyboard afterwards, and the learner is told once that the Application's group has it; fails_when=the preparation's focus return shows the learner's active file with the keyboard, taking it from a chat input the learner was typing in, or the keyboard stays in the new group without a word; why_new=Cycle 0046 row 612 (the borrow that cannot be avoided: workbench.action.newGroupAbove adds above the active group only, and no command makes a group active without focusing it); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), presentation.createViewport (the MCP-first preparation), textDocumentShows and the information messages
+test('an agent’s run that must focus the first editor group to place the Application gives no file the keyboard and says once that the Application’s group has it', async () => {
+  // Arrange: the learner's actions.ts is the active editor of the second group, and the learner typed the request into the chat view.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(2)
+    const actions = harness.focusMutableDraft('actions.ts', 2)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: no document was shown with the keyboard after the placement; the Application stands in its locked group at column 1, actions.ts in column 3, and the sentence says where the keyboard is.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+        ],
+      )
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(
+        harness.groups.find((group) => group.tabs.includes(actions.tab))
+          ?.viewColumn,
+        3,
+      )
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner in VS Code when an agent's first run after Developer: Reload Window must focus the earlier window's leftover group for its proof (another group is the active one): the removal of that focused group gives the editor's next group the keyboard, so the editor cannot tell whether the chat view had it; no file gets the keyboard after the Application is placed, and the learner is told once that the Application's group has it; fails_when=the preparation's focus return shows the learner's active file with the keyboard after row 609's proof took it from the chat view, or the keyboard stays in the new group without a word; why_new=Cycle 0046 row 612 (the proof's focus that cannot be avoided: the editor unlocks only the active group); seam=applicationGroupMarkers, leaveEmptyGroup, focusMutableDraft, focusView (the chat view's input), presentation.createViewport (the MCP-first preparation), textDocumentShows and the information messages
+test('an agent’s first run after a reload that must focus the earlier window’s leftover group for its proof gives no file the keyboard and says once that the Application’s group has it', async () => {
+  // Arrange: the earlier window recorded its Application group at column 3; after the reload it stands empty beside the learner's actions.ts, the active editor of column 1, and auth.ts in column 2, and the learner typed the request into the chat view.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 3,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyGroup(3)
+    const applicationLeftover = harness.groups.find(
+      (group) => group.viewColumn === 3,
+    )!
+    harness.leaveEmptyGroup(2)
+    const auth = harness.focusMutableDraft('auth.ts', 2)
+    harness.leaveEmptyGroup(1)
+    const actions = harness.focusMutableDraft('actions.ts', 1)
+    harness.focusView()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: no document was shown with the keyboard after the placement and the sentence says where the keyboard is; the leftover is gone and the Application stands locked at column 1 before the learner's two groups.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+        ],
+      )
+      assert.equal(harness.groups.includes(applicationLeftover), false)
+      assert.deepEqual(
+        harness.groups.map((group) => ({
+          column: group.viewColumn,
+          locked: Boolean(group.locked),
+          holdsActions: group.tabs.includes(actions.tab),
+          holdsAuth: group.tabs.includes(auth.tab),
+        })),
+        [
+          { column: 1, locked: true, holdsActions: false, holdsAuth: false },
+          { column: 2, locked: false, holdsActions: true, holdsAuth: false },
+          { column: 3, locked: false, holdsActions: false, holdsAuth: true },
+        ],
+      )
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who types in the first group's file while an agent's run prepares the Application in VS Code: the new group takes the keyboard from that file by the editor's own rule, and the preparation gives it back to the file, since a fresh sign of the learner's hand (a key press within LEARNER_SIGN_FRESH_MS) says the keyboard was there; fails_when=row 612's rule for the chat view also withholds the keyboard from a file the learner typed in a moment ago, which then stays in the empty Application group; why_new=Cycle 0046 row 612 (the bound of its fix: the learner's own sign still decides); seam=useNativeLayout, focusMutableDraft, workInActiveTextEditor('keyboard'), presentation.createViewport (the MCP-first preparation), textDocumentShows, focusedSource, keyboardOnBody and the information messages
+test('an agent’s run that prepares the Application while the learner types in the first group’s file gives that file the keyboard back', async () => {
+  // Arrange: actions.ts is the active editor of the first group, and the learner has just typed in it.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.workInActiveTextEditor('keyboard')
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: actions.ts, in column 2 behind the new Application group, was shown with the keyboard and has it; nothing is told.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
+        { name: 'actions.ts', viewColumn: 2, preserveFocus: false },
+      ])
+      assert.equal(
+        harness.focusedSource()?.document.uri.path.endsWith('/actions.ts'),
+        true,
+      )
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.deepEqual(harness.informationMessages, [])
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the captured source at the Study's own column when an agent's run reacquires the Application while the learner's file covers that source: the next entry from the repository brings the source to the front again; fails_when=the Application group is remembered as an ordinary Study layout because the source already stands at column 2, so no reentry fronts it and the learner's file stays over the captured source; why_new=Cycle 0046 control 'source-reentry' (the guard `|| !this.sourceReady()` of rememberApplicationGroup lost its only test when the fake editor began to give a text shown beyond the grid a group of its own, commit 7cc9499a); seam=closeTabByHand (the learner closes the Application pane), focusMutableDraft (the learner's file over the source), presentation.createViewport (the agent's run) and open with the repository origin, as the Repository Wiki's evidence link enters
 test('an entry from the repository fronts the captured source again after an agent’s run reacquired the Application while the learner’s file covered that source', async () => {
   // Arrange: a Return claimed the Application group; the learner closed the Application pane and opened a file over the captured source in column 2, and an agent's run then prepared the Application again.

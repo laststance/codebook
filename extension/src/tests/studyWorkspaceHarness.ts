@@ -929,7 +929,7 @@ export async function workspaceHarness(
   }
 
   /**
-   * Inserts the native empty group used by App preparation, preserving old tabs and their group objects; the newGroupAbove command calls it after focusing the first main group.
+   * Inserts the native empty group used by App preparation, preserving old tabs and their group objects; the newGroupAbove command calls it with the first main group active. The new group becomes the active one and takes the keyboard only from the editor area or the page body: a view, the chat view among them, and a side bar keep it (VS Code 1.140.0 `workbench.desktop.main.js` 990:31741, Cursor 17388:33629).
    * @example insertNativeAppGroup() // former main column one becomes column two, with its tabs intact
    */
   function insertNativeAppGroup(): void {
@@ -997,8 +997,8 @@ export async function workspaceHarness(
     const previouslyFocusedGroup = activeTabGroup
     activeTabGroup = created
     innerFocusedPanel = undefined
-    keyboardInView = false
-    keyboardOnBody = true
+    // The new empty group's own element takes the keyboard from the editor area, which this model counts as the page body.
+    if (!keyboardInView && !keyboardInSideBar) keyboardOnBody = true
     if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([], created)
     else
       changedGroups({

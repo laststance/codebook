@@ -9,6 +9,7 @@ import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
 import {
   AGENT_STORAGE_DIRECTORY,
   APPLICATION_GROUP_MARKER_KEY,
+  APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   APPLICATION_PANE_CLOSED_MESSAGE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
@@ -447,8 +448,18 @@ interface LeftoverTabClose {
   capturedSourceKept: boolean
   /** `true` when a dead Codebook pane is still in the window. */
   deadPaneKept: boolean
-  /** `true` when the groups an earlier window recorded were proved before the close, whose focus commands took the keyboard ({@link StudyWorkspace.retireLeftoverApplicationGroup}). */
-  provedRecordedGroups: boolean
+  /** `true` when the proof of the groups an earlier window recorded focused one of them before the close and so took the keyboard ({@link StudyWorkspace.retireLeftoverApplicationGroup}); `false` when no proof ran, and when it needed no focus. */
+  proofTookKeyboard: boolean
+}
+
+/** What an Application preparation knows when it gives the keyboard back ({@link StudyWorkspace.returnPreparationFocus}). */
+interface PreparedApplicationFocus {
+  /** `true` when the measured main grid accounts for every editor group: no other editor part exists, so a chat can only be a view. */
+  onlyEditorPart: boolean
+  /** `true` for a live run's viewport, which an agent starts while the learner may be typing in a chat. */
+  forAgentRun: boolean
+  /** `true` when the preparation focused an editor group itself: the first group, or a leftover's for its proof, whose removal left the keyboard in the main editor. */
+  tookKeyboard: boolean
 }
 
 /**
@@ -474,13 +485,15 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
  * keyboardNoticesTold.add('close')
  */
-const keyboardNoticesTold = new Set<'close' | 'pause' | 'chosen' | 'runEnd'>()
+const keyboardNoticesTold = new Set<
+  'close' | 'pause' | 'chosen' | 'runEnd' | 'preparation'
+>()
 
 /**
  * Drops the empty groups at the end of a list of groups' tabs, for {@link StudyWorkspace}'s comparison of the learner's groups before an Open and after a Close: an editor that removes emptied groups takes those away with the panes, and the layout makes them again.
@@ -1304,7 +1317,7 @@ export class StudyWorkspace {
    * @returns What closed and what stayed, see {@link LeftoverTabClose}.
    * @example
    * ```ts
-   * const closed = await this.closeLeftoverTabs(signal) // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false, provedRecordedGroups: false }
+   * const closed = await this.closeLeftoverTabs(signal) // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false, proofTookKeyboard: false }
    * ```
    */
   private async closeLeftoverTabs(
@@ -1312,8 +1325,7 @@ export class StudyWorkspace {
   ): Promise<LeftoverTabClose> {
     const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
       leftover = this.leftoverTabs()
-    const provedRecordedGroups =
-      await this.retireLeftoverApplicationGroup(signal)
+    const proofTookKeyboard = await this.retireLeftoverApplicationGroup(signal)
     const open = new Set(
         vscode.window.tabGroups.all.flatMap((group) => group.tabs),
       ),
@@ -1346,7 +1358,7 @@ export class StudyWorkspace {
       deadPaneKept: kept.some(
         (tab) => tab.input instanceof vscode.TabInputWebview,
       ),
-      provedRecordedGroups,
+      proofTookKeyboard,
     }
   }
 
@@ -1480,7 +1492,7 @@ export class StudyWorkspace {
           transition.cancellation.signal,
         )
       // The admission below reads the focus again: it finds the chat where the selection found it (row 608).
-      if (closed.provedRecordedGroups)
+      if (closed.proofTookKeyboard)
         await giveKeyboardBack?.(true).catch(() => false)
     } finally {
       this.endPresentationTransition(transition)
@@ -6629,7 +6641,13 @@ export class StudyWorkspace {
     createViewport: async (runId, record, fail, scenario, signal) => {
       // A new run may replace a closed reader, but an open recording keeps its independently selected film.
       if (!this.opened) this.leavePlayback()
-      const panel = await this.prepareApplicationGroup(signal),
+      const panel = await this.prepareApplicationGroup(
+          signal,
+          undefined,
+          false,
+          undefined,
+          true,
+        ),
         leaseId = randomUUID()
       this.leaseId = leaseId
       panel.title = `codebook · Application ${runId.slice(0, 8)}`
@@ -12106,6 +12124,7 @@ export class StudyWorkspace {
    * @param retiredContextGroup - An empty group created for the reader's prior Context, never a learner group.
    * @param manualEntry - Explicit Open may reconcile a parked App's later manual placement; background acquisition cannot borrow focus for it.
    * @param cancelEntryFocusReturn - Supplied when {@link open} owns the final foreign focus return; retire that older return when later learner input wins.
+   * @param forAgentRun - `true` for a live run's viewport ({@link presentation}'s `createViewport`), which an agent starts while the learner may be typing in a chat view: beside such a view the focus return gives the keyboard only to a place the learner is known to work in ({@link captureApplicationPreparationReturn}, row 612).
    * @returns The registered App in its new owned group, or its learner-chosen group on explicit manual reentry; original groups remain separate.
    * @throws When native scope, original groups or current lifetime cannot be retained safely.
    * @example const panel = await this.prepareApplicationGroup(signal)
@@ -12115,11 +12134,13 @@ export class StudyWorkspace {
     retiredContextGroup?: vscode.TabGroup,
     manualEntry = false,
     cancelEntryFocusReturn?: () => void,
+    forAgentRun = false,
   ): Promise<vscode.WebviewPanel> {
     signal?.throwIfAborted()
     this.assertLifetime(this.lifetime)
     // A closed reader's first preparation, as an agent's run right after Developer: Reload Window, retires the earlier window's proven leftovers before it allocates (row 609).
-    await this.retireLeftoversBeforePreparation(signal)
+    const proofKeptKeyboard =
+      await this.retireLeftoversBeforePreparation(signal)
     // A first acquisition cannot register beside an earlier host's leftover pane.
     if (!this.app && this.deadPaneTabs().length)
       await this.retirePreviousApplicationPanes(signal)
@@ -12139,23 +12160,24 @@ export class StudyWorkspace {
         }),
     )
     // Native command discovery remains outside the queue so Close can drain accepted placement.
-    await preparation.restoreFocus?.()
+    await preparation.restoreFocus?.({ proofKeptKeyboard, forAgentRun })
     return preparation.panel
   }
 
   /**
-   * Retires the earlier window's proven leftover groups before {@link prepareApplicationGroup} allocates, when a closed reader prepares its first Application (an agent's run right after Developer: Reload Window, before any Study select): the allocation would otherwise stand beside them and its record would replace the earlier one, so they were never proved again (row 609). The proof's focus commands take the keyboard; a chat that had it gets it back here, so the preparation's own focus return captures it where it was. Nothing happens for an open reader, without an earlier window's record, or when no recorded group is a leftover ({@link retireLeftoverApplicationGroup}).
+   * Retires the earlier window's proven leftover groups before {@link prepareApplicationGroup} allocates, when a closed reader prepares its first Application (an agent's run right after Developer: Reload Window, before any Study select): the allocation would otherwise stand beside them and its record would replace the earlier one, so they were never proved again (row 609). A proof that focused a group took the keyboard; a chat of another editor part that had it gets it back here, so the preparation's own focus return captures it where it was. Nothing happens for an open reader, without an earlier window's record, or when no recorded group is a leftover ({@link retireLeftoverApplicationGroup}).
    * @param signal - The preparation's cancellation.
+   * @returns `true` when the proof took the keyboard and nothing gave it back: the main editor has it (the group the removal activated), which the preparation's notice then names ({@link tellPreparedApplicationKeyboard}); `false` otherwise.
    * @throws When the editor refuses a proved group's close, or the grid does not lose exactly that group.
-   * @example await this.retireLeftoversBeforePreparation(signal) // the earlier window's empty groups go; the chat keeps its keyboard
+   * @example await this.retireLeftoversBeforePreparation(signal) // => false: the earlier window's empty groups go, and the chat keeps its keyboard
    */
   private async retireLeftoversBeforePreparation(
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const giveKeyboardBack = this.retainForeignTabFocus(undefined)
-    // Only a proof that ran moved the keyboard.
-    if (await this.retireLeftoverApplicationGroup(signal))
-      await giveKeyboardBack?.(true).catch(() => false)
+    // Only a proof that focused a group moved the keyboard.
+    if (!(await this.retireLeftoverApplicationGroup(signal))) return false
+    return !(await giveKeyboardBack?.(true).catch(() => false))
   }
 
   /**
@@ -12211,7 +12233,7 @@ export class StudyWorkspace {
    * Reconciles existing owners or selects the single fresh allocation path for {@link prepareApplicationGroup} inside its layout queue.
    * @param signal - The existing preparation cancellation.
    * @param input - Current queue lifetime/guard and the caller's Context retirement and focus-return authority.
-   * @returns The retained panel and any focus return that must run after the queue releases.
+   * @returns The retained panel and any focus return that must run after the queue releases; its argument says whether a leftover proof before the queue took the keyboard ({@link retireLeftoversBeforePreparation}) and whether the preparation is a live run's ({@link prepareApplicationGroup}).
    * @throws When native scope, ownership or accepted-effect recovery cannot be retained.
    * @example const prepared = await this.prepareApplicationLayout(signal, input)
    */
@@ -12225,7 +12247,10 @@ export class StudyWorkspace {
     },
   ): Promise<{
     panel: vscode.WebviewPanel
-    restoreFocus?: () => Promise<void>
+    restoreFocus?: (preparation: {
+      proofKeptKeyboard: boolean
+      forAgentRun: boolean
+    }) => Promise<void>
   }> {
     const { assertCurrent, retiredContextGroup } = input
     if (!vscode.window.state.focused)
@@ -12350,7 +12375,9 @@ export class StudyWorkspace {
     assertCurrent: () => void,
     cancelEntryFocusReturn?: () => void,
   ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
-    let restorePreparationFocus: (() => Promise<void>) | undefined
+    let restorePreparationFocus: Awaited<
+      ReturnType<StudyWorkspace['prepareApplicationLayout']>
+    >['restoreFocus']
     const existingPanel = this.app,
       returnFocus = this.captureApplicationPreparationReturn(
         existingPanel,
@@ -12360,6 +12387,9 @@ export class StudyWorkspace {
     const grid = await this.readMainEditorGrid(signal, assertCurrent)
     assertCurrent()
     grid.assertUnchanged()
+    // The measured main grid accounts for every group: the main editor is the only editor part, where a chat can only be a view.
+    const onlyEditorPart =
+      grid.groups.length === vscode.window.tabGroups.all.length
     this.noteLayoutBeforeOpen(grid.layout, grid.groups)
     const originals = vscode.window.tabGroups.all.map((group) => ({
       identity: this.editorGroupIdentities.get(group),
@@ -12371,10 +12401,11 @@ export class StudyWorkspace {
     this.placingPresentation = true
     try {
       const sourceFocus = await this.focusApplicationSourceGroup(
-        grid.groups.length,
-        assertCurrent,
-        cancelEntryFocusReturn,
-      )
+          grid.groups.length,
+          assertCurrent,
+          cancelEntryFocusReturn,
+        ),
+        sourceFocusTookKeyboard = sourceFocus.tookKeyboard
       this.applicationGroupChange = { kind: 'insert' }
       try {
         sourceFocus.assertRetained()
@@ -12442,9 +12473,16 @@ export class StudyWorkspace {
             return false
           }
         }
-        restorePreparationFocus = async (): Promise<void> => {
+        restorePreparationFocus = async ({
+          proofKeptKeyboard,
+          forAgentRun,
+        }): Promise<void> => {
           if (!stillCurrent()) return
-          await returnFocus(signal, stillCurrent, assertPlaced)
+          await returnFocus(signal, stillCurrent, assertPlaced, {
+            onlyEditorPart,
+            forAgentRun,
+            tookKeyboard: sourceFocusTookKeyboard || proofKeptKeyboard,
+          })
           assertCurrent()
         }
       }
@@ -12462,10 +12500,10 @@ export class StudyWorkspace {
    * Captures the original focus-return targets for {@link reserveApplicationGroup} before any preparation effect, and the order in which a later return tries them.
    * @param existingPanel - App captured at transaction entry, when one already exists.
    * @param cancelEntryFocusReturn - A caller-owned final return suppresses a second fallback target.
-   * @returns The focus return: it gives focus back to a foreign tab when one held it, otherwise to a focused Codebook panel, otherwise to the captured native focus. The caller still validates current input after placement.
+   * @returns The focus return ({@link returnPreparationFocus}): it gives focus back to a foreign tab when one held it, otherwise to a focused Codebook panel, otherwise to the captured native focus, except beside a chat view (row 612). The caller still validates current input after placement.
    * @example
    * const returnFocus = this.captureApplicationPreparationReturn(existingPanel, cancelEntryFocusReturn)
-   * await returnFocus(signal, stillCurrent, assertPlaced) // after the guarded placement
+   * await returnFocus(signal, stillCurrent, assertPlaced, { onlyEditorPart: true, forAgentRun: true, tookKeyboard: false }) // after the guarded placement in VS Code beside the chat view: nothing is focused, nothing is told
    */
   private captureApplicationPreparationReturn(
     existingPanel: vscode.WebviewPanel | undefined,
@@ -12474,21 +12512,118 @@ export class StudyWorkspace {
     signal: AbortSignal | undefined,
     stillCurrent: () => boolean,
     assertPlaced: () => void,
+    preparation: PreparedApplicationFocus,
   ) => Promise<void> {
     const focusedPanel = [existingPanel, this.contextPanel].find(
-        (panel) => panel?.active,
-      ),
-      giveBack = this.retainForeignTabFocus(undefined),
-      restoreFocus =
+      (panel) => panel?.active,
+    )
+    const captured = {
+      focusedPanel,
+      giveBack: this.retainForeignTabFocus(undefined),
+      restoreFocus:
         focusedPanel || cancelEntryFocusReturn
           ? undefined
-          : this.capturePresentationFocus(undefined)
-    return async (signal, stillCurrent, assertPlaced): Promise<void> => {
-      if (giveBack) await giveBack(true, stillCurrent)
-      else if (focusedPanel)
-        await this.focusPresentationPanel(focusedPanel, signal)
-      else await restoreFocus?.(signal, assertPlaced)
+          : this.capturePresentationFocus(undefined),
+      // The learner's own sign in the active text editor, or the Study pane's report, is all that tells where the keyboard is beside a chat view.
+      knowsLearnersPlace: focusedPanel
+        ? this.reportsKeyboard(focusedPanel)
+        : vscode.window.activeTextEditor !== undefined &&
+          this.learnerWorksInActiveEditor(),
     }
+    return async (
+      signal,
+      stillCurrent,
+      assertPlaced,
+      preparation,
+    ): Promise<void> =>
+      this.returnPreparationFocus(captured, {
+        signal,
+        stillCurrent,
+        assertPlaced,
+        preparation,
+      })
+  }
+
+  /**
+   * Gives the keyboard back once an Application preparation is placed, from what {@link captureApplicationPreparationReturn} captured before any of its effects; the focus return that method answers calls it, after {@link reserveApplicationGroup}'s guard.
+   * A chat of another editor part that had the keyboard gets it back first. Otherwise the focus goes to the Codebook pane or the native place that had it, unless {@link settleKeyboardBesideChatView} settles it for an agent's run beside a chat view.
+   * @param captured - The foreign tab's give-back ({@link retainForeignTabFocus}), the Codebook panel that was active, the captured native focus ({@link capturePresentationFocus}), and whether the learner is known to work there.
+   * @param placed - The preparation's cancellation, its guards for the current input and the placement, and what it knows of the editor parts and of its own focus.
+   * @example
+   * await this.returnPreparationFocus(captured, { signal, stillCurrent, assertPlaced, preparation: { onlyEditorPart: false, forAgentRun: true, tookKeyboard: true } }) // Cursor's chat tab gets the keyboard back
+   */
+  private async returnPreparationFocus(
+    captured: {
+      focusedPanel: vscode.WebviewPanel | undefined
+      giveBack: ReturnType<StudyWorkspace['retainForeignTabFocus']>
+      restoreFocus:
+        ReturnType<StudyWorkspace['capturePresentationFocus']> | undefined
+      knowsLearnersPlace: boolean
+    },
+    placed: {
+      signal: AbortSignal | undefined
+      stillCurrent: () => boolean
+      assertPlaced: () => void
+      preparation: PreparedApplicationFocus
+    },
+  ): Promise<void> {
+    const { focusedPanel, giveBack, restoreFocus } = captured
+    // A chat that held the keyboard beside the main editor gets it back; nothing else is focused after that return.
+    if (giveBack && (await giveBack(true, placed.stillCurrent))) return
+    if (
+      this.settleKeyboardBesideChatView(
+        placed.preparation,
+        captured.knowsLearnersPlace,
+        placed.stillCurrent,
+      ) ||
+      giveBack
+    )
+      return
+    if (focusedPanel)
+      await this.focusPresentationPanel(focusedPanel, placed.signal)
+    else await restoreFocus?.(placed.signal, placed.assertPlaced)
+  }
+
+  /**
+   * Settles the keyboard after an agent's run's Application preparation in the only editor part (VS Code, and Cursor with its chat in the side bar), where the active text editor and a pane's `active` flag read the same while a chat view has the keyboard (row 612): no file or pane is given the keyboard unless the learner is known to work there, and a keyboard the preparation took itself is named once ({@link tellPreparedApplicationKeyboard}); asked by {@link returnPreparationFocus} before it focuses anything.
+   * @param preparation - Whether the main editor is the only editor part, whether the preparation is a live run's, and whether it focused an editor group.
+   * @param knowsLearnersPlace - Whether a fresh sign of the learner's own hand in the active text editor ({@link learnerWorksInActiveEditor}) or the Study pane's report ({@link reportsKeyboard}) said where the keyboard was.
+   * @param stillCurrent - The preparation's guard for the current input; a newer learner choice is told nothing.
+   * @returns
+   * - `true` when the keyboard stays where the preparation left it (and the learner was told, once, if the preparation took it).
+   * - `false` for another editor part, a preparation that is not an agent's run, and a place the learner is known to work in: the ordinary return goes on.
+   * @example this.settleKeyboardBesideChatView({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true }, false, stillCurrent) // => true, after the notice
+   */
+  private settleKeyboardBesideChatView(
+    preparation: PreparedApplicationFocus,
+    knowsLearnersPlace: boolean,
+    stillCurrent: () => boolean,
+  ): boolean {
+    // Only an agent's run in the only editor part can find the learner typing in a chat view, and a known place still gets its keyboard back.
+    if (
+      !preparation.onlyEditorPart ||
+      !preparation.forAgentRun ||
+      knowsLearnersPlace
+    )
+      return false
+    // A keyboard the preparation took is named; one it left where it was needs no word.
+    if (preparation.tookKeyboard && stillCurrent())
+      this.tellPreparedApplicationKeyboard()
+    return true
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the new Application group has the keyboard after a preparation in the only editor part focused an editor group and gave the keyboard back to nobody; called by {@link settleKeyboardBesideChatView} in place of a return to a file or a pane the learner is not known to work in.
+   * @example this.tellPreparedApplicationKeyboard() // VS Code, the learner's file was the active editor of the second group
+   */
+  private tellPreparedApplicationKeyboard(): void {
+    if (keyboardNoticesTold.has('preparation')) return
+    keyboardNoticesTold.add('preparation')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
+    )
   }
 
   /**
@@ -12826,12 +12961,12 @@ export class StudyWorkspace {
   }
 
   /**
-   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in an unproven leftover. A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. The proof's focus commands take the keyboard; a caller that captures focus afterwards gives the chat its keyboard back first.
+   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in an unproven leftover. A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. A proof whose focus command took the keyboard is reported; a caller that captures focus afterwards gives the chat its keyboard back first.
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
    * @param signal - The entry's cancellation.
-   * @returns `true` when a proof ran (and its focus commands took the keyboard), `false` when nothing was issued.
+   * @returns `true` when a proof focused a leftover group and so took the keyboard; `false` when nothing was issued, and when every proof acted on the group the only editor part named as its active one ({@link retireProvenLeftoverGroups}).
    * @throws When the editor refuses a close, or the grid does not lose exactly that group.
-   * @example const proved = await this.retireLeftoverApplicationGroup(signal)
+   * @example const proofTookKeyboard = await this.retireLeftoverApplicationGroup(signal)
    */
   private async retireLeftoverApplicationGroup(
     signal: AbortSignal | undefined,
@@ -12853,36 +12988,44 @@ export class StudyWorkspace {
     )
     // No leftover group at a recorded column, or one the editor cannot focus: no native effect is issued.
     if (!leftovers.length) return false
-    await this.withLayout(signal, (_lifetime, assertCurrent) =>
+    return this.withLayout(signal, (_lifetime, assertCurrent) =>
       this.retireProvenLeftoverGroups(record, leftovers, assertCurrent, signal),
     )
-    return true
   }
 
   /**
    * Retires, inside the layout queue, the leftover groups {@link retireLeftoverApplicationGroup} found at the columns of an earlier window's record, one after the other from the last column to the first ({@link retireProvenLeftoverGroup}), and forgets the record once one of them is gone.
    * The first group is proved in the record's grid; each later one in the grid the removal before it left, as the editor answered it. A failed proof leaves that group and the ones after it; when the first proof fails, nothing changed and the record stays.
+   * A leftover is focused for its proof unless the main editor is the only editor part (every group in the grid the proof expects) and names that leftover as its active group: the layout read then answers for the main editor and the unlock acts on that group without the keyboard moving, and its removal gives no other group the keyboard either (VS Code 1.140.0 `workbench.desktop.main.js` 1106:115762 restores the focus only from inside the editor area; row 612).
    * @param record - The earlier window's record.
    * @param leftovers - The empty groups at its columns, from the last column to the first.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
+   * @returns `true` when a proof focused its group and so took the keyboard, `false` when none did.
    * @throws When the editor refuses a close, or the grid does not lose exactly that group; the record is forgotten all the same once an earlier group of it is gone.
-   * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal)
+   * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal) // => false for the active leftover of VS Code's only editor part
    */
   private async retireProvenLeftoverGroups(
     record: RecordedStudyGroups,
     leftovers: readonly RecordedLeftoverGroup[],
     assertCurrent: () => void,
     signal: AbortSignal | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let grid: { groupCount: number; layout: unknown } = record,
-      retired = false
+      retired = false,
+      tookKeyboard = false
     try {
       // From the last recorded column to the first: a removal renumbers only the columns after it.
       for (const { column, focusCommand } of leftovers) {
+        // Only a leftover the only editor part does not name as active yet is focused for its proof.
+        const takesKeyboard = !(
+          vscode.window.tabGroups.activeTabGroup.viewColumn === column &&
+          vscode.window.tabGroups.all.length === grid.groupCount
+        )
+        tookKeyboard ||= takesKeyboard
         const left = await this.retireProvenLeftoverGroup(
           { column, groupCount: grid.groupCount, layout: grid.layout },
-          focusCommand,
+          takesKeyboard ? focusCommand : undefined,
           assertCurrent,
           signal,
         )
@@ -12894,12 +13037,13 @@ export class StudyWorkspace {
       // A retired leftover changed the grid the record describes, so the record goes, also when a later group is refused; without one it stays for a later proof.
       if (retired) await this.clearApplicationGroupMarker()
     }
+    return tookKeyboard
   }
 
   /**
-   * Retires one leftover group for {@link retireProvenLeftoverGroups}: focuses its column, proves the group, unlocks it, proves it again, closes it and confirms that the grid lost exactly that group.
+   * Retires one leftover group for {@link retireProvenLeftoverGroups}: focuses its column where needed, proves the group, unlocks it, proves it again, closes it and confirms that the grid lost exactly that group.
    * @param marker - The group's recorded column, with the group count and layout of the grid it must stand in.
-   * @param focusCommand - The command that gives the group at that column the keyboard.
+   * @param focusCommand - The command that gives the group at that column the keyboard; `undefined` when that group is the active one of the only editor part already.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
    * @returns The grid the removal left (one group fewer, the layout the editor answered), or `undefined` when the proof failed and nothing was unlocked or closed.
@@ -12908,13 +13052,13 @@ export class StudyWorkspace {
    */
   private async retireProvenLeftoverGroup(
     marker: Parameters<typeof isApplicationGroupMarkerProven>[0],
-    focusCommand: RecordedLeftoverGroup['focusCommand'],
+    focusCommand: RecordedLeftoverGroup['focusCommand'] | undefined,
     assertCurrent: () => void,
     signal: AbortSignal | undefined,
   ): Promise<{ groupCount: number; layout: unknown } | undefined> {
     const groupsBefore = vscode.window.tabGroups.all.length
-    // Layout reads answer for the part that has the keyboard (a focused chat part answers for itself), and the editor unlocks only that group: the group at the record's column takes the keyboard before the proof.
-    await vscode.commands.executeCommand(focusCommand)
+    // Layout reads answer for the part that has the keyboard (a focused chat part answers for itself), and the editor unlocks only the active group: a group at the record's column that is not yet that group takes the keyboard before the proof.
+    if (focusCommand) await vscode.commands.executeCommand(focusCommand)
     assertCurrent()
     if (!(await this.provenLeftoverGroup(marker))) return undefined
     await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
@@ -13274,18 +13418,23 @@ export class StudyWorkspace {
 
   /**
    * Proves main-part focus before App allocation; {@link prepareApplicationGroup} borrows the retained original source when Cursor cannot report its pane focus.
+   * The editor's `workbench.action.newGroupAbove` adds above the active group of the active editor part and takes no argument, and `workbench.action.lockEditorGroup` without an argument locks the active group (VS Code 1.140.0 `workbench.desktop.main.js` 990:31741, 987:12723 with 981:147922; Cursor's at 17388:33629 and 11684:15251); no command makes a group active without focusing it (990:4618, Cursor 17388:5032). So the first group takes the keyboard only when it is not yet the active one, or when another editor part exists, whose layout reads would answer for that part (row 612).
    * @param mainCount - The measured main-group count before allocation; a non-text primary is admissible only when this stable grid accounts for every native group.
    * @param assertCurrent - The queue's lifetime/cancellation guard, also checked after accepted native focus drains.
    * @param cancelEntryFocusReturn - Revokes the caller's older foreign focus return after newer input.
-   * @returns A native-source guard the caller checks immediately before allocation and disposes after that accepted command settles.
+   * @returns A native-source guard the caller checks immediately before allocation and disposes after that accepted command settles; its `tookKeyboard` says whether an editor group was focused for it.
    * @throws When first-group identity, original document or newer native input cannot be preserved safely.
-   * @example await this.focusApplicationSourceGroup(grid.groups.length, assertCurrent)
+   * @example await this.focusApplicationSourceGroup(grid.groups.length, assertCurrent) // tookKeyboard: false in VS Code with the first group active
    */
   private async focusApplicationSourceGroup(
     mainCount: number,
     assertCurrent: () => void,
     cancelEntryFocusReturn?: () => void,
-  ): Promise<{ assertRetained(): void; dispose(): void }> {
+  ): Promise<{
+    assertRetained(): void
+    dispose(): void
+    tookKeyboard: boolean
+  }> {
     const primary = vscode.window.tabGroups.all.find(
       (group) => group.viewColumn === vscode.ViewColumn.One,
     )
@@ -13298,15 +13447,23 @@ export class StudyWorkspace {
       mainCount,
       cancelEntryFocusReturn,
     )
+    // In the only editor part whose first group is the active one already, the new group and its lock act on that group with the keyboard left where it is.
+    const takesKeyboard = !(
+      mainCount === vscode.window.tabGroups.all.length &&
+      vscode.window.tabGroups.activeTabGroup.viewColumn ===
+        vscode.ViewColumn.One
+    )
     try {
-      await vscode.commands.executeCommand(
-        'workbench.action.focusFirstEditorGroup',
-      )
+      if (takesKeyboard)
+        await vscode.commands.executeCommand(
+          'workbench.action.focusFirstEditorGroup',
+        )
       assertCurrent()
       sourceReceipt?.assertRetained()
       const borrow = this.preparationSourceToBorrow(primary)
       // A known existing source, rather than a guessed pane focus, supplies the main-part acknowledgement beside Cursor chat.
       if (
+        takesKeyboard &&
         !this.hasMainEditorFocus(vscode.ViewColumn.One) &&
         !sourceReceipt &&
         borrow
@@ -13380,6 +13537,7 @@ export class StudyWorkspace {
         dispose: (): void => {
           sourceReceipt?.dispose()
         },
+        tookKeyboard: takesKeyboard,
       }
     } catch (error) {
       sourceReceipt?.dispose()
