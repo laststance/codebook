@@ -631,6 +631,8 @@ export class StudyWorkspace {
   }
   /** Names this reader in the Application group record it writes; at a cold entry, only a record another reader wrote (the window before a reload) can prove a leftover group, since this reader still knows its own. */
   private readonly applicationGroupMarkerWriter = randomUUID()
+  /** The identity of the one group the Application group record of this reader describes, as {@link reserveApplicationGroup} claimed it; the record stays while that group stands, whichever Codebook pane it holds (a Living book Open gives the MCP-first Application's group to the Study Context, finding 596), and goes once Codebook retires or removes that group. Undefined while this reader keeps no record. */
+  private recordedApplicationGroup?: symbol
   /** Restricts native identity shifts to the exact issued allocation or allocated-group removal. */
   private applicationGroupChange?:
     { kind: 'insert' } | { kind: 'remove'; identity: symbol }
@@ -7078,7 +7080,7 @@ export class StudyWorkspace {
       signal?.throwIfAborted()
       // A two-group entry can create Context directly without an earlier reservation; seal that separate creation receipt after placement.
       if (this.layoutReceipt) this.sealCreatedContextPanelGroup()
-      // Cold MCP preparation can donate its allocated group to the source-derived Context; retain that creation owner before releasing the App allocation.
+      // Cold MCP preparation can donate its allocated group to the source-derived Context; retain that creation owner before releasing the App allocation. The group's Application record stays with the group ({@link recordedApplicationGroup}).
       if (
         this.layoutReceipt &&
         !this.liveComposition &&
@@ -7970,6 +7972,8 @@ export class StudyWorkspace {
       await this.releaseApplicationGroup()
       // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
       await this.giveLayoutOfBeforeOpenBack()
+      // A recorded group this Close removed takes its record along, also one no App owner was left to release (finding 596).
+      this.forgetRecordOfRemovedApplicationGroup()
       // Explicit Close and owned-editor disposal retain their existing keyboard return and notice, also after native panel fields cleared.
       if (
         this.movesKeyboardAfterClose(
@@ -12280,7 +12284,7 @@ export class StudyWorkspace {
       assertPlaced()
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
       // The record never rejects and is not awaited, so the preparation keeps its timing.
-      void this.rememberApplicationGroupMarker(layout, expectedCount)
+      void this.rememberApplicationGroupMarker(identity, layout, expectedCount)
       assertCurrent()
       // Live Return already owns its final chat handoff; preparation must not add an earlier, unguarded one.
       if (!this.returningCurrent && !cancelEntryFocusReturn) {
@@ -12566,14 +12570,17 @@ export class StudyWorkspace {
 
   /**
    * Keeps, in the workspace state, the proof that this window claimed and locked its Application group at column 1; {@link reserveApplicationGroup} calls it once {@link rememberPreparedApplication} confirmed the group's layout, so the next window after Developer: Reload Window can retire that group's empty leftover ({@link retireLeftoverApplicationGroup}).
+   * @param identity - The claimed group's identity, kept as {@link recordedApplicationGroup} so the record goes with that group and with no other ({@link retireEmptyOwnedGroup}, {@link forgetRecordOfRemovedApplicationGroup}).
    * @param layout - The confirmed main grid, with the Application in its claimed group.
    * @param groupCount - The main groups of that grid.
-   * @example await this.rememberApplicationGroupMarker(layout, expectedCount)
+   * @example await this.rememberApplicationGroupMarker(identity, layout, expectedCount)
    */
   private async rememberApplicationGroupMarker(
+    identity: symbol,
     layout: unknown,
     groupCount: number,
   ): Promise<void> {
+    this.recordedApplicationGroup = identity
     await this.writeApplicationGroupMarker({
       version: APPLICATION_GROUP_MARKER_VERSION,
       writer: this.applicationGroupMarkerWriter,
@@ -12588,7 +12595,27 @@ export class StudyWorkspace {
    * @example await this.clearApplicationGroupMarker()
    */
   private async clearApplicationGroupMarker(): Promise<void> {
+    this.recordedApplicationGroup = undefined
     await this.writeApplicationGroupMarker(undefined)
+  }
+
+  /**
+   * Forgets the Application group record once the group it describes is gone from this window; {@link close} calls it after its panes and the groups they left are gone, because the group a Living book Open gave the Study Context leaves with the Context's last tab and no App owner is left for {@link releaseApplicationGroup} to retire it (finding 596).
+   * A group that still stands keeps its record, so the window after a reload can still retire that group's empty leftover on proof.
+   * @example this.forgetRecordOfRemovedApplicationGroup() // forgets the record once the editor removed the group the Context's tab left empty
+   */
+  private forgetRecordOfRemovedApplicationGroup(): void {
+    const recorded = this.recordedApplicationGroup
+    // No record of this reader's, or its group still stands: the record stays as it is.
+    if (
+      !recorded ||
+      vscode.window.tabGroups.all.some(
+        (group) => this.editorGroupIdentities.get(group) === recorded,
+      )
+    )
+      return
+    // The removal never rejects and is not awaited, like the other record writes of Close.
+    void this.clearApplicationGroupMarker()
   }
 
   /**
@@ -13549,9 +13576,8 @@ export class StudyWorkspace {
     )
     if (!group) return true
     if (group.tabs.length) return false
-    // The record describes the Application allocation alone (a parked owner's still-retiring original); a Context or another owned group's retirement keeps it (finding 595).
-    const retiresRecordedGroup =
-      this.applicationAllocationIdentity(this.applicationGroup) === identity
+    // The record goes with the one group it describes, whichever Codebook pane that group held (the Application, or the Study Context a Living book Open gave it, finding 596); another owned group's retirement keeps it (finding 595).
+    const retiresRecordedGroup = this.recordedApplicationGroup === identity
     const previous = this.applicationGroupChange
     const removal: NonNullable<StudyWorkspace['applicationGroupChange']> = {
       kind: 'remove',
@@ -13830,7 +13856,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Identifies pending allocated work for {@link restoreRepositoryLayout} and {@link applicationAllocationToPark}, and the group the Application record describes for {@link retireEmptyOwnedGroup}, without adopting a borrowed parking group.
+   * Identifies pending allocated work for {@link restoreRepositoryLayout} and {@link applicationAllocationToPark} without adopting a borrowed parking group.
    * @param owned - The caller's current App owner; absence supplies no allocation authority.
    * @returns The allocated or still-retiring group identity, otherwise undefined after parking completes.
    * @example const identity = this.applicationAllocationIdentity(this.applicationGroup)
