@@ -379,6 +379,57 @@ test("a reloaded window's leftover empty Application group does not refuse Retur
   }
 })
 
+// Value: protects=a Restore after a Return that could not confirm the Application's dedicated layout keeps the learner's groups and their tabs; fails_when=the refused Return leaves its half-claimed owner (count set, layout unset) behind, so the Restore arranges the live two-group layout over three learner groups and the editor merges the third learner group into the source group; why_new=Cycle 0046 finding 590 (C54 in Cursor 3.23.12: the Restore after the failed Return merged README.md, auth.ts and Cursor Settings into the source group and lost the learner's arrangement); seam=reactivatePreviousGroupAtNextLayoutRead
+test('a Restore that cannot confirm its layout leaves the learner’s groups as they were', async () => {
+  // Arrange: the same reloaded window; the Return's native read after the Application moved into its new group finds the editor naming the old group, so the Return is refused after its group was taken.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.leaveEmptyLockedGroup(1)
+    const learnerNotes = harness.focusMutableDraft('learner-notes.ts', 2)
+    const learnerReadme = harness.focusMutableDraft('learner-readme.md', 3)
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    harness.reactivatePreviousGroupAtNextLayoutRead(4)
+    // The Return is refused; its switch to the live composition has already closed Codebook's own Study Context pane, which is no learner tab.
+    await harness.reader.action('return-current').catch(() => undefined)
+    const readmeGroupBefore = harness.groups.find((group) =>
+      group.tabs.includes(learnerReadme.tab),
+    )!
+    const readmeGroupTabsBefore = [...readmeGroupBefore.tabs]
+
+    // Act: the learner asks for Restore.
+    const restoreState = harness.reader.presentationState()
+    await harness.reader
+      .changePresentation({
+        presentationId: restoreState.presentationId,
+        expectedRevision: restoreState.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      .catch(() => undefined)
+
+    // Assert: the learner's README group keeps its tabs, and the learner's notes keep their group.
+    const readmeGroupAfter = harness.groups.find((group) =>
+      group.tabs.includes(learnerReadme.tab),
+    )
+    assert.deepEqual(readmeGroupAfter?.tabs, readmeGroupTabsBefore)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerNotes.tab)),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a cold Study select after a window reload retiring the empty Application group the earlier window recorded, before the Application is placed; fails_when=the cold entry leaves that unproven leftover group and places the Application in it, so the window keeps an empty locked group beside the learner's groups; why_new=Cycle 0046 finding 590 (C54 in both hosts: Developer: Reload Window kept the earlier window's owned group empty at column 1); seam=applicationGroupMarkers (the earlier window's record) and leaveEmptyLockedGroup
 test('a cold Study select after a window reload retires the empty Application group the earlier window recorded', async () => {
   // Arrange: the earlier window recorded its Application group at column 1 of this three-group grid; after the reload that group stands empty and locked, the learner's files stand in columns 2 and 3, and the chat part has the keyboard.
@@ -553,6 +604,57 @@ test('Close forgets the recorded Application group, so a later empty group at co
     assert.equal(learnersGroup.locked, true)
   } finally {
     await nextWindow.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
+test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
+  // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    harness.reactivatePreviousGroupAtNextLayoutRead(4)
+    await harness.reader.action('return-current').catch(() => undefined)
+    const tabsBefore = harness.groups.map((group) => [...group.tabs])
+    const restoreState = harness.reader.presentationState()
+
+    // Act
+    const restore = await harness.reader
+      .changePresentation({
+        presentationId: restoreState.presentationId,
+        expectedRevision: restoreState.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      .catch((error: unknown) => error)
+
+    // Assert: the arrangement was refused with the groups-preserved message, the Restore says the live layout could not be confirmed, and every group keeps its tabs.
+    assert.deepEqual(
+      [...harness.reader.inspect().view!.errors],
+      [
+        'Error: Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.',
+      ],
+    )
+    assert.equal(
+      String(restore),
+      'Error: The live Study layout could not be confirmed after Restore.',
+    )
+    assert.deepEqual(
+      harness.groups.map((group) => [...group.tabs]),
+      tabsBefore,
+    )
+  } finally {
     await harness.close()
   }
 })

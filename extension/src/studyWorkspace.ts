@@ -11,6 +11,7 @@ import {
   APPLICATION_GROUP_MARKER_KEY,
   APPLICATION_GROUP_MARKER_VERSION,
   APPLICATION_PANE_CLOSED_MESSAGE,
+  EDITOR_GROUPS_PRESERVED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
@@ -201,6 +202,7 @@ import {
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
 import { isSameEditorLayoutShape } from './utils/isSameEditorLayoutShape'
+import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
@@ -900,10 +902,16 @@ export class StudyWorkspace {
     this.rememberInheritedPanes()
   }
 
-  /** Keeps live explanation in native chat when {@link open} arranges app/source; replay retains its summary. @example this.studyLayout() */
+  /**
+   * Keeps live explanation in native chat when {@link open} arranges app/source; replay retains its summary.
+   * @returns The confirmed Application layout; the live two-group layout only while no Application pane stands in the grid; `undefined` for an Application pane no confirmed receipt describes, which {@link arrange} refuses.
+   * @example this.studyLayout()
+   */
   private studyLayout() {
     return this.usesPreparedApplicationLayout()
-      ? (this.applicationGroup?.layout ?? LIVE_EDITOR_LAYOUT)
+      ? // An Application pane without a confirmed receipt stands in a populated grid the live layout does not describe (finding 591).
+        (this.applicationGroup?.layout ??
+          (this.app ? undefined : LIVE_EDITOR_LAYOUT))
       : STUDY_PRESENTATIONS[this.presentationMode].layout
   }
 
@@ -12706,7 +12714,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Releases only the failed transaction's current owner after {@link reserveApplicationGroup} drains its existing cleanup path.
+   * Releases only the failed transaction's current owner after {@link reserveApplicationGroup} drains its existing cleanup path. An owner kept here still names the allocated group for Close's recovery; its layout was never confirmed, so {@link studyLayout} gives it no layout and {@link arrange} refuses to arrange the window from it (finding 591).
    * @param allocated - The transaction's known allocation identity.
    * @param empty - The known empty group whose close was attempted, when present.
    * @example this.releaseFailedApplicationOwner(allocated, empty)
@@ -16635,12 +16643,7 @@ export class StudyWorkspace {
         retiredGroup.tabs.length === 0
       if (grid.groups.length > groupCount && !canRetireContext) {
         this.layoutReceipt = undefined
-        this.report(
-          'layout',
-          new Error(
-            'Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.',
-          ),
-        )
+        this.report('layout', new Error(EDITOR_GROUPS_PRESERVED_MESSAGE))
         return
       }
       this.layoutReceipt = undefined
@@ -16669,6 +16672,14 @@ export class StudyWorkspace {
           ? requestedLayout
           : (toPixelEditorLayout(requestedLayout, measuredLayout) ??
             requestedLayout)
+      // A Study layout with fewer groups than the grid keeps would merge a learner's group into its neighbour, and none at all means no confirmed receipt describes the grid (finding 591): both are refused before any native change.
+      if (
+        mode === 'study' &&
+        !layoutKeepsEveryGroup(studyLayout, retainedGroups.length)
+      ) {
+        this.report('layout', new Error(EDITOR_GROUPS_PRESERVED_MESSAGE))
+        return
+      }
       // The workbench accepts both native effects together; its interim split sizes are not a receipt.
       await vscode.commands.executeCommand('runCommands', {
         commands: [

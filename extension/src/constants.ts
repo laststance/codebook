@@ -154,6 +154,9 @@ export type ReaderErrorKind = (typeof READER_ERROR_KINDS)[number]['kind']
 /** What the reader says when the learner follows the current run after its Application pane was closed: the pane's closure released the run's viewport and ended the run, so nothing can be shown for it until a new run opens the pane again. */
 export const APPLICATION_PANE_CLOSED_MESSAGE =
   'The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.'
+/** What the reader says when {@link StudyWorkspace}'s arrangement leaves the learner's editor groups as they are: the grid holds more groups than the Study layout describes, so applying that layout would merge a group into its neighbour. */
+export const EDITOR_GROUPS_PRESERVED_MESSAGE =
+  'Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.'
 // The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
 export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<ReaderErrorKind> =
   new Set(
