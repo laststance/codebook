@@ -5086,6 +5086,18 @@ export async function workspaceHarness(
       group.locked = true
       changedGroups({ opened: [], closed: [], changed: [group] })
     },
+    /**
+     * Leaves a main column's editor group empty with no pane and unlocked, as both editors restore the group the Study Context's pane had after a window reload: the pane has no serializer and is not restored, and its group stays at its column (finding 599). The new reader has no identity or proof for it.
+     * @param column - The main column whose tabs close.
+     * @example harness.leaveEmptyGroup(3)
+     */
+    leaveEmptyGroup(column: number): void {
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      assert.ok(group)
+      group.tabs.splice(0)
+      group.activeTab = undefined
+      changedGroups({ opened: [], closed: [], changed: [group] })
+    },
     /** Lets the editor close leftover captured-source tabs again after a refusal test, so the harness can shut its reader down. @example harness.acceptLeftoverClose() */
     acceptLeftoverClose(): void {
       for (const tab of leftoverCapturedTabs) closeRefusingTabs.delete(tab)

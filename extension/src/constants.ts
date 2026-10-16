@@ -245,7 +245,10 @@ export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
 /** The workspace-state key of the record {@link StudyWorkspace} keeps of the Application group it claimed and locked; after Developer: Reload Window the editor keeps that group empty, and only this record proves it is Codebook's own. */
 export const APPLICATION_GROUP_MARKER_KEY = 'codebook.applicationGroup.v1'
+/** The version of the record under {@link APPLICATION_GROUP_MARKER_KEY} that names one group by its `column`, the shape 0.2.30 candidates write and read; {@link StudyWorkspace} still writes it whenever the record names one group. */
 export const APPLICATION_GROUP_MARKER_VERSION = 1
+/** The version of the record under {@link APPLICATION_GROUP_MARKER_KEY} that names two or more groups Codebook created by their `columns` (the Application's group and the Study Context's created group, finding 599); a reader of {@link APPLICATION_GROUP_MARKER_VERSION} alone ignores it, so it never retires one group of the pair on a proof made for the pair. */
+export const STUDY_GROUPS_MARKER_VERSION = 2
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
 /**
  * How much wider the editor area must have become, in pixels, for {@link StudyWorkspace} to conclude that a side bar was open before it was hidden: the editor's side bars are at least 170 px wide, and a sash or a rounded size moves the width by a few pixels at most.

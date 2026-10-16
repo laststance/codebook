@@ -624,7 +624,7 @@ test('a Return that retires the Study’s own Context group keeps the record of 
     // Act
     await harness.reader.action('return-current')
 
-    // Assert: the Context group is gone, the Application still stands in its group at column 1, and that group's record is unchanged.
+    // Assert: the Context group is gone, the Application still stands in its group at column 1, and that group's record names it alone, at the two-group grid this Return confirmed (finding 599).
     assert.equal(harness.groups.includes(contextGroup), false)
     assert.equal(harness.reader['app']!.viewColumn, 1)
     const marker = harness.applicationGroupMarkers.get(
@@ -639,7 +639,7 @@ test('a Return that retires the Study’s own Context group keeps the record of 
         groupCount: 2,
         layout: {
           orientation: 1,
-          groups: [{ size: 0.25 }, { size: 0.25 }],
+          groups: [{ size: 0.5 }, { size: 0.5 }],
         },
       },
     )
@@ -713,7 +713,7 @@ test('a Living book Open that gives the MCP-first Application group to the Study
     // Act
     await reader.open()
 
-    // Assert: the claimed group, still locked at column 1, now holds the Study Context, and the record the preparation wrote for it stays.
+    // Assert: the claimed group, still locked at column 1, now holds the Study Context, and the record the preparation wrote for it stays, at the three-group grid the Open confirmed (finding 599).
     assert.equal(harness.groups.includes(claimedGroup), true)
     assert.equal(claimedGroup.locked, true)
     assert.equal(harness.panelColumn('codebook.studyContext'), 1)
@@ -726,10 +726,13 @@ test('a Living book Open that gives the MCP-first Application group to the Study
         version: 1,
         writer: 'string',
         column: 1,
-        groupCount: 2,
+        groupCount: 3,
         layout: {
-          orientation: 1,
-          groups: [{ size: 0.5 }, { size: 0.5 }],
+          orientation: 0,
+          groups: [
+            { size: 0.6 },
+            { size: 0.4, groups: [{ size: 0.5 }, { size: 0.5 }] },
+          ],
         },
       },
     )
@@ -789,7 +792,7 @@ test('a Return that retires the Study Context’s group taken from the MCP-first
 
 // Value: protects=a learner's later empty group at column 1 after Close removed the Study Context's group, the one a Living book Open took from the MCP-first Application; fails_when=Close keeps the record of that removed group because no App owner is left to release it, so the next window's cold Study select takes the learner's empty locked group in the very grid the record described for Codebook's leftover, unlocks it and closes it; why_new=Cycle 0046 finding 596; seam=closeDisposedPanelTabsLater (the editor removes the group the Context's last tab left, workbench.editor.closeEmptyGroups on), createReader (the next window over the same workspace state) and the learner's own native group commands
 test('Close after a Living book Open that took the MCP-first Application group forgets its record, so a later empty group at column 1 stays at the next window’s cold select', async () => {
-  // Arrange: an MCP run prepared the Application at column 1, the Living book Open gave that group to the Study Context, and Close removed it with the Context's tab; the learner then splits the window into the very grid the record described and locks its empty first group.
+  // Arrange: an MCP run prepared the Application at column 1, the Living book Open gave that group to the Study Context, and Close removed it with the Context's tab; the learner then splits the window into the very grid the record described at that Open (finding 599) and locks its empty first group.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
   harness.focusMutableDraft()
@@ -822,8 +825,11 @@ test('Close after a Living book Open that took the MCP-first Application group f
       'workbench.action.lockEditorGroup',
     )
     await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
-      orientation: 1,
-      groups: [{ size: 0.5 }, { size: 0.5 }],
+      orientation: 0,
+      groups: [
+        { size: 0.6 },
+        { size: 0.4, groups: [{ size: 0.5 }, { size: 0.5 }] },
+      ],
     })
     const learnersGroup = harness.groups.find(
       (group) => group.viewColumn === 1,
@@ -1037,6 +1043,345 @@ test('a cancelled Application preparation that already recorded its group forget
     finalRead?.release()
     await viewport
     await reader.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a record that never outlives, in the same window, the group a Living book Open took from the MCP-first Application for the Study Context, when Close leaves that group to the editor, which removes it with the Context's last tab (workbench.editor.closeEmptyGroups on); fails_when=Close keeps the record because no App owner is left to release the group and Codebook found no group of its own to retire; why_new=Cycle 0046 finding 599 (the record now names every group by identity, and the forget of a removed group follows all of them; this case reaches the hand-over itself: beside the chat's part the Open gives the claimed group to the Context alone, while without it the captured source joins the Context there and the App owner stays); seam=presentation.createViewport (the MCP-first preparation), addSeparateEditorPart, closeDisposedPanelTabsLater and applicationGroupMarkers
+test('Close after a Living book Open that took the MCP-first Application group forgets its record when the editor removes that group with the Context’s tab', async () => {
+  // Arrange: an MCP run prepared the Application at column 1 and the Living book Open gave that group to the Study Context; the editor removes a group its last tab left.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.addSeparateEditorPart()
+  harness.focusMutableDraft()
+  harness.closeDisposedPanelTabsLater()
+  harness.presentationPreferences.set('codebook.presentation.v1', {
+    version: 1,
+    mode: 'living-book',
+  })
+  const reader = harness.createReader(),
+    viewport = await reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+  try {
+    await reader.open()
+    const donatedGroup = harness.groups.find((group) => group.viewColumn === 1)!
+    assert.equal(harness.panelColumn('codebook.studyContext'), 1)
+    assert.equal(reader['applicationGroup'], undefined)
+    // End the MCP run's lease first; a live lease keeps its Application available.
+    viewport.close()
+
+    // Act
+    await reader.close()
+
+    // Assert: the editor removed the donated group, and its record went with it.
+    assert.equal(harness.groups.includes(donatedGroup), false)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+  } finally {
+    viewport.close()
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the record of every group Codebook created that a reload would leave empty, at the layout a Study select confirmed after it gave the Study Context a group of its own beside the Application's group; fails_when=the record keeps the grid of the Application group's reservation only, or does not name the Study Context's created group; why_new=Cycle 0046 finding 599 (the record kept the reservation's grid, so a reload in a later layout left the Application's leftover unproven and the Context's leftover unrecorded); seam=applicationGroupMarkers
+test('a Study select that gives the Context a group of its own records the Application’s group and the Context’s group at the layout it confirmed', async () => {
+  // Arrange: a Return claims the Application group at column 1 beside the learner's group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+
+    // Act: a saved item gives the Study Context a group of its own at column 3.
+    await harness.reader.select('repository/workspace/overview')
+
+    // Assert: both groups, by their columns in the confirmed three-group grid, written by this reader (a random name).
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    const marker = harness.applicationGroupMarkers.get(
+      'codebook.applicationGroup.v1',
+    ) as { writer?: unknown } | undefined
+    assert.deepEqual(
+      { ...marker, writer: typeof marker?.writer },
+      {
+        version: 2,
+        writer: 'string',
+        columns: [1, 3],
+        groupCount: 3,
+        layout: {
+          orientation: 0,
+          groups: [
+            { size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] },
+            { size: 0.45 },
+          ],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold Study select after a window reload that left the Application's group empty and locked at column 1 and the Study Context's created group empty at column 3, beside the learner's group; fails_when=the record kept only the reservation's two-group grid, so the cold select proves neither leftover, puts the Application into the locked one and refuses (finding 590's failure), and the Context's empty group stays for good; why_new=Cycle 0046 finding 599; seam=createReader (the window after the reload, over the same workspace state), leaveEmptyLockedGroup and leaveEmptyGroup
+test('a cold Study select after a window reload retires the empty Application group and the Study Context’s empty created group the earlier window recorded', async () => {
+  // Arrange: one learner group; a Return claims the Application group, and a saved item gives the Study Context a group of its own at column 3.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.select('repository/workspace/overview')
+    // The window reloads: neither pane is restored; the Application's group stays empty and locked at column 1, the Context's group empty at column 3.
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(3)
+    const applicationLeftover = harness.groups.find(
+        (group) => group.viewColumn === 1,
+      )!,
+      contextLeftover = harness.groups.find((group) => group.viewColumn === 3)!
+    const nextWindow = harness.createReader()
+    try {
+      const state = nextWindow.presentationState()
+
+      // Act
+      const selected = await nextWindow.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+
+      // Assert: both leftovers are gone and their record forgotten; the new window's Application stands in column 1 with the layout confirmed.
+      assert.equal(nextWindow.inspect().view!.errors.join(' | '), '')
+      assert.equal(harness.groups.includes(applicationLeftover), false)
+      assert.equal(harness.groups.includes(contextLeftover), false)
+      assert.equal(
+        harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+        undefined,
+      )
+      assert.equal(nextWindow['app']!.viewColumn, 1)
+      assert.equal(selected.layoutConfirmed, true)
+    } finally {
+      await nextWindow.dispose()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's group after a window reload whose two recorded leftovers a cold Study select retired: the new Study can be restored, and its Close gives back exactly the learner's group with its own tab; fails_when=a leftover stays beside the learner's group, the Restore cannot confirm the Study's layout, or the Close leaves a group Codebook created; why_new=Cycle 0046 finding 599 (with finding 597's Close); seam=createReader, leaveEmptyLockedGroup and leaveEmptyGroup
+test('after a cold Study select retired both recorded leftovers of a reload, Restore confirms the Study and Close gives back exactly the learner’s group', async () => {
+  // Arrange: the same reload as above, and the window after it selected the Study, which retired both leftovers.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const learnersTab = harness.groups[0]!.tabs[0]!
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.select('repository/workspace/overview')
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(3)
+    const nextWindow = harness.createReader()
+    try {
+      const selectState = nextWindow.presentationState()
+      await nextWindow.changePresentation({
+        presentationId: selectState.presentationId,
+        expectedRevision: selectState.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+
+      // Act
+      const restoreState = nextWindow.presentationState()
+      const restored = await nextWindow.changePresentation({
+        presentationId: restoreState.presentationId,
+        expectedRevision: restoreState.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      await nextWindow.close()
+
+      // Assert: the Restore confirmed the Study's layout, and after the Close only the learner's group is left, with its own tab.
+      assert.equal(restored.layoutConfirmed, true)
+      assert.deepEqual(
+        harness.groups.map((group) => group.tabs),
+        [[learnersTab]],
+      )
+    } finally {
+      await nextWindow.dispose()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's groups when the learner changed the layout after the last layout Codebook confirmed and the window then reloads; fails_when=the cold Study select guesses that the changed grid is the recorded one and unlocks or closes a group, or forgets the record without a proof; why_new=Cycle 0046 finding 599 (a layout the learner changed without a Codebook confirmation is not guessed: the proof fails conservatively); seam=createReader, leaveEmptyLockedGroup, leaveEmptyGroup and the learner's own layout command
+test('a cold Study select after a reload leaves the recorded leftovers untouched when the learner resized the groups after the last confirmed layout', async () => {
+  // Arrange: the record names both groups at the confirmed Study grid; the learner then widens the Context's column, and the window reloads.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.select('repository/workspace/overview')
+    await harness.reader.action('return-current')
+    await harness.reader.select('repository/workspace/overview')
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        { size: 0.3, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.7 },
+      ],
+    })
+    const recordBefore = harness.applicationGroupMarkers.get(
+      'codebook.applicationGroup.v1',
+    )
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(3)
+    const applicationLeftover = harness.groups.find(
+        (group) => group.viewColumn === 1,
+      )!,
+      contextLeftover = harness.groups.find((group) => group.viewColumn === 3)!
+    const nextWindow = harness.createReader()
+    try {
+      const commandsBefore = harness.commands.length
+      const state = nextWindow.presentationState()
+
+      // Act
+      await nextWindow
+        .changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        })
+        .catch(() => undefined)
+
+      // Assert: no group was unlocked or retired as a leftover, and the record is kept as it was.
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .includes('workbench.action.unlockEditorGroup'),
+        false,
+      )
+      assert.equal(harness.groups.includes(applicationLeftover), true)
+      assert.equal(harness.groups.includes(contextLeftover), true)
+      assert.deepEqual(
+        harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+        recordBefore,
+      )
+    } finally {
+      await nextWindow.dispose()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the editor-restart case of finding 590 across the update: a version-1 record that a 0.2.30 candidate (C55) wrote, in pixels, still proves the empty locked Application group that a quit and relaunch of the editor restored at column 1, as after Developer: Reload Window; fails_when=the reader of the new record shape no longer reads a version-1 record as the Application group alone, so the cold select keeps the leftover and puts the Application into it; why_new=Cycle 0046 finding 599 (the record's shape changed; the VS Code QA window holds such a record); seam=applicationGroupMarkers (the record C55 wrote) and leaveEmptyLockedGroup
+test('a cold Study select after an editor restart retires the empty Application group a version-1 record of a 0.2.30 candidate proves', async () => {
+  // Arrange: C55 recorded its Application group at column 1 of a three-group grid of rows, in pixels; the restarted editor restored that group empty and locked, with the learner's files in rows 2 and 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: '3f0c5a52-8f4e-4f43-9a5e-1d2b7c9e6a10',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    const learnerNotes = harness.focusMutableDraft('learner-notes.ts', 2)
+    const learnerReadme = harness.focusMutableDraft('learner-readme.md', 3)
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the leftover group is gone and its record forgotten; both learner files keep their tabs, and the Application stands in column 1.
+    assert.equal(harness.groups.includes(leftover), false)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerNotes.tab)),
+      true,
+    )
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(learnerReadme.tab)),
+      true,
+    )
+    assert.equal(harness.reader['app']!.viewColumn, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's file in a group the earlier window's record names, after a window reload: the cold Study select retires only the recorded group that is proved empty; fails_when=a recorded group that holds a learner's tab is closed with its tab, or the empty Application group beside it stays because the record is taken as a whole; why_new=Cycle 0046 finding 599 (each recorded leftover is retired on its own proof in the recorded grid); seam=applicationGroupMarkers (a version-2 record of the earlier window) and leaveEmptyLockedGroup
+test('a cold Study select after a reload retires the recorded empty Application group and keeps the recorded Context group that holds a learner’s file', async () => {
+  // Arrange: the earlier window recorded the Application's group at column 1 and the Study Context's group at column 3; after the reload the learner's files stand in columns 2 and 3, and the chat part has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 2,
+      writer: 'the window before the reload',
+      columns: [1, 3],
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const applicationLeftover = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const learnerReadme = harness.focusMutableDraft('learner-readme.md', 3)
+    const readmeGroup = harness.groups.find((group) =>
+      group.tabs.includes(learnerReadme.tab),
+    )!
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the empty Application group is gone and the record with it; the recorded group with the learner's file stands with its tab.
+    assert.equal(harness.groups.includes(applicationLeftover), false)
+    assert.equal(harness.groups.includes(readmeGroup), true)
+    assert.equal(readmeGroup.tabs.includes(learnerReadme.tab), true)
+    assert.equal(
+      harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+      undefined,
+    )
+  } finally {
     await harness.close()
   }
 })
