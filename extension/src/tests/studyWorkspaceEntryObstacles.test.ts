@@ -1705,6 +1705,117 @@ for (const editor of [
     }
   })
 
+// Value: protects=a cold Study select after a window reload whose focused tab is the earlier session's restored captured source, in an editor that removes emptied groups (workbench.editor.closeEmptyGroups on, the default); fails_when=the selection closes that leftover tab before the recorded leftovers are retired, the editor removes the Source group with it, the grid no longer equals the record, and the Application's and Context's leftovers stay unproven (row 590's failure); why_new=Cycle 0046 row 608; seam=applicationGroupMarkers (the record of the window before the reload), leaveEmptyLockedGroup, leaveEmptyGroup, restoreLeftoverCapturedSource (focused) and closeDisposedPanelTabsLater
+test('a cold Study select after a reload with the restored captured source focused retires every recorded leftover before that tab closes, and Close gives the learner’s group back', async () => {
+  // Arrange: the window before the reload recorded its Application group at column 1, its Source group at column 3 and its Context group at column 4; after the reload the learner's notes stand in column 2, the restored captured source has the keyboard in column 3, and the editor removes a group its last tab left.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}, {}] })
+  harness.closeDisposedPanelTabsLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 2,
+      writer: 'the window before the reload',
+      columns: [1, 3, 4],
+      groupCount: 4,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    const learnerNotes = harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.leaveEmptyGroup(3)
+    const restoredSource = harness.restoreLeftoverCapturedSource({ column: 3 })
+    const [applicationLeftover, , sourceLeftover, contextLeftover] =
+      harness.groups
+    const state = harness.reader.presentationState()
+
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the three leftovers and the restored captured source are gone before any pane is placed, and the Application stands in column 1 beside the learner's notes with the layout confirmed.
+    const leftoversAfterSelect = [
+      applicationLeftover,
+      sourceLeftover,
+      contextLeftover,
+    ].filter((group) => harness.groups.includes(group!))
+    assert.deepEqual(leftoversAfterSelect, [])
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(restoredSource)),
+      false,
+    )
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.layoutConfirmed, true)
+    // Close then gives the learner's group back, alone with its notes.
+    await harness.reader.close()
+    assert.deepEqual(
+      harness.groups.map((group) => group.tabs),
+      [[learnerNotes.tab]],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat's keyboard and the recorded leftovers at a cold Study select made from Cursor's chat after an extension-host restart left a dead Study pane in the earlier window's Context group, in an editor that removes emptied groups; fails_when=the selection closes the dead pane before the leftovers are retired, so the grid shrinks and nothing is proved, or the retirement's focus commands take the keyboard from the chat before the selection captured it, so the chat does not get it back; why_new=Cycle 0046 row 608; seam=applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, leaveDeadCodebookPane, addSeparateEditorPart with the chat's focusTab, and closeDisposedPanelTabsLater
+test('a cold Study select from the chat beside a dead pane in a recorded group retires the recorded leftovers first and gives the chat its keyboard back', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 and its Context group at column 3; the old host's Study pane is left dead in column 3, the learner's notes stand in column 2, and the chat has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  harness.closeDisposedPanelTabsLater()
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 2,
+      writer: 'the window before the reload',
+      columns: [1, 3],
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.leaveEmptyGroup(3)
+    const deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    const applicationLeftover = harness.groups.find(
+        (group) => group.viewColumn === 1,
+      )!,
+      contextLeftover = harness.groups.find((group) => group.viewColumn === 3)!
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: both leftovers and the dead pane are gone, the Application stands in column 1 with the layout confirmed, and the chat has the keyboard again.
+    assert.equal(harness.groups.includes(applicationLeftover), false)
+    assert.equal(harness.groups.includes(contextLeftover), false)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(deadStudy)),
+      false,
+    )
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups at a Restore after a Return that was refused once the Application stood in its new group; fails_when=the arrangement applies a layout no confirmed receipt describes (the live pair, or no layout at all) over the window's groups instead of refusing it; why_new=Cycle 0046 finding 591 (C54 in Cursor 3.23.12: the Restore after the refused Return merged a learner group into the source group); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore with no confirmed layout for the window’s groups refuses the arrangement and leaves every group’s tabs', async () => {
   // Arrange: one learner group; the Return is refused after the Application moved into its new group, so the window holds two groups and no confirmed Application layout.

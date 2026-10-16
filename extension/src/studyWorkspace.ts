@@ -446,6 +446,8 @@ interface LeftoverTabClose {
   capturedSourceKept: boolean
   /** `true` when a dead Codebook pane is still in the window. */
   deadPaneKept: boolean
+  /** `true` when the groups an earlier window recorded were proved before the close, whose focus commands took the keyboard ({@link StudyWorkspace.retireLeftoverApplicationGroup}). */
+  provedRecordedGroups: boolean
 }
 
 /**
@@ -1294,19 +1296,30 @@ export class StudyWorkspace {
   }
 
   /**
-   * Closes, in one request, the tabs {@link leftoverTabs} lists; called by {@link selectAfterClosingLeftoverTabs} once the library key is known, and by {@link open} at the start of every cold entry.
+   * Closes, in one request, the tabs {@link leftoverTabs} lists; called by {@link selectAfterClosingLeftoverTabs} once the library key is known, by {@link open} at the start of every cold entry and by {@link retirePreviousApplicationPanes}.
+   * Before any of them closes, the groups an earlier window recorded are retired on their proof ({@link retireLeftoverApplicationGroup}, row 608): a closed leftover tab lets an editor that removes emptied groups shrink the recorded grid, and nothing could be proved any more. A retired group's leftover tabs close with it and count as closed here, the focused one too.
    * The editor closes group by group and answers once for the whole request, so what closed is read from the tab model: a tab the editor keeps holds back the requested tabs of its own group only. A request the editor refuses or rejects changes nothing here; the caller decides what a kept tab means.
+   * @param signal - The entry's cancellation, for the retirement.
    * @returns What closed and what stayed, see {@link LeftoverTabClose}.
    * @example
    * ```ts
-   * const closed = await this.closeLeftoverTabs() // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false }
+   * const closed = await this.closeLeftoverTabs(signal) // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false, provedRecordedGroups: false }
    * ```
    */
-  private async closeLeftoverTabs(): Promise<LeftoverTabClose> {
+  private async closeLeftoverTabs(
+    signal?: AbortSignal,
+  ): Promise<LeftoverTabClose> {
     const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
       leftover = this.leftoverTabs()
-    if (leftover.length)
-      await vscode.window.tabGroups.close(leftover, true).then(
+    const provedRecordedGroups =
+      await this.retireLeftoverApplicationGroup(signal)
+    const open = new Set(
+        vscode.window.tabGroups.all.flatMap((group) => group.tabs),
+      ),
+      requested = leftover.filter((tab) => open.has(tab))
+    // Only what the retirement left is requested; the rest has gone with its group.
+    if (requested.length)
+      await vscode.window.tabGroups.close(requested, true).then(
         () => undefined,
         () => undefined,
       )
@@ -1332,6 +1345,7 @@ export class StudyWorkspace {
       deadPaneKept: kept.some(
         (tab) => tab.input instanceof vscode.TabInputWebview,
       ),
+      provedRecordedGroups,
     }
   }
 
@@ -1456,12 +1470,17 @@ export class StudyWorkspace {
       await this.initialize()
       this.assertLifetime(lifetime)
       this.assertSelectionOutlastsClose(input)
-      closed = await this.closeLeftoverTabs()
+      // Read before the close's proof of the earlier window's groups moves the keyboard: the chat that had it gets it back below.
+      const giveKeyboardBack = this.retainForeignTabFocus(undefined)
+      closed = await this.closeLeftoverTabs(transition.cancellation.signal)
       if (this.isEditorSettlingAfter(closed))
         await this.waitForEditorAfterClose(
           closed.closedSourceUris,
           transition.cancellation.signal,
         )
+      // The admission below reads the focus again: it finds the chat where the selection found it (row 608).
+      if (closed.provedRecordedGroups)
+        await giveKeyboardBack?.(true).catch(() => false)
     } finally {
       this.endPresentationTransition(transition)
     }
@@ -6797,9 +6816,8 @@ export class StudyWorkspace {
         await this.waitForRecordingWindow(signal, lifetime)
       // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them, with the captured-source tabs of that session, before it creates any. A tab the editor keeps does not stop the entry; the next selection names a kept pane.
       if (firstOpen) {
-        // The groups an earlier window created and left after a reload are retired, on its record's proof only, before any pane is placed (finding 590), and before that window's restored captured source closes: an editor that removes emptied groups would otherwise shrink the recorded grid (finding 599).
-        await this.retireLeftoverApplicationGroup(signal)
-        await this.closeLeftoverTabs()
+        // The groups an earlier window created and left after a reload are retired, on its record's proof only, before any pane is placed (finding 590) and before that window's leftover tabs close (findings 599 and 608).
+        await this.closeLeftoverTabs(signal)
         this.assertLifetime(lifetime)
         signal?.throwIfAborted()
         const firstInput = vscode.window.tabGroups.all.find(
@@ -12161,7 +12179,7 @@ export class StudyWorkspace {
     await this.initialize()
     this.assertLifetime(lifetime)
     signal?.throwIfAborted()
-    const closed = await this.closeLeftoverTabs()
+    const closed = await this.closeLeftoverTabs(signal)
     this.assertLifetime(lifetime)
     signal?.throwIfAborted()
     if (closed.deadPaneKept)
@@ -12790,30 +12808,37 @@ export class StudyWorkspace {
   }
 
   /**
-   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link open} calls it at a cold entry before {@link ensureApp} places the Application, which would otherwise stand in that unproven group, and before {@link closeLeftoverTabs} closes the restored captured source, whose group an editor that removes emptied groups would take away from the recorded grid. A Source group that holds only that restored tab is retired with it.
+   * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in an unproven leftover. A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. The proof's focus commands take the keyboard; a caller that captures focus afterwards gives the chat its keyboard back first.
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
    * @param signal - The entry's cancellation.
+   * @returns `true` when a proof ran (and its focus commands took the keyboard), `false` when nothing was issued.
    * @throws When the editor refuses a close, or the grid does not lose exactly that group.
-   * @example await this.retireLeftoverApplicationGroup(signal)
+   * @example const proved = await this.retireLeftoverApplicationGroup(signal)
    */
   private async retireLeftoverApplicationGroup(
     signal: AbortSignal | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const record = parseRecordedStudyGroups(
       this.context.workspaceState.get<unknown>(APPLICATION_GROUP_MARKER_KEY),
     )
-    // No record, or this reader's own record (its groups are still known to it): nothing proves a leftover.
-    if (!record || record.writer === this.applicationGroupMarkerWriter) return
+    // No record, this reader's own record (its groups are still known to it), or an open reader, whose cold entry tried the proof already: nothing is retired.
+    if (
+      !record ||
+      record.writer === this.applicationGroupMarkerWriter ||
+      this.opened
+    )
+      return false
     const leftovers = recordedLeftoverGroups(
       record.columns,
       vscode.window.tabGroups.all,
       new Set(this.leftoverTabs()),
     )
     // No leftover group at a recorded column, or one the editor cannot focus: no native effect is issued.
-    if (!leftovers.length) return
+    if (!leftovers.length) return false
     await this.withLayout(signal, (_lifetime, assertCurrent) =>
       this.retireProvenLeftoverGroups(record, leftovers, assertCurrent, signal),
     )
+    return true
   }
 
   /**
