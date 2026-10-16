@@ -3019,6 +3019,85 @@ for (const open of [
     }
   })
 
+// Value: protects=the learner's knowledge of where the keyboard is when an agent's Study selection (codebook_presentation) ends a Read while the learner types outside the editor (the terminal of the bottom panel, which a Read leaves shown, or another view): the side bars the Read hid are shown again with the editor's focus commands, which take the keyboard (VS Code 1.140.0 workbench.desktop.main.js 1113:32927, 859:17722; Cursor 3.23.12 18340:22765, 17376:10844), and the active editor group gets it after them, so the pane being read has it and the learner is told once; fails_when=the agent's selection moves the keyboard from the learner's view into the Study pane without a word; why_new=Cycle 0046 row 622; seam=workspaceHarness with modelSideBars, the pane's Read action, focusView (a view outside the editor with the keyboard), changePresentation with the agent's requester (the codebook_presentation handler), keyboardInView, sideBars and the information messages
+test('an agent’s Study selection that ends a Read while the learner types in a view outside the editor says once that the pane being read has the keyboard', async () => {
+  // Arrange: both side bars are open; the learner reads the explanation enlarged, which hides them, and then types in the terminal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.focusView()
+    const state = harness.reader.presentationState(),
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    const selected = await harness.reader.changePresentation(
+      {
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+
+    // Assert: the bars are open again, the view lost the keyboard to the pane that was read, and the learner is told so.
+    assert.equal(selected.layoutConfirmed, true)
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.keyboardInView(), false)
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext')
+    assert.deepEqual(
+      harness.informationMessages
+        .slice(messagesBefore)
+        .map((message) => message.message),
+      [
+        'Codebook ended your Read for the Study arrangement an agent asked for and showed the side bars the Read had hidden. Showing a side bar takes the keyboard in this editor, so the pane you were reading has it now: if you were typing in the terminal, a view or the chat, click there to type again.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who reads in the Study pane from a sentence that is not true for them: when the Study pane reports that it has the keyboard, an agent's Study selection that ends the Read gives it back to that pane and tells nothing; fails_when=row 622's notice is told although the learner was typing in the pane that gets the keyboard back; why_new=Cycle 0046 row 622 guard; seam=workspaceHarness with modelSideBars, the pane's Read action, receiveContext pane-focus (the Study pane's own report), changePresentation with the agent's requester, focusedPanel and the information messages
+test('an agent’s Study selection that ends a Read while the Study pane reports its keyboard gives it back to the pane without a word', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.receiveContext({ type: 'pane-focus', focused: true })
+    const state = harness.reader.presentationState(),
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    const selected = await harness.reader.changePresentation(
+      {
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+
+    // Assert
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext')
+    assert.deepEqual(harness.informationMessages.slice(messagesBefore), [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's side bars after a Read and the pane's Restore: the three panes are arranged again between the bars that were open before the Read, with the layout confirmed; fails_when=Restore ends the maximization and arranges the panes across the whole window, with the file explorer and the chat still hidden; why_new=Cycle 0045 NF-22 (a Restore that leaves the reading belongs to the same row as Close); seam=the workspace harness's side bar model and its pixel layout read
 test('a Restore that ends a Read brings back the side bars the Read hid and confirms the three panes between them', async () => {
   // Arrange: the primary side bar is open, the secondary one closed; the learner reads the explanation enlarged.

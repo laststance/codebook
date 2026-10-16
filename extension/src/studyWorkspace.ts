@@ -42,6 +42,7 @@ import {
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
+  READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   type ReaderErrorKind,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
@@ -494,7 +495,7 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -509,6 +510,7 @@ const keyboardNoticesTold = new Set<
   | 'agentSelection'
   | 'summaryBehindChat'
   | 'learnerReturn'
+  | 'readEnded'
 >()
 
 /**
@@ -1651,6 +1653,7 @@ export class StudyWorkspace {
         cancellation: new AbortController(),
         runtimeIdentity: this.assertPresentationAdmission(),
       }
+      const knowsKeyboardPlace = this.knowsKeyboardPlaceAtAdmission()
       const focusedPane = this.trackFocusedStudyPane(),
         lifetime = this.lifetime
       const returnForeignFocus = this.retainForeignTabFocus(undefined)
@@ -1661,12 +1664,13 @@ export class StudyWorkspace {
       this.presentationControlRevision++
       const pending = (async () => {
         try {
-          // Read/Enlarge may hide the other main leaf; restore visibility before measuring the two-pane layout.
-          await focusedPane.endReadMaximization(async () => {
-            await this.expandToEndMaximization()
-            this.maximizedByRead = false
-            await this.showSideBarsHiddenByRead()
-          })
+          // Read/Enlarge may hide the other main leaf; restore visibility before measuring the two-pane layout. A chat tab that had the keyboard gets it back below.
+          await focusedPane.endReadMaximization(() =>
+            this.endReadForAdmission(
+              requester,
+              knowsKeyboardPlace || Boolean(returnForeignFocus),
+            ),
+          )
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
@@ -1745,7 +1749,7 @@ export class StudyWorkspace {
         vscode.window.activeTextEditor?.document.uri.toString() ===
           this.sourceUri?.toString())
     )
-      return this.restoreStudyArrangement(input)
+      return this.restoreStudyArrangement(input, requester)
     // A restore of the confirmed layout made while no Study pane and no text editor has the keyboard (an agent's call from the chat, right after its own selection) is answered like that selection: nothing is arranged again and the keyboard stays where it is.
     if (
       (input.action === 'select' ||
@@ -2197,14 +2201,17 @@ export class StudyWorkspace {
    * Repairs an existing Study grid without replacing its evidence panes; called by {@link admitPresentation} for a Restore or a selection of the three-pane Study workspace whose layout is not confirmed while one of the reader's panes or the captured source is the active editor, which is the state a Read leaves.
    * The keyboard: this path takes no note of where the keyboard is and gives nothing back ({@link capturePresentationFocus} is asked only on the path behind it). It ends the Read's maximization with the editor's Expand, shows the side bars the Read hid, after which the active editor group has the keyboard again ({@link showSideBarsHiddenByRead}), and applies the Study layout; it reveals no pane and runs no focus command that names one. Where the keyboard is afterwards is therefore what the editor makes of those commands. In VS Code 1.140.0 for Linux the captured source and the Application pane kept it, and after a Read of the Explanation pane the Application pane had it (measured natively on 2026-10-07; which of the editor's steps moves it there is not established).
    * @param input - The admitted Restore or selection.
+   * @param requester - Who asked for it; an agent's that ends a Read may tell where the keyboard went ({@link endReadForAdmission}).
    * @returns The state after the arrangement, `'open'`.
    * @throws When the window lost the focus, the learner changed the focus or the panes, or the evidence changed during the Restore; the reason is published as the presentation's reason.
-   * @example await this.restoreStudyArrangement(intent)
+   * @example await this.restoreStudyArrangement(intent, 'learner')
    */
   private restoreStudyArrangement(
     input: PresentationIntent,
+    requester: PresentationRequester,
   ): Promise<PresentationState> {
     const runtimeIdentity = this.assertPresentationAdmission()
+    const knowsKeyboardPlace = this.knowsKeyboardPlaceAtAdmission()
     const focusedPane = this.trackFocusedStudyPane(true)
     const transition = {
       id: this.presentationId,
@@ -2221,11 +2228,9 @@ export class StudyWorkspace {
     pending = (async () => {
       try {
         // The maximized group can hide the other leaves from getEditorLayout; restore its grid before measuring ratios.
-        await focusedPane.endReadMaximization(async () => {
-          await this.expandToEndMaximization()
-          this.maximizedByRead = false
-          await this.showSideBarsHiddenByRead()
-        })
+        await focusedPane.endReadMaximization(() =>
+          this.endReadForAdmission(requester, knowsKeyboardPlace),
+        )
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
@@ -4327,7 +4332,43 @@ export class StudyWorkspace {
   }
 
   /**
-   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}, and by {@link beginReadingMaximized} for a Read that was refused after its measurement.
+   * Ends a Read's maximization for an admitted change and shows the side bars the Read hid ({@link showSideBarsHiddenByRead}); run through {@link trackFocusedStudyPane}'s `endReadMaximization` by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement}.
+   * The bars' show commands take the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1113:32927, 859:17722; Cursor 3.23.12 18340:22765, 17376:10844) and the active editor group, the pane being read, gets it after them. A Read leaves the bottom panel shown, so for an agent's request the learner may have been typing in its terminal, in a view or in a chat, which Codebook cannot tell: unless the keyboard's place is known, the learner is told once where it is now ({@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, row 622).
+   * @param requester - Who asked for the change.
+   * @param knowsKeyboardPlace - Whether the keyboard was known to be in the editor ({@link knowsKeyboardPlaceAtAdmission}) or goes back to a chat tab after the arrangement.
+   * @example await focusedPane.endReadMaximization(() => this.endReadForAdmission('agent', false)) // tells once after the bars were shown
+   */
+  private async endReadForAdmission(
+    requester: PresentationRequester,
+    knowsKeyboardPlace: boolean,
+  ): Promise<void> {
+    await this.expandToEndMaximization()
+    this.maximizedByRead = false
+    const shownBars = await this.showSideBarsHiddenByRead()
+    // The learner's own request comes from the pane being read, which gets the keyboard back.
+    if (!shownBars || requester !== 'agent' || knowsKeyboardPlace) return
+    if (keyboardNoticesTold.has('readEnded')) return
+    keyboardNoticesTold.add('readEnded')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
+    )
+  }
+
+  /**
+   * Says, when a presentation change is admitted and before any of its effects, whether the learner is known to type where the keyboard is: the Study pane's own report, or a fresh sign of the learner's hand in the active text editor ({@link knowsLearnersPlace}); asked by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement} for {@link endReadForAdmission}.
+   * @returns `true` for such a report or sign; `false` otherwise, also for the Application pane, whose page sends no report.
+   * @example this.knowsKeyboardPlaceAtAdmission() // => true while the Study pane reports its keyboard
+   */
+  private knowsKeyboardPlaceAtAdmission(): boolean {
+    return this.knowsLearnersPlace(
+      [this.app, this.contextPanel].find((panel) => panel?.active),
+    )
+  }
+
+  /**
+   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by {@link endReadForAdmission} (the live branch of {@link admitPresentation} and {@link restoreStudyArrangement}), {@link enlargePresentationPanel} and {@link close}, and by {@link beginReadingMaximized} for a Read that was refused after its measurement.
    * Only the bars {@link sideBarShowCommands} names are shown: those that were open before the Read, and the primary one when the learner opened it during the reading. A reading without a measurement hid no bar and shows none. The editor's commands that show a bar leave an open bar as it is and give the bar the keyboard, which the active editor group gets back. They do so in a window without the focus too, and beside a chat that had the keyboard as a tab of another editor part: {@link close} settles both ({@link endEnlargementAtClose}).
    * @returns `true` when a bar was shown and the active editor group focused again, `false` when no Read's measurement was pending or no bar is to be shown.
    * @example
