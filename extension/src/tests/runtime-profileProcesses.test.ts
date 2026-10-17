@@ -121,3 +121,42 @@ test('a Windows command line splits into the arguments a program receives, by it
     separatorsOnly: [],
   })
 })
+
+// Value: protects=a live profile on Windows whose Chrome names the folder in another way than the folder's resolved path: in another case, with `/` separators, or with `..` in it, which Windows reads as the same folder, so the owned Chrome is still found and a sweep never takes its folder for unused, while another folder whose path only starts with it is not matched (CX9, /ship Codex adversarial review); fails_when=the profile is compared by exact text on Windows, so a variant of the same path is left out and the live profile looks unused; why_new=every Windows profile test wrote the path as `realpath` gives it; seam=the system the command lines are read for (`win32`) and a listing of the test's own, matched against a real profile folder
+test('on Windows a profile named in another case, with forward slashes or with a parent step is still matched, and another folder is not', async (context) => {
+  // Arrange: a real profile folder, and the command lines of Chrome processes that name it in the ways Windows reads as the same folder.
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-case-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'codebook-browser-x')
+  await mkdir(profile)
+  const chrome = '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"'
+  const listing = [
+    {
+      pid: 21,
+      command: `${chrome} "--user-data-dir=${profile.toUpperCase()}"`,
+    },
+    {
+      pid: 22,
+      command: `${chrome} "--user-data-dir=${profile.replaceAll('/', '\\')}"`,
+    },
+    {
+      pid: 23,
+      command: `${chrome} "--user-data-dir=${join(parent, 'elsewhere')}${'/../codebook-browser-x'}"`,
+    },
+    {
+      pid: 24,
+      command: `${chrome} "--user-data-dir=${profile.toUpperCase()}-OTHER"`,
+    },
+  ]
+  // Act
+  const observed = await profileProcesses(profile, listing, {
+    platform: 'win32',
+  })
+  // Assert
+  assert.deepEqual(
+    observed.map((listed) => listed.pid),
+    [21, 22, 23],
+  )
+})
