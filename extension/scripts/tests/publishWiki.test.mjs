@@ -2078,17 +2078,66 @@ test('a recovery whose output lies behind a link at its parent in the project is
   }
 })
 
-// Value: protects=the learner who chose an output folder outside the project and reaches it through a link of their own; fails_when=the check of the folders on the way to the output refuses a link outside the project too, so a configured output outside it can no longer be prepared; why_new=Cycle 0046 /ship finding F1: the fix refuses links only once the path is inside the project; seam=none
+/** The load of the copy of the shipped publisher whose `node:fs/promises` calls a link a directory, once it has begun. */
+let publisherWhereTheLookIsWrong
+/**
+ * Loads a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, as the file system layer of Node.js does on Windows for a junction whose target is a volume: a loader hook (`scripts/tests/utils/wrongLookHooks.mjs`), registered once, hands the copy `wrongLookFileSystem.mjs`.
+ * @returns {Promise<typeof import('../../skills/codebook/publish-wiki.mjs')>} The copy's exports.
+ * @example
+ * const { prepareWikiStage } = await loadPublisherWhereTheLookIsWrong()
+ */
+function loadPublisherWhereTheLookIsWrong() {
+  if (!publisherWhereTheLookIsWrong) {
+    register(new URL('./utils/wrongLookHooks.mjs', import.meta.url))
+    publisherWhereTheLookIsWrong = import(
+      new URL(
+        '../../skills/codebook/publish-wiki.mjs?wrong-look',
+        import.meta.url,
+      ).href
+    )
+  }
+  return publisherWhereTheLookIsWrong
+}
+
+/**
+ * Publishes a Wiki into a new project's `.codebook/wiki` with the real publisher, optionally prepares a candidate beside it, then moves the Wiki folder out of the project and leaves a link to it in its place: on Windows a junction to another volume, which the publisher copy of {@link loadPublisherWhereTheLookIsWrong} looks at as a directory.
+ * @param {{ prepareNext?: boolean }} options - Whether a candidate `.codebook/next` is prepared before the move.
+ * @returns {Promise<{ directory: string, root: string, output: string, movedOut: string, next: string }>} The temporary folder, the project, the Wiki folder's path in the project, where the Wiki lies now, and the candidate's path.
+ * @example
+ * const wiki = await publishedWikiMovedOutBehindALink({ prepareNext: true })
+ */
+async function publishedWikiMovedOutBehindALink({ prepareNext = false } = {}) {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-output-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next'),
+    movedOut = join(directory, 'wiki-moved-out')
+  await mkdir(root)
+  await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+  await publishWiki({
+    projectRoot: root,
+    outputDirectory: output,
+    stageDirectory: first,
+  })
+  if (prepareNext)
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+  await rename(output, movedOut)
+  await symlink(movedOut, output, 'junction')
+  return { directory, root, output, movedOut, next }
+}
+
+/** The refusal of an entry on the output's path inside the project that is no folder of the project's own, for the path it names. */
+const refusalOfLinkedEntry = (path) =>
+  `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${path}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`
+
 // Value: protects=the folder outside the project that a `.codebook` junction to a volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher's walk trusts lstat and no longer compares a folder's real path with the project, so it prepares its stage beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of requireOwnFolder had no test); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, by a loader hook (scripts/tests/utils/wrongLookHooks.mjs)
 test('the publisher refuses a folder on the output’s path in the project that lstat calls a directory although its real path leaves the project, names it and writes nothing there', async () => {
   // Arrange: a copy of the publisher whose lstat answers for a link what stat answers, and a project whose `.codebook` is a link to a folder outside it.
-  register(new URL('./utils/wrongLookHooks.mjs', import.meta.url))
-  const { prepareWikiStage: prepareWhereTheLookIsWrong } = await import(
-    new URL(
-      '../../skills/codebook/publish-wiki.mjs?wrong-look',
-      import.meta.url,
-    ).href
-  )
+  const { prepareWikiStage: prepareWhereTheLookIsWrong } =
+    await loadPublisherWhereTheLookIsWrong()
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-wrong-look-')),
   )
@@ -2115,6 +2164,118 @@ test('the publisher refuses a folder on the output’s path in the project that 
   }
 })
 
+// Value: protects=the folder outside the project that a `.codebook\\wiki` junction to another volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher looks at the Wiki folder itself with lstat alone again, so it prepares a candidate from the Wiki behind the junction, publishes through it, or recovers by writing a manifest into it; why_new=Cycle 0046 /ship finding AF3 (the parents, the update start and the reader compare real paths; the publisher's look at the Wiki folder itself did not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/wrongLookHooks.mjs)
+for (const step of ['--prepare', 'publish', '--recover'])
+  test(`${step} of a Wiki folder in the project that lstat calls a directory although its real path leaves the project is refused with the folder named, and nothing is written there or beside it`, async () => {
+    // Arrange: a published Wiki moved out of the project behind a link at its folder's path, with a candidate prepared before the move for the publish, and an edited manifest behind the link for the recovery.
+    const {
+      prepareWikiStage,
+      publishWiki: publishWhereTheLookIsWrong,
+      recoverWikiPublication,
+    } = await loadPublisherWhereTheLookIsWrong()
+    const wiki = await publishedWikiMovedOutBehindALink({
+      prepareNext: step === 'publish',
+    })
+    try {
+      if (step === '--recover')
+        await writeFile(
+          join(wiki.movedOut, 'codebook-wiki.json'),
+          '{accidental edit',
+        )
+      const beside = (await readdir(join(wiki.root, '.codebook'))).sort()
+      const behind = (await readdir(wiki.movedOut)).sort()
+      const scope = { projectRoot: wiki.root, outputDirectory: wiki.output }
+
+      // Act
+      const refusal = await (
+        step === '--prepare'
+          ? prepareWikiStage(scope)
+          : step === 'publish'
+            ? publishWhereTheLookIsWrong({
+                ...scope,
+                stageDirectory: wiki.next,
+              })
+            : recoverWikiPublication(scope)
+      ).then(
+        () => 'done',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          beside: (await readdir(join(wiki.root, '.codebook'))).sort(),
+          behind: (await readdir(wiki.movedOut)).sort(),
+        },
+        { refusal: refusalOfLinkedEntry(wiki.output), beside, behind },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the folder outside the project that a candidate folder beside the Wiki leads to when it is a junction to another volume on Windows; fails_when=the publisher looks at the candidate with lstat alone, so it renders the pages into the folder behind the junction and moves it into the Wiki's place; why_new=Cycle 0046 /ship finding AF3 (the stage beside the output is looked at the same way); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/wrongLookHooks.mjs)
+test('a publish whose candidate beside the Wiki in the project is a folder that lstat calls a directory although its real path leaves the project is refused with the candidate named, and the candidate and the Wiki are left as they are', async () => {
+  // Arrange: a published Wiki with a candidate prepared beside it; the candidate is moved out of the project and a link to it stands in its place.
+  const { publishWiki: publishWhereTheLookIsWrong } =
+    await loadPublisherWhereTheLookIsWrong()
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-stage-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next'),
+    nextMovedOut = join(directory, 'next-moved-out')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    await rename(next, nextMovedOut)
+    await symlink(nextMovedOut, next, 'junction')
+    const candidateBefore = await readFile(
+      join(nextMovedOut, 'index.html'),
+      'utf8',
+    )
+    const wikiBefore = await readFile(join(output, 'index.html'), 'utf8')
+
+    // Act
+    const refusal = await publishWhereTheLookIsWrong({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        candidate: await readFile(join(nextMovedOut, 'index.html'), 'utf8'),
+        wiki: await readFile(join(output, 'index.html'), 'utf8'),
+        beside: (await readdir(join(root, '.codebook'))).sort(),
+      },
+      {
+        refusal: refusalOfLinkedEntry(next),
+        candidate: candidateBefore,
+        wiki: wikiBefore,
+        beside: ['next', 'wiki'],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who chose an output folder outside the project and reaches it through a link of their own; fails_when=the check of the folders on the way to the output refuses a link outside the project too, so a configured output outside it can no longer be prepared; why_new=Cycle 0046 /ship finding F1: the fix refuses links only once the path is inside the project; seam=none
 test('an output outside the project reached through a link outside it is still prepared, in the folder the link leads to', async () => {
   // Arrange
   const directory = await realpath(
