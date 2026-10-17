@@ -356,8 +356,8 @@ async function sourcesLoadedBy(entries, root = repositoryRoot) {
     const path = waiting.pop()
     if (loaded.has(path)) continue
     loaded.add(path)
-    // Only a TypeScript source loads further files; a manifest or a script it reads ends the walk.
-    if (!path.endsWith('.ts')) continue
+    // A TypeScript source and a script's ES module load further files; a manifest or a document ends the walk.
+    if (!/\.(?:ts|mjs)$/.test(path)) continue
     for (const loadedPath of loadedPathsOf(
       await repositoryText(path, root),
       path,
@@ -369,12 +369,13 @@ async function sourcesLoadedBy(entries, root = repositoryRoot) {
 
 /**
  * Lists the test sources a job runs, taken from its `node --test` commands, so that the Windows pin follows the files the job runs and not a list of its own, which the command can outgrow unseen.
- * The job runs compiled files from the folder `extension` (`dist/tests/<name>.test.js`); each stands for its source, `extension/src/tests/<name>.test.ts`.
+ * The job runs from the folder `extension`: compiled files (`dist/tests/<name>.test.js`), each of which stands for its source, `extension/src/tests/<name>.test.ts`, and script tests (`scripts/tests/<name>.test.mjs`), which are their own source.
  * @param workflow - The workflow's text.
  * @returns The sources in the order the commands name them; empty when the workflow runs no `node --test` command.
- * @throws When an argument of such a command is neither an option that begins with `--` nor one compiled test file of `dist/tests` (a glob, a folder, a file of another folder): the closure cannot start from it.
+ * @throws When an argument of such a command is neither an option that begins with `--`, nor one compiled test file of `dist/tests`, nor one script test of `scripts/tests` (a glob, a folder, a file of another folder): the closure cannot start from it.
  * @example
  * testSourcesRunBy('      - run: node --test dist/tests/isProcessGone.test.js\n') // => ['extension/src/tests/isProcessGone.test.ts']
+ * testSourcesRunBy('      - run: node --test scripts/tests/openWithoutFollowing.test.mjs\n') // => ['extension/scripts/tests/openWithoutFollowing.test.mjs']
  */
 function testSourcesRunBy(workflow) {
   return (
@@ -384,6 +385,9 @@ function testSourcesRunBy(workflow) {
       // An option of the runner (--test-concurrency=1) names no file.
       .filter((argument) => !argument.startsWith('--'))
       .map((argument) => {
+        // A script test is its own source.
+        if (/^scripts\/tests\/[\w.-]+\.test\.mjs$/.test(argument))
+          return `extension/${argument}`
         const name = /^dist\/tests\/([\w.-]+)\.test\.js$/.exec(argument)?.[1]
         if (name === undefined)
           throw new Error(
@@ -781,6 +785,10 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
     '.node-version',
+    'extension/scripts/tests/openWithoutFollowing.test.mjs',
+    'extension/scripts/utils/openWithoutFollowing.mjs',
+    'extension/scripts/utils/packageConstants.mjs',
+    'extension/scripts/utils/readVsixBytes.mjs',
     'extension/src/runtimeSupport/utils/listProcesses.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
@@ -897,6 +905,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
     'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js',
+    'node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
@@ -932,6 +941,7 @@ test('the Windows workflow, its job and its test step are named after the file s
     'Prepare environment',
     'Emit the compiled tests without type checking',
     'Run the file system and process tests',
+    "Run the tests of the scripts' opener",
   ])
   assert.deepEqual(
     names.filter((name) => /storage lock/i.test(name)),
@@ -1162,6 +1172,53 @@ test('the test files the Windows pin follows are the ones the job’s node --tes
   }
 })
 
+// Value: protects=the Windows run of a script test (the packaging scripts' opener) whenever a script module it loads changes; fails_when=the pin cannot read a script test from the job's command, or stops the walk at a script's ES module, so a module that test loads is left out of the path filter unseen and a change to it never runs on Windows; why_new=Cycle 0046 /ship review T14: the job runs a script test since then, and the walk followed TypeScript sources only; seam=a workflow and a repository of the test's own
+test('a script test the Windows job runs is followed with the script modules it loads, also those its modules load', async () => {
+  // Arrange: a job that runs one script test, which loads a script module that loads another.
+  const root = await mkdtemp(join(tmpdir(), 'codebook-workflow-pins-'))
+  try {
+    await mkdir(join(root, 'extension/scripts/tests'), { recursive: true })
+    await mkdir(join(root, 'extension/scripts/utils'), { recursive: true })
+    await writeFile(
+      join(root, 'extension/scripts/tests/opener.test.mjs'),
+      "import { openWithoutFollowing } from '../utils/opener.mjs'\n",
+    )
+    await writeFile(
+      join(root, 'extension/scripts/utils/opener.mjs'),
+      "import { MAX_ARCHIVE_BYTES } from './limits.mjs'\n",
+    )
+    await writeFile(join(root, 'extension/scripts/utils/limits.mjs'), '')
+    const workflow = [
+      'jobs:',
+      '  windows:',
+      '    steps:',
+      '      - name: Run the tests of the scripts',
+      '        working-directory: extension',
+      '        run: node --test --test-concurrency=1 scripts/tests/opener.test.mjs',
+      '',
+    ].join('\n')
+
+    // Act
+    const testSources = testSourcesRunBy(workflow)
+    const loadedSources = await sourcesLoadedBy(testSources, root)
+
+    // Assert
+    assert.deepEqual(
+      { testSources, loadedSources },
+      {
+        testSources: ['extension/scripts/tests/opener.test.mjs'],
+        loadedSources: [
+          'extension/scripts/tests/opener.test.mjs',
+          'extension/scripts/utils/limits.mjs',
+          'extension/scripts/utils/opener.mjs',
+        ],
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Cycle 0046 row 125: a load whose path the closure could not read (a template literal, a variable, require.resolve) was left out silently, so the file it names could be missing from a path filter unseen.
 test('a load whose path is a template literal, a variable or an expression fails the pin with the file, the line and the load, while a document read below a folder named by a variable does not', async () => {
   // Arrange: four test files that each load by a path the closure cannot read, and one that only reads a document that way and resolves a module by a quoted path.
@@ -1287,6 +1344,7 @@ test('a module that a comment or a docstring of a test file only quotes is not a
 /**
  * The kinds of test the Windows job runs, as the test execution guide and the workflow's header name them, each with its test files; for the pin below.
  * The two documents name kinds and no files, so a test file added to a kind they already name changes neither of them: it is added here, under its kind. A file of a kind they do not name fails the pin, which then asks for the kind's name in both.
+ * A test of `extension/src/tests` is named by its name alone (`withStorageLock`); a script test of `extension/scripts/tests` by `scripts/` and its name (`scripts/openWithoutFollowing`), so it is told from an extension test of the same name ({@link testNameInTheJob}).
  */
 const WINDOWS_JOB_TEST_KINDS = [
   {
@@ -1316,7 +1374,10 @@ const WINDOWS_JOB_TEST_KINDS = [
     kind: 'the reader of Wiki metadata files',
     tests: ['readWikiRegularFile'],
   },
-  { kind: 'the opener that refuses a link', tests: ['openWithoutFollowing'] },
+  {
+    kind: 'the opener that refuses a link',
+    tests: ['openWithoutFollowing', 'scripts/openWithoutFollowing'],
+  },
   { kind: 'the file hash', tests: ['hashFileSha256'] },
   {
     kind: "the Cursor MCP catalog's opens and file ids",
@@ -1333,6 +1394,21 @@ const WINDOWS_JOB_TEST_KINDS = [
     tests: ['listFolderTreeWithoutFollowing', 'isFolderOfItsOwn'],
   },
 ]
+
+/**
+ * Names a test source of the Windows job as {@link WINDOWS_JOB_TEST_KINDS} lists it; for the pin below.
+ * @param {string} path - A source {@link testSourcesRunBy} answered.
+ * @returns {string} `<name>` for `extension/src/tests/<name>.test.ts`; `scripts/<name>` for `extension/scripts/tests/<name>.test.mjs`.
+ * @example
+ * testNameInTheJob('extension/src/tests/withStorageLock.test.ts')               // => 'withStorageLock'
+ * testNameInTheJob('extension/scripts/tests/openWithoutFollowing.test.mjs') // => 'scripts/openWithoutFollowing'
+ */
+function testNameInTheJob(path) {
+  // A script test keeps the folder in its name: an extension test can have the same name.
+  if (path.startsWith('extension/scripts/tests/'))
+    return `scripts/${path.slice('extension/scripts/tests/'.length, -'.test.mjs'.length)}`
+  return path.slice('extension/src/tests/'.length, -'.test.ts'.length)
+}
 
 // Value: protects=a maintainer who reads in the guide, or at the head of the workflow, what the Windows job tests, how it runs and which files its filter leaves out; fails_when=the job gains a test file of a kind neither document names, a kind they name has no test file in the job any more, the two documents name different kinds, or the guide states another way of running or other left-out files than the workflow has; why_new=Cycle 0046 row 237: the guide named three kinds and one left-out file while the job ran twenty-four files of ten kinds and left out two; seam=none
 test('the test execution guide and the header of the Windows workflow name every kind of test the job runs, every test file of its run command belongs to a kind they name, and the guide states how the job runs and which two files its filter leaves out', async () => {
@@ -1355,9 +1431,7 @@ test('the test execution guide and the header of the Windows workflow name every
   const kindsSentence =
     /It runs the tests of (.+?)\.(?: |$)/m.exec(section)?.[1] ?? ''
   const kindsOfGuide = kindsSentence.split(/, of | and of /)
-  const testsOfCommand = testSourcesRunBy(workflow).map((path) =>
-    path.slice('extension/src/tests/'.length, -'.test.ts'.length),
-  )
+  const testsOfCommand = testSourcesRunBy(workflow).map(testNameInTheJob)
   const testsOfKinds = WINDOWS_JOB_TEST_KINDS.flatMap(({ tests }) => tests)
   const [pushFilter] = pathFiltersOf(workflow)
   const leftOutOfFilter = (

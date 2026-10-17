@@ -22,6 +22,10 @@ on:
     paths: &lock-test-paths
       - .github/workflows/storage-locks-windows.yml
       - .node-version
+      - extension/scripts/tests/openWithoutFollowing.test.mjs
+      - extension/scripts/utils/openWithoutFollowing.mjs
+      - extension/scripts/utils/packageConstants.mjs
+      - extension/scripts/utils/readVsixBytes.mjs
       - extension/src/runtimeSupport/utils/listProcesses.ts
       - extension/src/runtimeSupport/utils/sha256.ts
       - extension/src/tests/canJudgeOwnerHere.test.ts
@@ -162,3 +166,11 @@ jobs:
       - name: Run the file system and process tests
         working-directory: extension
         run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js
+
+      # The packaging scripts read a VSIX through their own copy of the opener that refuses a link
+      # (extension/scripts/utils/openWithoutFollowing.mjs, which says why it is a copy); its tests run here on the system
+      # whose open has no flag to refuse a link with. They are scripts, so they need no build, and they run one file at a
+      # time as above.
+      - name: Run the tests of the scripts' opener
+        working-directory: extension
+        run: node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs
