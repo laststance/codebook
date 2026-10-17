@@ -1994,6 +1994,26 @@ export async function workspaceHarness(
       !separateEditorPart?.focused,
     )
   }
+  /**
+   * Says whether the document of the pane in front of a group has the keyboard: the group is the active one, its front tab is that pane's and the pane's document took the keyboard (`innerFocusedPanel`), and neither a view, a side bar, the page body nor another part's chat has it; asked by `panel` when a pane is created without the keyboard in that group.
+   * A webview created in front of that pane hides it, as it hides a text editor (row 694): a document that is no longer rendered cannot keep the focus, and the page's focus falls back to its body (the HTML standard's focus fixup rule), where nothing types (Cycle 0046 row 705).
+   * @param group - The group the pane is created in.
+   * @returns `true` for such a group; `false` otherwise.
+   * @example paneDocumentHasKeyboardIn(groups[1]) // => true while the Study pane in front of the second group has the keyboard in its document
+   */
+  function paneDocumentHasKeyboardIn(group: (typeof groups)[number]): boolean {
+    const front = group.activeTab?.input
+    return Boolean(
+      group === activeTabGroup &&
+      front instanceof TabInputWebview &&
+      front.viewType === innerFocusedPanel &&
+      windowState.focused &&
+      !keyboardInView &&
+      !keyboardInSideBar &&
+      !keyboardOnBody &&
+      !separateEditorPart?.focused,
+    )
+  }
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
     if (partialFocusEditor) return partialFocusEditor.value
@@ -2630,6 +2650,11 @@ export async function workspaceHarness(
       // A pane created without the keyboard in front of the text editor that has it hides that editor: the keyboard falls to the page body (row 694).
       if (options?.preserveFocus && textEditorHasKeyboardIn(group))
         keyboardOnBody = true
+      // So does one created in front of a pane whose document has the keyboard: the hidden pane's document leaves it (row 705).
+      if (options?.preserveFocus && paneDocumentHasKeyboardIn(group)) {
+        innerFocusedPanel = undefined
+        keyboardOnBody = true
+      }
       if (!group.tabs.includes(nativeTab)) {
         group.tabs.push(nativeTab)
         // Cursor reports the opened tab before it reports it as the tab its group shows (obs15 P1: "opened", then "changed").
@@ -4291,7 +4316,7 @@ export async function workspaceHarness(
     typeof repositoryBoundary.RepositoryReader
   >[] = []
   /**
-   * Makes a real Repository Wiki reader over this fake editor, wired to the harness's Study workspace as the extension wires it (`extension.ts`: the workspace's learning storage, its `arrangeRepository`, its `openRepositoryEvidence` and its `knowsLearnerTypesInActiveEditor`), so the reader's own focus receipts and the workspace's layout meet the fake editor's models, Cursor's chat part among them (Cycle 0046 rows 674 and 694).
+   * Makes a real Repository Wiki reader over this fake editor, wired to the harness's Study workspace as the extension wires it (`extension.ts`: the workspace's learning storage, its `arrangeRepository`, its `openRepositoryEvidence`, its `knowsLearnerTypesInActiveEditor` and its `studyPaneKeyboardColumn`), so the reader's own focus receipts and the workspace's layout meet the fake editor's models, Cursor's chat part among them (Cycle 0046 rows 674, 694 and 705).
    * @returns The reader; a book published into the workspace's learning storage is what its `open` shows.
    * @example const wiki = harness.createRepositoryWikiReader(); await wiki.open(selection)
    */
@@ -4305,6 +4330,7 @@ export async function workspaceHarness(
         reader.openRepositoryEvidence(binding, recording, signal, origin),
       knowsLearnerTypesInActiveEditor: () =>
         reader.knowsLearnerTypesInActiveEditor(),
+      studyPaneKeyboardColumn: () => reader.studyPaneKeyboardColumn(),
     })
     repositoryWikiReaders.push(wiki)
     return wiki

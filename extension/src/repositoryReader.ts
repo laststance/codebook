@@ -11,6 +11,7 @@ import {
   REPOSITORY_READER_READY_TIMEOUT_MS,
   REPOSITORY_SOURCE_SCHEME,
   REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE,
+  REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE,
   REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE,
   REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE,
 } from './constants'
@@ -92,12 +93,14 @@ function tellAgentWikiKeyboardOnce(sentence: string): void {
   void showPlainNotice(vscode.window, 'information', sentence)
 }
 
-/** The text editor the editor reported as active when an agent's cold Wiki entry began ({@link RepositoryReader.noteAgentEntryKeyboardEditor}): the place the keyboard was in, or may have been in, before the Wiki was shown (Cycle 0046 row 694). */
+/** The text editor the editor reported as active, or the Study pane that reported the keyboard, when an agent's cold Wiki entry began ({@link RepositoryReader.noteAgentEntryKeyboardEditor}): the place the keyboard was in, or may have been in, before the Wiki was shown (Cycle 0046 rows 694 and 705). */
 interface AgentEntryKeyboardEditor {
   /** The view column of its group. */
   column: vscode.ViewColumn
-  /** Whether the learner was known to type in it then ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}). */
+  /** Whether the learner was known to type in it then ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}, or the Study pane's own report). */
   learnerTypesThere: boolean
+  /** `'study pane'` for the Study pane's report ({@link RepositoryControls.studyPaneKeyboardColumn}); `'file'` for the active text editor. */
+  place: 'file' | 'study pane'
 }
 
 interface RepositoryControls {
@@ -116,6 +119,8 @@ interface RepositoryControls {
   ): Promise<void>
   /** Says whether the learner is known to type in the active text editor now, by a fresh sign of the learner's own hand there ({@link StudyWorkspace.knowsLearnerTypesInActiveEditor}); asked when an agent's cold Wiki entry begins (row 694). Without it nothing is known. */
   knowsLearnerTypesInActiveEditor?(): boolean
+  /** Names the column of the Study pane while its document reports that it has the keyboard ({@link StudyWorkspace.studyPaneKeyboardColumn}); asked when an agent's cold Wiki entry begins without an active text editor (row 705). Without it no pane is known. */
+  studyPaneKeyboardColumn?(): vscode.ViewColumn | undefined
 }
 
 /** Owns repository reading/navigation while {@link RepositoryBookStore} seals content and {@link LearningLibrary} owns shared choices. @example await reader.open() */
@@ -704,35 +709,42 @@ export class RepositoryReader {
   }
 
   /**
-   * Notes the text editor the editor reports as active when an agent's cold Wiki entry begins, and whether the learner is known to type in it ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}), for {@link settleCoveredEditorKeyboard}; called first by {@link open}, before any effect (Cycle 0046 row 694). A side of a diff editor, which both editors report with no view column, is noted in its diff's group ({@link textEditorColumn}, row 709).
+   * Notes the text editor the editor reports as active when an agent's cold Wiki entry begins, and whether the learner is known to type in it ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}), for {@link settleCoveredEditorKeyboard}; called first by {@link open}, before any effect (Cycle 0046 row 694). A side of a diff editor, which both editors report with no view column, is noted in its diff's group ({@link textEditorColumn}, row 709). Without an active text editor it notes the Study pane while that pane's document reports the keyboard ({@link RepositoryControls.studyPaneKeyboardColumn}), whose report is the learner's sign (row 705).
    * @param coldAgentEntry - Whether the entry is an agent's into a window without the Wiki.
-   * @returns The editor's column and the learner's sign; `undefined` for any other entry and without an active text editor.
-   * @example this.noteAgentEntryKeyboardEditor(true) // => { column: 2, learnerTypesThere: true } a second after the learner typed in auth.ts in front of the second group
+   * @returns The editor's or the pane's column and the learner's sign; `undefined` for any other entry, and with neither an active text editor nor a Study pane that reports the keyboard.
+   * @example this.noteAgentEntryKeyboardEditor(true) // => { column: 2, learnerTypesThere: true, place: 'file' } a second after the learner typed in auth.ts in front of the second group
    */
   private noteAgentEntryKeyboardEditor(
     coldAgentEntry: boolean,
   ): AgentEntryKeyboardEditor | undefined {
+    if (!coldAgentEntry) return undefined
     // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
     const column = textEditorColumn(
       vscode.window.activeTextEditor,
       vscode.window.tabGroups.all,
       Reflect.get(vscode, 'TabInputTextDiff'),
     )
-    if (!coldAgentEntry || column === undefined) return undefined
-    return {
-      column,
-      learnerTypesThere: Boolean(
-        this.controls.knowsLearnerTypesInActiveEditor?.(),
-      ),
-    }
+    if (column !== undefined)
+      return {
+        column,
+        learnerTypesThere: Boolean(
+          this.controls.knowsLearnerTypesInActiveEditor?.(),
+        ),
+        place: 'file',
+      }
+    // A Study pane that reports the keyboard is where the learner works (row 705).
+    const paneColumn = this.controls.studyPaneKeyboardColumn?.()
+    return paneColumn === undefined
+      ? undefined
+      : { column: paneColumn, learnerTypesThere: true, place: 'study pane' }
   }
 
   /**
    * Settles the keyboard of the file an agent's cold Wiki was created in front of, for {@link settleAgentEntryKeyboard} once that keyboard stayed where the learner had it (Cycle 0046 row 694).
-   * The Wiki is created in the second group without the keyboard ({@link ensurePanel}); a webview created in front of the text editor that has the keyboard hides that editor, and the keyboard falls to the page body, where nothing types (C60, both hosts: `auth.ts` in front of column 2 with the keyboard, then BODY to the end). Both editors report the learner's last file as the active text editor also while a view, the terminal or VS Code's chat view has the keyboard (rows 612 and 656), which the Wiki leaves where it is, so only a known sign of the learner's own hand in that file decides: then the Wiki gets the keyboard and the learner is told so ({@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}); otherwise nothing is focused and the learner is told what may have happened ({@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}). Each sentence is told once in the editor session.
+   * The Wiki is created in the second group without the keyboard ({@link ensurePanel}); a webview created in front of the text editor that has the keyboard hides that editor, and the keyboard falls to the page body, where nothing types (C60, both hosts: `auth.ts` in front of column 2 with the keyboard, then BODY to the end). Both editors report the learner's last file as the active text editor also while a view, the terminal or VS Code's chat view has the keyboard (rows 612 and 656), which the Wiki leaves where it is, so only a known sign of the learner's own hand in that file decides: then the Wiki gets the keyboard and the learner is told so ({@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}); otherwise nothing is focused and the learner is told what may have happened ({@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}). A Study pane the Wiki covers while its document reported the keyboard loses it the same way, and its report is the learner's sign: the Wiki gets the keyboard and the pane's sentence is told ({@link REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE}, row 705). Each sentence is told once in the editor session.
    * @param panel - The Wiki the entry showed.
    * @param keyboardEditor - The text editor the editor reported as active when the entry began.
-   * @example this.settleCoveredEditorKeyboard(panel, { column: 2, learnerTypesThere: true }) // the Wiki has the keyboard, and the learner is told once
+   * @example this.settleCoveredEditorKeyboard(panel, { column: 2, learnerTypesThere: true, place: 'file' }) // the Wiki has the keyboard, and the learner is told once
    */
   private settleCoveredEditorKeyboard(
     panel: vscode.WebviewPanel,
@@ -742,7 +754,11 @@ export class RepositoryReader {
       return
     if (keyboardEditor.learnerTypesThere) {
       this.revealPanel(panel, false)
-      tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE)
+      tellAgentWikiKeyboardOnce(
+        keyboardEditor.place === 'study pane'
+          ? REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE
+          : REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE,
+      )
     } else tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE)
   }
 
@@ -751,7 +767,7 @@ export class RepositoryReader {
    * @param panel - The Wiki the entry showed.
    * @param keyboardEditor - That text editor's column.
    * @returns `true` while the Wiki is that group's front tab and no text editor is active; `false` once the learner brought a text editor to the front, there or elsewhere, and for the Wiki in another group.
-   * @example this.coversEditorColumn(panel, { column: 2, learnerTypesThere: false }) // => true right after the Wiki was created in front of auth.ts
+   * @example this.coversEditorColumn(panel, { column: 2, learnerTypesThere: false, place: 'file' }) // => true right after the Wiki was created in front of auth.ts
    */
   private coversEditorColumn(
     panel: vscode.WebviewPanel,

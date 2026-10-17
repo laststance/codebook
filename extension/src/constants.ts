@@ -381,6 +381,12 @@ export const REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE =
 export const REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE =
   'Codebook opened the Repository Wiki an agent asked for in front of the file you had open in its editor group. If you were typing in that file, click its tab in that group to type in it again.'
 /**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki was created in front of the Study pane while that pane's document reported that it had the keyboard: the Wiki goes to the second editor group without the keyboard, a webview created in front of the pane hides it, and the keyboard falls to the page body, as for a covered file ({@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, Cycle 0046 row 705). The pane's own report is the sign that the learner works there, so Codebook gives the Wiki the keyboard, and the sentence says so and how to use the Study pane again: its tab is in the same group, behind the Wiki.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE)
+ */
+export const REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for in front of the Study pane you were using, and the Wiki has the keyboard now. To use the Study pane again, click its tab, codebook · Study, in the same editor group.'
+/**
  * What the reader tells the learner, once in an editor session, when a Study arrangement an agent asked for (codebook_presentation, a live request) ended the learner's Read and showed the side bars the Read had hidden again. Both editors show a side bar only with a command that gives it the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1113:32927 `workbench.action.focusSideBar`, 859:17722 `workbench.action.focusAuxiliaryBar`, whose chat view puts it into its input at 3507:67487; Cursor 3.23.12 18340:22765, 17376:10844), and the active editor group, the pane being read, gets it after them. A Read hides the side bars but not the bottom panel (990:15233), so the learner may have been typing to the agent in the terminal, in another view or in a chat; the editor does not tell Codebook, and nothing can give it back there, so the sentence says where it is now (Cycle 0046 row 622). Not told when the Study pane reported having the keyboard, nor for the learner's own Restore.
  * @example void showPlainNotice(vscode.window, 'information', READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE)
  */

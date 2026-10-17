@@ -13679,6 +13679,20 @@ export class StudyWorkspace {
   }
 
   /**
+   * Names the column of the Study pane while it is the editor's active pane and its document reports that it has the keyboard ({@link reportsKeyboard}); asked through the Repository Wiki reader's `studyPaneKeyboardColumn` control when an agent's cold Wiki entry begins without an active text editor ({@link RepositoryReader.open}, codebook_open_book, Cycle 0046 row 705), so that a Wiki created in front of that pane gives the keyboard back to the learner who worked there.
+   * @returns The pane's view column then; `undefined` without the Study pane, while another editor is the active one, and while its document reports no keyboard.
+   * @example workspace.studyPaneKeyboardColumn() // => 2 after the learner moved the Study pane into the second group and clicked into it
+   */
+  studyPaneKeyboardColumn(): vscode.ViewColumn | undefined {
+    const panel = this.contextPanel
+    return panel &&
+      this.reportsKeyboard(panel) &&
+      this.isEditorsActivePane(panel)
+      ? panel.viewColumn
+      : undefined
+  }
+
+  /**
    * Says whether the learner is known to work where the keyboard is; asked by {@link captureApplicationPreparationReturn} and {@link performPresentation} before any native effect of an agent's request.
    * Beside a chat view the active text editor stays the active one and a pane stays `active`, so only the learner's own sign tells: a click or a key press in the active text editor a moment ago ({@link learnerWorksInActiveEditor}), the learner's own reported move onto the captured source that is still the active text editor ({@link endSourceKeyboardPlacementAtLearnersMove}, row 654), or the Study pane's own report that it has the keyboard ({@link reportsKeyboard}).
    * @param focusedPanel - The Codebook pane that is the active editor, if any.

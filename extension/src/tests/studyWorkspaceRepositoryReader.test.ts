@@ -832,3 +832,114 @@ test("an agent's citation open refused for the learner's click right after its c
     await harness.close()
   }
 })
+
+/**
+ * Opens the workspace harness with the learner's two columns, the Study open and its pane moved by the learner into the second column, the column a cold Wiki is created in, where its document reports that it has the keyboard; no Repository Wiki is open (Cycle 0046 row 705). In Cursor beside its Agent chat part as {@link cursorBesideChatPart} opens it.
+ * @param host - The editor whose model the harness runs.
+ * @returns The harness.
+ * @example const { harness } = await learnerUsingStudyPaneInWikiColumn('VS Code')
+ */
+async function learnerUsingStudyPaneInWikiColumn(host: 'VS Code' | 'Cursor') {
+  const { harness } = await learnerTypingInWikiColumn(host)
+  await harness.reader.open()
+  harness.movePanel('codebook.studyContext', 2)
+  harness.receiveContext({ type: 'pane-focus', focused: true })
+  return { harness }
+}
+
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the learner's keyboard when an agent opens an article through codebook_open_book while no Wiki is open and the learner works in the Study pane in front of the second group, the column the Wiki is created in: the Wiki covers that pane without the keyboard, the hidden pane's document loses the keyboard to the page body as a covered file does (row 694), so Codebook gives the Wiki the keyboard and says once what happened and how to use the Study pane again; the Study pane's own report that it has the keyboard is the sign that the learner works there; fails_when=RepositoryReader notes only a text editor at the entry, so the Study pane's keyboard stays on the page body and nothing is told; why_new=Cycle 0046 row 705 (the rows 686 to 701 fixer's findings); seam=workspaceHarness's two columns, the reader's open, movePanel (the learner's move of the Study pane), the pane's focus report (receiveContext pane-focus), Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), createRepositoryWikiReader with the workspace's controls, openFromAgent, keyboardOnBody, innerFocusedPanel, panelReveals, textDocumentShows and the information messages
+  test(`an agent's cold Wiki open created in front of the Study pane the learner was using gives the Wiki the keyboard and says so once (${host})`, async () => {
+    // Arrange: the Study pane in front of the second group reports that it has the keyboard; no Wiki is open.
+    const { harness } = await learnerUsingStudyPaneInWikiColumn(host)
+    const { selection, books } = await publishTwoCitationWiki(harness)
+    const wiki = harness.createRepositoryWikiReader()
+    const revealsBefore = harness.panelReveals().length
+    try {
+      // Act
+      await wiki.openFromAgent({
+        instanceId: harness.service.instanceId,
+        ...selection,
+      })
+
+      // Assert: the Wiki in front of the Study pane has the keyboard with one reveal, no file was shown with the keyboard, and the learner was told once.
+      assert.deepEqual(
+        {
+          keyboardOnBody: harness.keyboardOnBody(),
+          keyboard: harness.innerFocusedPanel(),
+          secondGroup: harness.groups[1]!.tabs.map(
+            (tab) =>
+              `${tab === harness.groups[1]!.activeTab ? '*' : ''}${tab.label}`,
+          ),
+          wikiRevealsWithKeyboard: harness
+            .panelReveals()
+            .slice(revealsBefore)
+            .filter(
+              (reveal) =>
+                reveal.kind === 'codebook.repositoryWiki' &&
+                reveal.preserveFocus === false,
+            ).length,
+          shownWithKeyboard: harness
+            .textDocumentShows()
+            .filter((shown) => !shown.preserveFocus),
+          notices: harness.informationMessages.map((notice) => notice.message),
+        },
+        {
+          keyboardOnBody: false,
+          keyboard: 'codebook.repositoryWiki',
+          secondGroup: [
+            'auth.ts',
+            'Captured-overview.mts',
+            'codebook · Study',
+            '*codebook · Repository Wiki',
+          ],
+          wikiRevealsWithKeyboard: 1,
+          shownWithKeyboard: [],
+          notices: [
+            'Codebook opened the Repository Wiki an agent asked for in front of the Study pane you were using, and the Wiki has the keyboard now. To use the Study pane again, click its tab, codebook · Study, in the same editor group.',
+          ],
+        },
+      )
+    } finally {
+      await books.dispose()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the fidelity of the workspace harness's panes, on which row 705's verdicts rest: a pane created without the keyboard in front of a pane whose document has the keyboard hides that pane, and the keyboard falls to the page body, as it does for a covered text editor (row 694, C60 in both hosts); a hidden pane's document is no longer rendered, and the page's focus falls back to its body (the HTML standard's focus fixup rule); fails_when=the fake keeps the keyboard in the hidden pane's document, so a test passes on a keyboard no document has; why_new=Cycle 0046 row 705; seam=workspaceHarness's two columns, the reader's open, movePanel, the fake editor's createWebviewPanel with preserveFocus, innerFocusedPanel and keyboardOnBody
+test('the fake editor leaves the keyboard on the page body when a pane is created without the keyboard in front of the pane whose document has it', async () => {
+  // Arrange: the Study pane in front of the second group has the keyboard in its document.
+  const { harness } = await learnerUsingStudyPaneInWikiColumn('VS Code')
+  try {
+    const keyboardBefore = {
+      keyboardOnBody: harness.keyboardOnBody(),
+      keyboard: harness.innerFocusedPanel(),
+    }
+
+    // Act
+    harness.editor.window.createWebviewPanel(
+      'codebook.repositoryWiki',
+      'codebook · Repository Wiki',
+      { viewColumn: 2, preserveFocus: true },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        keyboardBefore,
+        keyboardOnBody: harness.keyboardOnBody(),
+        keyboard: harness.innerFocusedPanel(),
+      },
+      {
+        keyboardBefore: {
+          keyboardOnBody: false,
+          keyboard: 'codebook.studyContext',
+        },
+        keyboardOnBody: true,
+        keyboard: undefined,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
