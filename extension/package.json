@@ -20,7 +20,10 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Agent execution requires a trusted local workspace."
+      "description": "Agent execution requires a trusted local workspace.",
+      "restrictedConfigurations": [
+        "codebook.wikiOutputDirectory"
+      ]
     },
     "virtualWorkspaces": false
   },
