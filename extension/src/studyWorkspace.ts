@@ -958,7 +958,7 @@ export class StudyWorkspace {
     >
   }
   private presentationMovedFocus = false
-  /** Whether the running presentation change, Return to current pause or entry was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732), and neither does {@link returnCurrentSelection} (row 735) nor an entry of {@link open} that owns its chat return (row 736). Each of them clears it when it begins. */
+  /** Whether the running presentation change, Return to current pause, entry or arrangement of the live or recording panes was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732), and neither does {@link returnCurrentSelection} (row 735), an entry of {@link open} that owns its chat return (row 736), nor {@link returnForeignFocusAfterFailure} (row 738). Each of them clears it when it begins. */
   private presentationYieldedToLearner = false
   private presentationPoseRequest?: PresentationPoseCapture
   private presentationPose?: PresentationPose
@@ -1713,7 +1713,11 @@ export class StudyWorkspace {
       }
       const knowsKeyboardPlace = this.knowsKeyboardPlaceAtAdmission()
       const focusedPane = this.trackFocusedStudyPane(),
-        lifetime = this.lifetime
+        lifetime = this.lifetime,
+        // A refusal after Codebook focused the main editor's first group is told that nothing was arranged (row 738).
+        borrowsBefore = this.focusBorrowCount()
+      // The arrangement notes its own refusal for the learner's newer input, as a presentation change does (row 738).
+      this.presentationYieldedToLearner = false
       // A press in a Codebook view (no Study pane is pressed) reads like the command: the view keeps no tab the measurement could give back (row 647).
       const returnForeignFocus = this.retainForeignTabFocus(
         undefined,
@@ -1776,11 +1780,13 @@ export class StudyWorkspace {
             focusedPane,
             returnForeignFocus,
             lifetime,
+            borrowsBefore,
           )
           throw error
         } finally {
           focusedPane.dispose()
           this.endPresentationTransition(transition)
+          this.presentationYieldedToLearner = false
           this.publish()
         }
         return this.confirmedCompositionState()
@@ -2093,10 +2099,11 @@ export class StudyWorkspace {
    * @param focusedPane - The focus watch of that arrangement: a focus the learner changed since the request stays where it is.
    * @param returnForeignFocus - What {@link retainForeignTabFocus} answered before the arrangement, `undefined` when no foreign tab had the focus.
    * @param lifetime - The reader lifetime the arrangement began in; a reader closed or closing since gives nothing back ({@link assertLifetime}).
-   * @returns Once the focus is given back or left: nothing is thrown, so that the arrangement's own error is the one reported.
+   * @param borrowsBefore - {@link focusBorrowCount} when the arrangement was admitted: a chat given its keyboard back after Codebook focused the main editor's first group since is told that nothing was arranged (`'refusedArrangement'` of {@link CHAT_KEYBOARD_RETURNED_MESSAGES}; Cycle 0046 row 738, as rows 718, 731 and 736).
+   * @returns Once the focus is given back or left: nothing is thrown, so that the arrangement's own error is the one reported. A refusal for the learner's newer input ({@link presentationYieldedToLearner}) gives nothing back, as a presentation change's does (rows 732 and 738).
    * @example
    * ```ts
-   * await this.returnForeignFocusAfterFailure(focusedPane, returnForeignFocus, lifetime)
+   * await this.returnForeignFocusAfterFailure(focusedPane, returnForeignFocus, lifetime, borrowsBefore)
    * throw error
    * ```
    */
@@ -2104,11 +2111,19 @@ export class StudyWorkspace {
     focusedPane: ReturnType<StudyWorkspace['trackFocusedStudyPane']>,
     returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
     lifetime: number,
+    borrowsBefore: number,
   ): Promise<void> {
+    // The learner's newer input that refused the arrangement keeps the keyboard, untold.
+    if (this.presentationYieldedToLearner) return
+    // Without a borrow since the admission the return's own rule decides its sentence.
+    const chatCause =
+      this.focusBorrowCount() !== borrowsBefore
+        ? 'refusedArrangement'
+        : undefined
     try {
       this.assertLifetime(lifetime)
       focusedPane.assertUndeparted()
-      await returnForeignFocus?.()
+      await returnForeignFocus?.(false, undefined, chatCause)
     } catch {
       // A reader that is closed or closing, a newer focus of the learner, or a return the editor refused leaves the keyboard where it is.
     }
