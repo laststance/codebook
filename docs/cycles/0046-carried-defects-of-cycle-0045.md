@@ -12,7 +12,9 @@ Source state: [Cycle 0045 result and decision](0045-natural-request-and-carried-
 
 Owner authority:
 
-- **Latest direction, 2026-10-16 (resumption):** when the saved context was restored, the owner chose "A) Resume (recommended)", then set the goal again: "Codebookを完成させてください。VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。返事ができないので、選択肢はReccomendをpickしてください🙇". The pause below is lifted. Complete every task and delivery gate of this cycle, then continue the product goal through the cycle rule; every decision point takes the recommended option and this record names it.
+- **Latest direction, 2026-10-17 (entry reads):** "you dont need full reading /home/murakami/laststance/codebook/docs/cycles/0046-carried-defects-of-cycle-0045.md anymore. just skip this file from next compaction". This record is skipped at an entry after a context compaction ([AGENTS.md](../../AGENTS.md#mandatory-entry) states the rule); its sections are consulted when the work needs them.
+
+- **Direction, 2026-10-16 (resumption, the goal in force):** when the saved context was restored, the owner chose "A) Resume (recommended)", then set the goal again: "Codebookを完成させてください。VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。返事ができないので、選択肢はReccomendをpickしてください🙇". The pause below is lifted. Complete every task and delivery gate of this cycle, then continue the product goal through the cycle rule; every decision point takes the recommended option and this record names it.
 
 - **Earlier direction, 2026-10-16 (pause, lifted the same day):** "eng reviewが完了したら一旦作業を中断してください". Complete the current R4/R6 engineering review and records, then stop; no implementation/native/package/delivery/background work. Explicit owner resumption is required. Goal accounting was cleared; the product goal is unfinished and no new goal is created.
 

@@ -16,6 +16,8 @@ This file states where the project stands now. It is overwritten when the state 
 
 The owner's directions, newest first; an explicit later direction supersedes the earlier one. The rules among them are stated as rules in [AGENTS.md](AGENTS.md) and [DEVELOPMENT.md](DEVELOPMENT.md#standing-owner-direction); this section keeps the owner's words and what they mean for the work now.
 
+- **Cycle 0046's record is skipped at an entry (2026-10-17).** "you dont need full reading /home/murakami/laststance/codebook/docs/cycles/0046-carried-defects-of-cycle-0045.md anymore. just skip this file from next compaction". The entry after a context compaction no longer reads that record in full; [AGENTS.md](AGENTS.md#mandatory-entry) states the rule, and the record's sections are consulted when the work needs them.
+
 - **Resumed after the engineering-review pause; goal set again (2026-10-16).** When the saved context was restored, the owner chose "A) Resume (recommended)" and set the goal of 2026-10-02 again in the same words (below). This lifts the pause directed that morning after the R4/R6 review ("eng reviewが完了したら一旦作業を中断してください"). Complete every task and delivery gate of Cycle 0046, then continue the product goal through the cycle rule.
 
 - **Development machine (2026-10-14).** The owner authorizes environment/IME repair and resets without repeated permission, accepts data loss and directs focus on essential Codebook development. Required owner operations get thoroughly researched concrete instructions. [DEVELOPMENT.md](DEVELOPMENT.md#standing-owner-direction) owns this rule.
@@ -65,7 +67,7 @@ G08 and G09 are retired IDs, not passed or pending rows. No single table row abo
 
 ## Exact resume action
 
-Complete the mandatory [AGENTS.md](AGENTS.md) entry using the current files, including full reads of this state and the active cycle record, and open the approved PNG with an image-viewing tool. Recheck the branch, dirty work, tool and runtime state, the dashboard revision and open pull requests. Closed cycle records are evidence consulted when needed, not substitute reads or required recursive reads.
+Complete the mandatory [AGENTS.md](AGENTS.md) entry using the current files, including the full read of this state (Cycle 0046's record is skipped at an entry, as AGENTS.md states), and open the approved PNG with an image-viewing tool. Recheck the branch, dirty work, tool and runtime state, the dashboard revision and open pull requests. Closed cycle records are evidence consulted when needed, not substitute reads or required recursive reads.
 
 Historical C15 focus evidence and original task5's unresolved continuous-focus/screenshot limits remain in the cycle and the AC table above.
 

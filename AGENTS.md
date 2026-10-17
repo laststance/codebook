@@ -5,7 +5,7 @@
 Before implementation or runtime trials, complete this sequence at each new session, after context compaction and after a controlling specification changes:
 
 1. Read **in full** [PRODUCT_GOAL.md](PRODUCT_GOAL.md) and its normative [replay](docs/specs/learning-replay.md), [DeepWiki](docs/specs/llm-wiki.md) and [shortcut](docs/specs/keyboard-shortcuts.md) contracts.
-2. Read **in full** [IMPLEMENTATION.md](IMPLEMENTATION.md), [PROJECT_STATE.md](PROJECT_STATE.md), its active cycle and [DESIGN.md](DESIGN.md). Verify the actual branch, dirty files, tools and relevant runtime/PR state.
+2. Read **in full** [IMPLEMENTATION.md](IMPLEMENTATION.md), [PROJECT_STATE.md](PROJECT_STATE.md), its active cycle and [DESIGN.md](DESIGN.md). The record of Cycle 0046 ([docs/cycles/0046-carried-defects-of-cycle-0045.md](docs/cycles/0046-carried-defects-of-cycle-0045.md)) is skipped at an entry (owner, 2026-10-17); its sections are consulted when the work needs them. Verify the actual branch, dirty files, tools and relevant runtime/PR state.
 3. **Open [the approved PNG](docs/designs/assets/codebook-product-spec-v9.png) with an image-viewing tool. This is the product to build.** Match DESIGN.md's identity; record observed live, replay, DeepWiki and shortcut regions. Reading a filename, prompt or alt text does not count.
 4. Follow IMPLEMENTATION.md's **gap audit → selected increment → proof → updated gaps** loop. Record entry evidence in the cycle. Missing reads, visual inspection or required gap analysis keep the implementation-entry gate incomplete; continue independent preparation and report the missing item.
 
