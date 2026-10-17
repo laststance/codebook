@@ -38,7 +38,7 @@ export type RecordingWriterState =
   | { kind: 'gone' }
   | { kind: 'left-to-caller' }
 
-/** The recordings whose writer this window found gone, by the record's path and the recording's creation time: a writer that is gone never comes back, so it is not judged again for as long as this window runs. */
+/** The recordings whose writer this window found gone by the record of its full identity, by the record's path and the recording's creation time: such a writer never comes back, so it is not judged again for as long as this window runs. A judgement by the header alone is not kept: the record can appear after the header (it is written right after it), and then it decides. */
 const goneWriters = new Set<string>()
 
 /**
@@ -168,7 +168,7 @@ async function writerStateByHeader(
 /**
  * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link isRecordingWriterLive} (what the library lists, the status {@link RecordingStore} gives a recording another session wrote) and the removal of a study ({@link LearningLibrary.removeStudy}), which tells a writer of this machine from one it cannot probe.
  * The record of the writer's full identity that this build keeps outside the recording decides when it exists ({@link writerStateByRecord}); a recording without one (made by 0.2.29.0) is judged by its header's host name and process id, a process id that went to a process begun after the recording counting as gone ({@link writerStateByHeader}).
- * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer found gone is not judged again while this window runs.
+ * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
  * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
@@ -191,7 +191,8 @@ export async function recordingWriterState(
   const state = recordedOwner
     ? await writerStateByRecord(recordedOwner, header, ownProcess, readStart)
     : await writerStateByHeader(header, ownProcess, readStart)
-  if (state.kind === 'gone') goneWriters.add(recording)
+  // Only a record's judgement is stable: a header's alone can change once the writer's record appears, so it is not remembered.
+  if (state.kind === 'gone' && recordedOwner) goneWriters.add(recording)
   return state
 }
 
