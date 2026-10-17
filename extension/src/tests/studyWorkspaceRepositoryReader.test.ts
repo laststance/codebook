@@ -188,6 +188,46 @@ test("an agent's cold Wiki open beside Cursor's chat part shows the Wiki with it
   }
 })
 
+// Value: protects=an agent's cold Wiki open beside Cursor's chat part in the state where Cursor's first-group focus moves no keyboard out of the chat (row 690's probe, steps 4 and 5: Focus Agent from the first group's file left that group named and the file reported, and focusFirstEditorGroup then left the chat its keyboard): the layout read borrows nothing, since the file in front of the first group as the active text editor proves the main editor the active part (StudyWorkspace.readMainEditorGrid's firstFocused, rows 655 and 663), so the open answers and the chat keeps its keyboard; fails_when=readMainEditorGrid borrows the first group in that state, a borrow Cursor does not carry out, so the wait for the main editor's focus ends after five seconds and the agent's open is refused; why_new=Cycle 0046 row 690 (the probe's last fact checked against the product's borrow); seam=workspaceHarness's Cursor model (cursorBesideChatPart), keepMainPartActiveAtFocusAgent, Focus Agent (composer.focusComposer), createRepositoryWikiReader's openFromAgent and the native commands
+test("an agent's cold Wiki open beside Cursor's chat part, after Focus Agent left the first group named with its file reported, borrows nothing and leaves the chat its keyboard", async () => {
+  // Arrange: the learner's login-form.tsx in front of the first group had the keyboard; Focus Agent gave the chat input the keyboard, and Cursor goes on naming the first group with login-form.tsx reported.
+  const { harness, chat } = await cursorBesideChatPart()
+  harness.keepMainPartActiveAtFocusAgent()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  await harness.editor.commands.executeCommand('composer.focusComposer')
+  const commandsBefore = harness.commands.length
+  const { selection, books } = await publishTwoCitationWiki(harness)
+  const wiki = harness.createRepositoryWikiReader()
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({ ...selection, instanceId: harness.service.instanceId })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the open answered; no focus command ran, and the chat input has the keyboard.
+    assert.deepEqual(
+      {
+        refusal,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+      },
+      { refusal: undefined, focusCommands: [], chatHasKeyboard: true },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=a citation the learner follows with Open Repository Wiki in the open Wiki after Cursor's chat tab took the keyboard again, end to end: the second citation takes the keyboard in front of the first group under the chat's stale group name, replaces the copy of the citation before, and the Wiki gets the keyboard; fails_when=the citation's receipt refuses Cursor's stale name for the citation's own group (row 660's isStaleGroupNameOfCitation gone), so the citation is refused with "Native focus changed during repository navigation; the newer learner focus was preserved."; why_new=Cycle 0046 row 674; seam=workspaceHarness's Cursor model of the chat part, createRepositoryWikiReader's open, the native commands, textDocumentShows and the first group's tabs
 test("a second citation followed in the open Wiki after Cursor's chat tab took the keyboard again takes the keyboard in the first group under the chat's group name and replaces the citation before", async () => {
   // Arrange: the learner's Wiki shows module.ts; then the chat tab has the keyboard again.

@@ -908,6 +908,8 @@ export async function workspaceHarness(
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
   // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
   let leavesPaneFocusUnreportedBesideChat = false
+  // Cursor 3.23.12 in c59-cu-690probe step 4: Focus Agent from a file of the main editor kept that part the active one and the file reported; see `keepMainPartActiveAtFocusAgent`.
+  let keepsMainPartActiveAtFocusAgent = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
   let keepsNamingGroupAfterFrameNavigation = false
   let deferMovedFocusEcho = false,
@@ -1105,6 +1107,9 @@ export async function workspaceHarness(
     innerFocusedPanel = undefined
     // The new empty group's own element takes the keyboard from the editor area, which this model counts as the page body.
     if (!keyboardInView && !keyboardInSideBar) keyboardOnBody = true
+    // Cursor's chat input is in an editor part too: a new group of the main editor took the keyboard from it (c59-cu-690probe step 6, row 690).
+    if (separateEditorPart?.focused && !separateEditorPart.floatingVsCodeChat)
+      leaveChatForMainEditor()
     if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([], created)
     else
       changedGroups({
@@ -1854,12 +1859,34 @@ export async function workspaceHarness(
    */
   function focusChatInput(): void {
     if (!separateEditorPart) return
+    // The probe's Focus Agent from the first group's file left the main editor the active part, with that file reported (`keepMainPartActiveAtFocusAgent`).
+    const keepsMainPart =
+      keepsMainPartActiveAtFocusAgent && !separateEditorPart.lastActive
     separateEditorPart.focused = true
-    separateEditorPart.lastActive = true
+    if (!keepsMainPart) separateEditorPart.lastActive = true
     keyboardOnBody = false
     keyboardInView = false
     innerFocusedPanel = undefined
-    activeTextEditorChanged(undefined)
+    if (!keepsMainPart) activeTextEditorChanged(undefined)
+  }
+  /**
+   * Says whether `workbench.action.focusFirstEditorGroup` leaves the keyboard in Cursor's chat input, as Cursor 3.23.12 was seen to beside its Agent chat part: with the chat's input focused by Focus Agent from the first group's file, the editor still naming the first group as the active one and reporting that file as the active text editor, the command moved no keyboard out of the chat (private c59-cu-690probe, step 5: the page's active element stayed the chat input, and `activeTabGroup` and the active text editor stayed as they were; Cycle 0046 row 690). The same command moved the keyboard into the first group's file while the editor named another group (step 1), and, as Cycle 0045 obs15 P1 saw, while it named the first group with no active text editor after the learner's click into the chat's input; both stay as they were. Asked by the fake command in the model of `leavePaneFocusUnreportedBesideChat`.
+   * @param primaryGroup - The first main group.
+   * @returns `true` in that model while the chat's input has the keyboard, the editor names the first group and reports the file in front of it as the active text editor; `false` otherwise.
+   * @example keepsChatKeyboardAtFirstGroupFocus(groups[0]) // => true after Focus Agent from the first group's file, with `keepMainPartActiveAtFocusAgent`
+   */
+  function keepsChatKeyboardAtFirstGroupFocus(
+    primaryGroup: (typeof groups)[number],
+  ): boolean {
+    const front = primaryGroup.activeTab?.input
+    return Boolean(
+      leavesPaneFocusUnreportedBesideChat &&
+      separateEditorPart?.focused &&
+      !separateEditorPart.floatingVsCodeChat &&
+      (staleNamedGroup ?? activeTabGroup) === primaryGroup &&
+      front instanceof TabInputText &&
+      focusedSourceEditor()?.document.uri.toString() === front.uri.toString(),
+    )
   }
   /**
    * Gives Cursor's chat input the keyboard of an earlier Focus Agent that has not reached it yet; see `focusAgentLater`.
@@ -3316,8 +3343,12 @@ export async function workspaceHarness(
                 editor.document.uri.toString() ===
                   primaryGroup.activeTab.input.uri.toString(),
             )
+            // Cursor 3.23.12 moves no keyboard out of its chat input while it already names the first group as the active one (c59-cu-690probe step 5, row 690): nothing changes and nothing is reported.
+            if (keepsChatKeyboardAtFirstGroupFocus(primaryGroup)) {
+              // The command's response below still settles.
+            }
             // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
-            if (
+            else if (
               leavesPaneFocusUnreportedBesideChat &&
               separateEditorPart &&
               ((staleNamedGroup ?? activeTabGroup) ===
@@ -5516,6 +5547,15 @@ export async function workspaceHarness(
       leavesPaneFocusUnreportedBesideChat = true
       // This is Cursor, which also replaces every tab group object with each tab change; that rebuild is what corrects the stale name.
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes Cursor's Focus Agent (`composer.focusComposer`) keep the main editor the active editor part when a file of the main editor had the keyboard, as Cursor 3.23.12 was seen to beside its Agent chat part (private c59-cu-690probe, step 4: after Focus Agent from the first group's login-form.tsx the chat input had the keyboard, `activeTabGroup` still named the first group and the active text editor stayed login-form.tsx; step 6: a new group the editor then added came into the main editor). Without it Focus Agent makes the chat part the active one with no active text editor, as the rest of this harness's Cursor model has it (its step 0 and Cycle 0046 row 696's 0-before.json read so); which of the two Cursor does after which focus is not established (Cycle 0046 row 690). Only with `leavePaneFocusUnreportedBesideChat`, where `workbench.action.focusFirstEditorGroup` then moves no keyboard out of the chat ({@link keepsChatKeyboardAtFirstGroupFocus}).
+     * @example
+     * harness.leavePaneFocusUnreportedBesideChat()
+     * harness.keepMainPartActiveAtFocusAgent()
+     */
+    keepMainPartActiveAtFocusAgent(): void {
+      keepsMainPartActiveAtFocusAgent = true
     },
     useNativeLayout(layout: unknown): void {
       // Replacing the fixture's native desktop closes its real pane handles and removes their old editors, rather than leaving invisible owners alive.

@@ -3131,6 +3131,92 @@ test("the fake editor goes on naming Cursor's chat group after the first group t
   }
 })
 
+// Value: protects=reader tests beside Cursor's chat part meeting Cursor's group names as the native probe of row 690 read them step by step (private c59-cu-690probe, Cursor 3.23.12 beside the Agent chat part, groups G1 login-form.tsx and G2 auth.ts): with the chat input focused the editor names the main group it named last (G2), not the chat's; the first-group focus gives G1's file the keyboard and leaves that earlier name (stale); a lock of the focused group names the locked group, as row 673's rebuild does, and the unlock keeps it; Focus Agent from G1's file keeps G1 named and that file reported; the first-group focus then moves no keyboard out of the chat while G1 is the named group; a new group of the main editor is named and takes the chat's keyboard; fails_when=the fake follows another rule at one of these steps: the lock keeps the stale name as row 674's new-tab rebuild does, the first-group focus takes the chat's keyboard while the first group is named, or a new group leaves the chat its keyboard or the old name; why_new=Cycle 0046 row 690; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, keepMainPartActiveAtFocusAgent (the probe's step 4), chat.focus (step 0), the first-group focus, lock, unlock, Focus Agent and newGroupAbove commands (step 6 used splitEditorDown; the reader's own new group is newGroupAbove's)
+test("the fake editor names Cursor's groups beside its chat part as the native probe read them through a borrow, a lock, Focus Agent, a first-group focus and a new group", async () => {
+  // Arrange: G1 shows login-form.tsx and G2 auth.ts, which the learner focused last; then the learner clicked into Cursor's chat input.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.focusMutableDraft('auth.ts', 2)
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.keepMainPartActiveAtFocusAgent()
+  chat.focus()
+  const tabGroups = harness.editor.window.tabGroups
+  /** Reads what the probe read at each step: the named group's column, the active text editor's file and whether the chat input has the keyboard. */
+  const read = () => ({
+    named: tabGroups.activeTabGroup.viewColumn,
+    activeTextEditor: harness.editor.window.activeTextEditor?.document.uri.path
+      .split('/')
+      .at(-1),
+    chatHasKeyboard: chat.focused(),
+  })
+  const steps: Record<string, ReturnType<typeof read>> = { chat: read() }
+  try {
+    // Act: the probe's steps 1 to 6.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    steps.borrow = read()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.lockEditorGroup',
+    )
+    steps.lock = read()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.unlockEditorGroup',
+    )
+    steps.unlock = read()
+    await harness.editor.commands.executeCommand('composer.focusComposer')
+    steps.focusAgent = read()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    steps.borrowAgain = read()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    steps.newGroup = read()
+
+    // Assert
+    assert.deepEqual(steps, {
+      chat: { named: 2, activeTextEditor: undefined, chatHasKeyboard: true },
+      borrow: {
+        named: 2,
+        activeTextEditor: 'login-form.tsx',
+        chatHasKeyboard: false,
+      },
+      lock: {
+        named: 1,
+        activeTextEditor: 'login-form.tsx',
+        chatHasKeyboard: false,
+      },
+      unlock: {
+        named: 1,
+        activeTextEditor: 'login-form.tsx',
+        chatHasKeyboard: false,
+      },
+      focusAgent: {
+        named: 1,
+        activeTextEditor: 'login-form.tsx',
+        chatHasKeyboard: true,
+      },
+      borrowAgain: {
+        named: 1,
+        activeTextEditor: 'login-form.tsx',
+        chatHasKeyboard: true,
+      },
+      newGroup: {
+        named: 1,
+        activeTextEditor: undefined,
+        chatHasKeyboard: false,
+      },
+    })
+    assert.equal(tabGroups.activeTabGroup.tabs.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests that hold a tab group object across a whole tab-model event meeting each editor as it is: VS Code 1.140.0 keeps the API object of every group that is still there and updates it (`extensionHostProcess.js` 173:41428 `let u=l.get(c.groupId);if(u)return u.acceptModelUpdate(c)`, the object cached at 173:38735), while Cursor 3.23.12 makes a new object for every group (131:33431 `const d=new rIe(c,…)`); fails_when=the VS Code model replaces its group objects at such an event, so a test passes on identities VS Code keeps, or the Cursor model keeps them; why_new=Cycle 0046 row 669 (evidence: VS Code keeps the objects, so the row's premise does not hold; this test holds the model to it); seam=the workspace harness's group lock command, which both editors answer with a whole new tab model, in the model that keeps group objects and in the one that replaces them
 for (const host of ['VS Code', 'Cursor'] as const)
   test(`the fake editor of ${host} ${host === 'VS Code' ? 'keeps' : 'replaces'} every tab group object at a whole tab-model event, as ${host} does`, async () => {
