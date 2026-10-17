@@ -731,6 +731,10 @@ export const WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON = 'WikiUpdateWindowClosing'
 export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
 /** File name of a generated Wiki's overview page: the page the browser entry opens, the one every Wiki owns and the one a request without a page falls back to. */
 export const WIKI_ENTRY_FILE = 'index.html'
+/** The SHA-256 hashes (base64), as a Content-Security-Policy names them, of the inline script the publisher's page shell carries: the Wiki reader lets exactly these inline scripts of a page run, so a script written straight into a page file runs nowhere on the reader's origin. Every shell from the first reader (0.2.12.0) to this build carries the same script; a shell whose script changes adds its hash here, and older ones stay, so the Wikis earlier builds published keep their theme button. */
+export const WIKI_SHELL_SCRIPT_HASHES: readonly string[] = [
+  'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
+]
 /** Route of the Wiki reader that answers the update run's state; the reader hands it to its page script, so both sides take the name from here. */
 export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
 /** Route of the Wiki reader that answers how the Wiki stands against the source; handed to the page script like {@link WIKI_UPDATE_STATUS_ROUTE}. */

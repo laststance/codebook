@@ -72,6 +72,11 @@ const PAGE_WITH_CONTENT_SCRIPT = 'pages/chapter-1.html'
 /** The content script of {@link PAGE_WITH_CONTENT_SCRIPT}: an image that fails to load with an event attribute, and a `javascript:` link; each one that runs notes itself in `window.contentScriptRuns`. */
 const CONTENT_SCRIPT =
   '<p>Explained from source.</p><p><img src="missing-image.png" alt="A missing image" onerror="(window.contentScriptRuns = window.contentScriptRuns || []).push(\'onerror\')"></p><p><a id="content-script-link" href="javascript:void (window.contentScriptRuns = window.contentScriptRuns || []).push(\'link\')">Run</a></p>'
+/** The chapter that is printed into the shell of 0.2.29.0 after the publish, as a site of that build carries it, and then gets a script written straight into its file, which no publisher prints. */
+const PAGE_WITH_PLANTED_SCRIPT = 'pages/chapter-2.html'
+/** The planted script of {@link PAGE_WITH_PLANTED_SCRIPT}, after the chapter's content; when it runs, it notes itself in `window.contentScriptRuns`. */
+const PLANTED_SCRIPT =
+  "<p>Explained from source.</p><script>(window.contentScriptRuns = window.contentScriptRuns || []).push('planted')</script>"
 /** The rail entry of a page after its link, as this publisher prints it and as the earlier builds printed it: what {@link withEntryAfterItsLink} replaces. */
 const ENTRY_AFTER_ITS_LINK =
   / aria-describedby="codebook-open-target">Open in VS Code<\/a> .*?<\/p>/
@@ -450,6 +455,16 @@ async function publishSampleWiki() {
         ),
       )
     }
+    // One chapter is printed into the shell of 0.2.29.0 and then gets a script written straight into its file.
+    const withPlantedScript = join(outputDirectory, PAGE_WITH_PLANTED_SCRIPT)
+    await writeFile(
+      withPlantedScript,
+      pageInTheShellOf02290(
+        await readFile(withPlantedScript, 'utf8'),
+        shell,
+        shellOf02290,
+      ).replace('<p>Explained from source.</p>', PLANTED_SCRIPT),
+    )
     // One page of the package manifest gets the entry of the builds of Cycle 0046 before finding 600, as C55 printed it: the target shown beside the link, with its wrap point, is the link's description.
     const describedByItsShownTarget = join(
       outputDirectory,
@@ -1977,6 +1992,37 @@ async function check(page, options, collected) {
       },
     )
   }
+  const usePageWithPlantedScript = async () => {
+    // Arrange: a chapter in the shell of 0.2.29.0, whose file got a script written straight into it after the publish.
+    await page.setViewportSize({ width: 1200, height: 720 })
+    await page.goto(`${options.url}${options.pageWithPlantedScript}`)
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-codebook-freshness]').textContent ===
+        'Source changed · Update available',
+    )
+    // Act: the theme button of the shell of 0.2.29.0 is pressed, as a learner does.
+    await page.click('button#theme-toggle')
+    const used = await page.evaluate(() => ({
+      contentScriptRuns: window.contentScriptRuns ?? [],
+      theme: document.documentElement.dataset.theme ?? null,
+      status: document.querySelector('[data-codebook-status]').textContent,
+      address: location.pathname.split('/').at(-1),
+    }))
+    await page.click('button#theme-toggle')
+    // Assert
+    record(
+      'a script written straight into a page file of the Wiki folder does not run under the reader, while the script of the shell of 0.2.29.0 that page carries (its theme button) and the reader’s own script run',
+      used,
+      {
+        doesNoPlantedScriptRun: used.contentScriptRuns.length === 0,
+        doesThemeButtonSwitchTheTheme: used.theme === 'dark',
+        isReaderScriptConnected:
+          used.status === '● Connected to Codebook reader',
+        doesPageStay: used.address === 'chapter-2.html',
+      },
+    )
+  }
   const useOfflinePageWithContentScript = async () => {
     // Arrange: the same chapter opened from disk, where no reader serves it and only the page's own policy holds; the image fails to load.
     await page.setViewportSize({ width: 1200, height: 720 })
@@ -2044,6 +2090,7 @@ async function check(page, options, collected) {
     usePagePublishedWithReaderIdsTwice,
     usePageWithContentScript,
     useOfflinePageWithContentScript,
+    usePageWithPlantedScript,
   ])
     await step()
 }
@@ -2142,6 +2189,7 @@ try {
       readerIdsPage: READER_IDS_PAGE,
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
       pageWithContentScript: PAGE_WITH_CONTENT_SCRIPT,
+      pageWithPlantedScript: PAGE_WITH_PLANTED_SCRIPT,
       // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
       offlinePageWithContentScript: pathToFileURL(
         join(wiki.outputDirectory, PAGE_WITH_CONTENT_SCRIPT),

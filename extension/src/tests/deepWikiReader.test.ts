@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { constants as openConstants } from 'node:fs'
 import {
   mkdtemp,
@@ -688,9 +689,9 @@ test('the reader refuses a Wiki whose `.codebook` folder in the project is a lin
   )
 })
 
-// Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them) and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or gives its nonce to a script it did not write or the publisher's shell did not print; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; seam=none (the reader's real responses)
-test('every page the reader serves forbids script without its nonce, and only the shell’s script and the reader’s own carry it, never a script of an asset that is an HTML file', async (context) => {
-  // Arrange: an overview as the publisher renders it (content with an event attribute and a javascript: link, then the shell's script), and an asset that ends in .html with a script of its own.
+// Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them), against a script written straight into a page file of the Wiki folder, and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or gives its nonce to any script of a page file instead of its own script alone; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; repeat review SC1 (critical): every script of a page file got the nonce; seam=none (the reader's real responses)
+test('every page the reader serves lets only the reader’s own script run by its nonce and the shell’s script by its known hash: a script written into a page file or into an asset that is an HTML file gets neither', async (context) => {
+  // Arrange: an overview page file with content that holds an event attribute and a javascript: link, and a script that is not the shell's, written into the file; and an asset that ends in .html with a script of its own.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-policy-')),
   )
@@ -749,14 +750,73 @@ test('every page the reader serves forbids script without its nonce, and only th
     },
     {
       overview: {
-        policy: "script-src 'nonce-NONCE'; object-src 'none'; base-uri 'none'",
-        page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script nonce="NONCE">\nthemeButton()\n</script><script nonce="NONCE" src="CLIENT"></script></body>',
+        policy:
+          "script-src 'nonce-NONCE' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script nonce="NONCE" src="CLIENT"></script></body>',
       },
       asset: {
-        policy: "script-src 'nonce-NONCE'; object-src 'none'; base-uri 'none'",
+        policy:
+          "script-src 'nonce-NONCE' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article></article><script>run()</script><script nonce="NONCE" src="CLIENT"></script></body>',
       },
       isNonceOfEachResponse: true,
+    },
+  )
+})
+
+// Value: protects=the shell's own script (the theme button, the offline note of the question form) on every page the reader serves, of this build and of the Wikis earlier builds published; fails_when=the reader's policy no longer names the hash of the script the bundled shell or the shell of 0.2.29.0 carries, so that script is refused and the page's theme button stops working, or a shell's script changes without its hash in the reader's list; why_new=Cycle 0046 /ship repeat review SC1: the shell's script runs by its hash instead of the nonce; seam=none
+test('the reader’s policy names the hash of the one script the shell of this build and the shell of 0.2.29.0 carry, unchanged since the first reader', async (context) => {
+  // Arrange: the bundled shell, the shell of 0.2.29.0 kept beside the DOM check, and a reader of a one-page Wiki.
+  const shells = await Promise.all(
+    [
+      join(__dirname, '..', '..', 'skills', 'codebook', 'reader-shell.html'),
+      join(
+        __dirname,
+        '..',
+        '..',
+        'scripts',
+        'fixtures',
+        'reader-shell-0.2.29.0.txt',
+      ),
+    ].map((path) => readFile(path, 'utf8')),
+  )
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shells-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: the hash of each shell's inline scripts, and the policy of a served page.
+  const scriptHashes = shells.map((shell) =>
+    [...shell.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(([, script]) =>
+      createHash('sha256')
+        .update(script ?? '')
+        .digest('base64'),
+    ),
+  )
+  const policy = (await fetch(reader.url)).headers.get(
+    'content-security-policy',
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      scriptHashes,
+      policy: policy?.replace(/'nonce-[^']+'/, "'nonce-NONCE'"),
+    },
+    {
+      scriptHashes: [
+        ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
+        ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
+      ],
+      policy:
+        "script-src 'nonce-NONCE' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
     },
   )
 })
