@@ -2158,7 +2158,7 @@ test('the bundled skill tells the agent the publisher’s refusals of event attr
   assert.deepEqual(
     [
       skill.includes(
-        'Do not put an event attribute (`onclick`, `onerror` or any other attribute whose name starts with `on`) on an element of `contentHtml`, and let every `href`, `src`, `srcset`, `action`, `formaction` and `xlink:href` name a relative path, a `#fragment` or an `http`, `https`, `mailto`, `vscode` or `cursor` address; the publisher refuses anything else.',
+        'Do not put an event attribute (`onclick`, `onerror` or any other attribute whose name starts with `on`) on an element of `contentHtml`, and let every `href`, `src`, `srcset`, `action`, `formaction` and `xlink:href` name a relative path, a `#fragment`, an `http`, `https` or `mailto` address, or Codebook’s own `vscode://laststance.codebook/…` or `cursor://laststance.codebook/…` address; the publisher refuses anything else.',
       ),
       skill.includes(
         'The output folder and every folder on its path inside the project must be real folders. The publisher refuses a link there (a cloned repository may carry `.codebook` as one) and writes nothing; report the path it names and let the learner replace the link with a folder or choose an output outside the project. Do not work around the refusal.',
@@ -2935,7 +2935,7 @@ for (const [place, content, sentence] of [
     }
   })
 
-// Value: protects=the reader's origin, whose page may ask the editor's model, against markup an agent writes into a page's content when a repository's text steers it; fails_when=the publisher refuses script elements but accepts an event attribute or an address a browser runs as script (or one that a character reference, a tab or a number without its semicolon turns into one), so the published page runs script on the reader's origin or when opened from disk; why_new=Cycle 0046 /ship finding F2 (security, verified): render-wiki.mjs refused `<script>` and the like but no event attribute and no `javascript:` address; seam=none
+// Value: protects=the reader's origin, whose page may ask the editor's model, against markup an agent writes into a page's content when a repository's text steers it; fails_when=the publisher refuses script elements but accepts an event attribute or an address a browser runs as script (or one that a character reference, a tab or a number without its semicolon turns into one), so the published page runs script on the reader's origin or when opened from disk, or accepts an editor address that is not Codebook's own (another extension's URI handler, the editor's file handler); why_new=Cycle 0046 /ship finding F2 (security, verified): render-wiki.mjs refused `<script>` and the like but no event attribute and no `javascript:` address; repeat review SC4: any vscode: or cursor: address was accepted; seam=none
 for (const [form, content, sentence] of [
   [
     'an event attribute on an image',
@@ -2950,42 +2950,57 @@ for (const [form, content, sentence] of [
   [
     'a javascript: link',
     '<h2 id="flow">Source flow</h2><p><a href="javascript:run()">Run</a></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href="javascript:run()".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="javascript:run()".',
   ],
   [
     'a javascript: link in capitals with a tab and a space before it',
     '<h2 id="flow">Source flow</h2><p><a href=" JAVA&#9;SCRIPT:run()">Run</a></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href=" JAVA&#9;SCRIPT:run()".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href=" JAVA&#9;SCRIPT:run()".',
   ],
   [
     'a link whose colon is a named character reference',
     '<h2 id="flow">Source flow</h2><p><a href="javascript&colon;run()">Run</a></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href="javascript&colon;run()".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="javascript&colon;run()".',
   ],
   [
     'a link whose colon is a number without its semicolon',
     '<h2 id="flow">Source flow</h2><p><a href="javascript&#58run()">Run</a></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href="javascript&#58run()".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="javascript&#58run()".',
   ],
   [
     'a data: address among the candidates of a srcset',
     '<h2 id="flow">Source flow</h2><p><img src="flow.png" srcset="flow.png 1x, data:image/svg+xml,x 2x" alt="Flow"></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <img> holds srcset="flow.png 1x, data:image/svg+xml,x 2x".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds srcset="flow.png 1x, data:image/svg+xml,x 2x".',
   ],
   [
     'a button that submits the reader’s form to a javascript: address',
     '<h2 id="flow">Source flow</h2><p><button form="qa-form" formaction="javascript:run()">Ask</button></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <button> holds formaction="javascript:run()".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <button> holds formaction="javascript:run()".',
   ],
   [
     'an xlink:href to a data: address',
     '<h2 id="flow">Source flow</h2><p><a xlink:href="data:text/html,x">Run</a></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds xlink:href="data:text/html,x".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds xlink:href="data:text/html,x".',
   ],
   [
     'an image from a file: address',
     '<h2 id="flow">Source flow</h2><p><img src="file:///etc/hosts" alt="Hosts"></p>',
-    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <img> holds src="file:///etc/hosts".',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="file:///etc/hosts".',
+  ],
+  [
+    'a vscode: address of the editor’s file handler',
+    '<h2 id="flow">Source flow</h2><p><a href="vscode://file/etc/hosts">Hosts</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="vscode://file/etc/hosts".',
+  ],
+  [
+    'a cursor: address of another extension’s URI handler',
+    '<h2 id="flow">Source flow</h2><p><a href="cursor://other.extension/run?task=1">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="cursor://other.extension/run?task=1".',
+  ],
+  [
+    'a vscode: address whose authority only starts with Codebook’s',
+    '<h2 id="flow">Source flow</h2><p><a href="vscode://laststance.codebook.evil/source">Source</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="vscode://laststance.codebook.evil/source".',
   ],
 ])
   test(`a page with ${form} is refused with the sentence that names the element and its attribute`, async () => {
