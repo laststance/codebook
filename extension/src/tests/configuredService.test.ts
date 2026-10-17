@@ -2640,7 +2640,7 @@ test('a run whose whole-run deadline expires while a continuation waits answers 
   )
 })
 
-// Value: protects=the cause an agent and the learner read for a run whose explanation was not committed and whose whole-run deadline passes before the maintenance turn released it: the run resource's terminalReason and error.message, and the reason the deadline journals as run.failed, name why the explanation's write failed; fails_when=they say only "Explanation was not committed." while the write's failure stays in error.cause alone; why_new=Cycle 0046 row 653 (StudyService.expireAtDeadline journals the run's error message); seam=the service's clock, moved by the test, its maintenance turn, switched off and then called once, runtime.evidence.save, made to reject, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed)
+// Value: protects=the cause an agent and the learner read for a run whose explanation was not committed and whose whole-run deadline passes before the maintenance turn released it: the run resource's terminalReason and error.message, and the reason the deadline journals as run.failed, name why the explanation's write failed; fails_when=they say only "Explanation was not committed." while the write's failure stays in error.cause alone; why_new=Cycle 0046 row 653 (StudyService.expireAtDeadline journals the run's error message); seam=the service's clock, moved by the test, its maintenance turn, switched off and then called once, runtime.evidence.save, made to reject, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, and only the first: its fail returns at once for a run that already failed). Since row 665 the explanation's failure fails the runtime itself, so the deadline's call comes second with the same reason
 test('a run whose explanation was not committed and whose whole-run deadline then passes names the write failure in its terminal reason and in the reason it journals as run.failed', async (context) => {
   // Arrange: a run is paused at its first stop; the maintenance turn is switched off so that the deadline, not an earlier turn, ends the run.
   let nowMs = CLOCK_START_MS
@@ -2681,6 +2681,8 @@ test('a run whose explanation was not committed and whose whole-run deadline the
     }),
     { code: 'EVIDENCE_UNAVAILABLE' },
   )
+  // The explanation's own failure fails the runtime first (row 665); what the deadline then gives runtime.fail is counted apart.
+  const journaledByExplanation = journaledReasons.splice(0)
   nowMs = record.deadlineAt
 
   // Act
@@ -2703,7 +2705,8 @@ test('a run whose explanation was not committed and whose whole-run deadline the
     {
       terminalReason: state.terminalReason,
       error: state.error,
-      journaledReasons,
+      journaledByExplanation,
+      journaledByDeadline: journaledReasons,
     },
     {
       terminalReason:
@@ -2715,9 +2718,66 @@ test('a run whose explanation was not committed and whose whole-run deadline the
         cause:
           "Error: EACCES: permission denied, open 'agent-explanation.json'",
       },
-      journaledReasons: [
+      journaledByExplanation: [
         "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
       ],
+      journaledByDeadline: [
+        "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      ],
+    },
+  )
+})
+
+// Value: protects=the journal of a run that fails because its explanation could not be written: the runtime is failed with the run's error, so it journals run.failed with the write's failure as its cause and accepts no further control, as on every other failure path of a run; fails_when=the explanation's catch sets the run's error and rejects without failing the runtime, so the run ends at the next maintenance turn with no run.failed in its journal; why_new=Cycle 0046 row 665 (the 653 fork's finding 1); seam=runtime.evidence.save, made to reject, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, configuredBrowserRun.ts fail)
+test('a run whose explanation cannot be written fails its runtime with the write failure, which the runtime journals as run.failed', async (context) => {
+  // Arrange: a run is paused at its first stop and its explanation write is made to fail.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'uncommitted-explanation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  runtime.evidence.save = async () => {
+    throw new Error('ENOSPC: no space left on device, write')
+  }
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+
+  // Act
+  const refusal = await service
+    .explain({
+      ...receipt,
+      key: 'explain',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => (error instanceof StudyError ? error.code : error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    { refusal, journaledReasons, runtimeStatus: runtime.view().status },
+    {
+      refusal: 'EVIDENCE_UNAVAILABLE',
+      journaledReasons: [
+        'Explanation was not committed. Cause: ENOSPC: no space left on device, write',
+      ],
+      runtimeStatus: 'failed',
     },
   )
 })

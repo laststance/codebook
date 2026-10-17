@@ -1432,6 +1432,8 @@ export class StudyService {
             String(error),
           ),
         )
+        // The run fails with the write: its runtime journals the cause as run.failed, as every other failure path of a run does (Cycle 0046 row 665).
+        record.runtime!.fail(record.error.message)
         throw record.error
       }
     })
