@@ -13693,12 +13693,16 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the learner is known to type in the active text editor now, by the sign {@link knowsLearnersPlace} reads without a Study pane: a click or a key press there a moment ago, or the learner's own move onto the captured source; asked through the Repository Wiki reader's `knowsLearnerTypesInActiveEditor` control when an agent's cold Wiki entry begins ({@link RepositoryReader.open}, codebook_open_book, Cycle 0046 row 694), so that a Wiki created in front of that file gives the keyboard only to a learner known to have typed there.
-   * @returns `true` within {@link LEARNER_SIGN_FRESH_MS} of such a sign in the active text editor; `false` otherwise and without an active text editor.
-   * @example workspace.knowsLearnerTypesInActiveEditor() // => true one second after the learner typed in auth.ts
+   * Says whether the learner is known to type in the active text editor now, by a click or a key press there a moment ago ({@link workedInEditorJustNow}), also at a stack frame; asked through the Repository Wiki reader's `knowsLearnerTypesInActiveEditor` control when an agent's cold Wiki entry begins ({@link RepositoryReader.open}, codebook_open_book, Cycle 0046 row 694), so that a Wiki created in front of that file gives the keyboard only to a learner known to have typed there.
+   * The other signs {@link knowsLearnersPlace} reads for an agent's selection hold without a time bound: the learner's own move onto the captured source (row 654) and a sign given at a frame ({@link noteLearnersSignAtFrame}) say where the learner was then, while VS Code goes on reporting that editor as the active one after the learner went to its chat view. Taken here, they gave the Wiki the chat view's keyboard and told the learner that it opened in front of the file they were typing in (row 715).
+   * @returns `true` within {@link LEARNER_SIGN_FRESH_MS} of such a click or key press while a text editor is active; `false` otherwise and without an active text editor.
+   * @example workspace.knowsLearnerTypesInActiveEditor() // => true one second after the learner typed in auth.ts; false a minute after the learner moved onto the captured source without typing
    */
   knowsLearnerTypesInActiveEditor(): boolean {
-    return this.knowsLearnersPlace(undefined)
+    return (
+      vscode.window.activeTextEditor !== undefined &&
+      this.workedInEditorJustNow()
+    )
   }
 
   /**
