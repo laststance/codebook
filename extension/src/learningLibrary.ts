@@ -311,6 +311,22 @@ export class LearningLibrary {
   }
 
   /**
+   * Refuses the removal of a study before its first move; called by {@link removeStudy} under the storage lock.
+   * @param paths - The study's paths as {@link studyPaths} found them.
+   * @throws
+   * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
+   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window may still write one of its recordings ({@link isRecordedByAnotherWindow}): that window would fail its next append and save the archive again
+   * @example await this.refuseUnlessRemovable(paths) // returns for a saved study whose recordings nobody else writes
+   */
+  private async refuseUnlessRemovable(paths: StudyPaths): Promise<void> {
+    // What is left of a study without its archive is removed like a study.
+    if (!paths.archives.length && !(await this.isLeftWithoutArchive(paths)))
+      throw new StudyArchiveUnavailableError()
+    if (await this.isRecordedByAnotherWindow(paths.recordings))
+      throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
+  }
+
+  /**
    * Says whether an archive format keeps a catalog checkpoint beside the archive, so {@link list} reads one and {@link reconcile} repairs one only for such a study.
    * @param format - The format of a study's newest archive.
    * @returns `true` for `v3` and `v4`; `false` for the historical formats and for a newer Codebook's.
@@ -791,12 +807,7 @@ export class LearningLibrary {
         identity,
         await this.newerFormatOf(identity),
       )
-      // What is left of a study without its archive is removed like a study; an id of which nothing is left, or only a recording that may still be written, names no study.
-      if (!paths.archives.length && !(await this.isLeftWithoutArchive(paths)))
-        throw new StudyArchiveUnavailableError()
-      // A recording another window's run may still write keeps every file of the study in place: that window would fail its next append and save the archive again.
-      if (await this.isRecordedByAnotherWindow(paths.recordings))
-        throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
+      await this.refuseUnlessRemovable(paths)
       // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
       const progress = await this.readProgress().catch(() => undefined),
         ledger = progress && withoutStudyReferences(progress, identity)
