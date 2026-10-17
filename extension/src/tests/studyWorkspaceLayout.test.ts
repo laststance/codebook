@@ -665,6 +665,58 @@ test('repeating article Return preserves its borrowed App group without draining
   }
 })
 
+// Value: protects=the replay's following of its Application pane after two quick presses of Return to Wiki from a recording: the second press reaches the article Return while the first one's layout work still places the panes, and is queued behind it; once both ended Codebook places nothing, so after the next evidence visit a file the learner opens over the Application pane hides the replay; fails_when=restoreRepositoryLayout reads the placement flag at its entry, outside the layout queue, so the second press reads the first one's own flag and sets it back to set after the first one cleared it: the flag stays set until a later presentation change, publishes are suppressed and the replay goes on behind the learner's file; why_new=Cycle 0046 R4 (the red team review of /ship); seam=articleRecordingLayoutHarness, the reader's openRepositoryEvidence and action('return-wiki'), holdNextCommand on vscode.setEditorLayout (the first Return's restore of the article's layout), focusMutableDraft in the Application pane's group, the pane's notifyViewState and the controller's state; no_claim=the native timing of two presses within one layout restore
+test('two quick Return to Wiki presses from a recording leave Codebook placing nothing, so the next visit’s replay hides behind a file the learner opens over its Application pane', async () => {
+  // Arrange: a recording's evidence visit; the first Return's restore of the article's layout is held while the second Return is pressed.
+  const harness = await articleRecordingLayoutHarness(true, true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const restore = harness.holdNextCommand('vscode.setEditorLayout')
+    const firstReturn = harness.reader.action('return-wiki')
+    await restore.started
+    const secondReturn = harness.reader.action('return-wiki')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    restore.release()
+    await Promise.all([firstReturn, secondReturn])
+    await harness.controller.settle()
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const application = harness.viewportInstances.find(
+      (candidate) => candidate.mode === 'recording',
+    )!.panel
+    const applicationGroup = harness.groups.find(
+      (group) => group.activeTab === application.nativeTab,
+    )!
+
+    // Act: the learner opens a file over the Application pane.
+    harness.focusMutableDraft('cover.ts', applicationGroup.viewColumn)
+    application.notifyViewState()
+
+    // Assert: the pane is hidden and the replay followed it.
+    assert.deepEqual(
+      {
+        applicationVisible: application.visible,
+        replayCleared: harness.controller.state().cleared,
+      },
+      { applicationVisible: false, replayCleared: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const next of ['Return', 'retry', 'Close'] as const)
   test(`${next} after interrupted main-part reservation preserves the original article, chat and draft`, async () => {
     // Arrange

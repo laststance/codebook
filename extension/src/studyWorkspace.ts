@@ -18810,8 +18810,7 @@ export class StudyWorkspace {
       replayViewport = this.replayViewport,
       leaseId = this.leaseId,
       selectedReader = JSON.stringify(this.selection),
-      film = this.recordingActive ? this.playback?.bundle() : undefined,
-      wasPlacing = this.placingPresentation
+      film = this.recordingActive ? this.playback?.bundle() : undefined
     let returnInput:
       ReturnType<StudyWorkspace['retainArticleReturnInput']> | undefined
     const assertRetained = (): void => {
@@ -18849,15 +18848,14 @@ export class StudyWorkspace {
       }
       retainedFocus?.dispose()
       retainedFocus = undefined
-      await this.withLayout(
-        signal,
-        async (queuedLifetime, assertQueuedCurrent) => {
+      // The placement flag is read and set back inside the layout queue: a Return queued behind this one reads it only after this one set it back (Cycle 0046 R4).
+      await this.withLayout(signal, (queuedLifetime, assertQueuedCurrent) =>
+        this.whilePlacing(async () => {
           const assertCurrent = (): void => {
             assertQueuedCurrent()
             assertRetained()
           }
           assertCurrent()
-          this.placingPresentation = true
           // Actual Return must validate its original focus after queueing, before any early exit or native operation.
           focus?.begin()
           const start = this.articleReturnStart(selection)
@@ -18932,13 +18930,31 @@ export class StudyWorkspace {
             after,
           )
           assertCurrent()
-        },
+        }),
       )
     } finally {
       retainedFocus?.dispose()
       returnInput?.dispose()
-      this.placingPresentation = wasPlacing
       for (const release of releases) release()
+    }
+  }
+
+  /**
+   * Runs layout work that Codebook places itself with {@link placingPresentation} set, and sets the flag back to what it was when that work began; called inside the {@link withLayout} queue by {@link restoreRepositoryLayout}, so that a Return to Wiki queued behind another reads the flag only after the earlier one set it back (Cycle 0046 R4: read at the Return's entry, outside the queue, the second of two quick presses read the first one's `true` and set it back to `true` after the first one's end, which left the learner's moves and the replay's visibility unfollowed).
+   * @param work - The layout work, run at once.
+   * @returns What the work answers.
+   * @throws What the work throws; the flag is set back first.
+   * @example await this.withLayout(signal, () => this.whilePlacing(async () => this.settleArticleReturn(…)))
+   */
+  private async whilePlacing<Result>(
+    work: () => Promise<Result>,
+  ): Promise<Result> {
+    const wasPlacing = this.placingPresentation
+    this.placingPresentation = true
+    try {
+      return await work()
+    } finally {
+      this.placingPresentation = wasPlacing
     }
   }
 
