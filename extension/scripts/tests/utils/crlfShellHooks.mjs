@@ -1,8 +1,8 @@
-/** The mark of a module URL whose `node:fs/promises` is {@link crlfShellFileSystem}: a test imports the page renderer with it to get a copy that reads the reader shell with CRLF line endings. */
+/** The mark of a module URL whose `node:fs/promises` is the stand-in of `crlfShellFileSystem.mjs`: a test imports the page renderer with it to get a copy that reads the reader shell with CRLF line endings. */
 const CRLF_SHELL_MARK = '?crlf-shell'
 
 /**
- * Resolves `node:fs/promises` to the stand-in that reads the reader shell with CRLF line endings, for a module imported with {@link CRLF_SHELL_MARK}; every other import resolves as usual. Registered by the publisher's tests with `module.register`, so a script test can render pages from a shell as a Windows checkout holds it without a flag of the test runner.
+ * Resolves `node:fs/promises` to the stand-in that reads the reader shell with CRLF line endings, for a module imported with {@link CRLF_SHELL_MARK} alone. The modules that module imports in turn carry no mark and keep the real file system, as does every other import. Registered by the publisher's tests with `module.register`, so a script test can render pages from a shell as a Windows checkout holds it without a flag of the test runner.
  * @param {string} specifier - What the importing module names.
  * @param {{ parentURL?: string }} context - Where the import comes from.
  * @param {(specifier: string, context: object) => Promise<{ url: string }>} nextResolve - The resolution the stand-in leaves every other import to.
