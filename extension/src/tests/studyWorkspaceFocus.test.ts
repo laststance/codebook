@@ -3515,6 +3515,34 @@ test("a passive layout read while a text editor of VS Code's floating window wit
   }
 })
 
+// Value: protects=the presentation state's confirmation beside Cursor's chat part when the main editor has more groups than the Study's three (a Live composition made from the learner's three groups: four main groups, the chat part's group the fifth): while the learner's file in the second group has the keyboard, the passive layout read answers the main editor's four groups, and the reader takes them for the main editor's layout, so a resize the learner makes is still measured; fails_when=the read's check before it asks row 689's other-part rule of the Study's three columns, which counts the main editor's own fourth group, with its file, as another part's editors, so the read answers nothing and the confirmation is never measured again; why_new=Cycle 0046 row 716 (the open-code-review delegate's finding F2 of the C61 delta, a regression of row 689's 4a93f090); seam=useNativeLayout with four main groups, addSeparateEditorPart (Cursor's chat part), leavePaneFocusUnreportedBesideChat, focusMutableDraft in each main group and readerSeams' readPassiveLayout
+test("a passive layout read beside Cursor's chat part while the learner's file in the second of four main groups has the keyboard reads the main editor's four groups", async () => {
+  // Arrange: four main groups with a learner's file each and Cursor's chat part as the fifth group; auth.ts in the second group has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 245 }, { size: 245 }, { size: 245 }, { size: 245 }],
+  })
+  harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.focusMutableDraft('notes.ts', 3)
+  harness.focusMutableDraft('readme.md', 4)
+  harness.focusMutableDraft('auth.ts', 2)
+  try {
+    // Act
+    const layout = await readerSeams(harness).readPassiveLayout()
+
+    // Assert
+    assert.deepEqual(layout, {
+      orientation: 0,
+      groups: [{ size: 245 }, { size: 245 }, { size: 245 }, { size: 245 }],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests of a learner's diff editor meeting what both editors report for it (C61 c61-688-diffprobe, VS Code 1.140.0 and Cursor 3.23.12, a diff focused in column 2): the active text editor is the diff's modified side with no view column, the visible text editors list both of the diff's sides with no view column beside a plain text editor's column, and the diff's group is the active tab group; fails_when=the fake gives a diff's text editors their group's column, so a reader test proves or gives back by a column neither editor reports (row 688's fix passed in the fake and not natively: c61-cu-688 borrowed the first group and could not give the keyboard back); why_new=Cycle 0046 row 709; seam=the workspace harness's focusDiffEditor, activeTextEditor, visibleTextEditors and tabGroups
 test('the fake editor reports a learner diff editor’s text editors without a view column, as both editors do', async () => {
   // Arrange: login-form.tsx in the first group; the learner's diff of auth.ts is opened in front of the second group and has the keyboard.

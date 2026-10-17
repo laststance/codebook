@@ -17311,6 +17311,22 @@ export class StudyWorkspace {
 
   /** Identifies main native focus for passive reads and {@link readMainEditorGrid}; stale TabGroup focus alone cannot prove a part. @example this.hasMainEditorFocus(1) */
   private hasMainEditorFocus(groupCount: number): boolean {
+    const column = vscode.window.tabGroups.activeTabGroup.viewColumn
+    return (
+      this.hasFocusWithinColumns(groupCount) &&
+      // A column beyond the first proves the main editor only while no other part holds editors (row 689); the count is one a layout read measured, so every group beyond it is another part's (row 716).
+      (column === vscode.ViewColumn.One ||
+        this.holdsOnlyChatsBeyond(groupCount))
+    )
+  }
+
+  /**
+   * Says whether the group the editor names is among the first `columnBound` columns and its text editor or Codebook pane has the focus; the first half of {@link hasMainEditorFocus}, and alone the check {@link readPassivePresentationLayout} makes before its read, whose bound is the Study's group count and no measured count: row 689's rule that the groups beyond it are another part's would count the main editor's own fourth group, with the learner's file, as another part's editors (Cycle 0046 row 716).
+   * @param columnBound - The highest column the named group may stand in.
+   * @returns `true` when the named group's column is within the bound and its text editor (a side of a diff editor placed by its diff's group, row 709) or an owned Codebook pane in it has the focus; `false` otherwise.
+   * @example this.hasFocusWithinColumns(STUDY_EDITOR_GROUP_COUNT) // => true while auth.ts in the second of four main groups has the keyboard
+   */
+  private hasFocusWithinColumns(columnBound: number): boolean {
     const { viewColumn: column, activeTab } =
       vscode.window.tabGroups.activeTabGroup
     const input = activeTab?.input
@@ -17328,13 +17344,10 @@ export class StudyWorkspace {
       )
     return (
       column >= vscode.ViewColumn.One &&
-      column <= groupCount &&
-      // A column beyond the first proves the main editor only while no other part holds editors (row 689).
-      (column === vscode.ViewColumn.One ||
-        this.holdsOnlyChatsBeyond(groupCount)) &&
+      column <= columnBound &&
       // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
       Boolean(
-        this.textEditorColumnOf(vscode.window.activeTextEditor, groupCount) ===
+        this.textEditorColumnOf(vscode.window.activeTextEditor, columnBound) ===
           column || ownedPanelFocused,
       )
     )
@@ -17342,7 +17355,8 @@ export class StudyWorkspace {
 
   /** Reads confirmation without borrowing focus for {@link readPresentationState} and same-mode selection; unknown scope is not a main-grid mismatch. @example await this.readPassivePresentationLayout() */
   private async readPassivePresentationLayout(): Promise<unknown> {
-    const mainFocused = this.hasMainEditorFocus(STUDY_EDITOR_GROUP_COUNT),
+    // The Study's group count bounds the focus before the read; the measured count, after it, decides another part (row 716).
+    const mainFocused = this.hasFocusWithinColumns(STUDY_EDITOR_GROUP_COUNT),
       assertRetained = this.retainPresentationPlacement()
     const layout = await vscode.commands.executeCommand<unknown>(
         'vscode.getEditorLayout',
