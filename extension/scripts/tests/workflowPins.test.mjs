@@ -391,7 +391,7 @@ function testSourcesRunBy(workflow) {
         const name = /^dist\/tests\/([\w.-]+)\.test\.js$/.exec(argument)?.[1]
         if (name === undefined)
           throw new Error(
-            `The job runs 'node --test' with '${argument}', which names no single compiled test file of dist/tests, so the pin cannot tell which sources that run loads.`,
+            `The job runs 'node --test' with '${argument}', which names neither a single compiled test file of dist/tests nor a single script test of scripts/tests, so the pin cannot tell which sources that run loads.`,
           )
         return `extension/src/tests/${name}.test.ts`
       })
@@ -1118,7 +1118,7 @@ test('a loaded path that names no source file fails the pin with the file that l
 })
 
 // Cycle 0046 row 125: the Windows pin named its test files in a list of its own, so a file added to the job's run command, but not to that list or the path filter, left the pin green.
-test('the test files the Windows pin follows are the ones the job’s node --test command names, also one no list of the pin names, and an argument that is no single compiled test file fails by name', async () => {
+test('the test files the Windows pin follows are the ones the job’s node --test command names, also one no list of the pin names, and an argument that is neither a single compiled test file nor a single script test fails by name', async () => {
   // Arrange: a job that runs two test files, one of them with a runner option before it, and a job that runs a glob.
   const root = await mkdtemp(join(tmpdir(), 'codebook-workflow-pins-'))
   try {
@@ -1165,7 +1165,7 @@ test('the test files the Windows pin follows are the ones the job’s node --tes
     ])
     assert.throws(readingAGlob, {
       message:
-        "The job runs 'node --test' with 'dist/tests/*.test.js', which names no single compiled test file of dist/tests, so the pin cannot tell which sources that run loads.",
+        "The job runs 'node --test' with 'dist/tests/*.test.js', which names neither a single compiled test file of dist/tests nor a single script test of scripts/tests, so the pin cannot tell which sources that run loads.",
     })
   } finally {
     await rm(root, { recursive: true, force: true })
