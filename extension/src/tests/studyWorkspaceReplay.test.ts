@@ -5440,6 +5440,56 @@ test('in Cursor, an agent’s Return Current from a replay leaves the keyboard i
   }
 })
 
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the fidelity of the workspace harness's terminal in the editor area that keeps the text editor report, on which row 727's tests rest: the text editor that had the keyboard stays reported as the active text editor from the moment the editor tells its tab and group listeners of the terminal, as focusWebviewTabKeepingTextEditorReport keeps it for a webview; fails_when=the fake sets the kept report only after it told the listeners, so a reader that reads the active text editor in them finds none and a test of the stale report passes by another path; why_new=Cycle 0046 row 733 (CodeRabbit on b5f8bf97..ec8a8ec3); seam=workspaceHarness's two columns, Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, which rebuilds the group objects), focusMutableDraft, the editor's onDidChangeTabs and onDidChangeTabGroups, focusEditorTerminal with keepsTextEditorReport
+  test(`the fake editor reports the text editor that had the keyboard behind a terminal opened in the editor area already while it tells its tab and group listeners (${host})`, async () => {
+    // Arrange: auth.ts in the second group has the keyboard; a listener of tabs and one of groups read the active text editor.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    if (host === 'Cursor') {
+      harness.addSeparateEditorPart()
+      harness.leavePaneFocusUnreportedBesideChat()
+    }
+    try {
+      harness.focusMutableDraft('auth.ts', 2)
+      const readInListeners: string[] = []
+      /** Names the active text editor's file as a listener reads it. */
+      const readActiveTextEditor = (listener: string): void => {
+        readInListeners.push(
+          `${listener}:${harness.editor.window.activeTextEditor?.document.uri.path.split('/').at(-1)}`,
+        )
+      }
+      const tabs = harness.editor.window.tabGroups.onDidChangeTabs(() =>
+          readActiveTextEditor('tabs'),
+        ),
+        tabGroups = harness.editor.window.tabGroups.onDidChangeTabGroups(() =>
+          readActiveTextEditor('groups'),
+        )
+
+      // Act: the learner opens a terminal in the editor area of the first group; the editor keeps reporting auth.ts.
+      harness.focusEditorTerminal(1, true)
+      tabs.dispose()
+      tabGroups.dispose()
+
+      // Assert: every listener read auth.ts, and the report stays after them.
+      assert.deepEqual(
+        {
+          readInListeners,
+          reportedAfter:
+            harness.editor.window.activeTextEditor?.document.uri.path
+              .split('/')
+              .at(-1),
+        },
+        {
+          readInListeners: ['tabs:auth.ts', 'groups:auth.ts'],
+          reportedAfter: 'auth.ts',
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the truth of what the learner is told when an agent's Return Current from a replay beside Cursor's Agent chat part (row 723's order) is refused right after its measurement borrowed the first group: the chat gets its keyboard back with Focus Agent, and the sentence says that Codebook could not finish arranging its panes; fails_when=finishCurrentReturn gives the chat its keyboard back with no cause after the refusal, so the return's own rule after a borrow tells "Codebook placed its panes and gave the keyboard back to the chat. …" although nothing was placed; why_new=Cycle 0046 row 731 (the fixer of rows 725 to 730, found beside row 727; row 718 fixed the same sentence for performPresentation's refusal); seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus (the click into the chat input), leavePaneFocusUnreportedBesideChat, focusMutableDraft, the service's playback and returnToCurrent, holdNextCommand on workbench.action.focusFirstEditorGroup with failNextCommand on the layout read after it, the command log and the information messages
 test('in Cursor, an agent’s Return Current from a replay refused right after its borrow of the first group gives the chat its keyboard back and says that nothing was arranged', async () => {
   // Arrange: as in row 723's test; the layout read right after the measurement's borrow of the first group will fail.

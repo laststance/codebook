@@ -6484,18 +6484,14 @@ export async function workspaceHarness(
       keyboardOnBody = false
       keyboardInView = false
       innerFocusedPanel = undefined
+      // The kept report holds before any listener hears of the terminal, and sends no active-editor event; Cursor's rebuild carries it to the group's new object (row 733).
+      if (reported)
+        textEditorReportedBehindWebview = { group, tab, editor: reported }
       for (const listener of tabChangeListeners)
         listener({ opened: [tab], closed: [], changed: [] })
       if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
       else changedGroups({ opened: [], closed: [], changed: [previous, group] })
-      // The kept report sends no active-editor event; it names the group's object after Cursor's rebuild.
-      if (reported)
-        textEditorReportedBehindWebview = {
-          group: activeTabGroup,
-          tab,
-          editor: reported,
-        }
-      else activeTextEditorChanged(undefined)
+      if (!reported) activeTextEditorChanged(undefined)
       return tab
     },
     addOpaqueTab(label: string, column: number) {
