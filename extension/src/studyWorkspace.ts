@@ -16,7 +16,7 @@ import {
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   APPLICATION_PANE_CLOSED_MESSAGE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
-  CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE,
+  CHAT_KEYBOARD_RETURNED_MESSAGES,
   CHOICE_RETIRED_ERROR_KINDS,
   CLOSE_GROUP_SETTLE_MS,
   HIDDEN_SIDE_BAR_MIN_GAIN_PX,
@@ -507,8 +507,11 @@ interface KeyboardPauseOfRecord {
  */
 const selectionOwnsForeignReturn = (): void => {}
 
+/** Why the reader gave a chat its keyboard back, which names the sentence the learner is told once ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}, row 648). */
+type ChatKeyboardReturnCause = keyof typeof CHAT_KEYBOARD_RETURNED_MESSAGES
+
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatEditorTab'` is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailed:application'`, `'agentSelectionFailed:study'` and `'agentSelectionFailed:source'` are the three sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}, `'agentSelectionApplication'` is either sentence of {@link AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES}, whichever came first.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, `'chatReturned:pause'`, `'chatReturned:leftoverProof'`, `'chatReturned:close'` and `'chatReturned:arrangement'` are the four sentences of {@link CHAT_KEYBOARD_RETURNED_MESSAGES}, the first of them {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, `'agentSelectionFailed:application'`, `'agentSelectionFailed:study'` and `'agentSelectionFailed:source'` are the three sentences of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}, `'agentSelectionApplication'` is either sentence of {@link AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES}, whichever came first.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
@@ -524,7 +527,7 @@ const keyboardNoticesTold = new Set<
   | 'summaryBehindChat'
   | 'learnerReturn'
   | 'readEnded'
-  | 'chatEditorTab'
+  | `chatReturned:${ChatKeyboardReturnCause}`
   | 'agentSelectionApplication'
   | `agentSelectionFailed:${keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}`
 >()
@@ -1530,9 +1533,11 @@ export class StudyWorkspace {
           closed.closedSourceUris,
           transition.cancellation.signal,
         )
-      // The admission below reads the focus again: it finds the chat where the selection found it (row 608).
+      // The admission below reads the focus again: it finds the chat where the selection found it (row 608), and the learner is told why the chat has it (row 648).
       if (closed.proofTookKeyboard)
-        await giveKeyboardBack?.(true).catch(() => false)
+        await giveKeyboardBack?.(true, undefined, 'leftoverProof').catch(
+          () => false,
+        )
     } finally {
       this.endPresentationTransition(transition)
     }
@@ -2841,7 +2846,7 @@ export class StudyWorkspace {
    * @param withoutPanePress - `true` for an arrangement of the live or recording panes that no control of a Study pane or view asked for (the composition branch of {@link admitPresentation}): an agent's (row 628), and the learner's Arrange Study Workspace run from the command palette or a shortcut (row 638). A Study pane's tab the editor names while no Study pane and no text editor is active is then read as the chat input of another editor part over that tab, as a learner's file is, because Cursor's Focus Agent, with which an agent's Return Current gave the chat its keyboard back, changes no tab or group. A press in a Study pane or view keeps its rule: such a tab is no foreign tab to return to.
    * @returns
    * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's (outside `withoutPanePress`), or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
-   * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Called with `true` by {@link returnsKeyboardToChatAtPause} and {@link judgeKeyboardAtPauseEnd}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that a text editor has it: the paused file the editor's debugger opened, or the captured source shown in its place), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. {@link returnsKeyboardToChatAfterSideBars} calls it with `true` in the same way after a close showed a side bar a Read hid: the caller knows that the bar's command took the keyboard. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
+   * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Its third argument names why a chat gets the keyboard back, where the editor cannot tell that chat's input from a view: a return to a chat then tells the learner the sentence of that cause once ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}, row 648); left out, nothing is told. Called with `true` by {@link returnsKeyboardToChatAtPause} and {@link judgeKeyboardAtPauseEnd}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that a text editor has it: the paused file the editor's debugger opened, or the captured source shown in its place), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. {@link returnsKeyboardToChatAfterSideBars} calls it with `true` in the same way after a close showed a side bar a Read hid: the caller knows that the bar's command took the keyboard. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
    * @example
    * ```ts
    * const returnForeignFocus = this.retainForeignTabFocus(undefined)
@@ -2856,6 +2861,7 @@ export class StudyWorkspace {
     | ((
         takenByEditor?: boolean,
         stillCurrent?: () => boolean,
+        toldCause?: ChatKeyboardReturnCause,
       ) => Promise<boolean>)
     | undefined {
     if (this.hasActiveStudyPane() || vscode.window.activeTextEditor)
@@ -2892,7 +2898,11 @@ export class StudyWorkspace {
       tab.input,
       Reflect.get(vscode, 'TabInputChat'),
     )
-    return async (takenByEditor = false, stillCurrent): Promise<boolean> => {
+    return async (
+      takenByEditor = false,
+      stillCurrent,
+      toldCause,
+    ): Promise<boolean> => {
       // Groups the arrangement opened or closed in the main editor shift the column of a group behind them.
       const shownColumn =
         column + vscode.window.tabGroups.all.length - groupCount
@@ -2938,43 +2948,48 @@ export class StudyWorkspace {
       )
       // A newer pause, replay or learner choice can revoke a return while native command discovery waits.
       if (stillCurrent && !stillCurrent()) return false
-      return this.runFocusReturnCommand(command, takenByEditor, chatEditorTab)
+      return this.runFocusReturnCommand(command, toldCause, chatEditorTab)
     }
   }
 
   /**
-   * Runs the command that gives a remembered tab's group the keyboard back, and tells the learner once where it went when that tab is VS Code's chat editor tab and the editor itself had taken the keyboard; the last step of the function {@link retainForeignTabFocus} answers.
+   * Runs the command that gives a remembered tab's group the keyboard back, and tells the learner once where it went when the return reached a chat for a cause the caller names; the last step of the function {@link retainForeignTabFocus} answers.
+   * A return reaches a chat when the remembered tab is VS Code's chat editor tab, or when the command is the host's own command for its chat (Cursor's Focus Agent): while such a chat is the active editor the extension API reads the same whether its input or a view had the keyboard (rows 632 and 635), so a return made for a cause is told with that cause's sentence (row 648).
    * @param command - What {@link focusReturnCommand} chose; `undefined` runs nothing.
-   * @param takenByEditor - Whether the editor took the keyboard from the remembered tab (a pause, a close that showed a side bar).
-   * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}): while it is the active editor, the editor reads the same whether its input or a view had the keyboard, so a return the editor's own move called for is told ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, row 632).
+   * @param toldCause - Why the keyboard is given back (a pause, a leftover proof, a close that showed a side bar, the learner's own arrangement); `undefined` tells nothing.
+   * @param chatEditorTab - Whether the remembered tab is VS Code's chat editor tab ({@link isChatEditorTabInput}).
    * @returns
    * - `true` once the command ran.
    * - `false` without a command.
    * @throws What the editor's command rejected with.
-   * @example await this.runFocusReturnCommand('workbench.action.focusThirdEditorGroup', true, true) // => true, and the chat editor tab's sentence is told once
+   * @example await this.runFocusReturnCommand('workbench.action.focusThirdEditorGroup', 'leftoverProof', true) // => true, and the leftover proof's sentence is told once
    */
   private async runFocusReturnCommand(
     command: string | undefined,
-    takenByEditor: boolean,
+    toldCause: ChatKeyboardReturnCause | undefined,
     chatEditorTab: boolean,
   ): Promise<boolean> {
     if (!command) return false
     await vscode.commands.executeCommand(command)
-    if (takenByEditor && chatEditorTab) this.tellChatEditorTabKeyboard()
+    // Only a chat is told about; a learner's page of the main editor that got its group's focus back is not.
+    if (toldCause && (chatEditorTab || command === CURSOR_FOCUS_AGENT_COMMAND))
+      this.tellChatKeyboardReturned(toldCause)
     return true
   }
 
   /**
-   * Tells the learner, once in an editor session, that the chat editor tab has the keyboard again and that the editor cannot tell its input from a view ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); called by {@link runFocusReturnCommand} for VS Code's chat editor tab and by {@link giveKeyboardBackAtPause} for every chat that got its keyboard back at a pause, Cursor's too.
-   * @example this.tellChatEditorTabKeyboard()
+   * Tells the learner, once in an editor session for each cause, that a chat has the keyboard again and that the editor cannot tell its input from a view ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}); called by {@link runFocusReturnCommand} for VS Code's chat editor tab and Cursor's Agent chat tab.
+   * @param cause - Why the chat got the keyboard back; its sentence names that cause and no other (row 648).
+   * @example this.tellChatKeyboardReturned('leftoverProof') // "Codebook gave the keyboard back to the chat after it closed the editor groups an earlier window had left, …"
    */
-  private tellChatEditorTabKeyboard(): void {
-    if (keyboardNoticesTold.has('chatEditorTab')) return
-    keyboardNoticesTold.add('chatEditorTab')
+  private tellChatKeyboardReturned(cause: ChatKeyboardReturnCause): void {
+    const notice: `chatReturned:${ChatKeyboardReturnCause}` = `chatReturned:${cause}`
+    if (keyboardNoticesTold.has(notice)) return
+    keyboardNoticesTold.add(notice)
     void showPlainNotice(
       vscode.window,
       'information',
-      CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE,
+      CHAT_KEYBOARD_RETURNED_MESSAGES[cause],
     )
   }
 
@@ -3738,7 +3753,7 @@ export class StudyWorkspace {
 
   /**
    * Gives the chat of the record its keyboard back at a pause, and tells the learner once where it went ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); the return of {@link returnKeyboardOfPause} and {@link endsPauseOfRecord}.
-   * Neither editor tells an extension whether its chat input or a view (the terminal, the Call Stack) had the keyboard while the chat is the active editor: Cursor names the chat's group as the active one until another editor part takes the focus, and no text editor is active in either case (Cursor 3.23.12 `workbench.desktop.main.js` 17269:31242, 17501:84373, 17264:2840, 17264:3411; VS Code 1.140.0 705:2504). So a return to Cursor's chat with Focus Agent is told once, as the return to VS Code's chat editor tab is (row 632, told by {@link runFocusReturnCommand}); the mark is the same, so either is told once (row 635).
+   * Neither editor tells an extension whether its chat input or a view (the terminal, the Call Stack) had the keyboard while the chat is the active editor: Cursor names the chat's group as the active one until another editor part takes the focus, and no text editor is active in either case (Cursor 3.23.12 `workbench.desktop.main.js` 17269:31242, 17501:84373, 17264:2840, 17264:3411; VS Code 1.140.0 705:2504). So a return to Cursor's chat with Focus Agent is told once, as the return to VS Code's chat editor tab is (rows 632 and 635), by {@link runFocusReturnCommand} with the pause's cause.
    * @param remembered - The chat's record.
    * @param stillCurrent - Revokes the return while native command discovery waits; left out for a pause that is over.
    * @returns `true` when the chat's focus command ran.
@@ -3749,9 +3764,7 @@ export class StudyWorkspace {
     remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
     stillCurrent?: () => boolean,
   ): Promise<boolean> {
-    const returned = await remembered.giveBack(true, stillCurrent)
-    if (returned) this.tellChatEditorTabKeyboard()
-    return returned
+    return remembered.giveBack(true, stillCurrent, 'pause')
   }
 
   /**
@@ -12684,7 +12697,9 @@ export class StudyWorkspace {
       await preparation.restoreFocus?.({ proofKeptKeyboard, forAgentRun })
       return preparation.panel
     } finally {
-      await owedChatReturn?.(true).catch(() => false)
+      await owedChatReturn?.(true, undefined, 'leftoverProof').catch(
+        () => false,
+      )
     }
   }
 
@@ -13070,10 +13085,15 @@ export class StudyWorkspace {
     const focusedPanel = [existingPanel, this.contextPanel].find(
       (panel) => panel?.active,
     )
+    // A return a leftover proof owes tells the learner that cause (row 648).
+    const toldCause: ChatKeyboardReturnCause | undefined = chatReturn
+      ? 'leftoverProof'
+      : undefined
     const captured = {
       focusedPanel,
       // The tab a leftover proof took the keyboard from is the place to return to; the group the proof left with the keyboard is none (row 646).
       giveBack: chatReturn ?? this.retainForeignTabFocus(undefined),
+      toldCause,
       restoreFocus:
         focusedPanel || cancelEntryFocusReturn || chatReturn
           ? undefined
@@ -13103,7 +13123,7 @@ export class StudyWorkspace {
    * Gives the keyboard back once an Application preparation is placed, from what {@link captureApplicationPreparationReturn} captured before any of its effects; the focus return that method answers calls it, after {@link reserveApplicationGroup}'s guard.
    * A chat of another editor part that had the keyboard gets it back first. Otherwise the focus goes to the Codebook pane or the native place that had it, unless {@link settleKeyboardBesideChatView} settles it for an agent's run beside a chat view.
    * A Live Return ({@link returnCurrentSelection}) gives a chat of another editor part its keyboard back itself at its end: a learner's Return adds nothing here, an agent's (codebook_return_current) only the rest of this return, and where a remembered tab waits for the Return's end, only the sentence that end tells if the tab gets nothing ({@link owePreparationNotice}, row 625).
-   * @param captured - The foreign tab's give-back ({@link retainForeignTabFocus}), the Codebook panel that was active, the captured native focus ({@link capturePresentationFocus}), whether the learner is known to work there, and whether the foreign tab is VS Code's chat editor tab ({@link isChatEditorTabInput}), which gets its keyboard back like a chat of another editor part (row 625).
+   * @param captured - The foreign tab's give-back ({@link retainForeignTabFocus}), the Codebook panel that was active, the captured native focus ({@link capturePresentationFocus}), whether the learner is known to work there, whether the foreign tab is VS Code's chat editor tab ({@link isChatEditorTabInput}), which gets its keyboard back like a chat of another editor part (row 625), and the cause a chat's return is told with: a leftover proof's, when the give-back is the one that proof owes (row 648).
    * @param placed - The preparation's cancellation, its guards for the current input and the placement, and what it knows of the editor parts and of its own focus.
    * @example
    * await this.returnPreparationFocus(captured, { signal, stillCurrent, assertPlaced, preparation: { onlyEditorPart: false, forAgentRun: true, tookKeyboard: true, ownedByReturn: false } }) // Cursor's chat tab gets the keyboard back
@@ -13116,6 +13136,7 @@ export class StudyWorkspace {
         ReturnType<StudyWorkspace['capturePresentationFocus']> | undefined
       knowsLearnersPlace: boolean
       toChatEditorTab: boolean
+      toldCause: ChatKeyboardReturnCause | undefined
     },
     placed: {
       signal: AbortSignal | undefined
@@ -13132,7 +13153,11 @@ export class StudyWorkspace {
     if (
       giveBack &&
       !ownedByReturn &&
-      (await giveBack(!captured.toChatEditorTab, placed.stillCurrent))
+      (await giveBack(
+        !captured.toChatEditorTab,
+        placed.stillCurrent,
+        captured.toldCause,
+      ))
     )
       return
     // The Return's end tells the sentence only when the remembered tab gets nothing back (row 625).
