@@ -12183,7 +12183,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Ends the note that Codebook's own placement gave the captured source the keyboard ({@link noteSourceKeyboardPlacement}) once the editor reports another active text editor while no presentation change, Return or arrangement of Codebook's runs, and notes whether that move landed on the captured source; called by the active-text-editor listener of {@link watchKeyboardOutsideEditors} (row 654).
+   * Ends the note that Codebook's own placement gave the captured source the keyboard ({@link noteSourceKeyboardPlacement}) once the editor reports another active text editor while no presentation change, Return or arrangement of Codebook's runs and no render shows the captured source, and notes whether that move landed on the captured source; called by the active-text-editor listener of {@link watchKeyboardOutsideEditors} (row 654).
+   * A render's display ({@link renderSelection}, from its show until it settles, while {@link pendingSourceDisplay} names it) is Codebook's own too: a background render's pause take shows the captured source with the keyboard over the file the debugger focused, and an evidence reentry gives it the keyboard in place of a copy it retires ({@link retireMovedSourceCopies}); neither is the learner's move (row 684). The broader `loading` is not used: it also lasts through a render's wait for its predecessor and a history load, where a reported change is the learner's.
    * Such a change is the learner's move: a click, a key, or a command such as the editor's numbered group focus, which moves no caret and so leaves no sign for {@link noteLearnersSelection}. A copy of the captured source the learner moved to is then the learner's place ({@link knowsLearnersPlace}): an agent's Return gives it the keyboard back and {@link retireMovedSourceCopies} keeps it. The editor reports nothing when the keyboard goes from a file to the terminal or a view and back, so a move it does not report cannot be told.
    * @param editor - The active text editor the editor reports now, `undefined` for none (the chat, a pane).
    * @example this.endSourceKeyboardPlacementAtLearnersMove(vscode.window.activeTextEditor) // after the learner's numbered group focus onto the captured source: the placement is the learner's now
@@ -12191,13 +12192,14 @@ export class StudyWorkspace {
   private endSourceKeyboardPlacementAtLearnersMove(
     editor: vscode.TextEditor | undefined,
   ): void {
-    // Codebook's own focus changes while it places or returns are no move of the learner's.
+    // Codebook's own focus changes while it places or returns, or while a render shows the captured source, are no move of the learner's (row 684).
     if (
       this.presentationTransition !== undefined ||
       this.presentationOperation !== undefined ||
       this.returningCurrent !== undefined ||
       this.arranging !== undefined ||
-      this.placingPresentation
+      this.placingPresentation ||
+      this.pendingSourceDisplay !== undefined
     )
       return
     this.sourceKeyboardPlacedAtMs = undefined

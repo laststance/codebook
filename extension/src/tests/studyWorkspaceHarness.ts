@@ -6566,6 +6566,8 @@ export function readerSeams(harness: {
     isSourceShown: (): boolean => reader['sourceReady'](),
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],
+    /** Says whether an agent's next request would read the keyboard's place as the learner's own (no Codebook pane active): the reading of rows 613 and 654 that decides whether the request gives the keyboard back or keeps it and tells where it is. @example readerSeams(harness).knowsLearnersPlace() // => false right after the reader's render of a pause gave the captured source the keyboard */
+    knowsLearnersPlace: (): boolean => reader['knowsLearnersPlace'](undefined),
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */
     checkpoint: (
       ...input: Parameters<WorkspaceReader['checkpoint']>

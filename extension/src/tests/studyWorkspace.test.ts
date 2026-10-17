@@ -6835,3 +6835,122 @@ test('a settings page that was in front before a pause of a live run does not ge
     await harness.close()
   }
 })
+
+// Value: protects=the learner's place an agent's next request reads after the reader's render of a pause gave the captured source the keyboard: the debugger opened the paused file with the keyboard and the render showed the captured source over it with the keyboard (takesPausedFocus), which is Codebook's own reveal and no move of the learner's, so the learner's place stays unknown and an agent's Study selection keeps the keyboard where Codebook put it and says so once (rows 613 and 654); fails_when=the render's own reveal is taken for the learner's move onto the captured source, so an agent's selection or Return reads that source as the learner's known place, gives the keyboard back as usual and tells nothing; why_new=Cycle 0046 row 684 (CodeRabbit's review of 465a6834..5f9e8f05: endSourceKeyboardPlacementAtLearnersMove ignored only the presentation flags, not a render's source display); seam=workspace harness with the controlled runtime, focusMutableDraft, pauseDebugger, the reader's refresh (the background render of the pause), textDocumentShows and readerSeams' knowsLearnersPlace (what an agent's next request reads)
+test("the captured source the reader's render of a pause gave the keyboard is no learner's move onto it, so an agent's next request reads the learner's place as unknown", async () => {
+  // Arrange: the reader follows a live run; the debugger opened the paused file actions.ts in front of the source group with the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the run reaches its stop, and the reader's render shows the stop's captured source over the paused file with the keyboard.
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+
+    // Assert: the render took the keyboard with the captured source, and the learner's place is not known from it.
+    assert.deepEqual(
+      {
+        shows: harness.textDocumentShows().slice(showsBefore),
+        activeTextEditor: harness
+          .focusedSource()
+          ?.document.uri.path.split('/')
+          .at(-1),
+        knowsLearnersPlace: readerSeams(harness).knowsLearnersPlace(),
+      },
+      {
+        shows: [
+          { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false },
+        ],
+        activeTextEditor: 'Captured-theme.ts',
+        knowsLearnersPlace: false,
+      },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the bound of row 684: a learner's own move onto the captured source after the reader's render of a pause settled is still the learner's move (row 654), so an agent's next request reads that source as the learner's known place and gives the keyboard back there; fails_when=the render's display is held to cover more than its own show, so the learner's later move away and back is not seen; why_new=Cycle 0046 row 684 (its bound); seam=workspace harness with the controlled runtime, focusMutableDraft and its focus (the learner's click into the paused file), pauseDebugger, the reader's refresh, focusExistingSource (the learner's click back into the captured source) and readerSeams' knowsLearnersPlace
+test("a learner's move back onto the captured source after the reader's render of a pause settled is the learner's, so an agent's next request reads the learner's place as known", async () => {
+  // Arrange: as above: the reader's render of the pause gave the captured source the keyboard over actions.ts.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    const actions = harness.focusMutableDraft('actions.ts', 2)
+    harness.pauseDebugger()
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    const source = harness.focusedSource()!
+    const knownAfterRender = readerSeams(harness).knowsLearnersPlace()
+
+    // Act: the learner clicks into actions.ts and back into the captured source.
+    actions.focus()
+    harness.focusExistingSource(source)
+
+    // Assert
+    assert.deepEqual(
+      {
+        knownAfterRender,
+        activeTextEditor: harness
+          .focusedSource()
+          ?.document.uri.path.split('/')
+          .at(-1),
+        knowsLearnersPlace: readerSeams(harness).knowsLearnersPlace(),
+      },
+      {
+        knownAfterRender: false,
+        activeTextEditor: 'Captured-theme.ts',
+        knowsLearnersPlace: true,
+      },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
