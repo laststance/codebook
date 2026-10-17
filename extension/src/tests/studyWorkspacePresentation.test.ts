@@ -4882,6 +4882,81 @@ test('in Cursor beside its chat part, an agent’s cold Study selection made whi
   }
 })
 
+// Value: protects=row 712's native order (C61 c61-cu-692, five_stop.py's file-select mode): a run paused and the Study closed beside Cursor's Agent chat part, the learner clicked into auth.ts in front of the second group while Cursor still names its chat part's group, then the agent's cold Study selection measures with the first group's focus (the borrow), inserts the Application's group above it, completes, and gives auth.ts its keyboard back in its group; fails_when=the selection's focus capture takes the chat part's group Cursor names for auth.ts's, so after the borrow, the insertion and the lock it is refused with "The presentation was not confirmed. …" and the keyboard stays on the page body, as on C61 (getEditorLayout, focusFirstEditorGroup, newGroupAbove, lockEditorGroup, getEditorLayout, the cleanup, then BODY to the end); why_new=Cycle 0046 row 712 (the native order of its round); seam=useNativeLayout, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, keepChatPartNameAtLearnersFileClick, focusMutableDraft and its focus, workInActiveTextEditor, pauseLiveRun, the service's selectPresentation, the command log, textDocumentShows, keyboardOnBody, the editor's active text editor and the information messages
+test('in Cursor beside its chat part, an agent’s cold Study selection during a paused run, made while the learner types in a file of the second group under the chat part’s group name, inserts the Application’s group and gives that file its keyboard back', async () => {
+  // Arrange: login-form.tsx is in front of the first group and auth.ts in front of the second; a run paused; the learner clicked the chat tab, then into auth.ts, and Cursor still names its chat part's group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const auth = harness.focusMutableDraft('auth.ts', 2)
+    await pauseLiveRun(harness)
+    chat.focusTab()
+    harness.keepChatPartNameAtLearnersFileClick()
+    auth.focus()
+    harness.workInActiveTextEditor('mouse')
+    const selection = harness.reader.presentationState()
+    const commandsBefore = harness.commands.length,
+      showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const answer = await harness.service
+      .selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .then(
+        (value) => ({ layoutConfirmed: value.layoutConfirmed }),
+        (error: unknown) => ({ refusal: String(error) }),
+      )
+
+    // Assert: the borrow and the insertion ran, the selection is confirmed, and auth.ts, shown again with the keyboard in its group (now the third column), has the keyboard; nothing needed telling.
+    assert.deepEqual(
+      {
+        answer,
+        focusAndPlacementCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            [
+              'workbench.action.focusFirstEditorGroup',
+              'workbench.action.newGroupAbove',
+              'composer.focusComposer',
+            ].includes(command),
+          ),
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus)
+          .map((shown) => `${shown.name}@${shown.viewColumn}`),
+        keyboardOnBody: harness.keyboardOnBody(),
+        activeTextEditor: harness.editor.window.activeTextEditor?.document.uri
+          .toString()
+          .split('/')
+          .at(-1),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        answer: { layoutConfirmed: true },
+        focusAndPlacementCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.newGroupAbove',
+        ],
+        shownWithKeyboard: ['auth.ts@3'],
+        keyboardOnBody: false,
+        activeTextEditor: 'auth.ts',
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); the selection is the learner's since row 656: an agent's selection beside Cursor's chat part gives no unproven file its focus back, so only the learner's own selection still makes that return; seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the reader's changePresentation for the learner
 test('in Cursor, a learner’s cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
   // Arrange: as above in Cursor; the selection's layout command will wait until the learner closed auth.ts.
