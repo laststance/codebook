@@ -6796,10 +6796,10 @@ export function readerSeams(harness: {
     isLiveArrangement: (): boolean => reader['liveComposition'],
     /** Says whether an agent's next request would read the keyboard's place as the learner's own (no Codebook pane active): the reading of rows 613 and 654 that decides whether the request gives the keyboard back or keeps it and tells where it is. @example readerSeams(harness).knowsLearnersPlace() // => false right after the reader's render of a pause gave the captured source the keyboard */
     knowsLearnersPlace: (): boolean => reader['knowsLearnersPlace'](undefined),
-    /** Measures the main editor as an arrangement does before its effects ({@link StudyWorkspace.readMainEditorGrid}), and names the view columns of the groups it measured as the main editor's. @example await readerSeams(harness).measureMainEditorGrid() // => [1] beside VS Code's floating window */
     /** Reads the main editor's layout without borrowing focus, as the presentation state's confirmation does ({@link StudyWorkspace.readPassivePresentationLayout}): the layout, or `undefined` when the read cannot tell that the main editor answered. @example await readerSeams(harness).readPassiveLayout() // => undefined while VS Code's floating window of text editors is the focused one */
     readPassiveLayout: (): Promise<unknown> =>
       reader['readPassivePresentationLayout'](),
+    /** Measures the main editor as an arrangement does before its effects ({@link StudyWorkspace.readMainEditorGrid}), and names the view columns of the groups it measured as the main editor's. @example await readerSeams(harness).measureMainEditorGrid() // => [1] beside VS Code's floating window */
     measureMainEditorGrid: async (): Promise<number[]> =>
       // The reader's arrays come from its own module context; the test compares an array of its own.
       Array.from(
