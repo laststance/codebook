@@ -29,8 +29,35 @@ function programNameAt(
 }
 
 /**
+ * Reads a run of backslashes inside an argument and the quote that may follow it, by the rules of the Microsoft C runtime; called by {@link argumentAt} at each backslash.
+ * Backslashes are characters of the argument unless they stand right before a quote: then each pair of them gives one backslash, and an odd one left over makes that quote a character instead of a delimiter.
+ * @param commandLine - The whole command line.
+ * @param start - Where the run of backslashes begins.
+ * @returns The text the run gives the argument and the position after what it consumed: after the escaped quote when one was escaped; before the quote when it stays a delimiter.
+ * @example
+ * backslashRunAt('a\\b', 1)    // => { text: '\\', end: 2 }: a backslash in a path
+ * backslashRunAt('d\\"e', 1)  // => { text: '"', end: 3 }: an escaped quote
+ * backslashRunAt('f\\\\"', 1) // => { text: '\\', end: 3 }: one backslash, then the quote is a delimiter
+ */
+function backslashRunAt(
+  commandLine: string,
+  start: number,
+): { text: string; end: number } {
+  let end = start
+  while (commandLine[end] === '\\') end += 1
+  const backslashes = end - start
+  // Backslashes count only right before a quote; elsewhere each is a character of a path.
+  if (commandLine[end] !== '"') return { text: '\\'.repeat(backslashes), end }
+  const halved = '\\'.repeat(Math.floor(backslashes / 2))
+  // An odd backslash escapes the quote, which is then a character; after an even number the quote is read as a delimiter by the caller.
+  return backslashes % 2 === 1
+    ? { text: `${halved}"`, end: end + 1 }
+    : { text: halved, end }
+}
+
+/**
  * Reads one argument after the program name by the rules of the Microsoft C runtime, from where it begins; called by {@link windowsCommandLineArguments}.
- * A quote opens or closes a quoted part, in which spaces and tabs belong to the argument, and a doubled quote inside a quoted part is one quote. Backslashes are characters of the argument unless they stand right before a quote: then each pair of them gives one backslash, and an odd one left over makes that quote a character instead of a delimiter.
+ * A quote opens or closes a quoted part, in which spaces and tabs belong to the argument, and a doubled quote inside a quoted part is one quote. Backslashes are read by {@link backslashRunAt}.
  * @param commandLine - The whole command line.
  * @param start - Where the argument begins (no separator there).
  * @returns The argument and the position after it.
@@ -48,37 +75,24 @@ function argumentAt(
     const character = commandLine[index]!
     if (!inQuotes && isArgumentSeparator(character)) break
     if (character === '\\') {
-      let backslashes = 0
-      while (commandLine[index] === '\\') {
-        backslashes += 1
-        index += 1
-      }
-      // Backslashes count only right before a quote; elsewhere each is a character of a path.
-      if (commandLine[index] !== '"') {
-        argument += '\\'.repeat(backslashes)
-        continue
-      }
-      argument += '\\'.repeat(Math.floor(backslashes / 2))
-      // An odd backslash escapes the quote, which is then a character; after an even number the quote is read as a delimiter below.
-      if (backslashes % 2 === 1) {
-        argument += '"'
-        index += 1
-      }
-      continue
-    }
-    if (character === '"') {
+      const run = backslashRunAt(commandLine, index)
+      argument += run.text
+      index = run.end
+    } else if (
+      inQuotes &&
+      character === '"' &&
+      commandLine[index + 1] === '"'
+    ) {
       // A doubled quote inside a quoted part is one quote, and the part goes on.
-      if (inQuotes && commandLine[index + 1] === '"') {
-        argument += '"'
-        index += 2
-        continue
-      }
+      argument += '"'
+      index += 2
+    } else if (character === '"') {
       inQuotes = !inQuotes
       index += 1
-      continue
+    } else {
+      argument += character
+      index += 1
     }
-    argument += character
-    index += 1
   }
   return { argument, end: index }
 }
