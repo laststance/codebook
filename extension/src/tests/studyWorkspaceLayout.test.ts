@@ -219,7 +219,7 @@ for (const recording of [false, true])
             ? mainGroups === 2
               ? {
                   orientation: 1,
-                  groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+                  groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
                 }
               : {
                   orientation: 0,
@@ -1310,6 +1310,85 @@ test('the fake editor sizes and expands a learner’s stacked rows as VS Code 1.
   }
 })
 
+// Value: protects=every reader test that inserts the Application's group above a learner's stack of rows given in pixels, or removes it again, in both editors' models: newGroupAbove gives the grid both editors gave natively without any seam (VS Code 1.140.0: 343/344 to 229/229/229 and 524/163 to 262/355/70, c59-vs-691probe3 and c59-vs-691probe4; Cursor 3.23.12: 328/329 to 219/219/219, c60-cu-567's 3-recording-open.json boxes), the split view's sizing both share, and the emptied group's removal keeps the editor area's height as the split view's removeView does (distributed rows distributed again, otherwise the row after the first takes its height); fails_when=the fake editor halves the first row by default (343/344 to 171.5/171.5/344), or a removal drops the row's height from the editor area, so a test of a stack passes on a grid neither editor gives; why_new=Cycle 0046 row 703 (the rows 686 to 701 fixer's finding); seam=workspaceHarness, useNativeLayout with stacked pixel rows, replaceGroupObjectsOnTabChanges (Cursor's model), the fake editor's newGroupAbove and editorLayout
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`the fake editor of ${host} adds a group above a learner's stack of rows in pixels and removes it with the grids ${host} gives natively`, async () => {
+    // Arrange: an even and an uneven stack of the learner's, each with the first row active.
+    const even = await workspaceHarness(),
+      uneven = await workspaceHarness()
+    try {
+      even.useNativeLayout({
+        orientation: 1,
+        groups:
+          host === 'VS Code'
+            ? [{ size: 343 }, { size: 344 }]
+            : [{ size: 328 }, { size: 329 }],
+      })
+      uneven.useNativeLayout({
+        orientation: 1,
+        groups: [{ size: 524 }, { size: 163 }],
+      })
+      if (host === 'Cursor') {
+        even.replaceGroupObjectsOnTabChanges()
+        uneven.replaceGroupObjectsOnTabChanges()
+      }
+
+      // Act
+      await even.editor.commands.executeCommand(
+        'workbench.action.newGroupAbove',
+      )
+      await uneven.editor.commands.executeCommand(
+        'workbench.action.newGroupAbove',
+      )
+      const evenAfterInsertion = even.editorLayout(),
+        unevenAfterInsertion = uneven.editorLayout()
+      // The new empty group closes again.
+      await even.editor.window.tabGroups.close(
+        even.groups.find((group) => group.viewColumn === 1)!,
+      )
+      await uneven.editor.window.tabGroups.close(
+        uneven.groups.find((group) => group.viewColumn === 1)!,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          evenAfterInsertion,
+          unevenAfterInsertion,
+          evenAfterRemoval: even.editorLayout(),
+          unevenAfterRemoval: uneven.editorLayout(),
+        },
+        {
+          evenAfterInsertion: {
+            orientation: 1,
+            groups:
+              host === 'VS Code'
+                ? [{ size: 229 }, { size: 229 }, { size: 229 }]
+                : [{ size: 219 }, { size: 219 }, { size: 219 }],
+          },
+          unevenAfterInsertion: {
+            orientation: 1,
+            groups: [{ size: 262 }, { size: 355 }, { size: 70 }],
+          },
+          evenAfterRemoval: {
+            orientation: 1,
+            groups:
+              host === 'VS Code'
+                ? [{ size: 343 }, { size: 344 }]
+                : [{ size: 328 }, { size: 329 }],
+          },
+          unevenAfterRemoval: {
+            orientation: 1,
+            groups: [{ size: 617 }, { size: 70 }],
+          },
+        },
+      )
+    } finally {
+      await even.close()
+      await uneven.close()
+    }
+  })
+
 // Value: protects=the learner's uneven stack of two rows through a Repository Wiki recording visit and its article Return in VS Code: the visit's newGroupAbove leaves the Wiki's row at the minimum height, which VS Code expands when the visit gives the Wiki its keyboard back (doRestoreGroup, workbench.desktop.main.js 1106:114938), so the visit stacks its rows at one height first; its arrangement stays confirmed and the Return gives the learner's rows back at 524 and 163 px, with row 681's retained tabs while the Study stays open; fails_when=the visit keeps VS Code's 262/355/70, the focus return expands the Wiki's row to 70/70/547, the Study reports "The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout…" and the Return gives nothing back (C59 c59-vs-567, c59-vs-691probe4: the Application's group left at column 1, three rows); why_new=Cycle 0046 row 691; seam=articleRecordingLayoutHarness, useNativeLayout with the uneven stack, modelVsCodeStackedRowSizing, focusWebviewTabKeepingTextEditorReport (View recording pressed in the Wiki), openRepositoryEvidence with the recording, the presentation state, the return-wiki action, editorLayout and the groups' tabs
 test('in VS Code, a Wiki recording visit in the learner’s uneven stack of two rows stays confirmed, and the article Return gives both rows back at their sizes', async () => {
   // Arrange: the learner's rows are 524 and 163 px high, article-source.ts in the first and the Repository Wiki in the second, where the learner pressed View recording.
@@ -2148,7 +2227,7 @@ test('actual Return cannot consume another article origin when its native layout
     // Assert
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
     })
     await harness.reader.action('return-wiki')
     assert.deepEqual(harness.editorLayout(), {
@@ -2247,7 +2326,7 @@ test('cancelling actual Return during its ownership read preserves Study and per
     // Assert
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
     })
     await harness.reader.action('return-wiki')
     assert.deepEqual(harness.editorLayout(), {
@@ -2299,7 +2378,7 @@ test('a new evidence visit drains a cancelled Return layout before restoring its
     assert.equal(harness.controller.state().presentedMs, 100)
     assert.deepEqual(harness.editorLayout(), {
       orientation: 1,
-      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
     })
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     assert.equal(harness.sourceColumn(), 2)
@@ -3498,7 +3577,7 @@ for (const recording of [false, true])
         recording
           ? {
               orientation: 1,
-              groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+              groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
             }
           : {
               orientation: 0,

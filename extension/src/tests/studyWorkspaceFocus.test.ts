@@ -3296,6 +3296,45 @@ test("the fake editor answers Focus Agent from a file and from the chat and a ta
   }
 })
 
+// Value: protects=reader tests in Cursor's model that give a learner's file the keyboard again after Cursor replaced every tab group object (a lock, a tab change): the learner's click names the group that holds the file now, the object the editor lists in tabGroups.all, as Cursor 3.23.12's group event does (131:33431 makes a new object for every group, and activeTabGroup is one of them); fails_when=focusMutableDraft's focus names the group object the file was opened in, which the rebuild retired, so activeTabGroup is an object tabGroups.all no longer lists and a reader that finds the named group by identity among the groups finds none; why_new=Cycle 0046 row 703 (the rows 686 to 701 fixer's finding); seam=the workspace harness's Cursor model (replaceGroupObjectsOnTabChanges), focusMutableDraft and its focus, and the group lock command, which rebuilds every group
+test("a learner's file given the keyboard again after Cursor replaced every tab group object names the group object the editor lists now", async () => {
+  // Arrange: a.ts in group 1 and b.ts in group 2, which has the keyboard; a lock of group 2 makes Cursor replace every group object.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.replaceGroupObjectsOnTabChanges()
+  const draft = harness.focusMutableDraft('a.ts', 1)
+  harness.focusMutableDraft('b.ts', 2)
+  await harness.editor.commands.executeCommand(
+    'workbench.action.lockEditorGroup',
+  )
+  const tabGroups = harness.editor.window.tabGroups
+  try {
+    // Act: the learner clicks into a.ts again.
+    draft.focus()
+
+    // Assert
+    assert.deepEqual(
+      {
+        namedIsListed: tabGroups.all.includes(tabGroups.activeTabGroup),
+        named: tabGroups.activeTabGroup.viewColumn,
+        namedFront: tabGroups.activeTabGroup.activeTab?.label,
+        activeTextEditor:
+          harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+      },
+      {
+        namedIsListed: true,
+        named: 1,
+        namedFront: 'a.ts',
+        activeTextEditor: 'a.ts',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests beside Cursor's chat part meeting the group name Cursor gives after a tab opened in the main editor without the keyboard while Focus Agent left its chat input the keyboard: the rebuild names the group Cursor's editor groups service holds active, the chat part's, also when the extension host named a main group (C60 c60-cu-7d2: the reader's copy shown at 149 ms with preserveFocus moved the name from group 1 to the chat part's group 3 at 153 ms); a tab opened with the keyboard keeps the stale name as row 674 has it; fails_when=the fake keeps naming the main group after that rebuild, so a reader test passes where Cursor refused the agent's second citation open (row 696); why_new=Cycle 0046 row 696; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, Focus Agent and showTextDocument with preserveFocus
 test("the fake editor names Cursor's chat part's group after a tab opened without the keyboard in the main editor while Focus Agent left the chat input the keyboard", async () => {
   // Arrange: G1 shows login-form.tsx and G2 the learner's notes.md, which had the keyboard last; then Focus Agent gave the chat input the keyboard.

@@ -4690,11 +4690,11 @@ for (const arrangement of ['live', 'replay'] as const)
       // Assert: the Read resized the groups; the Close ended the maximization and then applied the layout of before the Read.
       assert.deepEqual(layoutAtFirstNativeClose, {
         orientation: 1,
-        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
       })
       assert.deepEqual(beforeRead, {
         orientation: 1,
-        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
       })
       assert.deepEqual(duringRead, {
         maximized: true,
@@ -4722,7 +4722,7 @@ for (const arrangement of ['live', 'replay'] as const)
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
-            'vscode.setEditorLayout',
+            // The Application row's removal gives the learner's rows their heights back, as the split view does, so the layout of before the Open is not applied again (row 703).
           ],
           maximized: false,
           layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
@@ -4959,7 +4959,7 @@ test("Close Study Workspace after a Read of the application and then of the capt
     // Assert
     assert.deepEqual(layoutAtFirstNativeClose, {
       orientation: 1,
-      groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+      groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
     })
     assert.equal(duringSecondRead, true)
     assert.deepEqual(
@@ -5205,7 +5205,7 @@ test("a Read in the live arrangement that the editor refuses after its Expand ra
         maximized: false,
         layout: {
           orientation: 1,
-          groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+          groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
         },
       },
     )
@@ -5274,7 +5274,7 @@ for (const arrangement of ['live', 'replay'] as const)
       // Assert
       assert.deepEqual(layoutAtFirstNativeClose, {
         orientation: 1,
-        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
       })
       assert.deepEqual(duringEnlarge, {
         maximized: true,
@@ -5302,7 +5302,7 @@ for (const arrangement of ['live', 'replay'] as const)
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
-            'vscode.setEditorLayout',
+            // The Application row's removal gives the learner's rows their heights back, as the split view does, so the layout of before the Open is not applied again (row 703).
           ],
           maximized: false,
           layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
@@ -5517,7 +5517,7 @@ for (const order of [
       // Assert
       assert.deepEqual(layoutAtFirstNativeClose, {
         orientation: 1,
-        groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
       })
       assert.deepEqual(
         {
@@ -5537,7 +5537,7 @@ for (const order of [
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
-            'vscode.setEditorLayout',
+            // The Application row's removal gives the learner's rows their heights back, as the split view does, so the layout of before the Open is not applied again (row 703).
           ],
           maximized: false,
           layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
@@ -5656,7 +5656,7 @@ test("Enlarge application in the live arrangement that the editor refuses after 
         maximized: false,
         layout: {
           orientation: 1,
-          groups: [{ size: 80.5 }, { size: 80.5 }, { size: 162 }],
+          groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
         },
       },
     )
@@ -5758,7 +5758,7 @@ test("a Restore after Enlarge application that arranges nothing applies no layou
       await harness.editor.commands.executeCommand('vscode.getEditorLayout'),
       {
         orientation: 1,
-        groups: [{ size: 80.5 }, { size: 162 }, { size: 163 }, { size: 164 }],
+        groups: [{ size: 161 }, { size: 162 }, { size: 163 }, { size: 164 }],
       },
     )
   } finally {

@@ -738,7 +738,7 @@ export async function workspaceHarness(
   /** The editor area in which the fake editor answers a layout given in proportions as pixels; see `answerProportionsAsPixels`. `undefined`: such a layout is kept as it was given. */
   let proportionsAnsweredInPx: { width: number; height: number } | undefined
   let hideGridWhileMaximized = false
-  /** Set by `modelVsCodeStackedRowSizing`: a group inserted into stacked rows given in pixels is sized as VS Code's split view sizes it, and a row at the minimum height that a numbered focus command activates is expanded, as VS Code 1.140.0 does (Cycle 0046 row 691). */
+  /** Set by `modelVsCodeStackedRowSizing`: a row at the minimum height that a numbered focus command activates is expanded, as VS Code 1.140.0 does (Cycle 0046 row 691). A group inserted into stacked rows given in pixels is sized as the split view sizes it in every model (row 703). */
   let modelsVsCodeStackedRowSizing = false
   // The legacy fixture keeps an empty App destination beside source; both groups must exist before MCP-first preparation measures them.
   let editorLayout: unknown = { orientation: 0, groups: [{}, {}] }
@@ -1149,10 +1149,8 @@ export async function workspaceHarness(
         ? Number(editorLayout.orientation)
         : 0
     const sizedLayout = structuredClone(editorLayout),
-      pixelRows = modelsVsCodeStackedRowSizing
-        ? stackOfRowsAtFirstLeaf(sizedLayout)
-        : undefined
-    // VS Code's split view sizes the stack of rows the first group stands in, at the root or in a column (rows 691 and 704).
+      pixelRows = stackOfRowsAtFirstLeaf(sizedLayout)
+    // Both editors' split view sizes the stack of rows the first group stands in, at the root or in a column (rows 691, 703 and 704); a grid in proportions keeps the fake's halving of the first leaf.
     if (pixelRows) {
       const [added, ...kept] = rowsAfterNewGroupAbove(pixelRows.map(layoutSize))
       pixelRows.splice(
@@ -1448,7 +1446,52 @@ export async function workspaceHarness(
     }
   }
   /**
-   * Sizes the rows after `workbench.action.newGroupAbove` adds a row above the first one, as VS Code 1.140.0's split view does with its default `workbench.editor.splitSizing` ("auto"): rows within 2 px of each other are distributed evenly (`areViewsDistributed`, `workbench.desktop.main.js` 540:77201; `distributeViewSizes`, 540:71277); otherwise the new row takes half of the row it splits (`addView`, 540:72177) and the height that is now missing is taken from the last row upward, each down to the minimum, the new row last (`relayout` with the new row at low priority, 540:73529 and 540:73732). Called by `insertNativeAppGroup` while `modelVsCodeStackedRowSizing` is on.
+   * Reads the heights of a layout's rows when the layout is a stack of two or more groups at its root, each given in pixels; asked by `removeEmptiedGroup` before it removes an emptied row (Cycle 0046 row 703).
+   * @param layout - The fake editor's layout.
+   * @returns The rows' heights, top to bottom; `undefined` for columns, a nested split, proportions and a single group.
+   * @example rootPixelRows({ orientation: 1, groups: [{ size: 109 }, { size: 107 }, { size: 107 }] }) // => [109, 107, 107]
+   */
+  function rootPixelRows(layout: unknown): number[] | undefined {
+    const rows = layoutChildren(layout)
+    return Reflect.get(Object(layout), 'orientation') === 1 &&
+      rows &&
+      rows.length > 1 &&
+      rows.every((row) => !layoutChildren(row) && layoutSize(row) > 1)
+      ? rows.map(layoutSize)
+      : undefined
+  }
+  /**
+   * Sizes the rows that stay after an editor group's row is removed from a stack, as both editors' split view does with the default `workbench.editor.splitSizing` ("auto"): the editor part removes an emptied group with `removeView(group, Sizing.Auto)` (`doRemoveEmptyGroup`, `getSplitSizingStyle`), the grid names the sibling (`Sizing.Auto(index === 0 ? 1 : index - 1)`), and the split view distributes rows within 2 px of each other evenly again (`areViewsDistributed`; `distributeViewSizes` gives each the floor of the share and `relayout` the rest to the last row) or else adds the removed row's height to that sibling (`removeView`: `i.size += n.size`). The editor area keeps its height either way. Read in the `workbench.desktop.main.js` of VS Code 1.142.0 installed on the development host (offsets 2686250 and 6281045); VS Code 1.140.0's `distributeViewSizes` and `areViewsDistributed` are at 540:71277 and 540:77201. Called by `removeEmptiedGroup` for a root stack of rows given in pixels (Cycle 0046 row 703).
+   * @param rows - The heights of the stacked rows before the removal, top to bottom.
+   * @param removedIndex - The zero-based position of the removed row.
+   * @returns The heights of the rows that stay, top to bottom.
+   * @example
+   * rowsAfterRemoval([109, 107, 107], 0) // => [161, 162]
+   * rowsAfterRemoval([80.5, 80.5, 162, 163, 164], 0) // => [161, 162, 163, 164]
+   */
+  function rowsAfterRemoval(
+    rows: readonly number[],
+    removedIndex: number,
+  ): number[] {
+    const total = rows.reduce((sum, row) => sum + row, 0),
+      staying = rows.filter((_row, index) => index !== removedIndex)
+    // Rows that were distributed are distributed again over the whole height.
+    if (Math.max(...rows) - Math.min(...rows) <= 2) {
+      const even = Math.floor(total / staying.length)
+      return staying.map((_row, index) =>
+        index === staying.length - 1
+          ? total - even * (staying.length - 1)
+          : even,
+      )
+    }
+    // Otherwise the row before the removed one takes its height, or the row after it when the first row went.
+    const sibling = removedIndex === 0 ? 0 : removedIndex - 1
+    return staying.map((row, index) =>
+      index === sibling ? row + rows[removedIndex]! : row,
+    )
+  }
+  /**
+   * Sizes the rows after `workbench.action.newGroupAbove` adds a row above the first one, as VS Code 1.140.0's split view does with its default `workbench.editor.splitSizing` ("auto"): rows within 2 px of each other are distributed evenly (`areViewsDistributed`, `workbench.desktop.main.js` 540:77201; `distributeViewSizes`, 540:71277); otherwise the new row takes half of the row it splits (`addView`, 540:72177) and the height that is now missing is taken from the last row upward, each down to the minimum, the new row last (`relayout` with the new row at low priority, 540:73529 and 540:73732). Cursor 3.23.12 gives the same (c60-cu-567: 328/329 gave 219/219/219). Called by `insertNativeAppGroup` for every stack of rows given in pixels (Cycle 0046 row 703).
    * @param rows - The heights of the stacked rows before the insertion, top to bottom.
    * @returns The heights of the rows after it, the new row first.
    * @example
@@ -1828,12 +1871,16 @@ export async function workspaceHarness(
   }
   /**
    * Gives the text editor of a draft's tab the keyboard, whoever had it before: the tab is in front of its group, the group is the active one, and the editor is reported as the active text editor; called by `focusMutableDraft` for a learner's click and by `pauseDebugger` for the debugger's own opening of the paused file.
+   * The group is the one that holds the tab now: Cursor's model replaces every group object at a tab change (`replaceGroupObjects`), so the object the draft was opened in may be retired (Cycle 0046 row 703).
    * @param opened - What `openDraftTab` returned for that draft.
    * @example giveDraftKeyboard(openDraftTab('actions.ts', 1))
    */
   function giveDraftKeyboard(opened: ReturnType<typeof openDraftTab>): void {
-    opened.group.activeTab = opened.tab
-    activeTabGroup = opened.group
+    const group =
+      groups.find((candidate) => candidate.tabs.includes(opened.tab)) ??
+      opened.editor.group
+    group.activeTab = opened.tab
+    activeTabGroup = group
     leaveChatForMainEditor()
     keyboardOnBody = false
     keyboardInView = false
@@ -1933,7 +1980,16 @@ export async function workspaceHarness(
       keyboardOnBody = true
     // Both editors leave a maximization when a group is removed from their grid, and the groups that remain have the sizes they had before it (the grid's `removeView` exits the maximized view first).
     maximizedEditorGroup = false
-    editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
+    // A root stack of rows in pixels keeps the editor area's height, as the split view's removal does (row 703); other grids lose the leaf alone.
+    const rowsBefore = rootPixelRows(editorLayout)
+    editorLayout = rowsBefore
+      ? {
+          orientation: 1,
+          groups: rowsAfterRemoval(rowsBefore, main.indexOf(emptied)).map(
+            (size) => ({ size }),
+          ),
+        }
+      : layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
     groups.splice(groups.indexOf(emptied), 1)
     for (const remaining of groups)
       if (remaining.viewColumn > emptied.viewColumn) remaining.viewColumn--
@@ -5910,18 +5966,18 @@ export async function workspaceHarness(
       constrainStudyGrid = true
     },
     /**
-     * Makes the fake editor size stacked rows given in pixels as VS Code 1.140.0 does, for a learner's stack of uneven rows (Cycle 0046 row 691): `workbench.action.newGroupAbove` sizes the rows as VS Code's split view does (`rowsAfterNewGroupAbove`: 524/163 gives 262/355/70, 343/344 gives 229/229/229), and a numbered focus command that activates a row at the minimum height expands it (`expandMinimizedRow`, `doRestoreGroup` at 1106:114938: 262/355/70 gives 70/70/547 when the third row is activated), as c59-vs-691probe4 recorded. Off by default: the other tests keep the fake editor's halving of the first row, on which their verdicts were taken.
-     * @example
-     * harness.useNativeLayout({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] })
-     * harness.modelVsCodeStackedRowSizing()
-     */
-    /**
      * Makes `workbench.action.newGroupAbove` leave the text editor reported before it as the active text editor until a pane's tab stands in front of the new empty group, as Cursor 3.23.12 reported it in a Repository Wiki recording visit (C61 c61-cu-695c: the first-group focus made the Wiki's cited copy the active text editor, the insertion and the lock of the Application's group left it so, and the active text editor was reported as none only 43 ms after the lock, while the parked Application pane moved into the new group; Cycle 0046 row 710). Off by default: the other tests keep the fake editor's report of no active text editor at the insertion.
      * @example harness.keepTextEditorReportAfterNewGroup()
      */
     keepTextEditorReportAfterNewGroup(): void {
       keepsTextEditorReportAfterNewGroup = true
     },
+    /**
+     * Makes the fake editor expand a stacked row at the minimum height that a numbered focus command activates, as VS Code 1.140.0 does, for a learner's stack of uneven rows (Cycle 0046 row 691): `expandMinimizedRow`, `doRestoreGroup` at 1106:114938: 262/355/70 gives 70/70/547 when the third row is activated, as c59-vs-691probe4 recorded. `workbench.action.newGroupAbove` sizes stacked rows given in pixels as the split view does in every model since row 703 (`rowsAfterNewGroupAbove`: 524/163 gives 262/355/70, 343/344 gives 229/229/229), and an emptied row's removal keeps the editor area's height (`rowsAfterRemoval`). Off by default: the other tests keep rows that no activation expands, on which their verdicts were taken.
+     * @example
+     * harness.useNativeLayout({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] })
+     * harness.modelVsCodeStackedRowSizing()
+     */
     modelVsCodeStackedRowSizing(): void {
       modelsVsCodeStackedRowSizing = true
     },
