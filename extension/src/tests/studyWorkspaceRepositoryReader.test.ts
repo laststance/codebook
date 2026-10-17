@@ -542,6 +542,59 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
+// Value: protects=an agent's cold Wiki open beside VS Code's floating window of text editors while the learner's diff editor in front of the main editor's second group has the keyboard: no text editor beyond the first column proves the main editor while another part holds editors (row 689), so the layout read borrows the first group and gives the keyboard back to the diff through its group's focus (rows 688 and 709), and the reader's receipt of the borrow's focus target takes the diff in front of its group for the target's group, so the open answers and the Wiki shows in front of the diff; fails_when=the target's group check asks for a plain text tab in front of the diff's group, so the reader's cold focus receipt never takes the target and reads the return as a change: the open is refused with "Native focus changed during repository navigation; the newer learner focus was preserved." and no Wiki shows; why_new=Cycle 0046 row 717 (the open-code-review delegate's finding F3 of the C61 delta; row 688's tests measured the grid without the reader's receipt); seam=useNativeLayout with two main groups, leaveEmptyGroup, addFloatingEditorWindow (not focused), focusDiffEditor (a diff's text editors without a view column), createRepositoryWikiReader, openFromAgent, the native commands and the second group's tabs
+test("an agent's cold Wiki open beside VS Code's floating window while the learner's diff editor has the keyboard borrows the first group, gives the diff its keyboard back and opens the Wiki", async () => {
+  // Arrange: VS Code's floating window shows notes.ts; in the main editor login-form.tsx is in the first group and the learner's diff of auth.ts in front of the second group has the keyboard; no Wiki is open.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 490 }, { size: 490 }],
+  })
+  harness.leaveEmptyGroup(2)
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.addFloatingEditorWindow(['notes.ts'])
+  harness.focusDiffEditor('auth.ts', 2)
+  const { selection, books } = await publishTwoCitationWiki(harness)
+  const wiki = harness.createRepositoryWikiReader()
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({ instanceId: harness.service.instanceId, ...selection })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the borrow of the first group and the diff's group focus ran, the open answered, and the Wiki shows in front of the diff.
+    assert.deepEqual(
+      {
+        refusal,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        secondGroup: harness.groups[1]!.tabs.map(
+          (tab) =>
+            `${tab === harness.groups[1]!.activeTab ? '*' : ''}${tab.label}`,
+        ),
+      },
+      {
+        refusal: undefined,
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusSecondEditorGroup',
+        ],
+        secondGroup: ['auth.ts (Working Tree)', '*codebook · Repository Wiki'],
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's keyboard in VS Code's floating window of text editors when an agent opens an article through codebook_open_book while no Wiki is open: the layout read borrows the main editor's first group (row 689), measures the main editor, and gives the keyboard back to the floating window's file through its group's numbered focus (row 708), so the open answers, the Wiki stands in the main editor and the learner types on in the floating window with nothing told; fails_when=the borrow gives nothing back, so the keyboard stays in the main editor's first group, or the Repository Wiki's navigation takes the return for a learner's move and refuses the open; why_new=Cycle 0046 row 708; seam=useNativeLayout with two main groups, leaveEmptyGroup, addFloatingEditorWindow (two groups) and its focus, createRepositoryWikiReader, openFromAgent, the native commands, focusedSource and the information messages
 test("an agent's cold Wiki open while a text editor of VS Code's floating window has the keyboard gives that editor the keyboard back after the borrow and opens the Wiki in the main editor", async () => {
   // Arrange: the main editor's first group shows login-form.tsx; the learner works in notes.ts, in the first group of a floating window of two groups; no Wiki is open.
