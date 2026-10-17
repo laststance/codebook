@@ -218,18 +218,24 @@ export function activate(
     | undefined
   // The Cancel of the VS Code watch whose status bar entry is shown: a press on the entry stops that watch, not the chat; nothing while no entry is shown.
   let cancelShownWikiChatWatch: (() => void) | undefined
-  // How this window's last run ended, also across a reload: a candidate written while it lasted is this window's own leftover.
-  let lastWikiRun: WikiLastRun | undefined = wikiLastRunSchema.safeParse(
+  // How this window's last run of each Wiki output ended: a candidate written while it lasted is this window's own leftover, and a chat it left at work holds the next start of that output back. The workspace state keeps the latest run's record, so a reloaded window still has that one.
+  const storedWikiRun = wikiLastRunSchema.safeParse(
     context.workspaceState.get(WIKI_UPDATE_LAST_RUN_STATE_KEY),
   ).data
-  /** Whether the editor stored the latest run's record; {@link dropWikiReservation} waits for it at shutdown before removing the reload's fallback reservation. */
-  let lastWikiRunWrite: Promise<boolean> | undefined
+  const lastWikiRuns = new Map<string, WikiLastRun>(
+    storedWikiRun ? [[storedWikiRun.outputDirectory, storedWikiRun]] : [],
+  )
+  /** The output of the latest run's record, and whether the editor stored it; {@link dropWikiReservation} waits for it at shutdown before removing the reload's fallback reservation. */
+  let lastWikiRunWrite:
+    { outputDirectory: string; written: Promise<boolean> } | undefined
   // This window's id in the marker of a running update; another window's live marker refuses a start here.
   const wikiWindowId = randomUUID()
-  // The reservation this window's stopped VS Code watch left on disk for other windows, with the timer that removes it at the watch bound.
-  let wikiReservation:
-    { release: () => Promise<void>; timer: NodeJS.Timeout } | undefined
-  /** Checks whether a reload needs the stopped watch's disk reservation; called by {@link dropWikiReservation} before releasing it. @param isWindowClosing - Whether this removal is part of shutdown. @param mayAgentStillWork - Whether the latest run left a chat that may publish. @param recordWritten - The storage result of that run, which never rejects. @returns `true` only at shutdown when a chat may still publish and its record could not be stored. @example await doesReloadNeedWikiReservation(true, true, Promise.resolve(false)) // => true */
+  // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound.
+  const wikiReservations = new Map<
+    string,
+    { release: () => Promise<void>; timer: NodeJS.Timeout }
+  >()
+  /** Checks whether a reload needs the stopped watch's disk reservation; called by {@link dropWikiReservation} before releasing it. @param isWindowClosing - Whether this removal is part of shutdown. @param mayAgentStillWork - Whether the last run of the reservation's output left a chat that may publish. @param recordWritten - Whether the workspace state holds that run's record ({@link storedWikiRunWriteOf}), which never rejects. @returns `true` only at shutdown when a chat may still publish and its record could not be stored. @example await doesReloadNeedWikiReservation(true, true, Promise.resolve(false)) // => true */
   const doesReloadNeedWikiReservation = async (
     isWindowClosing: boolean,
     mayAgentStillWork: boolean | undefined,
@@ -238,24 +244,38 @@ export function activate(
     isWindowClosing &&
     mayAgentStillWork === true &&
     (await recordWritten) === false
-  /** Removes this window's reservation at its bound or shutdown; called by its timer and {@link stopExtension}. A failed workspace-state write keeps the stopped watch's reservation for the reloaded window, which otherwise has no record of the chat that may still publish. @param isWindowClosing - Whether shutdown must first check that the record was stored. @example await dropWikiReservation(true) */
+  /** Says whether the workspace state holds the record of an output's last run; called by {@link dropWikiReservation} at shutdown. @param outputDirectory - The Wiki output of the reservation. @returns The storage result of the latest write when it was that output's record; `false` when a later run of another output took its place there, so a reloaded window has no record of this output's chat. @example await storedWikiRunWriteOf('/repo/.codebook/wiki') // => false after a later run of '/repo/docs/wiki' */
+  const storedWikiRunWriteOf = (outputDirectory: string): Promise<boolean> =>
+    lastWikiRunWrite?.outputDirectory === outputDirectory
+      ? lastWikiRunWrite.written
+      : Promise.resolve(false)
+  /** Removes this window's reservation of one Wiki output at its bound or shutdown; called by its timer and by {@link dropWikiReservations}. A record of the stopped watch that the workspace state does not hold (its write failed, or a later run of another output took its place) keeps the reservation for the reloaded window, which otherwise has no record of the chat that may still publish. @param outputDirectory - The Wiki output whose reservation is removed. @param isWindowClosing - Whether shutdown must first check that the record was stored. @example await dropWikiReservation('/repo/.codebook/wiki', true) */
   const dropWikiReservation = async (
+    outputDirectory: string,
     isWindowClosing = false,
   ): Promise<void> => {
-    const reservation = wikiReservation
-    wikiReservation = undefined
+    const reservation = wikiReservations.get(outputDirectory)
+    wikiReservations.delete(outputDirectory)
     if (!reservation) return
     clearTimeout(reservation.timer)
-    // The disk marker is the reload's only protection when its stopped-watch record could not be stored.
+    // The disk marker is the reload's only protection when its stopped-watch record is not in storage.
     if (
       await doesReloadNeedWikiReservation(
         isWindowClosing,
-        lastWikiRun?.mayAgentStillWork,
-        lastWikiRunWrite,
+        lastWikiRuns.get(outputDirectory)?.mayAgentStillWork,
+        storedWikiRunWriteOf(outputDirectory),
       )
     )
       return
     await reservation.release().catch(() => undefined)
+  }
+  /** Removes every reservation this window holds, each by {@link dropWikiReservation}; called by {@link stopExtension} at shutdown. @example await dropWikiReservations() */
+  const dropWikiReservations = async (): Promise<void> => {
+    await Promise.all(
+      [...wikiReservations.keys()].map((outputDirectory) =>
+        dropWikiReservation(outputDirectory, true),
+      ),
+    )
   }
   /** The button of a refusal that names an earlier chat's leftover: it starts the update with that leftover ignored. */
   const UPDATE_ANYWAY_ACTION = 'Update anyway'
@@ -795,7 +815,7 @@ export function activate(
     )
   }
   /**
-   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, settles the Wiki reservation and closes the DeepWiki reader; called by {@link deactivate}. A stopped watch whose record could not be stored keeps its bounded reservation for the reloaded window.
+   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, settles the Wiki reservations and closes the DeepWiki reader; called by {@link deactivate}. A stopped watch whose record the workspace state does not hold keeps its bounded reservation for the reloaded window.
    * Every step runs whatever the step before it did. A stop that threw used to end the first three steps, so the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, did not run, and a write under way was not waited for before the extension host ended.
    * It is kept apart from {@link replaceReadersAfterFolderChange}: the two share only "stop, then dispose two readers", and that handling also hands archives over, clears the readers' variables, makes new readers and names each failed step for its notice, none of which a closing window may do.
    * @throws The first failure of its steps, after all of them ran, so that the editor still logs it.
@@ -821,7 +841,7 @@ export function activate(
           stoppedWikiRun.settled.catch(() => undefined),
           WIKI_CURSOR_TERMINATION_GRACE_MS,
         ),
-      (): Promise<void> => dropWikiReservation(true),
+      (): Promise<void> => dropWikiReservations(),
       (): Promise<void> | undefined => deepWikiReader?.close(),
     ]) {
       try {
@@ -935,8 +955,8 @@ export function activate(
   }
   /** Keeps the last Wiki update's record in memory and workspace storage; called by {@link finishWikiUpdate}. The open window does not wait for storage before showing the end. A refusal stays in memory and leaves the reservation as the reload's fallback at shutdown. @param record - The latest run's durable control facts. @returns A non-rejecting promise: `true` when stored, `false` when storage refused it. @example await rememberLastWikiRun({ outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: [] }) // => true */
   const rememberLastWikiRun = (record: WikiLastRun): Promise<boolean> => {
-    lastWikiRun = record
-    lastWikiRunWrite = Promise.resolve()
+    lastWikiRuns.set(record.outputDirectory, record)
+    const written = Promise.resolve()
       .then(() =>
         context.workspaceState.update(WIKI_UPDATE_LAST_RUN_STATE_KEY, record),
       )
@@ -944,7 +964,8 @@ export function activate(
         () => true,
         () => false,
       )
-    return lastWikiRunWrite
+    lastWikiRunWrite = { outputDirectory: record.outputDirectory, written }
+    return written
   }
   /** What a run hands to its end: what it observed itself, without a look at the disk. */
   type ObservedWikiRunEnd = Partial<
@@ -1021,12 +1042,14 @@ export function activate(
     }
     // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
     await run.reserveMarker(endedAtMs).catch(() => undefined)
-    wikiReservation = {
+    // The reservation of this output only; one this window left on another output keeps its own timer.
+    clearTimeout(wikiReservations.get(run.outputDirectory)?.timer)
+    wikiReservations.set(run.outputDirectory, {
       release: run.releaseMarker,
       timer: setTimeout(() => {
-        void dropWikiReservation()
+        void dropWikiReservation(run.outputDirectory)
       }, WIKI_UPDATE_WATCH_TIMEOUT_MS).unref(),
-    }
+    })
   }
   /** Records how a run of either host ended: lets {@link readWikiUpdateEnd} decide from the disk, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. It never rejects: a run whose end cannot be read from the disk is recorded as failed without a word about the site ({@link unreadWikiUpdateEnd}), so no window stays "already updating", and a notice that cannot be shown does not keep the run's marker in place. @example await finishWikiUpdate(run, { cancelled: true }) */
   const finishWikiUpdate = async (
@@ -1379,10 +1402,7 @@ export function activate(
           reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(otherWindow.watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
         })
       // The record of another output says nothing about this one's candidates.
-      const lastRun =
-        lastWikiRun?.outputDirectory === outputDirectory
-          ? lastWikiRun
-          : undefined
+      const lastRun = lastWikiRuns.get(outputDirectory)
       const activeCandidate = selectActiveWikiCandidate(
         await listWikiCandidates(outputDirectory),
         { nowMs, activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS, lastRun },
@@ -1433,9 +1453,9 @@ export function activate(
       // Another window began its run between the look at the marker and this write.
       if ('heldBy' in claim)
         return refuse(describeOtherWindow(claim.heldBy), {})
-      // This window's own reservation, if it left one, is now this run's marker; its timer must not remove it.
-      clearTimeout(wikiReservation?.timer)
-      wikiReservation = undefined
+      // This window's own reservation of this output, if it left one, is now this run's marker; its timer must not remove it. A reservation of another output shares no marker with this run and keeps its timer.
+      clearTimeout(wikiReservations.get(outputDirectory)?.timer)
+      wikiReservations.delete(outputDirectory)
       return {
         tokenAtStart,
         publicationAtStart,

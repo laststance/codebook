@@ -3578,6 +3578,115 @@ test('a stopped watch’s reservation leaves the disk when its window closes, an
   }
 })
 
+/** Publishes a second Wiki of the window's project in another output folder, for a test that changes `codebook.wikiOutputDirectory` between two updates. */
+async function writeSecondWiki(
+  projectRoot: string,
+  outputSetting: string,
+): Promise<string> {
+  const outputDirectory = join(projectRoot, outputSetting)
+  await mkdir(outputDirectory, { recursive: true })
+  await writeFile(join(outputDirectory, 'index.html'), INDEX_PAGE)
+  await writePublishedWiki(outputDirectory, projectRoot, 'a'.repeat(64))
+  return outputDirectory
+}
+
+// Value: protects=the chat a stopped VS Code watch left at work on one Wiki output, after the learner updated another output and set the first one again; fails_when=the window keeps one record of its last run and one reservation for every output, so the run on the second output takes the first one's place, and the press on the first output within the watch bound finds neither a record of its chat nor another window's marker and sends a second request beside the chat that may still work; why_new=Cycle 0046 /ship red team finding R7; seam=the output setting, which the test changes between the presses
+test('after a stopped watch on one Wiki output and an update of another output, a press on the first output again within the watch bound is refused for the chat that may still work there and offers Update anyway', async () => {
+  // Arrange: a watch on the first output is stopped, the setting names a second output, whose watch is stopped too, and the setting names the first output again.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress })
+  try {
+    await writeSecondWiki(wiki.projectRoot, '.codebook/wiki-two')
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    wiki.setOutputSetting('.codebook/wiki-two')
+    await wiki.clickUpdate()
+    progress[1]!.cancel()
+    await waitForEnd(wiki.status)
+    wiki.setOutputSetting('.codebook/wiki')
+
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const pressed = wiki.status()
+    assert.equal(pressed.state, 'failed')
+    assert.match(
+      pressed.state === 'failed' ? pressed.reason : '',
+      /^The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at \d{1,2}:\d{2}[^.]* and waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
+    )
+    assert.equal(
+      pressed.state === 'failed' ? pressed.outputDirectory : '',
+      wiki.outputDirectory,
+    )
+    assert.equal(wiki.chatRequests.length, 2)
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes
+test('the reservation a stopped watch left on one Wiki output leaves the disk at its watch bound, also after an update of another output began in the meantime', async () => {
+  // Arrange: the watch bound is 3 seconds; a watch on the first output is stopped, then the setting names a second output, whose update begins and is stopped too.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    constants: { WIKI_UPDATE_WATCH_TIMEOUT_MS: 3_000 },
+  })
+  const isOnDisk = (path: string): Promise<boolean> =>
+    access(path).then(
+      () => true,
+      () => false,
+    )
+  try {
+    const secondOutput = await writeSecondWiki(
+      wiki.projectRoot,
+      '.codebook/wiki-two',
+    )
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    wiki.setOutputSetting('.codebook/wiki-two')
+    await wiki.clickUpdate()
+    progress[1]!.cancel()
+    await waitForEnd(wiki.status)
+    const secondEndedAtMs = Date.now()
+    const wasFirstReservedMeanwhile = await isOnDisk(
+      `${wiki.outputDirectory}.update-run.json`,
+    )
+
+    // Act: the watch bound of both stopped watches passes, the second one's half a second ago.
+    await new Promise((resolveWait) =>
+      setTimeout(resolveWait, secondEndedAtMs + 3_500 - Date.now()),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        wasFirstReservedMeanwhile,
+        isFirstReservedAfterItsBound: await isOnDisk(
+          `${wiki.outputDirectory}.update-run.json`,
+        ),
+        isSecondReservedAfterItsBound: await isOnDisk(
+          `${secondOutput}.update-run.json`,
+        ),
+      },
+      {
+        wasFirstReservedMeanwhile: true,
+        isFirstReservedAfterItsBound: false,
+        isSecondReservedAfterItsBound: false,
+      },
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a press after a publish stopped inside its swap names the unfinished publish, not a missing Wiki', async () => {
   // Arrange
   const wiki = await openWikiWindow()

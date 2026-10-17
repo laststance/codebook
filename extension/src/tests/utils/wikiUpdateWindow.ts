@@ -163,6 +163,8 @@ export async function openWikiUpdateWindow(options: {
   clickUpdate(): Promise<void>
   runUpdateCommand(): Promise<void>
   status(): WikiUpdateStatus
+  /** Changes `codebook.wikiOutputDirectory` from now on, as the learner does in the settings; the next update resolves its Wiki folder from it. */
+  setOutputSetting(value: string): void
   setFreshness(freshness: WikiFreshness): void
   /** Makes every read of the publish token reject with the message from now on, the start checks' and the one a run's end begins with; `undefined` mends the read. */
   breakPublishTokenRead(message: string | undefined): void
@@ -170,7 +172,7 @@ export async function openWikiUpdateWindow(options: {
   close(): Promise<void>
 }> {
   const { projectRoot } = options
-  const outputSetting = options.outputSetting ?? '.codebook/wiki'
+  let outputSetting = options.outputSetting ?? '.codebook/wiki'
   let handleUri: UriHandler | undefined
   let readUpdateStatus: (() => WikiUpdateStatus) | undefined
   // The Wiki is stale until a test says otherwise; a current one ends the click as "already current".
@@ -596,6 +598,9 @@ export async function openWikiUpdateWindow(options: {
       if (!readUpdateStatus)
         throw new Error('The browser reader was not opened in this window.')
       return readUpdateStatus()
+    },
+    setOutputSetting(value: string): void {
+      outputSetting = value
     },
     setFreshness(next: WikiFreshness): void {
       freshness = next
