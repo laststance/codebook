@@ -5654,7 +5654,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     codebookStopLedger.closeWindow(this.participantSessionIds())
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate(true)
-    this.evidence.record('run.failed', { reason })
+    // Also after the evidence refused further events: the journal of a failed run ends with its failure (Cycle 0046 row 666).
+    this.evidence.recordFailure(reason)
     queueMicrotask(() => {
       void this.stop().catch((error) => this.failures.push(String(error)))
     })

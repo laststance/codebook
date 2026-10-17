@@ -78,6 +78,35 @@ test("a profile folder that cannot be removed is named in the run's cleanup reco
   assert.deepEqual([...view.failures], [])
 })
 
+// Value: protects=the journal an agent reads through the run's events resource, the end of the run's recording and the replay's paused intervals for a run that fails after its evidence refused further events: the run's run.failed with its reason is the journal's last event; fails_when=ConfiguredBrowserRun.fail records run.failed as an ordinary event, which the evidence drops once it has failed, so the failed run's journal ends without its failure; why_new=Cycle 0046 row 666 (the 653 fork's finding 2); seam=configuredRuntimeHarness with the run's evidence failure set as Evidence sets it at a refusal past its bound
+test('a run whose evidence refused further events and which then fails keeps its run.failed with its reason as the last event of its journal', async (context) => {
+  // Arrange: a prepared run whose evidence has refused an event past its bound.
+  const { run } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.evidence.failure = 'Evidence buffering limit exceeded'
+
+  // Act
+  run.fail(
+    'Evidence buffering or persistence failed. Cause: Evidence buffering limit exceeded',
+  )
+  const last = run.view().events.at(-1)
+  // The release fail() schedules, and the harness's own, can save the run's manifest once the test has read the journal.
+  run.evidence.failure = undefined
+
+  // Assert
+  assert.deepEqual(
+    { type: last?.type, detail: last?.detail, status: run.view().status },
+    {
+      type: 'run.failed',
+      detail: {
+        reason:
+          'Evidence buffering or persistence failed. Cause: Evidence buffering limit exceeded',
+      },
+      status: 'failed',
+    },
+  )
+})
+
 test('a required value inspection of an object commits the stop with an object marker and the run continues to completion', async (context) => {
   // Arrange: the agent asked for value:nextTheme, which is an application object at the pause.
   const { run, useObjectValue, commands } =

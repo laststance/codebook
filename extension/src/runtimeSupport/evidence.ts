@@ -11,6 +11,13 @@ export interface RecordedEvent {
   detail: unknown
 }
 
+/** An event stamped by {@link Evidence} before it decides whether to keep it: the event, its journal line and that line's size. */
+interface EventReceipt {
+  event: RecordedEvent
+  serialized: string
+  bytes: number
+}
+
 export interface EvidenceLimits {
   maxEvents: number
   retainedBytes: number
@@ -25,6 +32,8 @@ export class Evidence {
   private pending: Promise<void>
   private retainedBytes = 0
   private queuedBytes = 0
+  /** Set once {@link Evidence.recordFailure} kept a run's failure past a refusal, so the journal's bounds are exceeded by that one event at most. */
+  private isFailureKeptPastRefusal = false
 
   constructor(
     readonly directory: string,
@@ -40,6 +49,43 @@ export class Evidence {
 
   /** Records a local receipt time immediately when any runtime lane reports evidence. @example evidence.record('input.accepted', { operationId: 'op' }) */
   record(type: string, detail: unknown = {}): RecordedEvent {
+    const receipt = this.receiptOf(type, detail)
+    if (this.refuses(receipt.bytes)) {
+      this.failure ??= 'Evidence buffering limit exceeded'
+      return receipt.event
+    }
+    return this.retain(receipt)
+  }
+
+  /**
+   * Journals a run's failure as `run.failed`, also once the evidence refused further events or failed to write them, so the journal every reader reads (the run's events resource, the end of its recording, the replay's paused intervals) ends with the run's failure (Cycle 0046 row 666); called by {@link ConfiguredBrowserRun.fail}, which journals a run's failure once.
+   * Past a refusal the event is kept in {@link Evidence.events} and appended to `events.jsonl` while that file can still be written; the first failure stays the evidence's {@link Evidence.failure}, and only one failure is kept past a refusal.
+   * @param reason - The run's failure, as its runtime was given it.
+   * @returns The journaled event; an event that is not kept for a second failure past a refusal.
+   * @example
+   * evidence.failure // => 'Evidence buffering limit exceeded'
+   * evidence.recordFailure('Selected debugger terminated')
+   * evidence.events.at(-1) // => { sequence: 10001, type: 'run.failed', detail: { reason: 'Selected debugger terminated' }, … }
+   */
+  recordFailure(reason: string): RecordedEvent {
+    const receipt = this.receiptOf('run.failed', { reason })
+    if (this.refuses(receipt.bytes)) {
+      this.failure ??= 'Evidence buffering limit exceeded'
+      // One failure past the refusal, so the journal's bounds are exceeded by one event at most.
+      if (this.isFailureKeptPastRefusal) return receipt.event
+      this.isFailureKeptPastRefusal = true
+    }
+    return this.retain(receipt)
+  }
+
+  /**
+   * Stamps an event with its sequence and receipt times and serializes it once, for {@link Evidence.record} and {@link Evidence.recordFailure}.
+   * @param type - The event's type.
+   * @param detail - The event's detail, serialized as it is now.
+   * @returns The event, its journal line and that line's size in bytes.
+   * @example this.receiptOf('input.accepted', { operationId: 'op' }).bytes // => 142
+   */
+  private receiptOf(type: string, detail: unknown): EventReceipt {
     const event = {
       sequence: this.events.length + 1,
       elapsedMs: this.elapsedMs(),
@@ -48,18 +94,33 @@ export class Evidence {
       detail,
     }
     const serialized = JSON.stringify(event) + '\n'
-    const bytes = Buffer.byteLength(serialized)
-    // Product adapters stop buffering on overload; legacy experiments preserve their existing contract.
-    if (
+    return { event, serialized, bytes: Buffer.byteLength(serialized) }
+  }
+
+  /**
+   * Says whether a product adapter's evidence refuses another event: after a failure, or when the event would pass a bound; legacy experiments without limits preserve their existing contract and refuse nothing. Asked by {@link Evidence.record} and {@link Evidence.recordFailure}.
+   * @param bytes - The size of the event's journal line.
+   * @returns `true` when the event must not be buffered; `false` without limits or within them.
+   * @example this.refuses(142) // => true once this.failure is set
+   */
+  private refuses(bytes: number): boolean {
+    return Boolean(
       this.limits &&
       (this.failure ||
         this.events.length >= this.limits.maxEvents ||
         this.retainedBytes + bytes > this.limits.retainedBytes ||
-        this.queuedBytes + bytes > this.limits.queuedBytes)
-    ) {
-      this.failure ??= 'Evidence buffering limit exceeded'
-      return event
-    }
+        this.queuedBytes + bytes > this.limits.queuedBytes),
+    )
+  }
+
+  /**
+   * Keeps an event in the journal and queues its line for `events.jsonl`, for {@link Evidence.record} and {@link Evidence.recordFailure}.
+   * @param receipt - The stamped event.
+   * @returns The retained copy of the event.
+   * @example this.retain(this.receiptOf('stopped', { generation: 1 })).sequence // => 1
+   */
+  private retain(receipt: EventReceipt): RecordedEvent {
+    const { serialized, bytes } = receipt
     // Retain the serialized observation, never a live object that later input acknowledgements can mutate.
     const captured: RecordedEvent = JSON.parse(serialized)
     this.events.push(captured)
@@ -68,7 +129,8 @@ export class Evidence {
     this.pending = this.pending
       .then(() => appendFile(join(this.directory, 'events.jsonl'), serialized))
       .catch((error) => {
-        this.failure = String(error)
+        // The first failure is the evidence's cause; a later append, such as a run's failure journaled past it, does not replace it.
+        this.failure ??= String(error)
       })
       .finally(() => {
         this.queuedBytes -= bytes
