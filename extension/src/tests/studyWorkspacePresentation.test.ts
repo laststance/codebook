@@ -5248,6 +5248,155 @@ test('beside VS Code’s floating window, an agent’s cold Study selection refu
   }
 })
 
+// Value: protects=the learner's newer choice when an agent's cold Study selection made from Cursor's chat tab is refused for it: right after the measurement's borrow of the first group, during its layout read, the learner clicked README.md, a second tab of that group, and the refusal says that the learner arrangement was preserved; README.md keeps the keyboard, the chat gets none and nothing is told; fails_when=the refusal path gives the chat its keyboard back after a refusal that names the learner's change, reading README.md in front of the first group under the chat part's name as the file the borrow focused, so Focus Agent takes the keyboard from README.md and "Codebook could not finish arranging its panes …" is told; why_new=Cycle 0046 row 732 (the fixer of rows 725 to 730, found beside row 728); seam=workspaceHarness's Cursor model, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, focusMutableDraft and README.md's focus (a click on its tab), holdNextCommand on workbench.action.focusFirstEditorGroup and on the layout read after it, refusedSelectionOutcome and the named group
+test('in Cursor beside its chat part, an agent’s cold Study selection from the chat tab refused for the learner’s tab of the first group chosen during its layout read leaves that tab the keyboard and gives the chat none', async () => {
+  // Arrange: README.md stands behind login-form.tsx in the first group; a run is paused and the chat tab has the keyboard. Right after the measurement's borrow the learner will click README.md's tab.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const readme = harness.focusMutableDraft('README.md', 1)
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('auth.ts', 2)
+    await pauseLiveRun(harness)
+    chat.focusTab()
+    const borrow = harness.holdNextCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    void borrow.started.then(() => {
+      const readAfterBorrow = harness.holdNextCommand('vscode.getEditorLayout')
+      void readAfterBorrow.started.then(() => {
+        readme.focus()
+        readAfterBorrow.release()
+      })
+      borrow.release()
+    })
+
+    // Act
+    const outcome = await refusedSelectionOutcome(harness, chat)
+
+    // Assert: refused for the learner's change after the borrow; no Focus Agent ran, the chat has no keyboard, README.md is in front of the first group, and nothing was told.
+    assert.deepEqual(
+      {
+        ...outcome,
+        firstGroupFront: harness.groups.find((group) => group.viewColumn === 1)
+          ?.activeTab?.label,
+      },
+      {
+        refusal:
+          'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+        shownWithKeyboard: [],
+        keyboardOnBody: false,
+        chatHasKeyboard: false,
+        activeTextEditor: 'README.md',
+        groups: 3,
+        messages: [],
+        firstGroupFront: 'README.md',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's newer input when an agent's cold Study selection made from Cursor's chat tab is refused for it while the first group still shows the file the borrow focused: right after the measurement's borrow the learner changed login-form.tsx there, and the refusal says that the newer learner focus was preserved; the chat gets no keyboard back over the learner's edit and nothing is told; fails_when=the refusal path gives the chat its keyboard back after a refusal that names the learner's change, because the first group and the active text editor still read as the borrow left them; why_new=Cycle 0046 row 732 (its first half: no chat give-back after a refusal for the learner's change); seam=workspaceHarness's Cursor model, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, focusMutableDraft and its replaceContent, holdNextCommand on workbench.action.focusFirstEditorGroup and on the layout read after it, refusedSelectionOutcome
+test('in Cursor beside its chat part, an agent’s cold Study selection from the chat tab refused for the learner’s change of the first group’s file during its layout read gives the chat no keyboard and tells nothing', async () => {
+  // Arrange: login-form.tsx is in front of the first group; a run is paused and the chat tab has the keyboard. Right after the measurement's borrow the learner will change login-form.tsx.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const loginForm = harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('auth.ts', 2)
+    await pauseLiveRun(harness)
+    chat.focusTab()
+    const borrow = harness.holdNextCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    void borrow.started.then(() => {
+      const readAfterBorrow = harness.holdNextCommand('vscode.getEditorLayout')
+      void readAfterBorrow.started.then(() => {
+        loginForm.replaceContent('export const changedByLearner = true\n')
+        readAfterBorrow.release()
+      })
+      borrow.release()
+    })
+
+    // Act
+    const outcome = await refusedSelectionOutcome(harness, chat)
+
+    // Assert: refused for the learner's change after the borrow; no Focus Agent ran, the chat has no keyboard, and nothing was told.
+    assert.deepEqual(outcome, {
+      refusal:
+        'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+      shownWithKeyboard: [],
+      keyboardOnBody: false,
+      chatHasKeyboard: false,
+      activeTextEditor: 'login-form.tsx',
+      groups: 3,
+      messages: [],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's newer choice when an agent's cold Study selection made from Cursor's chat tab is refused for a reason of the editor's (the lock of the inserted Application group fails) after the learner clicked README.md, a second tab of the first group, while that lock waited: README.md keeps the keyboard, the chat gets none and nothing is told; fails_when=the chat return takes the first group, which the editor names with README.md in front, for the place the measurement's borrow left the keyboard in, so Focus Agent takes the keyboard from README.md and "Codebook could not finish arranging its panes …" is told; why_new=Cycle 0046 row 732 (its second half: leftByMeasurement asks the first group's front tab the borrow left); seam=workspaceHarness's Cursor model, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, focusMutableDraft and README.md's focus, holdNextCommand and failNextCommand on workbench.action.lockEditorGroup, refusedSelectionOutcome and the named group
+test('in Cursor beside its chat part, an agent’s cold Study selection from the chat tab refused after the learner chose another tab of the first group leaves that tab the keyboard and gives the chat none', async () => {
+  // Arrange: README.md stands behind login-form.tsx in the first group; a run is paused and the chat tab has the keyboard. While the lock of the inserted group waits the learner will click README.md's tab, and then the lock fails.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const readme = harness.focusMutableDraft('README.md', 1)
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('auth.ts', 2)
+    await pauseLiveRun(harness)
+    chat.focusTab()
+    const lock = harness.holdNextCommand('workbench.action.lockEditorGroup')
+    harness.failNextCommand('workbench.action.lockEditorGroup')
+    void lock.started.then(() => {
+      readme.focus()
+      lock.release()
+    })
+
+    // Act
+    const outcome = await refusedSelectionOutcome(harness, chat)
+
+    // Assert: refused by the editor after both borrows and the insertion; no Focus Agent ran, the chat has no keyboard, the editor names README.md's group, and nothing was told.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        ...outcome,
+        named: `${named.viewColumn}:${named.activeTab?.label}`,
+      },
+      {
+        refusal:
+          'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        keyboardCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.newGroupAbove',
+        ],
+        shownWithKeyboard: [],
+        keyboardOnBody: false,
+        chatHasKeyboard: false,
+        activeTextEditor: 'README.md',
+        groups: 3,
+        messages: [],
+        named: '1:README.md',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the Study pane's keyboard and the truth of what the learner is told when an agent's Study selection beside VS Code's floating window is refused right after its measurement borrowed the main editor's first group, while the Study pane had the keyboard (the learner clicked its tab after typing in the floating window's file, which VS Code goes on reporting as the active text editor): the Study pane gets its keyboard back and the sentence names the Study pane; fails_when=the refusal's record counts that reported text editor as a file with the keyboard (activeTextEditorWithKeyboard reads past the panes' tabs for callers that ask the panes first), so the learner is told "the file you had open has the keyboard again" while the Study pane has it, or the refusal leaves the keyboard on the Application pane the borrow focused; why_new=Cycle 0046 row 726 (CodeRabbit on 8ac142df..b5f8bf97, row 718's refusal record); seam=useNativeLayout, the learner's Guided walkthrough (the saved layout an agent's selection still leaves), addFloatingEditorWindow, focusWebviewTabKeepingTextEditorReport on the Study pane's tab, holdNextCommand on workbench.action.focusFirstEditorGroup with failNextCommand on the layout read after it, the service's selectPresentation, the command log, focusedPanel, keyboardOnBody and the information messages
 test('beside VS Code’s floating window, an agent’s Study selection refused right after its borrow while the Study pane had the keyboard gives the Study pane its keyboard back and names that pane, not a file', async () => {
   // Arrange: the learner reads in the Guided walkthrough, typed in notes.ts of the floating window, then clicked the Study pane's tab; VS Code still reports notes.ts. The layout read after the borrow will fail.

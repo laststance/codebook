@@ -958,7 +958,7 @@ export class StudyWorkspace {
     >
   }
   private presentationMovedFocus = false
-  /** Whether the running presentation change was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728). */
+  /** Whether the running presentation change was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732). */
   private presentationYieldedToLearner = false
   private presentationPoseRequest?: PresentationPoseCapture
   private presentationPose?: PresentationPose
@@ -3044,8 +3044,10 @@ export class StudyWorkspace {
             : undefined,
         panes = this.studyPanePositions()
       // The focus is given back only from where the arrangement or its measurement left it, and never to a group a Study pane uses or one that is gone. The arrangement leaves it on a Codebook pane, the captured source or the learner's file it focused. The measurement leaves it in the first group, which the editor names then, or still names the group it named before: Cursor reports no focus of a pane beside the chat. Its chat part's group, named since a tab closed during the arrangement, stays named over the first group's text editor the borrow focused (row 723).
+      // A learner's other tab in front of the first group since the borrow is the learner's newer place, also under the chat part's name (row 732).
       const leftByMeasurement =
         this.mainEditorFocusBorrows !== borrowsBefore &&
+        !this.showsLearnersOtherTabInFirstGroup() &&
         (active.viewColumn === vscode.ViewColumn.One ||
           active.viewColumn === target?.viewColumn ||
           this.isFirstGroupEditorUnderAnotherPartsName(active))
@@ -3103,7 +3105,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the first group's text editor a layout read's borrow focused has the keyboard while the editor names another editor part's group: after `workbench.action.focusFirstEditorGroup` beside Cursor 3.23.12's chat part, the first group's text editor is reported as the active text editor and the group named before stays named until a group event (row 673), and that is the chat part's group once a tab closed while the chat input had the keyboard (row 702's probe, step 6), as the replay's captured source closes at an agent's Return Current (row 711's order); asked by the function {@link retainForeignTabFocus} answers for its measurement's borrow, so the chat gets its keyboard back as after row 711's borrow through the captured source (Cycle 0046 row 723).
+   * Says whether the first group's text editor a layout read's borrow focused has the keyboard while the editor names another editor part's group: after `workbench.action.focusFirstEditorGroup` beside Cursor 3.23.12's chat part, the first group's text editor is reported as the active text editor and the group named before stays named until a group event (row 673), and that is the chat part's group once a tab closed while the chat input had the keyboard (row 702's probe, step 6), as the replay's captured source closes at an agent's Return Current (row 711's order); asked by the function {@link retainForeignTabFocus} answers for its measurement's borrow, so the chat gets its keyboard back as after row 711's borrow through the captured source (Cycle 0046 row 723). That function takes it only while the first group shows in front no learner's tab other than the one the borrow left there ({@link showsLearnersOtherTabInFirstGroup}): a learner's tab of that group, reported as the active text editor under the chat's name, is the learner's newer place (row 732).
    * @param active - The group the editor names as active now.
    * @returns `true` while the named group's front tab has no editor's input (the chat's tab, {@link namesAnotherEditorPartsTab}) and the active text editor is the one in front of the first group ({@link isActiveTextEditorInFrontOfGroup}); `false` otherwise.
    * @example this.isFirstGroupEditorUnderAnotherPartsName(vscode.window.tabGroups.activeTabGroup) // => true after Return Current's measurement focused the learner's login-form.tsx in front of the first group beside Cursor's chat part, once the replay's captured source closed under the chat's name
@@ -5319,8 +5321,12 @@ export class StudyWorkspace {
           agentSelection?.knowsLearnersPlace ?? true,
           refusal.learnerSignBefore,
         )
-      // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays. After a borrow its sentence says that nothing was placed (row 718).
-      if (!this.closing && lifetime === this.lifetime)
+      // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays, also the one a refusal names (row 732). After a borrow its sentence says that nothing was placed (row 718).
+      if (
+        !this.closing &&
+        lifetime === this.lifetime &&
+        !this.presentationYieldedToLearner
+      )
         await returnForeignFocus?.(
           false,
           undefined,
@@ -13931,20 +13937,59 @@ export class StudyWorkspace {
   private assertKeyboardWhereBorrowLeftIt(
     learnerSignBefore: number | undefined,
   ): void {
-    const editor = vscode.window.activeTextEditor,
-      front = this.frontTabOfFirstGroup()
+    const editor = vscode.window.activeTextEditor
     if (
       !vscode.window.state.focused ||
       this.learnerWorkedInEditorAtMs !== learnerSignBefore ||
-      this.firstGroupFrontAtBorrow === undefined ||
-      front !== this.firstGroupFrontAtBorrow ||
+      !this.isFirstGroupFrontAsBorrowLeftIt() ||
       (editor !== undefined &&
         (editor.viewColumn !== vscode.ViewColumn.One ||
-          front !== this.textTabIdentity(editor.document.uri)))
+          this.frontTabOfFirstGroup() !==
+            this.textTabIdentity(editor.document.uri)))
     )
       throw new Error(
         'The keyboard moved after the refused arrangement; it stays where it is.',
       )
+  }
+
+  /**
+   * Says whether the main editor's first group still shows in front the tab the last borrow of that group left there ({@link firstGroupFrontAtBorrow}); asked by {@link assertKeyboardWhereBorrowLeftIt} before a refused change gives the keyboard back (row 728). A learner's click on another tab of that group gives no sign of the learner's hand, so the tab tells that choice.
+   * @returns `true` while a borrow noted its front tab and the first group shows that tab in front; `false` otherwise.
+   * @example this.isFirstGroupFrontAsBorrowLeftIt() // => false once the learner clicked README.md behind login-form.tsx, the file the borrow focused
+   */
+  private isFirstGroupFrontAsBorrowLeftIt(): boolean {
+    return (
+      this.firstGroupFrontAtBorrow !== undefined &&
+      this.frontTabOfFirstGroup() === this.firstGroupFrontAtBorrow
+    )
+  }
+
+  /**
+   * Says whether the learner brought another tab of the main editor's first group to its front since the last borrow of that group ({@link firstGroupFrontAtBorrow}); asked by the function {@link retainForeignTabFocus} answers before it takes the keyboard for the one its measurement left, so a learner's tab chosen there keeps the keyboard, whether the editor names that group or still names the chat part's (Cycle 0046 row 732).
+   * Codebook's own effects after the borrow bring other tabs to that front without the learner, and are told apart: a Codebook pane, the captured source and the Repository Wiki's cited copy (an agent's cold Wiki shows it there) are Codebook's own tabs, and a tab that comes to the front because the noted tab left the group (a refusal closed the Application pane it had opened there) was not chosen.
+   * @returns `true` for a learner's tab in front while the noted tab still stands behind it in that group; `false` for the noted tab, for Codebook's own tabs, once the noted tab left the group, for a first group without a tab, and while no borrow noted its front tab.
+   * @example this.showsLearnersOtherTabInFirstGroup() // => true once the learner clicked README.md behind login-form.tsx, the file the borrow focused
+   */
+  private showsLearnersOtherTabInFirstGroup(): boolean {
+    const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
+      ),
+      front = group?.activeTab,
+      noted = this.firstGroupFrontAtBorrow
+    if (!group || !front || noted === undefined) return false
+    // A pane, a captured source and a cited copy in front are Codebook's doing.
+    if (
+      this.isCodebookPaneInput(front.input) ||
+      this.isCapturedSourceInput(front.input) ||
+      (front.input instanceof vscode.TabInputText &&
+        front.input.uri.scheme === REPOSITORY_SOURCE_SCHEME)
+    )
+      return false
+    // Only while the noted tab still stands in the group did a tab come to the front by the learner's choice.
+    return (
+      this.tabIdentity(front) !== noted &&
+      group.tabs.some((tab) => this.tabIdentity(tab) === noted)
+    )
   }
 
   /**
@@ -13956,7 +14001,16 @@ export class StudyWorkspace {
     const tab = vscode.window.tabGroups.all.find(
       (group) => group.viewColumn === vscode.ViewColumn.One,
     )?.activeTab
-    if (!tab) return 'none'
+    return tab ? this.tabIdentity(tab) : 'none'
+  }
+
+  /**
+   * Names a tab by its input as {@link frontTabOfFirstGroup} names the first group's front tab, so tabs are compared across Cursor's new tab objects; asked by {@link frontTabOfFirstGroup} and {@link showsLearnersOtherTabInFirstGroup}.
+   * @param tab - The tab.
+   * @returns `text:` with a text tab's resource ({@link textTabIdentity}), `webview:` with a webview's view type, `tab:` with the label of any other tab.
+   * @example this.tabIdentity(readmeTab) // => 'text:file:///workspace/README.md'
+   */
+  private tabIdentity(tab: vscode.Tab): string {
     const input = tab.input
     if (input instanceof vscode.TabInputText)
       return this.textTabIdentity(input.uri)
@@ -13976,7 +14030,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Ends a presentation change's ownership of the focus for a learner's newer input, where the change is refused for that input and the refusal says so ("…the newer learner focus was preserved."): {@link presentationMovedFocus} is cleared, so nothing is restored after the placement, and {@link presentationYieldedToLearner} is set, so {@link performPresentation}'s refusal gives back no keyboard a borrow took either (Cycle 0046 row 728). Called at each such refusal, also by {@link readMainEditorGrid} and the placement's guards.
+   * Ends a presentation change's ownership of the focus for a learner's newer input, where the change is refused for that input and the refusal says so ("…the newer learner focus was preserved."): {@link presentationMovedFocus} is cleared, so nothing is restored after the placement, and {@link presentationYieldedToLearner} is set, so {@link performPresentation}'s refusal gives back no keyboard a borrow took either (Cycle 0046 row 728), not even to a chat (row 732). Called at each such refusal, also by {@link readMainEditorGrid} and the placement's guards.
    * @example
    * this.yieldFocusToLearner()
    * throw new Error('The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.')
