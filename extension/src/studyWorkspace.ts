@@ -804,6 +804,8 @@ export class StudyWorkspace {
   private mainEditorFocusBorrows = 0
   /** How often {@link focusApplicationSourceGroup} focused the main editor's first group for an Application preparation's new group; {@link performPresentation} compares it with {@link mainEditorFocusBorrows} for a refusal that comes after either (Cycle 0046 row 718). */
   private applicationFocusBorrows = 0
+  /** The first group's front tab the last of those focus commands left in front ({@link frontTabOfFirstGroup}), noted once the borrow's own focus step ended and `undefined` until then; {@link assertKeyboardWhereBorrowLeftIt} compares the first group's front tab with it before a refused change gives the keyboard back (Cycle 0046 row 728). */
+  private firstGroupFrontAtBorrow?: string
   /** How often {@link readMainEditorGrid} gave such a borrowed keyboard back itself, to the Study pane or the text editor that had it ({@link giveKeyboardBackBeyondMainEditor} among them); {@link captureRepositoryKeyboardReturn} compares it with {@link mainEditorFocusBorrows}, since an agent's cold Wiki is created in front of that editor afterwards and hides it (Cycle 0046 row 719). */
   private mainEditorFocusReturns = 0
   /** Positive host-lifetime discovery retained by {@link chatFocusCommand}; absent commands remain discoverable later. */
@@ -956,6 +958,8 @@ export class StudyWorkspace {
     >
   }
   private presentationMovedFocus = false
+  /** Whether the running presentation change was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728). */
+  private presentationYieldedToLearner = false
   private presentationPoseRequest?: PresentationPoseCapture
   private presentationPose?: PresentationPose
   private presentationPoseRestored?: string
@@ -4973,6 +4977,7 @@ export class StudyWorkspace {
       ? this.retainPresentationPlacement()
       : undefined
     this.presentationMovedFocus = false
+    this.presentationYieldedToLearner = false
     const windowFocus =
       input.action === 'save-preference'
         ? undefined
@@ -5297,12 +5302,13 @@ export class StudyWorkspace {
       )
         await restoreFocus?.(signal, assertSourceFocus).catch(() => undefined)
       const borrowed = this.focusBorrowCount() !== refusal.borrowsBefore
-      // A refusal after the measurement borrowed the main editor and before the placement moved the keyboard gives the file back what the borrow took (row 718).
+      // A refusal after the measurement borrowed the main editor and before the placement moved the keyboard gives the file back what the borrow took (row 718); a refusal for the learner's newer input gives nothing back (row 728).
       if (
         borrowed &&
         refusal.keyboardHolder !== undefined &&
         !restoreFocusAttempted &&
         !this.presentationMovedFocus &&
+        !this.presentationYieldedToLearner &&
         !this.closing &&
         lifetime === this.lifetime
       )
@@ -5337,6 +5343,7 @@ export class StudyWorkspace {
       this.placingPresentation = false
       this.presentationEditorScope = undefined
       this.presentationMovedFocus = false
+      this.presentationYieldedToLearner = false
       this.presentationPoseRequest = undefined
       this.presentationPose = undefined
       this.presentationPoseRestored = undefined
@@ -5536,7 +5543,7 @@ export class StudyWorkspace {
           transition === this.presentationTransition &&
           lifetime === this.lifetime
         )
-          this.presentationMovedFocus = false
+          this.yieldFocusToLearner()
         throw new Error(
           'Native focus left the owned presentation target; the newer learner choice was preserved.',
         )
@@ -6199,7 +6206,7 @@ export class StudyWorkspace {
         transition === this.presentationTransition &&
         lifetime === this.lifetime
       )
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
       throw new Error(
         'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
       )
@@ -6304,7 +6311,7 @@ export class StudyWorkspace {
               !isRegistered(role, replacements.get(role.region)!)),
         )
       ) {
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
         throw new Error(
           'A presentation pane moved during creation; the later learner arrangement was preserved.',
         )
@@ -6525,7 +6532,7 @@ export class StudyWorkspace {
           .find(({ tab }) => tab.isPreview && !isOwnedPreview(tab))
         if (!foreignPreview) return
         // A preview opened during a passive await belongs to the learner, including its current focus.
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
         throw refusePreview(foreignPreview.tab, foreignPreview.group, true)
       }
       // A debugger stop opens a cited workspace file as a clean preview and a learner's single click opens any file as one; both are kept by pinning instead of refusing the selection.
@@ -6662,7 +6669,7 @@ export class StudyWorkspace {
           vscode.window.activeTextEditor?.selections ?? [],
         )
       ) {
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
         throw new Error(
           'Native source selection changed before its display response; the newer learner selection was preserved.',
         )
@@ -6691,7 +6698,7 @@ export class StudyWorkspace {
         )
           return
         // Later learner focus or selection ends ownership; do not move again or restore stale reading state.
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
         throw new Error(
           sameFocus
             ? 'Native source selection changed while presentation panes moved; the learner selection was preserved.'
@@ -13907,23 +13914,67 @@ export class StudyWorkspace {
   }
 
   /**
-   * Refuses the give-back of {@link returnBorrowedKeyboardAfterRefusal} once the keyboard is no longer where the refused change's own effects left it: the window lost the focus, the learner clicked or typed in a text editor since the change began, or the editor reports a text editor outside the first group, which the measurement focused.
+   * Refuses the give-back of {@link returnBorrowedKeyboardAfterRefusal} once the keyboard is no longer where the refused change's own effects left it: the window lost the focus, the learner clicked or typed in a text editor since the change began, the first group shows another tab in front than the one the borrow left there ({@link firstGroupFrontAtBorrow}), or the editor reports a text editor other than that tab's, in the first group, which the borrow focused. A learner's tab click or an Explorer preview gives no sign of the learner's hand, so the first group's front tab and the active text editor tell that choice (Cycle 0046 row 728).
    * @param learnerSignBefore - The moment of the learner's last click or key in a text editor when the change began.
-   * @throws An `Error` in any of those cases; the learner's newer place keeps the keyboard.
-   * @example this.assertKeyboardWhereBorrowLeftIt(learnerSignBefore) // passes while login-form.tsx, the first group's file the borrow focused, is the active text editor
+   * @throws An `Error` in any of those cases, and when no borrow noted its front tab; the learner's newer place keeps the keyboard.
+   * @example this.assertKeyboardWhereBorrowLeftIt(learnerSignBefore) // passes while login-form.tsx, the first group's file the borrow focused, is that group's front tab and the active text editor
    */
   private assertKeyboardWhereBorrowLeftIt(
     learnerSignBefore: number | undefined,
   ): void {
-    const editor = vscode.window.activeTextEditor
+    const editor = vscode.window.activeTextEditor,
+      front = this.frontTabOfFirstGroup()
     if (
       !vscode.window.state.focused ||
       this.learnerWorkedInEditorAtMs !== learnerSignBefore ||
-      (editor !== undefined && editor.viewColumn !== vscode.ViewColumn.One)
+      this.firstGroupFrontAtBorrow === undefined ||
+      front !== this.firstGroupFrontAtBorrow ||
+      (editor !== undefined &&
+        (editor.viewColumn !== vscode.ViewColumn.One ||
+          front !== this.textTabIdentity(editor.document.uri)))
     )
       throw new Error(
         'The keyboard moved after the refused arrangement; it stays where it is.',
       )
+  }
+
+  /**
+   * Names the tab in front of the main editor's first group by its input, for the borrow's note ({@link firstGroupFrontAtBorrow}) and {@link assertKeyboardWhereBorrowLeftIt}: Cursor gives every tab and group a new object when a group closes, so the tab is known by what it shows.
+   * @returns `text:` with a text tab's resource ({@link textTabIdentity}), `webview:` with a webview's view type, `tab:` with the label of any other tab, and `none` for a first group without a tab or no first group.
+   * @example this.frontTabOfFirstGroup() // => 'text:file:///workspace/login-form.tsx' while login-form.tsx is in front of the first group
+   */
+  private frontTabOfFirstGroup(): string {
+    const tab = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === vscode.ViewColumn.One,
+    )?.activeTab
+    if (!tab) return 'none'
+    const input = tab.input
+    if (input instanceof vscode.TabInputText)
+      return this.textTabIdentity(input.uri)
+    if (input instanceof vscode.TabInputWebview)
+      return `webview:${input.viewType}`
+    return `tab:${tab.label}`
+  }
+
+  /**
+   * Names a text tab by its resource as {@link frontTabOfFirstGroup} does, so the active text editor's document can be compared with the first group's front tab.
+   * @param uri - The text tab's or text editor's resource.
+   * @returns `text:` followed by the resource.
+   * @example this.textTabIdentity(editor.document.uri) // => 'text:file:///workspace/login-form.tsx'
+   */
+  private textTabIdentity(uri: vscode.Uri): `text:${string}` {
+    return `text:${uri.toString()}`
+  }
+
+  /**
+   * Ends a presentation change's ownership of the focus for a learner's newer input, where the change is refused for that input and the refusal says so ("…the newer learner focus was preserved."): {@link presentationMovedFocus} is cleared, so nothing is restored after the placement, and {@link presentationYieldedToLearner} is set, so {@link performPresentation}'s refusal gives back no keyboard a borrow took either (Cycle 0046 row 728). Called at each such refusal, also by {@link readMainEditorGrid} and the placement's guards.
+   * @example
+   * this.yieldFocusToLearner()
+   * throw new Error('The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.')
+   */
+  private yieldFocusToLearner(): void {
+    this.presentationMovedFocus = false
+    this.presentationYieldedToLearner = true
   }
 
   /**
@@ -15303,9 +15354,12 @@ export class StudyWorkspace {
     try {
       if (takesKeyboard) {
         this.applicationFocusBorrows++
+        this.firstGroupFrontAtBorrow = undefined
         await vscode.commands.executeCommand(
           'workbench.action.focusFirstEditorGroup',
         )
+        // What the borrow left in front of the first group, for a refused change's give-back (row 728).
+        this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
       }
       assertCurrent()
       sourceReceipt?.assertRetained()
@@ -15357,6 +15411,8 @@ export class StudyWorkspace {
             version,
             selections,
           })
+          // The borrowed source the show put in front of the first group is what that borrow left there.
+          this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
         } finally {
           for (const change of changes) change.dispose()
         }
@@ -17937,6 +17993,7 @@ export class StudyWorkspace {
               },
       )
       this.mainEditorFocusBorrows++
+      this.firstGroupFrontAtBorrow = undefined
       if (useCitation) {
         assertAcquiredFocus = await acquireSourceFocus!()
         assertCurrent()
@@ -17957,6 +18014,8 @@ export class StudyWorkspace {
         assertCurrent()
         assertGroups()
       }
+      // What the borrow left in front of the first group, for a refused change's give-back (row 728).
+      this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
       await waitUntil(
         () => {
           const currentInput = vscode.window.tabGroups.all.find(
@@ -17971,7 +18030,7 @@ export class StudyWorkspace {
               firstInput.viewType === currentInput.viewType)
           // Group focus preserves its active tab; a different tab belongs to the learner, not this temporary focus request.
           if (!useCitation && identifiableFirst && !samePrimaryInput) {
-            this.presentationMovedFocus = false
+            this.yieldFocusToLearner()
             didLearnerChangePrimaryTab = true
             throw new Error(
               'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
@@ -18027,7 +18086,7 @@ export class StudyWorkspace {
           JSON.stringify(vscode.window.activeTextEditor?.selections) !==
             primarySelections)
       ) {
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
         throw new Error(
           'The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.',
         )
@@ -18135,7 +18194,7 @@ export class StudyWorkspace {
           JSON.stringify(activeEditor.selections) !== retainedSelections ||
           JSON.stringify(restored.selections) !== retainedSelections
         ) {
-          this.presentationMovedFocus = false
+          this.yieldFocusToLearner()
           throw new Error(
             'Native focus or selection changed while the previous editor was restored; the newer learner state was preserved.',
           )
@@ -20293,7 +20352,7 @@ export class StudyWorkspace {
         this.presentationTransition &&
         message.captureId === this.presentationPoseRequest?.captureId
       ) {
-        this.presentationMovedFocus = false
+        this.yieldFocusToLearner()
         this.presentationTransition.cancellation.abort(
           new StudyError(
             'PRESENTATION_UNAVAILABLE',
