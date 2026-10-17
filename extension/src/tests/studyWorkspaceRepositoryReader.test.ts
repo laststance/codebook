@@ -1156,3 +1156,65 @@ test('the fake editor leaves the keyboard on the page body when a pane is create
     await harness.close()
   }
 })
+
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the learner's keyboard when an agent opens an article through codebook_open_book while no Wiki is open and the learner moved from login-form.tsx in the first group into the Study pane in front of the second group by a click on the pane's tab: the editor goes on reporting login-form.tsx as the active text editor behind the pane (rows 659 and 671), so the Study pane's own report that it has the keyboard is noted first; the Wiki covers that pane, gets the keyboard, and the pane's sentence is told once; fails_when=RepositoryReader.noteAgentEntryKeyboardEditor notes the reported text editor before the Study pane's report, finds the first group's column not covered, and leaves the keyboard on the page body of the hidden pane with nothing told; why_new=Cycle 0046 row 729 (the OCR delegate's review of 8ac142df..b5f8bf97: row 705's native round moved the pane by command and did not meet this order); seam=workspaceHarness's two columns, the reader's open, movePanel, focusMutableDraft and its focus, focusWebviewTabKeepingTextEditorReport on the Study pane's tab with the pane's document taking the keyboard, the pane's focus report (receiveContext pane-focus), Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), createRepositoryWikiReader with the workspace's controls, openFromAgent, keyboardOnBody, innerFocusedPanel and the information messages
+  test(`an agent's cold Wiki open created in front of the Study pane the learner clicked into from a file of the first group gives the Wiki the keyboard and says so once (${host})`, async () => {
+    // Arrange: the Study pane is moved into the second group; the learner typed in login-form.tsx in the first group, then clicked the Study pane's tab, whose document reports the keyboard while the editor still reports login-form.tsx; no Wiki is open.
+    const { harness } =
+      host === 'Cursor'
+        ? await cursorBesideChatPart()
+        : { harness: await workspaceHarness(false) }
+    if (host === 'VS Code')
+      harness.useNativeLayout({
+        orientation: 0,
+        groups: [{ size: 490 }, { size: 490 }],
+      })
+    harness.leaveEmptyGroup(2)
+    const loginForm = harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('auth.ts', 2)
+    await harness.reader.open()
+    harness.movePanel('codebook.studyContext', 2)
+    loginForm.focus()
+    harness.workInActiveTextEditor('keyboard')
+    const studyPane = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.studyContext')
+    assert.ok(studyPane)
+    harness.focusWebviewTabKeepingTextEditorReport(studyPane.nativeTab, true)
+    harness.receiveContext({ type: 'pane-focus', focused: true })
+    const reportedBefore = harness.editor.window.activeTextEditor?.document.uri
+      .toString()
+      .split('/')
+      .at(-1)
+    const { selection, books } = await publishTwoCitationWiki(harness)
+    const wiki = harness.createRepositoryWikiReader()
+    try {
+      // Act
+      await wiki.openFromAgent({
+        instanceId: harness.service.instanceId,
+        ...selection,
+      })
+
+      // Assert: login-form.tsx was reported behind the pane; the Wiki in front of the Study pane has the keyboard, and the learner was told once.
+      assert.deepEqual(
+        {
+          reportedBefore,
+          keyboardOnBody: harness.keyboardOnBody(),
+          keyboard: harness.innerFocusedPanel(),
+          notices: harness.informationMessages.map((notice) => notice.message),
+        },
+        {
+          reportedBefore: 'login-form.tsx',
+          keyboardOnBody: false,
+          keyboard: 'codebook.repositoryWiki',
+          notices: [
+            'Codebook opened the Repository Wiki an agent asked for in front of the Study pane you were using, and the Wiki has the keyboard now. To use the Study pane again, click its tab, codebook · Study, in the same editor group.',
+          ],
+        },
+      )
+    } finally {
+      await books.dispose()
+      await harness.close()
+    }
+  })

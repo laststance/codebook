@@ -1063,6 +1063,11 @@ export async function workspaceHarness(
       replacements.get(group) ?? group
     groups.splice(0, groups.length, ...groups.map(replaced))
     activeTabGroup = replaced(activeTabGroup)
+    // A text editor reported behind a webview stays reported through the rebuild (row 729).
+    if (textEditorReportedBehindWebview)
+      textEditorReportedBehindWebview.group = replaced(
+        textEditorReportedBehindWebview.group,
+      )
     if (separateEditorPart)
       separateEditorPart.group = replaced(separateEditorPart.group)
     for (const editor of visibleSourceEditors)
@@ -4992,15 +4997,24 @@ export async function workspaceHarness(
     },
     /**
      * Gives a webview tab the keyboard the way VS Code 1.140.0 reported it for the Repository Wiki in C58 (`c58-vs-567d`, the extension-host observer's baseline before the Wiki's "View recording"): the webview's group is the active tab group and its tab the active tab, while the active text editor stays the text editor that had the keyboard before, in another group. The cause below is no property of the Wiki: any editor that is no code editor (another extension's webview too) leaves that report (Cycle 0046 row 671). VS Code updates its active text editor when the active group changes and counts a code editor that still has the text focus then as the active one (`workbench.desktop.main.js` 705:2664 `a.hasTextFocus()`, in `_updateState`, which `onDidActiveEditorChange` runs), before the webview's own focus reaches its frame, and afterwards only a text or widget focus of a code editor updates it again (705:1683 `onDidFocusEditorText`, `onDidFocusEditorWidget`; no blur is listened to), so the report stays until the active group changes again (Cycle 0046 row 659).
-     * @param tab - The webview's tab (the Repository Wiki's, or another extension's from `addForeignWebviewTab`), in a group of the main editor.
+     * Beside Cursor's chat part the click makes the main editor the active part again, and Cursor's rebuild of its tab model names the clicked tab's group; the report follows the group's new object (row 729).
+     * @param tab - The webview's tab (the Repository Wiki's, a Codebook pane's, or another extension's from `addForeignWebviewTab`), in a group of the main editor.
+     * @param paneDocumentTakesKeyboard - Whether the pane's own document takes the keyboard with its frame's focus, as at a pane's reveal with the focus (`focusActiveGroupAfterLayout`), for a Codebook pane whose page then reports it (row 729); left out, no document has it, as row 659's tests of the Wiki read it.
      * @example harness.focusWebviewTabKeepingTextEditorReport(wikiTab) // activeTabGroup is the Wiki's, activeTextEditor still the cited source copy of the first group
      */
-    focusWebviewTabKeepingTextEditorReport(tab: Tab): void {
-      assert.equal(separateEditorPart, undefined)
+    focusWebviewTabKeepingTextEditorReport(
+      tab: Tab,
+      paneDocumentTakesKeyboard = false,
+    ): void {
       const group = groups.find((candidate) => candidate.tabs.includes(tab))
       assert.ok(group)
       const editor = focusedSourceEditor()
       assert.ok(editor, 'No text editor has the keyboard before the Wiki')
+      const pane = [...panels].find((candidate) => candidate.nativeTab === tab)
+      assert.ok(
+        !paneDocumentTakesKeyboard || pane,
+        'Only a pane of this editor has a document that takes the keyboard',
+      )
       const previousGroup = activeTabGroup
       group.activeTab = tab
       activeTabGroup = group
@@ -5008,11 +5022,18 @@ export async function workspaceHarness(
       if (floatingEditorWindow)
         floatingEditorWindow.active =
           floatingEditorWindow.groups.includes(group)
+      leaveChatForMainEditor()
       keyboardOnBody = false
       keyboardInView = false
-      innerFocusedPanel = undefined
+      innerFocusedPanel = paneDocumentTakesKeyboard ? pane?.kind : undefined
       textEditorReportedBehindWebview = { group, tab, editor }
-      changedGroups({ opened: [], closed: [], changed: [previousGroup, group] })
+      if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
+      else
+        changedGroups({
+          opened: [],
+          closed: [],
+          changed: [previousGroup, group],
+        })
     },
     /** Delivers Cursor's delayed source deactivation after a handoff reads the stale receipt. @example const held = harness.holdTextFocusClear('codebook.studyContext'); await held.observed; held.release(); */
     holdTextFocusClear(kind: string) {
