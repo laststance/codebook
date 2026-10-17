@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+
+import { z } from 'zod'
 
 import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
@@ -976,5 +978,77 @@ test('publishing a Repository Wiki revision that links a saved study the library
       error.code === 'BOOK_UNAVAILABLE' &&
       error.message ===
         `Linked saved study ${removedStudyId} is no longer in the study library; it was deleted or never saved.`,
+  )
+})
+
+// Value: protects=the learner's next run and Close Study Workspace after a run whose evidence failed for good (a full disk, its buffering limit, its evidence folder removed by hand): the release frees every resource and only the final evidence write fails, so the run is stopped with that failure as its error and terminal reason, and the next start is admitted; fails_when=the configured run's release throws on its final persistence after it released everything (ConfiguredBrowserRun.cleanupOwned), so StudyService.stopRecord never marks the run stopped, every retry fails the same way, codebook_start answers BUSY ("Another run still owns resources.") and Close keeps failing until the server restarts; why_new=R1, Cycle 0046 /ship red-team review; seam=the real ConfiguredBrowserRun behind the real service (configuredRuntimeHarness, startRunWithStorage), its evidence folder removed before the stop, StudyService.stop as codebook_stop calls it, the run resource and StudyService.start
+test('a run whose final evidence write fails after its release freed every resource is stopped with that failure as its error, and the next start is admitted', async (context) => {
+  // Arrange: a prepared run whose evidence folder is removed by hand, so every later write of its evidence fails.
+  const started = await startRunWithStorage(context, 4, 'nothing')
+  const evidenceDirectory = started.record.runtime!.evidence.directory
+  await rm(evidenceDirectory, { recursive: true, force: true })
+
+  // Act: the agent stops the run, then starts the next one.
+  const stopFailure = await started.service.stop(started.receipt).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
+  const resource = await readResource(started.service, started.receipt.runUri)
+  let nextStartRefusal: unknown
+  try {
+    const next = started.service.start({
+      instanceId: started.service.instanceId,
+      profile: 'repository-browser',
+      key: 'after-failed-persistence',
+      configuration: started.harness.definition.configuration,
+    })
+    await started.service.record(next).preparation
+  } catch (error) {
+    nextStartRefusal = error
+  }
+
+  // Assert: the terminal reason up to the evidence folder's path, which the system's error names, and the opening of the error's cause.
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      state: z.string(),
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      stopFailure,
+      stopped: started.record.stopped,
+      cleanupError: started.record.cleanupError,
+      state: state.state,
+      terminalReason: state.terminalReason.split(evidenceDirectory)[0],
+      error: {
+        code: state.error.code,
+        message: state.error.message,
+        causeOpening: state.error.cause.slice(
+          0,
+          'Final evidence persistence failed: '.length,
+        ),
+      },
+      nextStartRefusal,
+    },
+    {
+      stopFailure: undefined,
+      stopped: true,
+      cleanupError: undefined,
+      state: 'stopped',
+      terminalReason: "Error: ENOENT: no such file or directory, open '",
+      error: {
+        code: 'RUNTIME_FAILED',
+        message: 'The run failed in its runtime.',
+        causeOpening: 'Final evidence persistence failed: ',
+      },
+      nextStartRefusal: undefined,
+    },
   )
 })

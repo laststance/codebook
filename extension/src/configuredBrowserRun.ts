@@ -5741,7 +5741,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw error
     }
   }
-  /** Closes transports before draining acquisitions; raw tabs, dirty files and unrelated breakpoints are never cleanup targets. @example await this.cleanupOwned() */
+  /**
+   * Closes transports before draining acquisitions; raw tabs, dirty files and unrelated breakpoints are never cleanup targets. Called once by {@link stop}, again only after an incomplete release.
+   * The run's evidence is persisted last. When that fails after every resource was released (the evidence failed for good: a full disk, its buffering limit, its folder removed by hand), the release is finished all the same: the run is cleaned, its status is failed and the persistence failure is its failure, so the service can mark the run stopped and start another; a retry could only fail on the same evidence again.
+   * @throws The first release failures, joined, when a resource could not be released; the persistence failure when it comes on top of such a release failure.
+   * @example await this.cleanupOwned()
+   */
   private async cleanupOwned(): Promise<void> {
     if (this.unjournaledAdapterEvents)
       this.evidence.record('cdp.adapter-pauses-not-journaled', {
@@ -5845,10 +5850,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     try {
       await this.persist()
     } catch (error) {
-      this.cleaned = false
       this.status = 'failed'
       this.failures.push(`Final evidence persistence failed: ${String(error)}`)
-      throw error
+      // A run whose resources are all released has finished its release: the persistence failure stays the run's failure, and a retry would only meet the same evidence failure again, which the evidence keeps.
+      if (!this.resourcesReleased) throw error
     }
     if (failures.length) throw new Error(failures.join('; '))
   }
