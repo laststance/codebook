@@ -161,6 +161,8 @@ export class RepositoryReader {
   private sourceDeferred = false
   /** A command outside Study defers its original layout until the learner selects Wiki; {@link revealDeferredSource} completes that Return. */
   private deferredReturn?: RepositorySelection
+  /** The listeners that keep {@link deferredReturn} only until the learner's next change of the focus ({@link watchDeferredReturn}); {@link forgetDeferredReturn} releases them. */
+  private deferredReturnWatch: vscode.Disposable[] = []
   /** Prevents a focus callback from superseding an {@link open} whose final source checks are still pending. */
   private openingGeneration?: number
   private sourcePreviewRequest = 0
@@ -291,7 +293,7 @@ export class RepositoryReader {
       agentEntryKeyboardEditor =
         this.noteAgentEntryKeyboardEditor(coldAgentEntry)
     this.sourceDeferred = false
-    this.deferredReturn = undefined
+    this.forgetDeferredReturn()
     this.sourcePreviewRequest++
     this.loading = true
     this.error = undefined
@@ -493,6 +495,9 @@ export class RepositoryReader {
           )
       } else {
         await this.completeDeferredReturn(signal, initialFocus)
+        // A Return still deferred waits for the learner's own selection of the Wiki only (R6).
+        if (generation === this.generation && this.deferredReturn)
+          this.watchDeferredReturn()
       }
       // The citation shown for this article replaces an earlier citation's copy; a citation that waits for the Wiki's selection replaces it once shown (row 652).
       if (
@@ -946,7 +951,7 @@ export class RepositoryReader {
     // Only admitted history navigation cancels a preview; refused evidence keeps even an already-started citation.
     this.sourcePreviewRequest++
     this.sourceDeferred = false
-    this.deferredReturn = undefined
+    this.forgetDeferredReturn()
     await this.controls.evidence(
       binding,
       recording,
@@ -963,7 +968,7 @@ export class RepositoryReader {
    */
   close(): void {
     this.sourceDeferred = false
-    this.deferredReturn = undefined
+    this.forgetDeferredReturn()
     this.sourcePreviewRequest++
     this.navigation.abort()
     this.generation++
@@ -1673,6 +1678,63 @@ export class RepositoryReader {
     if (!selection || !this.hasActiveWikiFocus()) return
     initialFocus?.dispose()
     await this.open(selection, signal, true)
+  }
+
+  /**
+   * Keeps a command's deferred Return ({@link deferredReturn}) for the learner's own selection of the Wiki only; called by {@link open} once its background entry (Return to Wiki from the Command Palette) left the Return deferred, with the learner's input elsewhere.
+   * The Return and its cited source's preview ({@link sourceDeferred}) expire at the first change of the native focus that does not land on the Wiki, and at any tab the editor closes: the editor activates a neighbour of a closed tab or group by itself (a Study close that removes its panes' groups, a neighbouring group's close), and a Wiki it activates so is no selection of the learner's. Without this, such an activation, minutes later, restored the article's layout and could give the cited source the keyboard (Cycle 0046 R6). A selection of the Wiki that changes no other place keeps the Return for {@link revealDeferredSource}.
+   * @example this.watchDeferredReturn() // after the palette's Return to Wiki while the learner types in auth.ts
+   */
+  private watchDeferredReturn(): void {
+    this.forgetDeferredReturnWatch()
+    /** Names the place of the native focus: the named group with its front tab, and the active text editor. */
+    const focusPlace = (): string => {
+      const group = vscode.window.tabGroups.activeTabGroup,
+        editor = vscode.window.activeTextEditor
+      return JSON.stringify([
+        group.viewColumn,
+        group.activeTab?.label,
+        group.activeTab?.input,
+        editor?.document.uri.toString(),
+        editor?.viewColumn,
+      ])
+    }
+    const placeBefore = focusPlace()
+    const expire = (): void => {
+      this.sourceDeferred = false
+      this.forgetDeferredReturn()
+    }
+    // Only a change of the focus that lands on the Wiki keeps the Return.
+    const observe = (): void => {
+      if (focusPlace() !== placeBefore && !this.hasNativeWikiFocus()) expire()
+    }
+    this.deferredReturnWatch = [
+      vscode.window.tabGroups.onDidChangeTabs((event) => {
+        // The editor's own activation of a closed tab's neighbour is no choice of the learner's.
+        if (event.closed.length) expire()
+        else observe()
+      }),
+      vscode.window.tabGroups.onDidChangeTabGroups(observe),
+      vscode.window.onDidChangeActiveTextEditor(observe),
+    ]
+  }
+
+  /**
+   * Drops a command's deferred Return and the watch that keeps it ({@link watchDeferredReturn}); called by {@link open} when it begins, by {@link evidence}, by {@link close} and when the watch expires the Return.
+   * @example this.forgetDeferredReturn()
+   */
+  private forgetDeferredReturn(): void {
+    this.deferredReturn = undefined
+    this.forgetDeferredReturnWatch()
+  }
+
+  /**
+   * Releases the listeners of {@link watchDeferredReturn}; called by {@link forgetDeferredReturn} and before a new watch begins.
+   * @example this.forgetDeferredReturnWatch()
+   */
+  private forgetDeferredReturnWatch(): void {
+    for (const listener of this.deferredReturnWatch.splice(0))
+      listener.dispose()
   }
 
   /** Requires both native tab identity and active-panel state before {@link completeDeferredReturn} can move the saved layout. @example this.hasActiveWikiFocus() // false while side chat owns input */

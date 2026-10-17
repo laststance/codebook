@@ -171,6 +171,7 @@ async function readerHarness(context: TestContext) {
   let blurWikiPanel = (): void => {}
   let focusStudyPanel = (): void => {}
   let closeStudyPanel = (): void => {}
+  let clickWikiTab = (): void => {}
   let hideWikiPanel = (): void => {}
   let nativeWikiSelection = false
   let retireWikiTextEditor = false
@@ -635,6 +636,12 @@ async function readerHarness(context: TestContext) {
               fireTabChange({ closed: studyTabs })
               activateWikiPanel()
             }
+            clickWikiTab = (): void => {
+              // The learner's click selects the Wiki's tab in its group, in front of the Study's, and the Wiki takes the keyboard.
+              otherGroup.activeTab = wikiTab
+              fireTabChange({ changed: [wikiTab] })
+              activateWikiPanel()
+            }
             activateWikiPanel = (): void => {
               activeEditor = undefined
               activeGroup = otherGroup
@@ -1004,6 +1011,17 @@ async function readerHarness(context: TestContext) {
      */
     closeStudy(): void {
       closeStudyPanel()
+    },
+    /**
+     * Models the learner's click on the Wiki's tab while the Study's tab stands in front of the same group ({@link focusStudy}): the Wiki's tab comes to the front of its group, the editor reports that tab change, and the Wiki becomes the active panel with the keyboard (Cycle 0046 R6).
+     * @example
+     * ```ts
+     * harness.focusStudy()
+     * harness.clickWikiTab()
+     * ```
+     */
+    clickWikiTab(): void {
+      clickWikiTab()
     },
     /** Models the selected Wiki tab callbacks for Return regressions; recording Return also retires that group's text editor. @param retiresEditor - Emits the observed text-editor loss after tab selection. @example harness.useNativeWikiSelection(true) */
     useNativeWikiSelection(retiresEditor = false): void {
@@ -2231,6 +2249,75 @@ test('selecting Wiki during a Return freshness check completes that Return witho
     release()
     await opening.catch(() => undefined)
   }
+})
+
+// Value: protects=the learner's layout and keyboard after Return to Wiki from the Command Palette while the Study pane had the keyboard: the Return waits for the learner's own selection of the Wiki, and a Study close that removes the Study's tab makes the editor select the Wiki by itself, which is no such selection, so the article's layout is not restored and no cited source is shown; fails_when=the deferred Return has no expiry and runs on any later activation of the Wiki, also one the editor made after closing a neighbouring tab, minutes later, rearranging the grid and possibly giving the cited source the keyboard; why_new=Cycle 0046 R6 (the red team review of /ship); seam=readerHarness with hideWiki, focusStudy, requireSourceFocus, open with preserveNativeInput (the palette's Return), closeStudy (the Study tab's close, then the editor's activation of the Wiki), arrangements and shown; no_claim=a time bound for the deferral, which this rule does not need
+test('a palette Return to Wiki from the Study pane does not restore the article layout when a Study close makes the editor select the Wiki', async (context) => {
+  // Arrange: the Wiki is open behind the Study pane, which has the keyboard; the learner runs Return to Wiki from the Command Palette, which defers the article's layout.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+  harness.focusStudy()
+  harness.requireSourceFocus()
+  const selection = {
+    ...harness.selection,
+    nodeId: 'order',
+    location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+  }
+  await harness.reader.open(selection, undefined, true, true)
+  const arrangementsBefore = harness.arrangements(),
+    shownBefore = harness.shown.length
+
+  // Act: the Study closes; its tab leaves the Wiki's group, and the editor selects the Wiki.
+  harness.closeStudy()
+  await harness.deliverTabEvents()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  // Assert: no layout was restored and no cited source was shown.
+  assert.deepEqual(
+    {
+      arrangements: harness.arrangements() - arrangementsBefore,
+      shown: harness.shown.length - shownBefore,
+      error: harness.reader.inspect().view.error,
+    },
+    { arrangements: 0, shown: 0, error: '' },
+  )
+})
+
+// Value: protects=the article Return the learner asked for from the Command Palette while the Study pane had the keyboard: the learner's own click on the Wiki's tab is the selection the deferred Return waits for, so the article's layout is restored then; fails_when=the expiry of a deferred Return (R6) also takes the learner's own selection of the Wiki for a change away from it, so a palette Return never restores the article's layout; why_new=Cycle 0046 R6 (the other side of the rule); seam=readerHarness with hideWiki, focusStudy, requireSourceFocus, open with preserveNativeInput, clickWikiTab (the new seam: the learner's click on the Wiki's tab in front of the Study's), arrangements; no_claim=the native order of the tab and view-state events of that click
+test('a palette Return to Wiki from the Study pane restores the article layout when the learner selects the Wiki', async (context) => {
+  // Arrange: as above.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+  harness.focusStudy()
+  harness.requireSourceFocus()
+  const selection = {
+    ...harness.selection,
+    nodeId: 'order',
+    location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+  }
+  await harness.reader.open(selection, undefined, true, true)
+  const arrangementsBefore = harness.arrangements()
+
+  // Act: the learner clicks the Wiki's tab.
+  harness.clickWikiTab()
+  await waitUntil(
+    () =>
+      harness.arrangements() === arrangementsBefore + 1 &&
+      !harness.reader.inspect().view.loading,
+    'original article layout restored after the learner selected the Wiki',
+  )
+
+  // Assert: the layout was restored once, for the selected article.
+  assert.deepEqual(
+    {
+      arrangements: harness.arrangements() - arrangementsBefore,
+      selection: harness.reader.inspect().view.selection,
+      error: harness.reader.inspect().view.error,
+    },
+    { arrangements: 1, selection, error: '' },
+  )
 })
 
 test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
