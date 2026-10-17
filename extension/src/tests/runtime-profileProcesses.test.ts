@@ -86,8 +86,8 @@ test('on Windows a profile whose path holds a space is matched in both quoted fo
   )
 })
 
-// Value: protects=the arguments a Windows command line holds as Chrome receives them, by which a profile is matched on Windows: quoted parts, doubled quotes and backslashes before quotes are read by the rules of the Microsoft C runtime, and a backslash elsewhere stays a character of a path; fails_when=a quote ends or splits an argument where Windows does not, or a path loses a backslash, so a profile is matched wrongly (CX2, hosted Codex review of PR #88); why_new=the splitter is new; seam=none
-test('a Windows command line splits into the arguments a program receives, by its quotes and the backslashes before them', () => {
+// Value: protects=the arguments a Windows command line holds as Chrome receives them, by which a profile is matched on Windows: Chrome reads its command line with CommandLineToArgvW, whose program name ends at its closing quote or at the first white space, and whose quoted parts, runs of quotes and backslashes before quotes follow its own rules (the inputs of the /ship adversarial review's probe, AD14); a backslash elsewhere stays a character of a path; fails_when=the splitter follows the C runtime's rules where they differ, so `"C:\P F\chrome.exe"--user-data-dir=X` hides the switch inside the program name, a doubled or tripled quote joins two arguments, or a path loses a backslash (CX2; AD14, /ship adversarial review Step 11); why_new=the splitter followed the C runtime; seam=none (expected values checked against the reviewer's port of Wine's CommandLineToArgvW)
+test('a Windows command line splits into the arguments Chrome receives, as CommandLineToArgvW splits it', () => {
   // Arrange
   const commandLines = {
     quotedProgramAndArgument:
@@ -96,6 +96,20 @@ test('a Windows command line splits into the arguments a program receives, by it
     backslashesBeforeQuotes: 'tool.exe a\\\\"b c" d\\"e "f\\\\" g\\h',
     doubledQuoteInQuotes: 'tool.exe "say ""hi""" ""',
     separatorsOnly: ' \t ',
+    programNameClosesAtItsQuote:
+      '"C:\\P F\\chrome.exe"--user-data-dir=C:\\T\\codebook-browser-1',
+    doubledQuoteThenSpaceInQuotes:
+      'chrome.exe "a""b --user-data-dir=C:\\T\\codebook-browser-1"',
+    tripleQuoteOutsideQuotes:
+      'chrome.exe """ --user-data-dir=C:\\T\\codebook-browser-1',
+    unquotedProgramNameWithAQuote:
+      'C:\\a"b c\\chrome.exe --user-data-dir=C:\\T\\codebook-browser-1',
+    leadingSpacesBeforeTheProgram:
+      '  chrome.exe --user-data-dir=C:\\T\\codebook-browser-1',
+    lineBreakInTheProgramName:
+      'chrome\n.exe --user-data-dir=C:\\T\\codebook-browser-1',
+    unterminatedQuotedProgramName:
+      '"C:\\a b\\chrome.exe --user-data-dir=C:\\T\\codebook-browser-1',
   }
   // Act
   const split = Object.fromEntries(
@@ -118,8 +132,67 @@ test('a Windows command line splits into the arguments a program receives, by it
     ],
     backslashesBeforeQuotes: ['tool.exe', 'a\\b c', 'd"e', 'f\\', 'g\\h'],
     doubledQuoteInQuotes: ['tool.exe', 'say "hi"', ''],
-    separatorsOnly: [],
+    separatorsOnly: [''],
+    programNameClosesAtItsQuote: [
+      'C:\\P F\\chrome.exe',
+      '--user-data-dir=C:\\T\\codebook-browser-1',
+    ],
+    doubledQuoteThenSpaceInQuotes: [
+      'chrome.exe',
+      'a"b',
+      '--user-data-dir=C:\\T\\codebook-browser-1',
+    ],
+    tripleQuoteOutsideQuotes: [
+      'chrome.exe',
+      '"',
+      '--user-data-dir=C:\\T\\codebook-browser-1',
+    ],
+    unquotedProgramNameWithAQuote: [
+      'C:\\a"b',
+      'c\\chrome.exe',
+      '--user-data-dir=C:\\T\\codebook-browser-1',
+    ],
+    leadingSpacesBeforeTheProgram: [
+      '',
+      'chrome.exe',
+      '--user-data-dir=C:\\T\\codebook-browser-1',
+    ],
+    lineBreakInTheProgramName: [
+      'chrome',
+      '\n.exe',
+      '--user-data-dir=C:\\T\\codebook-browser-1',
+    ],
+    unterminatedQuotedProgramName: [
+      'C:\\a b\\chrome.exe --user-data-dir=C:\\T\\codebook-browser-1',
+    ],
   })
+})
+
+// Value: protects=a live profile on Windows whose Chrome was given its folder by a switch written in another case or with another of Chrome's switch prefixes, which Chrome reads as the same switch (base::CommandLine lowercases switch names on Windows and reads `--`, `-` and `/`), while a switch after the terminator `--` and a switch without a value give no profile (AD14, /ship adversarial review Step 11); fails_when=the switch is matched by its exact text, so `--User-Data-Dir=` hides a live profile from the sweep, or a loose argument after `--` is taken for the switch; why_new=the switch was matched as `--user-data-dir=` alone; seam=the system the command lines are read for (`win32`) and a listing of the test's own, matched against a real profile folder
+test('on Windows a profile switch written in another case or with another of Chrome’s prefixes is matched, and one after the switch terminator is not', async (context) => {
+  // Arrange
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-switch-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'codebook-browser-x')
+  await mkdir(profile)
+  const listing = [
+    { pid: 31, command: `chrome.exe "--User-Data-Dir=${profile}"` },
+    { pid: 32, command: `chrome.exe "-user-data-dir=${profile}"` },
+    { pid: 33, command: `chrome.exe "/USER-DATA-DIR=${profile}"` },
+    { pid: 34, command: `chrome.exe -- "--user-data-dir=${profile}"` },
+    { pid: 35, command: `chrome.exe --user-data-dir "${profile}"` },
+  ]
+  // Act
+  const observed = await profileProcesses(profile, listing, {
+    platform: 'win32',
+  })
+  // Assert
+  assert.deepEqual(
+    observed.map((listed) => listed.pid),
+    [31, 32, 33],
+  )
 })
 
 // Value: protects=a live profile on Windows whose Chrome names the folder in another way than the folder's resolved path: in another case, with `/` separators, or with `..` in it, which Windows reads as the same folder, so the owned Chrome is still found and a sweep never takes its folder for unused, while another folder whose path only starts with it is not matched (CX9, /ship Codex adversarial review); fails_when=the profile is compared by exact text on Windows, so a variant of the same path is left out and the live profile looks unused; why_new=every Windows profile test wrote the path as `realpath` gives it; seam=the system the command lines are read for (`win32`) and a listing of the test's own, matched against a real profile folder

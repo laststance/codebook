@@ -40,21 +40,53 @@ function comparableWindowsPath(path: string): string {
   return win32.normalize(path).replace(/\\+$/, '').toLowerCase()
 }
 
+/** The prefixes by which Chrome reads a switch on Windows (`kSwitchPrefixes` of Chromium's `base::CommandLine`), the longest first. */
+const WINDOWS_SWITCH_PREFIXES = ['--', '-', '/']
+
+/** The argument after which Chrome reads no more switches (`kSwitchTerminator`). */
+const SWITCH_TERMINATOR = '--'
+
+/**
+ * Reads the profile folder an argument gives Chrome on Windows, as `base::CommandLine` reads a switch there: after one of its prefixes ({@link WINDOWS_SWITCH_PREFIXES}), by a name it compares in lower case, and the value after the first `=`; called by {@link namesProfileOnWindows} for each argument.
+ * @param argument - One argument of the command line.
+ * @returns The value of a `user-data-dir` switch, also one written `--User-Data-Dir=` or `/user-data-dir=`; `undefined` for any other argument and for the switch without a value.
+ * @example
+ * profileSwitchValueOnWindows('--USER-DATA-DIR=C:\\x') // => 'C:\\x'
+ * profileSwitchValueOnWindows('--user-data-dir')        // => undefined
+ */
+function profileSwitchValueOnWindows(argument: string): string | undefined {
+  const prefix = WINDOWS_SWITCH_PREFIXES.find((candidate) =>
+    argument.startsWith(candidate),
+  )
+  if (prefix === undefined) return undefined
+  const switchText = argument.slice(prefix.length)
+  const equals = switchText.indexOf('=')
+  // Chrome lowercases every switch name on Windows before it looks one up.
+  return equals > 0 &&
+    switchText.slice(0, equals).toLowerCase() === PROFILE_FLAG.slice(2, -1)
+    ? switchText.slice(equals + 1)
+    : undefined
+}
+
 /**
  * Says whether a Windows command line names a profile folder as Chrome's `--user-data-dir`; called by {@link profileProcesses} on Windows.
- * The command line is split into its arguments by the rules of the Microsoft C runtime ({@link windowsCommandLineArguments}), so a quoted path that holds a space is read whole, and the flag's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
+ * The command line is split into its arguments as `CommandLineToArgvW` splits it ({@link windowsCommandLineArguments}), the arguments after the program name and before a switch terminator (`--`) are read as Chrome reads its switches ({@link profileSwitchValueOnWindows}), and the switch's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
  * @param command - The command line as Windows keeps it.
  * @param folder - The resolved profile folder.
- * @returns `true` when one argument is the flag with this folder; `false` for a folder that only shares a prefix with it.
+ * @returns `true` when an argument is the profile switch with this folder; `false` for a folder that only shares a prefix with it.
  * @example
- * namesProfileOnWindows('chrome.exe "--user-data-dir=C:/USERS/a b/temp/codebook-browser-x"', 'C:\\Users\\a b\\Temp\\codebook-browser-x') // => true
+ * namesProfileOnWindows('chrome.exe "--User-Data-Dir=C:/USERS/a b/temp/codebook-browser-x"', 'C:\\Users\\a b\\Temp\\codebook-browser-x') // => true
  */
 function namesProfileOnWindows(command: string, folder: string): boolean {
   const wanted = comparableWindowsPath(folder)
-  return windowsCommandLineArguments(command).some(
-    (argument) =>
-      argument.startsWith(PROFILE_FLAG) &&
-      comparableWindowsPath(argument.slice(PROFILE_FLAG.length)) === wanted,
+  const switches = windowsCommandLineArguments(command).slice(1)
+  const terminator = switches.indexOf(SWITCH_TERMINATOR)
+  // Chrome reads no switch after the terminator: such an argument is a loose one.
+  return (terminator === -1 ? switches : switches.slice(0, terminator)).some(
+    (argument) => {
+      const value = profileSwitchValueOnWindows(argument)
+      return value !== undefined && comparableWindowsPath(value) === wanted
+    },
   )
 }
 

@@ -1,63 +1,77 @@
-/** Says whether a character separates two arguments of a Windows command line outside quotes: a space or a tab. @example isArgumentSeparator('\t') // => true */
+/** Says whether a character separates two arguments after the program name outside quotes: a space or a tab. @example isArgumentSeparator('\t') // => true */
 function isArgumentSeparator(character: string | undefined): boolean {
   return character === ' ' || character === '\t'
 }
 
+/** Gives the position of the first character after a run of separators. @example afterSeparators('a  b', 1) // => 3 */
+function afterSeparators(commandLine: string, start: number): number {
+  let index = start
+  while (isArgumentSeparator(commandLine[index])) index += 1
+  return index
+}
+
 /**
- * Reads the program name, the first argument of a Windows command line, from where it begins; called by {@link windowsCommandLineArguments}.
- * The program name has rules of its own: a quote opens or closes a quoted part, and a backslash is always a character of the name (it is a path).
+ * Reads the program name, the first argument of a Windows command line, by `CommandLineToArgvW`'s own rule for it; called by {@link windowsCommandLineArguments}.
+ * A name that begins with a quote ends at the next quote, whatever follows it (`"C:\P F\chrome.exe"--flag` is the program and `--flag`); any other name ends at the first white space, a line break among it. A backslash or a quote inside an unquoted name is a character of it, and a leading space gives an empty name.
  * @param commandLine - The whole command line.
- * @param start - Where the program name begins (no separator there).
  * @returns The program name and the position after it.
  * @example
- * programNameAt('"C:\\Program Files\\chrome.exe" --headless', 0) // => { argument: 'C:\\Program Files\\chrome.exe', end: 29 }
+ * programNameAt('"C:\\Program Files\\chrome.exe" --headless') // => { argument: 'C:\\Program Files\\chrome.exe', end: 29 }
  */
-function programNameAt(
-  commandLine: string,
-  start: number,
-): { argument: string; end: number } {
-  let argument = '',
-    inQuotes = false,
-    index = start
-  for (; index < commandLine.length; index += 1) {
-    const character = commandLine[index]!
-    if (character === '"') inQuotes = !inQuotes
-    else if (!inQuotes && isArgumentSeparator(character)) break
-    else argument += character
+function programNameAt(commandLine: string): {
+  argument: string
+  end: number
+} {
+  if (commandLine.startsWith('"')) {
+    const closing = commandLine.indexOf('"', 1)
+    // A name whose quote is never closed takes the rest of the line.
+    return closing === -1
+      ? { argument: commandLine.slice(1), end: commandLine.length }
+      : { argument: commandLine.slice(1, closing), end: closing + 1 }
   }
-  return { argument, end: index }
+  const whiteSpace = commandLine.search(/\s/)
+  const end = whiteSpace === -1 ? commandLine.length : whiteSpace
+  return { argument: commandLine.slice(0, end), end }
 }
 
 /**
- * Reads a run of backslashes inside an argument and the quote that may follow it, by the rules of the Microsoft C runtime; called by {@link argumentAt} at each backslash.
- * Backslashes are characters of the argument unless they stand right before a quote: then each pair of them gives one backslash, and an odd one left over makes that quote a character instead of a delimiter.
+ * Reads a run of quotes inside an argument by `CommandLineToArgvW`'s rule, with the backslashes right before it; called by {@link argumentAt} at each quote.
+ * The backslashes were taken into the argument as they came. Before an even number of them, half of them stay and the quote opens or closes a quoted part; before an odd number, half of them stay and the quote is a character. Every further quote right after it counts too: each third quote in a row is a character, and a count of two closes the quoted part.
  * @param commandLine - The whole command line.
- * @param start - Where the run of backslashes begins.
- * @returns The text the run gives the argument and the position after what it consumed: after the escaped quote when one was escaped; before the quote when it stays a delimiter.
+ * @param at - The position of the quote.
+ * @param read - The argument so far, its quote count (`quotes`, 0 outside a quoted part) and the backslashes right before the quote.
+ * @returns The argument with the run read, the quote count after it and the position after the run.
  * @example
- * backslashRunAt('a\\b', 1)    // => { text: '\\', end: 2 }: a backslash in a path
- * backslashRunAt('d\\"e', 1)  // => { text: '"', end: 3 }: an escaped quote
- * backslashRunAt('f\\\\"', 1) // => { text: '\\', end: 3 }: one backslash, then the quote is a delimiter
+ * quoteRunAt('"a""b"', 2, { argument: 'a', quotes: 1, backslashes: 0 }) // => { argument: 'a"', quotes: 0, end: 4 }
  */
-function backslashRunAt(
+function quoteRunAt(
   commandLine: string,
-  start: number,
-): { text: string; end: number } {
-  let end = start
-  while (commandLine[end] === '\\') end += 1
-  const backslashes = end - start
-  // Backslashes count only right before a quote; elsewhere each is a character of a path.
-  if (commandLine[end] !== '"') return { text: '\\'.repeat(backslashes), end }
-  const halved = '\\'.repeat(Math.floor(backslashes / 2))
-  // An odd backslash escapes the quote, which is then a character; after an even number the quote is read as a delimiter by the caller.
-  return backslashes % 2 === 1
-    ? { text: `${halved}"`, end: end + 1 }
-    : { text: halved, end }
+  at: number,
+  read: { argument: string; quotes: number; backslashes: number },
+): { argument: string; quotes: number; end: number } {
+  const { backslashes } = read
+  let quotes = read.quotes
+  // An even run of backslashes is halved and the quote counts; an odd one is halved and escapes the quote.
+  let argument =
+    backslashes % 2 === 0
+      ? read.argument.slice(0, read.argument.length - backslashes / 2)
+      : `${read.argument.slice(0, read.argument.length - (backslashes - 1) / 2 - 1)}"`
+  if (backslashes % 2 === 0) quotes += 1
+  let end = at + 1
+  for (; commandLine[end] === '"'; end += 1) {
+    quotes += 1
+    // Every third quote in a row is one quote of the argument.
+    if (quotes === 3) {
+      argument += '"'
+      quotes = 0
+    }
+  }
+  return { argument, quotes: quotes === 2 ? 0 : quotes, end }
 }
 
 /**
- * Reads one argument after the program name by the rules of the Microsoft C runtime, from where it begins; called by {@link windowsCommandLineArguments}.
- * A quote opens or closes a quoted part, in which spaces and tabs belong to the argument, and a doubled quote inside a quoted part is one quote. Backslashes are read by {@link backslashRunAt}.
+ * Reads one argument after the program name by `CommandLineToArgvW`'s rules, from where it begins; called by {@link windowsCommandLineArguments}.
+ * Spaces and tabs end the argument outside quoted parts; quotes and the backslashes before them are read by {@link quoteRunAt}; every other character, a backslash elsewhere among it, is a character of the argument.
  * @param commandLine - The whole command line.
  * @param start - Where the argument begins (no separator there).
  * @returns The argument and the position after it.
@@ -69,63 +83,55 @@ function argumentAt(
   start: number,
 ): { argument: string; end: number } {
   let argument = '',
-    inQuotes = false,
+    quotes = 0,
+    backslashes = 0,
     index = start
-  while (index < commandLine.length) {
+  while (
+    index < commandLine.length &&
+    (quotes !== 0 || !isArgumentSeparator(commandLine[index]))
+  ) {
     const character = commandLine[index]!
-    if (!inQuotes && isArgumentSeparator(character)) break
-    if (character === '\\') {
-      const run = backslashRunAt(commandLine, index)
-      argument += run.text
+    if (character === '"') {
+      const run = quoteRunAt(commandLine, index, {
+        argument,
+        quotes,
+        backslashes,
+      })
+      ;({ argument, quotes } = run)
       index = run.end
-    } else if (
-      inQuotes &&
-      character === '"' &&
-      commandLine[index + 1] === '"'
-    ) {
-      // A doubled quote inside a quoted part is one quote, and the part goes on.
-      argument += '"'
-      index += 2
-    } else if (character === '"') {
-      inQuotes = !inQuotes
-      index += 1
-    } else {
-      argument += character
-      index += 1
+      backslashes = 0
+      continue
     }
+    argument += character
+    // Backslashes are counted until a quote decides what they are; any other character ends the run.
+    backslashes = character === '\\' ? backslashes + 1 : 0
+    index += 1
   }
   return { argument, end: index }
 }
 
 /**
- * Splits a Windows command line into its arguments as a program built with the Microsoft C runtime receives them (Chrome among them), so that an argument is compared as a whole; called by {@link profileProcesses} for the command lines PowerShell lists on Windows.
- * Why: Windows keeps a process's command line as one text, and an argument that holds a space is written in quotes, whole (`"--user-data-dir=C:\Users\a b\…"`) or only around its value (`--user-data-dir="C:\Users\a b\…"`). Read as text, the profile path then ends at a quote, not at a space or at the end.
+ * Splits a Windows command line into its arguments as `CommandLineToArgvW` does, by which Chrome (`base::CommandLine`) reads its own, so that an argument is compared as Chrome sees it; called by {@link profileProcesses} for the command lines PowerShell lists on Windows.
+ * Why: Windows keeps a process's command line as one text, and an argument that holds a space is written in quotes, whole (`"--user-data-dir=C:\Users\a b\…"`) or only around its value (`--user-data-dir="C:\Users\a b\…"`). Read as text, the profile path then ends at a quote, not at a space or at the end. The program name has a rule of its own ({@link programNameAt}); the arguments after it follow {@link argumentAt}. The rules are the ones of Wine's port of `CommandLineToArgvW`, which mirrors Windows'.
  * @param commandLine - The process's command line as Windows keeps it (`Win32_Process.CommandLine`).
- * @returns Every argument in order, the program name first; quotes and the backslashes that only escape them are removed. Empty for a command line of separators only.
+ * @returns Every argument in order, the program name first (empty for a line that begins with a space); quotes and the backslashes that only escape them are removed.
  * @example
  * windowsCommandLineArguments('"C:\\Program Files\\chrome.exe" "--user-data-dir=C:\\Users\\a b\\x" --headless')
  * // => ['C:\\Program Files\\chrome.exe', '--user-data-dir=C:\\Users\\a b\\x', '--headless']
- * windowsCommandLineArguments('chrome.exe --user-data-dir="C:\\Users\\a b\\x"')
- * // => ['chrome.exe', '--user-data-dir=C:\\Users\\a b\\x']
+ * windowsCommandLineArguments('"C:\\P F\\chrome.exe"--user-data-dir=C:\\x')
+ * // => ['C:\\P F\\chrome.exe', '--user-data-dir=C:\\x']
  */
 export function windowsCommandLineArguments(commandLine: string): string[] {
-  const commandArguments: string[] = []
-  let index = 0
-  // Separators between arguments, and before the first, are no part of any argument.
-  const skipSeparators = (): void => {
-    while (isArgumentSeparator(commandLine[index])) index += 1
-  }
-  skipSeparators()
-  if (index >= commandLine.length) return commandArguments
-  const program = programNameAt(commandLine, index)
-  commandArguments.push(program.argument)
-  index = program.end
-  skipSeparators()
-  while (index < commandLine.length) {
+  const program = programNameAt(commandLine)
+  const commandArguments = [program.argument]
+  // Separators after the program name and between arguments belong to no argument; trailing ones start none.
+  for (
+    let index = afterSeparators(commandLine, program.end);
+    index < commandLine.length;
+  ) {
     const next = argumentAt(commandLine, index)
     commandArguments.push(next.argument)
-    index = next.end
-    skipSeparators()
+    index = afterSeparators(commandLine, next.end)
   }
   return commandArguments
 }
