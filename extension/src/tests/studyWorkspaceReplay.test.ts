@@ -4,6 +4,7 @@ import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { CHAT_KEYBOARD_RETURNED_MESSAGES } from '../constants'
 import { RecordingStore } from '../recordingStore'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -5082,6 +5083,91 @@ test('in Cursor, an agent’s Return Current right after its cold Study selectio
         shownWithKeyboard: ['Captured-theme.ts@2'],
         keyboardCommands: ['composer.focusComposer'],
         chatHasKeyboard: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=row 5's cold order beside Cursor's Agent chat part when the reader holds a saved replay (C61 c61-5-cu-cold): the agent's select reopens the replay and gives the chat its keyboard back; its Return Current leaves the replay for the live run, whose captured source opens quietly in place of the replay's, which closes, while the chat input has the keyboard, so Cursor names its chat part's group (rows 696 and 702); the measurement then borrows through the captured source (readMainEditorGrid's sourceBorrow, the Application pane in front of the first group), and the Return gives the chat its keyboard back with Focus Agent, the arrangement's sentence told once in the session, so the run that starts next finds the chat with the keyboard; fails_when=the give-back reads the chat part's group the editor names as a move of the keyboard away from where the measurement left it, so no Focus Agent runs and the captured source keeps the keyboard, which the Live entry's source view then drops to the page body (C61: 3,037 samples on BODY, every stop of the five-stop flow on BODY); why_new=Cycle 0046 row 711; seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus (the click into the chat input), leavePaneFocusUnreportedBesideChat, focusMutableDraft, focusExistingWebviewTab, the service's playback, selectPresentation and returnToCurrent, the command log, textDocumentShows and the information messages
+test('in Cursor, an agent’s Return Current from the saved replay its cold select reopened gives the chat its keyboard back after borrowing through the captured source, while Cursor names its chat part’s group', async () => {
+  // Arrange: the reader holds a saved replay, the learner's login-form.tsx is in front of the first group, and the learner clicked into the chat input; the agent's cold select reopened the replay and gave the chat its keyboard back.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    const wiki = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Repository Wiki')!
+    harness.focusExistingWebviewTab(wiki)
+    chat.focus()
+    const messagesBefore = harness.informationMessages.length
+    const state = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    await harness.controller.settle()
+    const selected = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const returned = await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: selected.presentationId,
+      expectedRevision: selected.reader.contentRevision,
+    })
+    await harness.controller.settle()
+
+    // Assert: the measurement borrowed through the captured source, Focus Agent ran last, and the arrangement's sentence was told once over the select and the Return.
+    assert.deepEqual(
+      {
+        layoutConfirmed: returned.layoutConfirmed,
+        contentTab: returned.reader.contentTab,
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus)
+          .map((shown) => `${shown.name}@${shown.viewColumn}`),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        arrangementSentences: harness.informationMessages
+          .slice(messagesBefore)
+          .filter(
+            (message) =>
+              message.message === CHAT_KEYBOARD_RETURNED_MESSAGES.arrangement,
+          ).length,
+      },
+      {
+        layoutConfirmed: true,
+        contentTab: 'live',
+        shownWithKeyboard: ['Captured-theme.ts@2'],
+        keyboardCommands: ['composer.focusComposer'],
+        chatHasKeyboard: true,
+        arrangementSentences: 1,
       },
     )
   } finally {

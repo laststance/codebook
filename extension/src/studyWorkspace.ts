@@ -3030,7 +3030,8 @@ export class StudyWorkspace {
           this.contextPanel?.active ||
           (activeUri !== undefined &&
             (activeUri === this.sourceUri?.toString() ||
-              (activeUri === heldUri && active.viewColumn === column)))
+              (activeUri === heldUri && active.viewColumn === column))) ||
+          this.isCapturedSourceUnderAnotherPartsName(active)
         )
       )
         return false
@@ -3049,6 +3050,25 @@ export class StudyWorkspace {
         chatEditorTab,
       )
     }
+  }
+
+  /**
+   * Says whether the captured source the arrangement showed with the keyboard has it while the editor names another editor part's group: Cursor 3.23.12 names its chat part's group after a tab closed while the chat input had the keyboard (C61 c61-702-probe step 6, Cycle 0046 row 702), and a text editor of the main editor that takes the keyboard after that is reported as the active text editor while that name stays until a group event (c58-cu-567, row 674); asked by the function {@link retainForeignTabFocus} answers, before it gives the keyboard back from where the arrangement left it.
+   * @param active - The group the editor names as active now.
+   * @returns `true` while the named group's front tab is neither a text tab nor a webview (the chat's tab) and the active text editor is the captured source; `false` otherwise.
+   * @example this.isCapturedSourceUnderAnotherPartsName(vscode.window.tabGroups.activeTabGroup) // => true after Return Current showed the captured source with the keyboard beside Cursor's chat part, once its obsolete copy's close named the chat's group
+   */
+  private isCapturedSourceUnderAnotherPartsName(
+    active: vscode.TabGroup,
+  ): boolean {
+    const input = active.activeTab?.input
+    return (
+      this.sourceUri !== undefined &&
+      !(input instanceof vscode.TabInputText) &&
+      !(input instanceof vscode.TabInputWebview) &&
+      vscode.window.activeTextEditor?.document.uri.toString() ===
+        this.sourceUri.toString()
+    )
   }
 
   /**

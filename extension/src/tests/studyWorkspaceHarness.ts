@@ -953,6 +953,7 @@ export async function workspaceHarness(
    * @param opened - The group the same change opened; it is reported as opened and keeps its object.
    * @param notify - False snapshots the next model before an empty group's first source tab changes, then the completed change emits normally.
    * @param keepsStaleName - True for the rebuild a document shown in the main editor brings while Cursor names its chat part's group: the rebuild names the group Cursor's editor groups service holds active (`workbench.desktop.main.js` 17269:31013 `isActive:t.id===this._editorGroupsService.activeGroup.id`), which that display does not change, so the chat's group stays the named one (C58 c58-cu-567: the cited source took the keyboard in the first group under the chat's name; C59 c59-cu-2c: the citation's group event named column 3 still; Cycle 0046 row 674).
+   * @param closesTabs - True for the rebuild a closed tab or group brings: while Cursor's chat part is the active part with its input focused, it names the chat part's group, the group Cursor's editor groups service holds active (C61 c61-702-probe step 6: next.config.js of group 2 closed by `tabGroups.close` while the chat input had the keyboard, and the name went from the stale group 1 to the chat part's group 3; Cycle 0046 row 702). Otherwise it names the active group, which ends a stale name (row 673).
    * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
    */
   function replaceGroupObjects(
@@ -960,6 +961,7 @@ export async function workspaceHarness(
     opened?: (typeof groups)[number],
     notify = true,
     keepsStaleName = false,
+    closesTabs = false,
   ): void {
     if (!replacesGroupObjectsOnTabChanges) return
     const replacements = new Map(
@@ -983,8 +985,24 @@ export async function workspaceHarness(
           closed,
           changed: [...replacements.values()],
         },
-        keepsStaleName ? nameAfterNewTabRebuild(replaced) : undefined,
+        keepsStaleName
+          ? nameAfterNewTabRebuild(replaced)
+          : closesTabs
+            ? chatPartGroupWhileActive()
+            : undefined,
       )
+  }
+  /**
+   * Names Cursor's chat part's group while that part is the active editor part with its chat input focused, the group Cursor's editor groups service holds active then, which a whole tab-model rebuild names (`workbench.desktop.main.js` 17269:31013); asked by `replaceGroupObjects` for the rebuild of a closed tab (row 702) and by `nameAfterNewTabRebuild` for that of a tab opened without the keyboard (row 696).
+   * @returns The chat part's group then; `undefined` without Cursor's chat part, while the main editor is the active part, while a view has the keyboard, and for VS Code's floating chat window.
+   * @example chatPartGroupWhileActive() // => the chat part's group after Focus Agent
+   */
+  function chatPartGroupWhileActive(): (typeof groups)[number] | undefined {
+    return separateEditorPart?.lastActive &&
+      separateEditorPart.focused &&
+      !separateEditorPart.floatingVsCodeChat
+      ? separateEditorPart.group
+      : undefined
   }
   /**
    * Names the group the rebuild a tab opened in the main editor brings names in Cursor's model, for `replaceGroupObjects`: the group Cursor's editor groups service holds active (`workbench.desktop.main.js` 17269:31013), which a display does not change. While Cursor's chat part is the active part with its input focused, that is the chat part's group, also when the extension host still named a main group: the reader's own copy shown without the keyboard in the first group moved the name from that stale group 1 to the chat part's group 3 (C60 c60-cu-7d2, the show at 149 ms and the groups event at 153 ms; Cycle 0046 row 696). Otherwise the stale name stays, the chat's group among them (row 674).
@@ -995,13 +1013,10 @@ export async function workspaceHarness(
   function nameAfterNewTabRebuild(
     replaced: (group: (typeof groups)[number]) => (typeof groups)[number],
   ): (typeof groups)[number] | undefined {
-    if (
-      separateEditorPart?.lastActive &&
-      separateEditorPart.focused &&
-      !separateEditorPart.floatingVsCodeChat
+    return (
+      chatPartGroupWhileActive() ??
+      (staleNamedGroup && replaced(staleNamedGroup))
     )
-      return separateEditorPart.group
-    return staleNamedGroup && replaced(staleNamedGroup)
   }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
@@ -1770,7 +1785,9 @@ export async function workspaceHarness(
         candidate.tabs.includes(retained.nativeTab),
       )?.viewColumn
     if (activeTabGroup === emptied) activeTabGroup = groups[0]!
-    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([emptied])
+    // A group's close is a closing rebuild too: beside Cursor's active chat part it names the chat part's group (row 702).
+    if (replacesGroupObjectsOnTabChanges)
+      replaceGroupObjects([emptied], undefined, true, false, true)
     else changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
     // Both installed hosts restore only an actual editor-part input or BODY; terminal/sidebar chat lie outside that container.
     if (
@@ -1850,12 +1867,12 @@ export async function workspaceHarness(
       }
       removeEmptiedGroup(emptied, preserveFocus)
     }
-    // Cursor answers closed tabs with new group objects; a removed group above already came with them.
+    // Cursor answers closed tabs with new group objects, which name the chat part's group beside its active chat part (row 702); a removed group above already came with them.
     if (
       groups.length === groupCountBefore &&
       tabs.some((tab) => !groups.some((group) => group.tabs.includes(tab)))
     )
-      replaceGroupObjects()
+      replaceGroupObjects([], undefined, true, false, true)
     if (closedActiveLeftover) {
       if (lateEditorAfterLeftoverClose || staleEditorAfterLeftoverClose) {
         // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
