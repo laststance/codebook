@@ -275,6 +275,31 @@ test('a sealed recording, and one whose header cannot be read, have no writer an
   })
 })
 
+// Value: protects=this window's own live run whose recording has only its header (its writer's record could not be written) while this computer's host name changed during the run (macOS takes it from the network); fails_when=the host name is compared before the process id, so this window's own reservation counts as a recording of another computer: Saved studies lists it as what is left of a removed study, and a removal offers to move it; why_new=Cycle 0046 security review SX1; seam=the recording's header, which names this test process under another host name, without a record of its writer
+test('a recording whose header names this window’s own process under another host name is this window’s: it may run, it is left to this window when asked, and it is not listed', async (context) => {
+  // Arrange: this window's run, recording under the host name it had when it began.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rm(recordingOwnerRecordPath(storage.directory, recording.studyId))
+  await rewriteHeader(recording.folder, {
+    owner: { pid: process.pid, hostname: 'laptop.home-network' },
+  })
+
+  // Act
+  const answers = {
+    counted: await writerOf(recording.folder),
+    leftToThisWindow: await writerOf(recording.folder, 'ignored'),
+    listed: (await storage.library.list()).map((entry) => entry.id),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    counted: { kind: 'may-run' },
+    leftToThisWindow: { kind: 'left-to-caller' },
+    listed: [],
+  })
+})
+
 /** The owner of a recording's header as 0.2.29.0 reads it (its `recordingSchemas.ts`, `z.strictObject` of these three fields): any other field makes it refuse the recording. */
 const OWNER_AS_0_2_29_0_READS_IT = z.strictObject({
   pid: z.number().int().positive(),

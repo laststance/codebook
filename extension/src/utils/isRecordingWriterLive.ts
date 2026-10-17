@@ -109,13 +109,35 @@ async function hasIdGoneToALaterProcess(
 }
 
 /**
+ * Says whether a header names this very process as a recording's writer: its process id is this process's, and the recording was not created before this process began (by the clock, with the tolerance of a corrected clock); called by {@link writerStateByHeader} before it compares the host name, which can change while this window records (macOS takes it from the network).
+ * @param header - What the header says of the writer.
+ * @param readStart - The list's reader of process starts ({@link readStartOncePerList}); this process's own start is read once and kept ({@link readProcessStart}).
+ * @returns `true` when the id is this process's and the recording began after it, or this process's start cannot be read; `false` for another process id, and for a recording created before this process began, which an earlier process of that id made.
+ * @example await isThisProcessWriter({ owner: { pid: process.pid, hostname: 'laptop.home-network' }, createdAt: new Date().toISOString() }, readStart) // => true
+ */
+async function isThisProcessWriter(
+  header: RecordingWriterOfHeader,
+  readStart: ProcessStartReader,
+): Promise<boolean> {
+  if (header.owner.pid !== process.pid) return false
+  const start = await readStart(process.pid).catch(() => undefined)
+  const startedAtMs =
+    start === undefined ? undefined : processStartedAtMs(start)
+  return (
+    startedAtMs === undefined ||
+    Date.parse(header.createdAt) >=
+      startedAtMs - STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
+  )
+}
+
+/**
  * Judges a recording's writer by its header alone, for a recording without a record of its full identity (one 0.2.29.0 made, or one whose record could not be written); called by {@link recordingWriterState}.
  * @param header - What the header says of the writer.
  * @param ownProcess - Whether this process's own recording counts.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns
+ * - for this process's own recording ({@link isThisProcessWriter}), whatever host name the header gives: `left-to-caller` with `ignored`, `may-run` with `counts`
  * - `on-another-host` for a writer of another host name, which cannot be probed
- * - `left-to-caller` with `ignored` for this process's own recording
  * - `gone` for a process of this host that is gone, and for one that began after the recording was created (its id went to another process: {@link hasIdGoneToALaterProcess})
  * - `may-run` for a live process of this host that began before the recording was created
  * @example await writerStateByHeader({ owner: { pid: 2 ** 22 + 1, hostname: hostname() }, createdAt }, 'counts', readStart) // => { kind: 'gone' }
@@ -126,12 +148,14 @@ async function writerStateByHeader(
   readStart: ProcessStartReader,
 ): Promise<RecordingWriterState> {
   const { owner } = header
+  // This window's own recording, also one whose host name changed while it records, is told first: it may run, or it is left to the caller's own run state.
+  if (await isThisProcessWriter(header, readStart))
+    return ownProcess === 'ignored'
+      ? { kind: 'left-to-caller' }
+      : { kind: 'may-run' }
   // Only a process of this machine can be probed; any other owner may still be writing.
   if (owner.hostname !== hostname())
     return { kind: 'on-another-host', host: owner.hostname }
-  // This process's own recording is left to the caller's own run state when it asks so.
-  if (ownProcess === 'ignored' && owner.pid === process.pid)
-    return { kind: 'left-to-caller' }
   if (isProcessGone(owner.pid)) return { kind: 'gone' }
   return (await hasIdGoneToALaterProcess(header, readStart))
     ? { kind: 'gone' }
