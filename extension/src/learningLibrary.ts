@@ -49,6 +49,7 @@ import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
+import type { ProcessStartsOfList } from './utils/isRecordingWriterLive'
 import { newerStudyArchive } from './utils/newerStudyArchive'
 import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
@@ -79,6 +80,9 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
 export type StudyRemoval =
   | { outcome: 'moved'; unreleasedLock?: string }
   | { outcome: 'nothing-moved' | 'partly-moved'; cause: string }
+
+/** Judges whether a run may still write one recording directory ({@link recordingMayStillBeWritten}), as the caller's list or removal judges it. */
+type RecordingJudge = (recording: string) => Promise<boolean>
 
 /** What {@link LearningLibrary.removeStudy} has changed so far, read when a step fails to tell `nothing-moved` from `partly-moved`. @example const changes: StudyRemovalChanges = { movedPathCount: 0 } */
 type StudyRemovalChanges = {
@@ -166,7 +170,7 @@ export class LearningLibrary {
     )
     return [
       ...catalog,
-      ...(await this.entriesWithoutArchive(names, entries)),
+      ...(await this.entriesWithoutArchive(names, entries, new Map())),
     ].sort((left, right) => right.savedAt.localeCompare(left.savedAt))
   }
 
@@ -175,26 +179,30 @@ export class LearningLibrary {
    * Such a study is found by a catalog sidecar in the library directory or by a recording directory in a recording root, as after the learner removed a study's files by hand and left some. It cannot be opened, repaired or counted as a saved study; {@link studyFiles} names its files and {@link removeStudy} moves them.
    * @param names - The file names of the library directory.
    * @param kept - The studies that have an archive, which are listed by it.
-   * @returns One entry a study without an archive of which something is left ({@link isLeftWithoutArchive}); a study that cannot be inspected is left out, so it never hides the saved studies.
-   * @example await this.entriesWithoutArchive(['<id>.study.meta.v3.json'], []) // => [{ id, savedAt, format: 'archive-missing', metadata: 'unavailable', outcome: 'Archive missing; remaining files kept' }]
+   * @param starts - The process starts of this list, shared by the judgements of the recordings' writers, so each writer's process is asked once ({@link ProcessStartsOfList}).
+   * @returns One entry a study without an archive of which something is left ({@link isLeftWithoutArchive}), in the order the studies were found; a study that cannot be inspected is left out, so it never hides the saved studies.
+   * @example await this.entriesWithoutArchive(['<id>.study.meta.v3.json'], [], new Map()) // => [{ id, savedAt, format: 'archive-missing', metadata: 'unavailable', outcome: 'Archive missing; remaining files kept' }]
    */
   private async entriesWithoutArchive(
     names: string[],
     kept: LibraryEntry[],
+    starts: ProcessStartsOfList,
   ): Promise<StudyCatalogEntry[]> {
     const keptIds = new Set(kept.map((entry) => entry.id))
-    const candidates = new Set([
-      ...this.sidecarStudyIds(names),
-      ...(await this.recordedStudyIds()),
-    ])
-    const left: StudyCatalogEntry[] = []
-    for (const id of candidates) {
-      // A study with an archive, also one of a newer format, is listed by its archive.
-      if (keptIds.has(id)) continue
-      const entry = await this.entryWithoutArchive(id).catch(() => undefined)
-      if (entry) left.push(entry)
-    }
-    return left
+    // A study with an archive, also one of a newer format, is listed by its archive.
+    const candidates = [
+      ...new Set([
+        ...this.sidecarStudyIds(names),
+        ...(await this.recordedStudyIds()),
+      ]),
+    ].filter((id) => !keptIds.has(id))
+    // The candidates are looked at together; their order is kept.
+    const left = await Promise.all(
+      candidates.map((id) =>
+        this.entryWithoutArchive(id, starts).catch(() => undefined),
+      ),
+    )
+    return left.filter((entry) => entry !== undefined)
   }
 
   /**
@@ -254,15 +262,20 @@ export class LearningLibrary {
   /**
    * Builds the catalog entry of one study without an archive of which something is left; called by {@link entriesWithoutArchive} for every study a sidecar or a recording directory names.
    * @param id - The validated study id.
+   * @param starts - The process starts of the caller's list ({@link ProcessStartsOfList}).
    * @returns The entry with `format: 'archive-missing'` and `metadata: 'unavailable'`, which has no reason: nothing Retry storage does brings the archive back. Its saved time is the latest modification of what is left. `undefined` when nothing is left that makes the study one ({@link isLeftWithoutArchive}).
    * @throws When a path of the study cannot be inspected.
-   * @example (await this.entryWithoutArchive(id))?.outcome // => 'Archive missing; remaining files kept'
+   * @example (await this.entryWithoutArchive(id, new Map()))?.outcome // => 'Archive missing; remaining files kept'
    */
   private async entryWithoutArchive(
     id: string,
+    starts: ProcessStartsOfList,
   ): Promise<StudyCatalogEntry | undefined> {
     const paths = await this.studyPaths(id, undefined)
-    if (!(await this.isLeftWithoutArchive(paths))) return undefined
+    const isLeft = await this.isLeftWithoutArchive(paths, (recording) =>
+      recordingMayStillBeWritten(recording, 'counts', starts),
+    )
+    if (!isLeft) return undefined
     const modified = await Promise.all(
       [...paths.recordings, ...paths.sidecars].map((path) => lstat(path)),
     )
@@ -281,23 +294,28 @@ export class LearningLibrary {
    * Says whether the paths of a study are what is left of a saved study without its archive, which is listed ({@link entriesWithoutArchive}) and may be removed ({@link removeStudy}).
    * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one only when no editor may still be writing it ({@link recordingMayStillBeWritten}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run.
    * @param paths - The study's paths as {@link studyPaths} found them.
+   * @param mayStillBeWritten - Judges one recording directory ({@link recordingMayStillBeWritten}), with the process starts of the caller's list.
    * @returns `true` when no archive is left and a sidecar, or a recording that nobody writes, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only a recording that may still be written.
-   * @example await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }) // => true once that recording is sealed
+   * @example await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => true once that recording is sealed
    */
-  private async isLeftWithoutArchive(paths: StudyPaths): Promise<boolean> {
+  private async isLeftWithoutArchive(
+    paths: StudyPaths,
+    mayStillBeWritten: RecordingJudge,
+  ): Promise<boolean> {
     if (paths.archives.length) return false
     return (
       paths.sidecars.length > 0 ||
-      this.hasRecordingNobodyWrites(paths.recordings)
+      this.hasRecordingNobodyWrites(paths.recordings, mayStillBeWritten)
     )
   }
 
-  /** Says whether one of a study's recording directories is finished or abandoned, so that it is no reservation of a run that still writes it; asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNobodyWrites(['/…/recordings.v2/<id>']) // => true once that recording is sealed */
+  /** Says whether one of a study's recording directories is finished or abandoned, so that it is no reservation of a run that still writes it; asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNobodyWrites(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
   private async hasRecordingNobodyWrites(
     recordings: string[],
+    mayStillBeWritten: RecordingJudge,
   ): Promise<boolean> {
     for (const recording of recordings)
-      if (!(await recordingMayStillBeWritten(recording))) return true
+      if (!(await mayStillBeWritten(recording))) return true
     return false
   }
 
@@ -320,7 +338,12 @@ export class LearningLibrary {
    */
   private async refuseUnlessRemovable(paths: StudyPaths): Promise<void> {
     // What is left of a study without its archive is removed like a study.
-    if (!paths.archives.length && !(await this.isLeftWithoutArchive(paths)))
+    if (
+      !paths.archives.length &&
+      !(await this.isLeftWithoutArchive(paths, (recording) =>
+        recordingMayStillBeWritten(recording),
+      ))
+    )
       throw new StudyArchiveUnavailableError()
     if (await this.isRecordedByAnotherWindow(paths.recordings))
       throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)

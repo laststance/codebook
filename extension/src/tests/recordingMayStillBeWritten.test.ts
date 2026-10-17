@@ -10,22 +10,27 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
 
 import { z } from 'zod'
 
+import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary } from '../learningLibrary'
 import { retainedRecordingHeaderSchema } from '../recordingSchemas'
+import type * as storeModule from '../recordingStore'
 import { RecordingStore } from '../recordingStore'
 import { useEditorMachineId } from '../utils/currentStorageOwner'
+import type * as judgeModule from '../utils/isRecordingWriterLive'
 import { readProcessStart } from '../utils/readProcessStart'
+import type * as recordingJudgementModule from '../utils/recordingMayStillBeWritten'
 import { recordingMayStillBeWritten } from '../utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 
 // The editor's id of this machine, which stays the same when the host name follows the network; every record this file's windows write names it.
 before(() => {
@@ -444,6 +449,173 @@ test('the folder of writer records adds no entry to the saved studies or to the 
       studies: [],
       recordings: [recording.studyId],
       savedStudies: { count: 0, limit: 4 },
+    },
+  )
+})
+
+/**
+ * Loads the recording store and the study library as a window runs them, with the one reader of process starts that judges recording writers ({@link isRecordingWriterLive}) counted: every process id that reader is asked for is noted.
+ * @returns The two classes, and the process ids read, in the order they were asked for.
+ * @example const observed = await windowWithCountedStartReads(); await new observed.RecordingStore(directory, workspaceKey).list(); observed.startReads // => [4242]
+ */
+async function windowWithCountedStartReads() {
+  const startReads: number[] = []
+  const judge = await loadModule<typeof judgeModule>(
+    resolve(__dirname, '../utils/isRecordingWriterLive.js'),
+    {
+      './readProcessStart': {
+        readProcessStart: (
+          ...reading: Parameters<typeof readProcessStart>
+        ): ReturnType<typeof readProcessStart> => {
+          startReads.push(reading[0])
+          return readProcessStart(...reading)
+        },
+      },
+    },
+    { Error },
+  )
+  const recordingJudgement = await loadModule<typeof recordingJudgementModule>(
+    resolve(__dirname, '../utils/recordingMayStillBeWritten.js'),
+    { './isRecordingWriterLive': judge },
+    { Error },
+  )
+  const { RecordingStore: ObservedStore } = await loadModule<
+    typeof storeModule
+  >(
+    resolve(__dirname, '../recordingStore.js'),
+    { './utils/isRecordingWriterLive': judge },
+    { Error },
+  )
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    { './utils/recordingMayStillBeWritten': recordingJudgement },
+    { Error },
+  )
+  return {
+    RecordingStore: ObservedStore,
+    LearningLibrary: ObservedLibrary,
+    startReads,
+  }
+}
+
+/**
+ * Starts four recordings of runs that saved no study and names their writers as two other windows would: three of a window that still runs (a live child process of the test, with its own start in each record), and one of a window that crashed, whose process id a later process has now (the record keeps the crashed window's start).
+ * @param context - The test, at whose end the child processes end.
+ * @param storage - The test's storage.
+ * @returns The study ids of the live window's three recordings and of the crashed window's one.
+ * @example const { ofLiveWindow, ofCrashedWindow } = await recordingsOfTwoOtherWindows(context, storage)
+ */
+async function recordingsOfTwoOtherWindows(
+  context: TestContext,
+  storage: Awaited<ReturnType<typeof recordingStorage>>,
+) {
+  const liveWindow = await idleChild(context),
+    laterProcess = await idleChild(context)
+  const liveStart = await readProcessStart(liveWindow.pid!)
+  const ofLiveWindow: string[] = []
+  for (let recordingIndex = 0; recordingIndex < 3; recordingIndex += 1) {
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: { pid: liveWindow.pid!, hostname: hostname() },
+    })
+    await rewriteWriterRecord(storage, recording.studyId, {
+      pid: liveWindow.pid!,
+      processStart: liveStart,
+    })
+    ofLiveWindow.push(recording.studyId)
+  }
+  const crashed = await startRecording(storage)
+  await rewriteHeader(crashed.folder, {
+    owner: { pid: laterProcess.pid!, hostname: hostname() },
+  })
+  await rewriteWriterRecord(storage, crashed.studyId, {
+    pid: laterProcess.pid!,
+  })
+  return {
+    liveWindow: liveWindow.pid!,
+    laterProcess: laterProcess.pid!,
+    ofLiveWindow,
+    ofCrashedWindow: crashed.studyId,
+  }
+}
+
+// Value: protects=every refresh of the recordings list on Windows, where each read of a process's start is a PowerShell of up to 3 s; fails_when=the list asks the system for a writer's start once for each of its recordings instead of once for each process, or asks again on every list for a writer it already found gone; why_new=Cycle 0046 repeat review P1: the judgements of a list shared no read; seam=the reader of process starts of the loaded judgement, which counts the process ids it is asked for
+test('the recordings list reads the start of each writer process once per list, and does not read again for a writer it found gone', async (context) => {
+  // Arrange: three recordings of one live window and one of a crashed window, listed by another window twice.
+  const storage = await recordingStorage(context)
+  const writers = await recordingsOfTwoOtherWindows(context, storage)
+  const observed = await windowWithCountedStartReads()
+  const otherWindow = new observed.RecordingStore(
+    storage.directory,
+    storage.workspaceKey,
+  )
+
+  // Act
+  const firstList = await otherWindow.list()
+  const readsOfTheFirstList = observed.startReads.splice(0).sort()
+  const secondList = await otherWindow.list()
+  const readsOfTheSecondList = observed.startReads.splice(0).sort()
+
+  // Assert
+  const statusOf = (list: typeof firstList) =>
+    Object.fromEntries(list.map((entry) => [entry.studyId, entry.status]))
+  assert.deepEqual(
+    {
+      statuses: [statusOf(firstList), statusOf(secondList)],
+      readsOfTheFirstList,
+      readsOfTheSecondList,
+    },
+    {
+      statuses: [
+        Object.fromEntries([
+          ...writers.ofLiveWindow.map((studyId) => [studyId, 'unfinalized']),
+          [writers.ofCrashedWindow, 'interrupted'],
+        ]),
+        Object.fromEntries([
+          ...writers.ofLiveWindow.map((studyId) => [studyId, 'unfinalized']),
+          [writers.ofCrashedWindow, 'interrupted'],
+        ]),
+      ],
+      readsOfTheFirstList: [writers.liveWindow, writers.laterProcess].sort(),
+      readsOfTheSecondList: [writers.liveWindow],
+    },
+  )
+})
+
+// Value: protects=every refresh of the saved studies list on Windows; fails_when=the list's look for what is left of studies without an archive asks the system for a writer's start once for each recording instead of once for each process, or asks again for a writer it already found gone; why_new=Cycle 0046 repeat review P1; seam=the reader of process starts of the loaded judgement, which counts the process ids it is asked for
+test('the saved studies list reads the start of each writer process once per list, and does not read again for a writer it found gone', async (context) => {
+  // Arrange: three recordings of one live window and one of a crashed window, none of a saved study; another window lists the library twice.
+  const storage = await recordingStorage(context)
+  const writers = await recordingsOfTwoOtherWindows(context, storage)
+  const observed = await windowWithCountedStartReads()
+  const otherWindow = new observed.LearningLibrary(
+    storage.directory,
+    storage.workspaceKey,
+    () => 4,
+  )
+
+  // Act
+  const firstList = await otherWindow.list()
+  const readsOfTheFirstList = observed.startReads.splice(0).sort()
+  const secondList = await otherWindow.list()
+  const readsOfTheSecondList = observed.startReads.splice(0).sort()
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed: [firstList, secondList].map((list) =>
+        // The loaded library builds its arrays in a realm of its own; they are compared as arrays of this one.
+        Array.from(list, (entry) => entry.id),
+      ),
+      readsOfTheFirstList,
+      readsOfTheSecondList,
+    },
+    {
+      listed: [[writers.ofCrashedWindow], [writers.ofCrashedWindow]],
+      readsOfTheFirstList: [writers.liveWindow, writers.laterProcess].sort(),
+      readsOfTheSecondList: [writers.liveWindow],
     },
   )
 })

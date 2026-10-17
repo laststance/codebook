@@ -13,6 +13,7 @@ import { recordingHeaderSchema } from '../recordingSchemas'
 import {
   isRecordingWriterLive,
   type OwnProcessRule,
+  type ProcessStartsOfList,
 } from './isRecordingWriterLive'
 import { readBoundedFile } from './readBoundedFile'
 import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
@@ -28,6 +29,7 @@ const headerOwnerSchema = z.object({
  * A sealed recording is finished. A directory without a readable header was never handed to a writer. An unsealed one counts as being written while its writer may run ({@link isRecordingWriterLive}): by the record of the writer's full identity that this build keeps outside the recording, or, for a recording without one (made by 0.2.29.0), by the header's host name and process id, with a process id that went to a process begun after the recording counted as gone.
  * @param directory - The directory of one recording, `<learning directory>/recordings.vN/<study id>`.
  * @param ownProcess - `counts` (the default) when a recording this very process started counts like any other; `ignored` for {@link LearningLibrary.removeStudy}, which asks for other windows only: this window refuses to remove a study whose own run has not stopped, and a recording of its own that a stopped run left unsealed is no longer written.
+ * @param starts - The process starts of the caller's list ({@link ProcessStartsOfList}), so that each writer's process is asked once in that list; one for this call alone when left out.
  * @returns
  * - `false` for a sealed recording, for a directory whose header cannot be read, for an unsealed recording whose writer is gone from this machine, and with `ignored` for one this process started
  * - `true` for an unsealed recording whose writer still runs on this machine or runs on another one
@@ -38,6 +40,7 @@ const headerOwnerSchema = z.object({
 export async function recordingMayStillBeWritten(
   directory: string,
   ownProcess: OwnProcessRule = 'counts',
+  starts?: ProcessStartsOfList,
 ): Promise<boolean> {
   const isSealed = await lstat(join(directory, RECORDING_SEAL_FILE)).then(
     () => true,
@@ -55,5 +58,6 @@ export async function recordingMayStillBeWritten(
     recordingOwnerRecordPath(dirname(dirname(directory)), basename(directory)),
     header,
     ownProcess,
+    starts,
   )
 }

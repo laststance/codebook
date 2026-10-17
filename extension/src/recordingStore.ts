@@ -66,7 +66,10 @@ import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
-import { isRecordingWriterLive } from './utils/isRecordingWriterLive'
+import {
+  isRecordingWriterLive,
+  type ProcessStartsOfList,
+} from './utils/isRecordingWriterLive'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
@@ -332,43 +335,58 @@ export class RecordingStore {
     this.active.delete(studyId)
   }
 
-  /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. @example await store.list() */
+  /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. The recordings are looked at together, in the order of the listing, and their writers' process starts are read once for the whole list ({@link ProcessStartsOfList}). @example await store.list() */
   async list(): Promise<RecordingCatalogEntry[]> {
     await this.initialize()
-    const result: RecordingCatalogEntry[] = []
-    for (const studyId of await this.identities()) {
-      try {
-        const header = await this.header(studyId),
-          seal = await this.seal(studyId, header.version)
-        const writer = this.active.get(studyId)
-        result.push({
-          studyId,
-          profile: header.profile,
-          createdAt: header.createdAt,
-          status: seal
-            ? seal.status === 'complete'
-              ? 'finalized'
-              : 'partial'
-            : await this.ownerState(header, writer),
-          endMs: seal?.endMs,
-          lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs,
-          reason:
-            writer?.state().reason ??
-            seal?.reason ??
-            (seal
-              ? undefined
-              : 'Capture has no verified final checkpoint; end time is unknown.'),
-        })
-      } catch (error) {
-        result.push({
-          studyId,
-          status: 'partial',
-          lastVerifiedMs: 0,
-          reason: String(error).slice(0, MAX_UI_TEXT_CHARS),
-        })
+    const starts: ProcessStartsOfList = new Map()
+    return Promise.all(
+      (await this.identities()).map((studyId) =>
+        this.catalogEntryOf(studyId, starts),
+      ),
+    )
+  }
+
+  /**
+   * Gives the catalog entry of one recording, or the entry of its failure; called by {@link list} for every recording, all of them at once.
+   * @param studyId - The recording's study id.
+   * @param starts - The process starts of the list, shared by the judgements of its writers ({@link ownerState}).
+   * @returns The entry with the recording's status, its end and its reason; for a recording that cannot be read, a `partial` entry whose reason is the failure.
+   * @example await this.catalogEntryOf(studyId, new Map()) // => { studyId, status: 'unfinalized', … }
+   */
+  private async catalogEntryOf(
+    studyId: string,
+    starts: ProcessStartsOfList,
+  ): Promise<RecordingCatalogEntry> {
+    try {
+      const header = await this.header(studyId),
+        seal = await this.seal(studyId, header.version)
+      const writer = this.active.get(studyId)
+      return {
+        studyId,
+        profile: header.profile,
+        createdAt: header.createdAt,
+        status: seal
+          ? seal.status === 'complete'
+            ? 'finalized'
+            : 'partial'
+          : await this.ownerState(header, writer, starts),
+        endMs: seal?.endMs,
+        lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs,
+        reason:
+          writer?.state().reason ??
+          seal?.reason ??
+          (seal
+            ? undefined
+            : 'Capture has no verified final checkpoint; end time is unknown.'),
+      }
+    } catch (error) {
+      return {
+        studyId,
+        status: 'partial',
+        lastVerifiedMs: 0,
+        reason: String(error).slice(0, MAX_UI_TEXT_CHARS),
       }
     }
-    return result
   }
 
   /** Verifies journal order, sealed bytes and every referenced PNG once when opening playback. @example const index = await store.read(studyId) */
@@ -961,12 +979,14 @@ export class RecordingStore {
    * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id, with a process id that went to a later process counted as gone).
    * @param header - The recording's header.
    * @param writer - This session's writer of the recording, if any.
+   * @param starts - The process starts of the caller's list ({@link list}); one for this recording alone when left out ({@link read}).
    * @returns `recording` or `partial` from this session's writer; otherwise `unfinalized` or `interrupted`.
    * @example await this.ownerState(header) // => 'interrupted' for a crashed editor whose process id another process has now
    */
   private async ownerState(
     header: RecordingHeader,
     writer?: RecordingWriter,
+    starts?: ProcessStartsOfList,
   ): Promise<RecordingIndex['status']> {
     if (writer && header.owner.sessionId === this.sessionId)
       return writer.state().status === 'recording' ? 'recording' : 'partial'
@@ -974,6 +994,8 @@ export class RecordingStore {
     return (await isRecordingWriterLive(
       recordingOwnerRecordPath(this.learningDirectory, header.studyId),
       header,
+      'counts',
+      starts,
     ))
       ? 'unfinalized'
       : 'interrupted'
