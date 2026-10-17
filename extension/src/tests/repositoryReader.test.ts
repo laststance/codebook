@@ -2320,6 +2320,85 @@ test('a palette Return to Wiki from the Study pane restores the article layout w
   )
 })
 
+// Value: protects=the learner's layout after a palette Return to Wiki made from the chat: the Return waits for the learner's own selection of the Wiki, and the learner's next move goes elsewhere (a click into notes.ts in the first group), which ends that wait, so a later activation of the Wiki, with no tab closed, restores no article layout and shows no cited source; fails_when=the deferred Return's watch does not expire on a change of the focus that does not land on the Wiki, so it waits on and the later activation restores the layout, minutes after the Return; why_new=Cycle 0046 TR1 (the repeat testing review of R6: only the tab-close branch of the expiry had a test); seam=readerHarness with focusChat, requireSourceFocus, open with preserveNativeInput (the palette's Return), focusUnrelatedDraft with switchTabGroup(true) (the learner's click into a file of the first group, which the editor names), focusWiki (the Wiki's activation), arrangements and shown; no_claim=whether the later activation is the learner's or the editor's: the rule ends the wait at the first move elsewhere either way
+test('a palette Return to Wiki is dropped once the learner moves to a file, so a later Wiki activation restores no article layout', async (context) => {
+  // Arrange: the Wiki is open and the chat has the keyboard; the learner runs Return to Wiki from the Command Palette, which defers the article's layout.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusChat()
+  harness.requireSourceFocus()
+  await harness.reader.open(
+    {
+      ...harness.selection,
+      nodeId: 'order',
+      location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+    },
+    undefined,
+    true,
+    true,
+  )
+  const arrangementsBefore = harness.arrangements(),
+    shownBefore = harness.shown.length
+
+  // Act: the learner clicks into notes.ts in the first group; later the Wiki is activated, with no tab closed.
+  harness.focusUnrelatedDraft('notes.ts')
+  harness.switchTabGroup(true)
+  harness.focusWiki()
+  await harness.deliverTabEvents()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  // Assert: no layout was restored and no cited source was shown.
+  assert.deepEqual(
+    {
+      arrangements: harness.arrangements() - arrangementsBefore,
+      shown: harness.shown.length - shownBefore,
+      error: harness.reader.inspect().view.error,
+    },
+    { arrangements: 0, shown: 0, error: '' },
+  )
+})
+
+// Value: protects=the article Return the learner asked for from the Command Palette while typing in a file of the first group: a tab-group event that leaves the focus where it was (Cursor's rebuild of its tab model, which renames nothing) is no move of the learner's, so the Return still waits and the learner's later click on the Wiki restores the article's layout; fails_when=the deferred Return's watch expires on any event while the Wiki has no focus, also one that changed no place, so the palette Return is dropped before the learner ever selects the Wiki; why_new=Cycle 0046 TR1 (the repeat testing review of R6: the place comparison of the expiry had no test); seam=readerHarness with focusUnrelatedDraft and switchTabGroup(true) (the learner's file in the first group, which the editor names), requireSourceFocus, open with preserveNativeInput, switchTabGroup(true) again (a group event that names the same group), focusWiki (the learner's click on the Wiki), arrangements; no_claim=the exact events of Cursor's rebuild, which the reader reads only through the place they leave
+test('a palette Return to Wiki survives a tab-group event that leaves the focus where it was and restores the article layout when the learner selects the Wiki', async (context) => {
+  // Arrange: the learner types in notes.ts in the first group, which the editor names; the palette's Return to Wiki defers the article's layout.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft('notes.ts')
+  harness.switchTabGroup(true)
+  harness.requireSourceFocus()
+  const selection = {
+    ...harness.selection,
+    nodeId: 'order',
+    location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+  }
+  await harness.reader.open(selection, undefined, true, true)
+  const arrangementsBefore = harness.arrangements()
+
+  // Act: the editor reports a tab-group event that names the same group; then the learner clicks the Wiki.
+  harness.switchTabGroup(true)
+  const arrangementsAfterGroupEvent = harness.arrangements()
+  harness.focusWiki()
+  // A dropped Return arranges nothing: the wait ends without a refusal, and the assertion below reads what happened.
+  await waitUntil(
+    () =>
+      harness.arrangements() === arrangementsBefore + 1 &&
+      !harness.reader.inspect().view.loading,
+    'original article layout restored after the learner selected the Wiki',
+    2_000,
+  ).catch(() => undefined)
+
+  // Assert: nothing was arranged at the group event, and the layout was restored once at the Wiki's selection.
+  assert.deepEqual(
+    {
+      atGroupEvent: arrangementsAfterGroupEvent - arrangementsBefore,
+      atSelection: harness.arrangements() - arrangementsBefore,
+      selection: harness.reader.inspect().view.selection,
+      error: harness.reader.inspect().view.error,
+    },
+    { atGroupEvent: 0, atSelection: 1, selection, error: '' },
+  )
+})
+
 test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
   // Arrange
   const harness = await readerHarness(context)
