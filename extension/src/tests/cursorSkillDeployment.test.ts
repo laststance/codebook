@@ -1084,6 +1084,55 @@ test('a window that reconnects while another window updates the shared skill wai
   )
 })
 
+// Value: protects=the sentence a learner reads when a file of theirs takes the Cursor skill's path while a reconnect updates the skill; fails_when=the reconnect reads the link's EEXIST under the refusal as another window's storage lock, waits and tries again, and ends with "Cursor skill is missing or was changed", which names no change during setup and no step that frees the path; why_new=Cycle 0046 /ship review T4 (the refusal of a changed skill carries the link's EEXIST as its cause since row 214); seam=node:fs/promises link of the loaded deployment, before which a file of the learner takes the skill's path
+test('a file that takes the Cursor skill path while a reconnect updates the skill ends the reconnect with the sentence of a skill that changed during setup', async (context) => {
+  // Arrange: the skill was set up from the 0.2.26 directory; the editor now runs 0.2.27, and a file of the learner appears at the skill's path right before the update links its skill there.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.26',
+    ),
+    runningExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    )
+  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        if (newPath === paths.targetPath)
+          await writeFile(newPath, 'A file of the learner.\n')
+        return fileSystem.link(existingPath, newPath)
+      },
+    },
+  })
+
+  // Act
+  const reconnect = await statusOrRefusalOf(
+    window.verifyManagedCursorSkill(
+      runningExtension,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      reconnect,
+      files: await filesOfTheSetup(paths),
+      fileAtTheSkillPath: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      reconnect: `The Cursor skill changed during setup: ${paths.targetPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.`,
+      files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+      fileAtTheSkillPath: 'A file of the learner.\n',
+    },
+  )
+})
+
 // Value: protects=a reconnect telling another window's regular update from an edit; fails_when=the receipt is read before and the file after another window replaced both, and the reconnect answers that the skill is missing or was changed; why_new=Cycle 0045 (RT-8, PC-4.7); seam=the reconnecting window's opener, whose receipt file is read and then followed by the other window's update
 test('another window’s update between a reconnect’s read of the receipt and of the skill is not answered as a missing or changed skill', async (context) => {
   // Arrange: the skill is of the previous installation; two windows of the running one reconnect.

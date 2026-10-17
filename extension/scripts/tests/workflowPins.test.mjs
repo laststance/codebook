@@ -864,6 +864,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/removeWithoutFollowing.ts',
     'extension/src/utils/startOverBy.ts',
     'extension/src/utils/stepPastNoRealFolder.ts',
+    'extension/src/utils/storageLockHeldError.ts',
     'extension/src/utils/systemErrorCode.ts',
     'extension/src/utils/unopenedFileCode.ts',
     'extension/src/utils/withStorageLock.ts',

@@ -45,6 +45,7 @@ import {
   REMOVE_LINK_OR_RENAME_IT,
   stepPastNoRealFolder,
 } from './utils/stepPastNoRealFolder'
+import { StorageLockHeldError } from './utils/storageLockHeldError'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { unopenedFileCode } from './utils/unopenedFileCode'
 import { withStorageLock } from './utils/withStorageLock'
@@ -1574,7 +1575,7 @@ export async function deployCursorSkill(
  *
  * @param entry - `setup` installs, updates or restores as the learner asked; `reconnect` only updates the receipted, unedited skill of this or an earlier extension version, or of a later version whose installation was removed.
  * @returns What was done; for a reconnect that found this installation's or a newer window's skill, `current` with the deployed skill's digest and version.
- * @throws When another skill or a later edit is in the way, when the storage lock is held by another writer (the error's `cause` carries `EEXIST`), and for a reconnect when the skill is missing or was changed.
+ * @throws When another skill or a later edit is in the way, when the storage lock is held by another writer ({@link StorageLockHeldError}), and for a reconnect when the skill is missing or was changed.
  * @example await deploySkill('/ext', '/private', '/home', 'reconnect') // => { status: 'updated', path, sha256, version }
  */
 async function deploySkill(
@@ -1912,30 +1913,18 @@ function skillAcceptedWithoutLock(
 }
 
 /**
- * Says whether a failed deployment was refused because another window holds the storage lock, for {@link rethrowUnlessLockHeldElsewhere}.
- * @param error - What {@link deploySkill} threw.
- * @returns `true` when the error's cause is the `EEXIST` of the lock file; `false` for every other failure.
- * @example isLockHeldElsewhere(new Error('changed')) // => false
- */
-function isLockHeldElsewhere(error: unknown): boolean {
-  // The cause is read by its shape: the lock's refusal carries the `EEXIST` of the lock file.
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'cause' in error &&
-    systemErrorCode(error.cause) === 'EEXIST'
-  )
-}
-
-/**
  * Ends the reconnect with a deployment's failure unless waiting can help, for {@link verifyManagedCursorSkill} when {@link deploySkill} threw: only a lock another window holds is waited for, and only while attempts are left.
+ * The lock's refusal is told by its type ({@link StorageLockHeldError}), never by an `EEXIST` under the error: the refusal of a file that took the skill's path before its link carries the link's `EEXIST`, and waiting would only turn its sentence into the one of a changed skill.
  * @param error - What the deployment threw.
  * @param attempt - The number of this attempt, from 1.
  * @throws `error` itself when it is no held lock, and at the last of {@link CURSOR_SKILL_RECONNECT_ATTEMPTS}.
  * @example rethrowUnlessLockHeldElsewhere(new Error('changed'), 1) // throws that error
  */
 function rethrowUnlessLockHeldElsewhere(error: unknown, attempt: number): void {
-  if (!isLockHeldElsewhere(error) || attempt >= CURSOR_SKILL_RECONNECT_ATTEMPTS)
+  if (
+    !(error instanceof StorageLockHeldError) ||
+    attempt >= CURSOR_SKILL_RECONNECT_ATTEMPTS
+  )
     throw error
 }
 

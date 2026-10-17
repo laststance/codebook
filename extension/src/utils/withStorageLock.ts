@@ -14,6 +14,7 @@ import {
 } from './readRecordedOwner'
 import { removeStaleStorageClaims } from './removeStaleStorageClaims'
 import { removeStaleStorageLock } from './removeStaleStorageLock'
+import { StorageLockHeldError } from './storageLockHeldError'
 import { systemErrorCode } from './systemErrorCode'
 
 const pendingWriters = new Map<string, Promise<void>>()
@@ -74,7 +75,7 @@ async function makeStorageFolder(directory: string): Promise<void> {
  * @returns What `operation` returned, after the lock is released.
  * @throws
  * - "Learning storage is not a regular directory: <path>. …" when the directory's path holds a link or something that is no folder ({@link makeStorageFolder}); nothing was written
- * - "Learning storage is locked …", naming the lock file, with the `EEXIST` system error as `cause`, while another writer holds the lock or a lock stays that cannot be judged; nothing was written
+ * - {@link StorageLockHeldError} "Learning storage is locked …", naming the lock file, with the `EEXIST` system error as `cause`, while another writer holds the lock or a lock stays that cannot be judged; nothing was written
  * - What `operation` throws, and what removing this process's own lock throws for another reason than a lock that is already gone
  * @example
  * await withStorageLock('/storage/learning', () => save())
@@ -106,8 +107,9 @@ export async function withStorageLock<Value>(
           throw error
         })
         .catch((error) => {
+          // Only the lock's own refusal gets its type: a caller waits for it and for nothing else.
           if (error.code === 'EEXIST')
-            throw new Error(
+            throw new StorageLockHeldError(
               `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.`,
               { cause: error },
             )

@@ -41,6 +41,7 @@ import {
   PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
   stepPastNoRealFolder,
 } from './stepPastNoRealFolder'
+import { StorageLockHeldError } from './storageLockHeldError'
 import { systemErrorCode } from './systemErrorCode'
 import { unopenedFileCode } from './unopenedFileCode'
 import { withStorageLock } from './withStorageLock'
@@ -911,7 +912,7 @@ async function recoverRemoval(
   return undefined
 }
 
-/** Waits briefly for another active Cursor window's catalog writer, also one that is taking a stale lock over; the retries displace no lock themselves. {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
+/** Waits briefly for another active Cursor window's catalog writer, also one that is taking a stale lock over; the retries displace no lock themselves. {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. Only the lock's own refusal ({@link StorageLockHeldError}) is waited for, never any failure with an `EEXIST` under it. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
 async function withCatalogLockRetry<Result>(
   operation: () => Promise<Result>,
 ): Promise<Result> {
@@ -919,13 +920,8 @@ async function withCatalogLockRetry<Result>(
     try {
       return await operation()
     } catch (error) {
-      const cause = error instanceof Error ? error.cause : undefined
       if (
-        !(
-          cause instanceof Error &&
-          'code' in cause &&
-          cause.code === 'EEXIST'
-        ) ||
+        !(error instanceof StorageLockHeldError) ||
         retry >= CURSOR_MCP_CATALOG_LOCK_RETRIES
       )
         throw error
