@@ -2109,6 +2109,28 @@ test('an output outside the project reached through a link outside it is still p
   }
 })
 
+// Value: protects=the editor agent that writes a Wiki with the bundled skill, which reads the publisher's rules there before it writes; fails_when=the skill no longer tells the agent that a page's content carries no event attribute and links only to the schemes the publisher accepts, or that the publisher refuses a link on the output's path inside the project, so the agent learns each rule only from a refused publish; why_new=Cycle 0046 /ship follow-up N4 (findings F1 and F2 added the refusals); seam=none
+test('the bundled skill tells the agent the publisher’s refusals of event attributes, of addresses of other schemes and of a link on the output’s path inside the project', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.deepEqual(
+    [
+      skill.includes(
+        'Do not put an event attribute (`onclick`, `onerror` or any other attribute whose name starts with `on`) on an element of `contentHtml`, and let every `href`, `src`, `srcset`, `action`, `formaction` and `xlink:href` name a relative path, a `#fragment` or an `http`, `https`, `mailto`, `vscode` or `cursor` address; the publisher refuses anything else.',
+      ),
+      skill.includes(
+        'The output folder and every folder on its path inside the project must be real folders. The publisher refuses a link there (a cloned repository may carry `.codebook` as one) and writes nothing; report the path it names and let the learner replace the link with a folder or choose an output outside the project. Do not work around the refusal.',
+      ),
+    ],
+    [true, true],
+  )
+})
+
 test('reader source links cannot follow a repository symlink to an outside file', async () => {
   // Arrange
   const directory = await realpath(
