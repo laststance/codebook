@@ -7,15 +7,19 @@ import filesystem, {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
 import { domainError } from '../errors'
 import { bookDocumentSchema } from '../repositorySchemas'
+import type * as sourceModule from '../repositorySource'
 import { RepositorySourceService } from '../repositorySource'
+import { gitExecutablePath } from '../utils/gitExecutablePath'
 
+import { childProcessThatNotesPrograms } from './utils/childProcessThatNotesPrograms'
+import { loadModule } from './utils/loadModule'
 import { repositoryHarness as sourceHarness } from './utils/repositoryHarness'
 
 const executeFile = promisify(execFile)
@@ -630,6 +634,35 @@ test('a project whose Git index is a folder, or a link to a folder, is refused b
         folder: { discovery: ['src/module.ts'], read: 'answered' },
         linkToAFolder: { discovery: ['src/module.ts'], read: 'answered' },
       },
+    },
+  )
+})
+
+// Value: protects=the learner's rights when the opened project carries a program named git: source discovery starts every Git command by the absolute path the lookup found on PATH alone, never by the bare name that Windows looks up in the project folder first (SX2, Cycle 0046 repeat security review); fails_when=a Git command is started by its bare name with the project as its folder; why_new=source discovery started `git` by its bare name; seam=a stand-in for `node:child_process` of the loaded service, which notes every program it starts and runs it
+test('source discovery starts every Git command by the absolute path found on PATH, never by the bare name', async (context) => {
+  // Arrange: a repository with one tracked source, and the service loaded with a child process module that notes its programs.
+  const { directory, track } = await sourceHarness(context)
+  await track('src/module.ts')
+  const noted = childProcessThatNotesPrograms()
+  const { RepositorySourceService: ServiceNotingPrograms } = await loadModule<
+    typeof sourceModule
+  >(resolve(__dirname, '../repositorySource.js'), {
+    'node:child_process': noted.childProcess,
+  })
+  // Act
+  const page = await new ServiceNotingPrograms(directory).list()
+  // Assert
+  const git = await gitExecutablePath()
+  assert.deepEqual(
+    {
+      files: [...page.files],
+      started: noted.started,
+      gitIsAbsolute: isAbsolute(git),
+    },
+    {
+      files: ['src/module.ts'],
+      started: [git, git, git],
+      gitIsAbsolute: true,
     },
   )
 })

@@ -4,13 +4,15 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, win32 } from 'node:path'
+import { isAbsolute, join, resolve, win32 } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+import { gitExecutablePath } from '../utils/gitExecutablePath'
 import type * as freshnessModule from '../utils/inspectDeepWikiFreshness'
 import { inspectDeepWikiFreshness } from '../utils/inspectDeepWikiFreshness'
 
+import { childProcessThatNotesPrograms } from './utils/childProcessThatNotesPrograms'
 import { loadModule } from './utils/loadModule'
 
 const runGit = promisify(execFile)
@@ -831,4 +833,45 @@ test('an indexed source that is a link to a file on another drive is not hashed 
     unknownCause: 'unchecked-source',
     addedFilesUnchecked: true,
   })
+})
+
+// Value: protects=the learner's rights when the opened project carries a program named git: the Wiki's freshness check starts every Git command by the absolute path the lookup found on PATH alone, never by the bare name that Windows looks up in the project folder first (SX2, Cycle 0046 repeat security review); fails_when=a Git command is started by its bare name with the project as its folder; why_new=the freshness check started `git` by its bare name; seam=a stand-in for `node:child_process` of the loaded check, which notes every program it starts and runs it
+test('the Wiki freshness check starts every Git command by the absolute path found on PATH, never by the bare name', async () => {
+  // Arrange: a committed repository, and the check loaded with a child process module that notes its programs.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-freshness-git-'),
+  )
+  const root = await realpath(directory)
+  const source = 'export const answer = 1;\n'
+  await writeFile(join(root, 'source.ts'), source)
+  const revision = await commitAll(root)
+  const noted = childProcessThatNotesPrograms()
+  const { inspectDeepWikiFreshness: inspectNotingPrograms } = await loadModule<
+    typeof freshnessModule
+  >(resolve(__dirname, '../utils/inspectDeepWikiFreshness.js'), {
+    'node:child_process': noted.childProcess,
+  })
+  try {
+    // Act
+    await inspectNotingPrograms(
+      root,
+      [
+        {
+          path: 'source.ts',
+          sha256: createHash('sha256').update(source).digest('hex'),
+        },
+      ],
+      revision,
+      [],
+    )
+
+    // Assert
+    const git = await gitExecutablePath()
+    assert.deepEqual(
+      { started: noted.started, gitIsAbsolute: isAbsolute(git) },
+      { started: [git, git, git], gitIsAbsolute: true },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

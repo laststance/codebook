@@ -10,6 +10,7 @@ import {
 } from '../constants'
 
 import type { WikiIncludedSource } from './answerDeepWikiQuestion'
+import { gitExecutablePath } from './gitExecutablePath'
 import { hashFileSha256 } from './hashFileSha256'
 import { isWikiSourceCandidate } from './isWikiSourceCandidate'
 import { mapWithConcurrencyLimit } from './mapWithConcurrencyLimit'
@@ -254,8 +255,11 @@ async function findAddedSources(
     // Git's own words decide "no repository", so they must not be translated.
     env: { ...process.env, LC_ALL: 'C' },
   }
+  // Git is started by its absolute path from PATH alone, never found in the opened folder; no Git found answers as a Git that cannot start.
+  let git: string
   try {
-    await runGit('git', ['rev-parse', '--show-toplevel'], options)
+    git = await gitExecutablePath()
+    await runGit(git, ['rev-parse', '--show-toplevel'], options)
   } catch (error) {
     return repositoryFailure(error)
   }
@@ -265,7 +269,7 @@ async function findAddedSources(
     // Both commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
     const [committed, untracked] = await Promise.all([
       runGit(
-        'git',
+        git,
         [
           'diff',
           '--name-only',
@@ -280,7 +284,7 @@ async function findAddedSources(
         options,
       ),
       runGit(
-        'git',
+        git,
         ['ls-files', '--others', '--exclude-standard', '-z'],
         options,
       ),

@@ -22,6 +22,7 @@ import {
   type RepositorySource,
 } from './repositorySchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { gitExecutablePath } from './utils/gitExecutablePath'
 import { sourceExclusion } from './utils/sourceExclusion'
 import { unchangedSource } from './utils/unchangedSource'
 
@@ -413,6 +414,8 @@ export class RepositorySourceService {
     try {
       const root = await realpath(this.workspace),
         rootIdentity = await lstat(root, { bigint: true })
+      // Git is started by its absolute path from PATH alone, never found in the opened folder that is its working folder; no Git found fails as a Git that cannot start.
+      const gitProgram = await gitExecutablePath()
       const options = {
         cwd: root,
         maxBuffer: REPOSITORY_GIT_LIMIT_BYTES,
@@ -427,7 +430,7 @@ export class RepositorySourceService {
       const git = (arguments_: string[]) => {
         this.assertActive(control)
         return executeFile(
-          'git',
+          gitProgram,
           ['-c', 'core.fsmonitor=false', ...arguments_],
           {
             ...options,
