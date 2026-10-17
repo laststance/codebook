@@ -1242,7 +1242,7 @@ export function activate(
   /**
    * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
    *
-   * The order: what makes the publisher refuse (a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusal named, and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
+   * The order: what makes the publisher refuse (a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusal named, and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
    *
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
@@ -1303,7 +1303,10 @@ export function activate(
     }
     for (const isLastAttempt of [false, true]) {
       // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
-      const startBlock = await findWikiUpdateStartBlock(outputDirectory)
+      const startBlock = await findWikiUpdateStartBlock(
+        outputDirectory,
+        projectRoot,
+      )
       if (startBlock) {
         wikiUpdateRun.refuseStart(host, wikiOutput, {
           kind: 'conflict',

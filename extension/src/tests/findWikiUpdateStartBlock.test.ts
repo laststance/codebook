@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
@@ -35,7 +35,10 @@ test('a generated page the learner edited by hand blocks the start and is named,
   )
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'edited-page', paths: ['index.html'] })
@@ -54,7 +57,10 @@ test('a deleted generated page is reported as missing, not as edited by hand', a
   await rm(join(wiki.outputDirectory, 'index.html'))
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'missing-page', paths: ['index.html'] })
@@ -70,7 +76,10 @@ test('a manifest changed after its publish blocks the start and is named, as the
   await writeFile(manifestPath, `${await readFile(manifestPath, 'utf8')}\n`)
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, {
@@ -95,7 +104,10 @@ test('an earlier publish that left its journal behind blocks the start and names
   )
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, {
@@ -117,7 +129,10 @@ test('a published Wiki nobody touched does not block the start, and the learner�
   await writeFile(wiki.learnerFile, 'my notes, changed again\n')
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.equal(block, undefined)
@@ -150,7 +165,7 @@ test('a manifest that lists files outside the Wiki folder among its owned files 
   )
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(output)
+    const block = await findWikiUpdateStartBlock(output, directory)
 
     // Assert
     assert.equal(block, undefined)
@@ -173,7 +188,7 @@ test('a Wiki published before file hashes were recorded does not block the start
   )
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(output)
+    const block = await findWikiUpdateStartBlock(output, dirname(output))
 
     // Assert
     assert.equal(block, undefined)
@@ -188,7 +203,10 @@ test('a symbolic link under the Wiki folder refuses the update at its start and 
   await symlink(wiki.learnerFile, join(wiki.outputDirectory, 'shared-notes.md'))
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, {
@@ -212,7 +230,10 @@ test('a generated page replaced by a link is named and is not read through the l
   await symlink(sameBytesElsewhere, indexPath)
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'special-file', paths: ['index.html'] })
@@ -242,7 +263,10 @@ test(
     })
 
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'special-file', paths: ['index.html'] })
@@ -258,7 +282,10 @@ test('a manifest that is no JSON blocks the start as a manifest Codebook cannot 
   )
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, {
@@ -279,13 +306,17 @@ test('a publish that finishes while the start check looks does not block the sta
   const waits: number[] = []
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory, {
-      wait: async (delayMs) => {
-        waits.push(delayMs)
-        // The publish ends while the check waits for its second look.
-        await rm(journalPath)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      {
+        wait: async (delayMs) => {
+          waits.push(delayMs)
+          // The publish ends while the check waits for its second look.
+          await rm(journalPath)
+        },
       },
-    })
+    )
 
     // Assert
     assert.equal(block, undefined)
@@ -308,10 +339,12 @@ test('a journal that is still there at the second look, and one written long ago
     // Act
     const writtenJustNow = await findWikiUpdateStartBlock(
       wiki.outputDirectory,
+      wiki.projectRoot,
       { wait },
     )
     const writtenAMinuteAgo = await findWikiUpdateStartBlock(
       wiki.outputDirectory,
+      wiki.projectRoot,
       { wait, now: () => Date.now() + 60_000 },
     )
 
@@ -346,13 +379,80 @@ test('a link at the Wiki folder’s own path refuses the update at its start wit
     await symlink(movedAside, wiki.outputDirectory, 'junction')
 
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
     await assert.rejects(wiki.prepare(), /The Wiki directory must be regular/)
   } finally {
     await wiki.cleanup()
+  }
+})
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook` link leads to, and the learner who presses Update there; fails_when=the start check looks at the Wiki folder alone again, finds a complete Wiki behind the link and asks an agent, whose publisher stages beyond the link (or, fixed, refuses at its first step); why_new=Cycle 0046 /ship finding F1: the start check looked at the output folder only; seam=none (a junction on Windows, which needs no right)
+test('a link at a folder on the Wiki folder’s path in the project refuses the update at its start, names that folder as the learner reads it, and the real publisher refuses it too', async () => {
+  // Arrange: the published Wiki's `.codebook` folder is moved out of the project and a link to it stands in its place.
+  const wiki = await publishedWikiFixture()
+  const outside = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-')),
+  )
+  try {
+    await rename(
+      join(wiki.projectRoot, '.codebook'),
+      join(outside, 'codebook-moved-out'),
+    )
+    await symlink(
+      join(outside, 'codebook-moved-out'),
+      join(wiki.projectRoot, '.codebook'),
+      'junction',
+    )
+
+    // Act
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
+
+    // Assert
+    assert.deepEqual(block, { cause: 'linked-parent', paths: ['.codebook'] })
+    await assert.rejects(
+      wiki.prepare(),
+      /its path passes through a link or an entry that is no folder of the project’s own/,
+    )
+  } finally {
+    await wiki.cleanup()
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who set the Wiki output to a folder outside the project and reaches it through a link of their own; fails_when=the start check refuses every link on the Wiki folder's path, also outside the project, so a configured outside output can no longer be updated; why_new=Cycle 0046 /ship finding F1: only the part of the path inside the project is held to folders of its own; seam=none (a junction on Windows)
+test('an output outside the project reached through a link outside it does not block the start', async () => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-link-')),
+  )
+  try {
+    await mkdir(join(directory, 'project'))
+    await mkdir(join(directory, 'outside/wiki'), { recursive: true })
+    await symlink(
+      join(directory, 'outside'),
+      join(directory, 'outside-link'),
+      'junction',
+    )
+
+    // Act
+    const block = await findWikiUpdateStartBlock(
+      join(directory, 'outside-link/wiki'),
+      join(directory, 'project'),
+    )
+
+    // Assert
+    assert.equal(block, undefined)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
@@ -365,7 +465,10 @@ test('a file at the Wiki folder’s own path refuses the update at its start wit
     await writeFile(wiki.outputDirectory, '../elsewhere/wiki')
 
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
@@ -383,18 +486,22 @@ test('a link that takes the Wiki folder’s place after the start check first lo
   await writeFile(journalPath, '{}')
   try {
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory, {
-      wait: async () => {
-        await rm(journalPath)
-        await rename(wiki.outputDirectory, movedAside)
-        await symlink(
-          wiki.projectRoot,
-          join(movedAside, 'a-link-inside'),
-          'junction',
-        )
-        await symlink(movedAside, wiki.outputDirectory, 'junction')
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      {
+        wait: async () => {
+          await rm(journalPath)
+          await rename(wiki.outputDirectory, movedAside)
+          await symlink(
+            wiki.projectRoot,
+            join(movedAside, 'a-link-inside'),
+            'junction',
+          )
+          await symlink(movedAside, wiki.outputDirectory, 'junction')
+        },
       },
-    })
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
@@ -438,7 +545,10 @@ test('an entry at the Wiki folder’s path that the look calls a directory altho
     await symlink(movedAside, wiki.outputDirectory, 'junction')
 
     // Act
-    const block = await findBlockWhereTheLookIsWrong(wiki.outputDirectory)
+    const block = await findBlockWhereTheLookIsWrong(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
 
     // Assert: the block comes from a module loaded apart, so it is compared by its text.
     assert.deepEqual(
@@ -461,9 +571,13 @@ test('a Wiki folder that is a link is named before the journal of an unfinished 
     await writeFile(`${wiki.outputDirectory}.publish-journal.json`, '{}')
 
     // Act
-    const block = await findWikiUpdateStartBlock(wiki.outputDirectory, {
-      now: () => Date.now() + 60_000,
-    })
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      {
+        now: () => Date.now() + 60_000,
+      },
+    )
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })

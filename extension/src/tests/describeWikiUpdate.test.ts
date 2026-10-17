@@ -796,6 +796,29 @@ test('a Wiki folder that is itself a link or a file is named as the reason no up
   )
 })
 
+// Value: protects=the learner whose repository carries a folder on the Wiki folder's path, `.codebook` for the default output, as a link; fails_when=the refusal has no sentence of its own, so the page shows "Update stopped: it would overwrite your own file in the Wiki folder (.codebook)", or it reuses the sentence of the Wiki folder itself and names the wrong folder; why_new=Cycle 0046 /ship finding F1: the start check refuses a link on the path with a cause of its own; seam=none
+test('a link on the Wiki folder’s path in the project is named as the reason no update started, with the two ways to give the publisher a folder of its own', () => {
+  // Arrange
+  const refused: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['.codebook'],
+    cause: 'linked-parent',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(refused, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): the Wiki folder’s path in the project passes through a link or a file (.codebook), and the publisher writes only into folders of the project’s own, so nothing was written. Replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.',
+  )
+})
+
 test('a manifest Codebook cannot read is named as the reason no update started, with the chat request that recovers it', () => {
   // Arrange
   const refused: WikiUpdateStatus = {

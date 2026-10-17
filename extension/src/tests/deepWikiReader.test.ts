@@ -647,3 +647,43 @@ test('the reader’s manifest read does not follow a link to a regular manifest 
     },
   )
 })
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook` link leads to, when the learner opens the Wiki; fails_when=the reader reads the manifest by the Wiki folder's path again and follows the link at its parent, so it serves the files of a folder outside the project; why_new=Cycle 0046 /ship finding F1: the reader's reads checked the manifest's own path and the served files below the folder, never the folders above it; seam=none (a junction on Windows, which needs no right)
+test('the reader refuses a Wiki whose `.codebook` folder in the project is a link to a folder outside it, names the link and opens nothing behind it', async (context) => {
+  // Arrange: a one-page Wiki whose `.codebook` folder is moved out of the project, with a link to it left in its place.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-linked-parent-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const projectRoot = join(directory, 'project')
+  await mkdir(projectRoot)
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await rename(
+    join(projectRoot, '.codebook'),
+    join(directory, 'codebook-moved-out'),
+  )
+  await symlink(
+    join(directory, 'codebook-moved-out'),
+    join(projectRoot, '.codebook'),
+    'junction',
+  )
+
+  // Act
+  const refusal = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  ).then(
+    async (reader) => {
+      await reader.close()
+      return 'opened'
+    },
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    refusal,
+    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it. Replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project.`,
+  )
+})

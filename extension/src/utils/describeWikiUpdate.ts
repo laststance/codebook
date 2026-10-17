@@ -440,21 +440,32 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
-   * Words a start refused because the Wiki folder is itself a link or a file; called by {@link describeConflict} between {@link describePageRefusal} and {@link describeRecoveryRefusal}.
+   * Words a start refused because the Wiki folder, or a folder on its path inside the project, is a link or a file; called by {@link describeConflict} between {@link describePageRefusal} and {@link describeRecoveryRefusal}.
    * @param cause - The cause of the conflict.
-   * @param named - The Wiki folder's own name, as the sentence names it.
-   * @returns The sentence after the time for `not-a-folder`, with the next step; undefined for every other cause.
-   * @example describeFolderRefusal('not-a-folder', 'wiki')?.slice(0, 52) // => 'the Wiki folder itself (wiki) is a link or a file, an'
+   * @param named - The Wiki folder's own name for `not-a-folder`, the folder on its path as the learner reads it for `linked-parent`, as the sentence names it.
+   * @returns The sentence after the time for `not-a-folder` and `linked-parent`, with the next step; undefined for every other cause.
+   * @example
+   * describeFolderRefusal('not-a-folder', 'wiki')?.slice(0, 52)       // => 'the Wiki folder itself (wiki) is a link or a file, an'
+   * describeFolderRefusal('linked-parent', '.codebook')?.slice(0, 70) // => 'the Wiki folder’s path in the project passes through a link or a file'
    */
   const describeFolderRefusal = (
     cause: WikiUpdateStatusOf<'conflict'>['cause'],
     named: string,
-  ): string | undefined =>
-    cause === 'not-a-folder'
-      ? 'the Wiki folder itself (' +
+  ): string | undefined => {
+    if (cause === 'not-a-folder')
+      return (
+        'the Wiki folder itself (' +
         named +
         ') is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.'
-      : undefined
+      )
+    if (cause === 'linked-parent')
+      return (
+        'the Wiki folder’s path in the project passes through a link or a file (' +
+        named +
+        '), and the publisher writes only into folders of the project’s own, so nothing was written. Replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.'
+      )
+    return undefined
+  }
   /**
    * Words a start refused because of the Wiki's manifest or an unfinished publish, each ending with the recovery request for the editor chat; called by {@link describeConflict} after {@link describePageRefusal}.
    * @param cause - The cause of the conflict.

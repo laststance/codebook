@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { renderWikiPages } from './render-wiki.mjs';
 
@@ -44,9 +44,30 @@ async function listFiles(directory, prefix = '') {
   return files;
 }
 
+/** Whether a real path is the project root itself or lies below it. Called by {@link requireOwnFoldersToOutput}. @example isInProject('/repo', '/repo/.codebook') // => true; isInProject('/repo', '/elsewhere') // => false */
+const isInProject = (root, path) => { const within = relative(root, path); return within === '' || !isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep); };
+
+/** Refuses an output whose path, once it has entered the project, passes through a link or through an entry that is no folder of the project's own, before anything is created, read or written there: the stage, the journal and the backup lie beside the output, so a cloned repository that carries `.codebook` (or any folder on the way) as a link would have the publisher write outside the project. The folders up to the point where the path enters the project are the learner's choice, as is an output outside the project. Called by {@link locations} first. @example await requireOwnFoldersToOutput('/repo', '/repo/wiki-link/wiki') // throws while /repo/wiki-link is a link */
+async function requireOwnFoldersToOutput(root, requested) {
+  const parent = dirname(requested);
+  let path = parse(parent).root, hasEntered = false;
+  for (const part of relative(path, parent).split(sep).filter(Boolean)) {
+    path = join(path, part);
+    const stat = await lstat(path).catch(error => { if (isMissing(error)) return undefined; throw error; });
+    // Nothing below a missing folder exists yet; the preparation creates it as a folder of the project's own.
+    if (!stat) return;
+    // Inside the project, a link or a folder whose real path leaves the project (a junction on Windows) is refused; before it, the real path says whether this folder is where the project begins.
+    if (hasEntered && (!stat.isDirectory() || stat.isSymbolicLink() || !isInProject(root, await realpath(path))))
+      throw new Error('The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.');
+    hasEntered ||= isInProject(root, await realpath(path));
+  }
+}
+
 /** Resolves paths for {@link prepareWikiStage}, {@link publishWiki} and recovery without following directory aliases. @example await locations('/repo', '/repo/.codebook/wiki') */
 async function locations(projectRoot, outputDirectory, stageDirectory, createParent = false) {
   const root = await realpath(projectRoot), requested = resolve(outputDirectory);
+  // Checked before the parent is created: a missing folder behind a link would otherwise be made outside the project.
+  await requireOwnFoldersToOutput(root, requested);
   if (createParent) await mkdir(dirname(requested), { recursive: true });
   const output = join(await realpath(dirname(requested)), basename(requested));
   const within = relative(output, root);

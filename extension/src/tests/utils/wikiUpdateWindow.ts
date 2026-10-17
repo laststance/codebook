@@ -411,8 +411,11 @@ export async function openWikiUpdateWindow(options: {
         : {}),
       // The real start check runs; a test that holds its wait at a fresh journal decides when the second look comes, and otherwise the real time passes.
       './utils/findWikiUpdateStartBlock': {
-        findWikiUpdateStartBlock: (outputDirectory: string) =>
-          findWikiUpdateStartBlock(outputDirectory, {
+        findWikiUpdateStartBlock: (
+          outputDirectory: string,
+          projectRoot: string,
+        ) =>
+          findWikiUpdateStartBlock(outputDirectory, projectRoot, {
             wait: async (delayMs: number) => {
               if (holds.has('journal-wait')) await passHold('journal-wait')
               else await sleepFor(delayMs)

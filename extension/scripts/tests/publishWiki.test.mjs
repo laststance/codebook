@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -13,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -1938,6 +1939,171 @@ test('publication rejects an output containing the project even when its folder 
       await readFile(join(root, 'source.ts'), 'utf8'),
       'export const value = 1;\n',
     )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that a link in a cloned repository leads to (the repository carries `.codebook`, or another folder on the way to the Wiki output, as a link); fails_when=the preparation looks at the output folder alone again, follows the link at its parent and makes its stage and receipt in the folder outside the project; why_new=Cycle 0046 /ship finding F1 (critical, replayed twice): `--prepare` exited 0 and prepared its stage beyond the link; seam=none (the shipped CLI as the agent runs it)
+for (const [linkName, outputSetting] of [
+  ['wiki-link', 'wiki-link/wiki'],
+  ['.codebook', '.codebook/wiki'],
+])
+  test(`the CLI preparation of an output whose parent ${linkName} in the project is a link to a folder outside it is refused, names the link and writes nothing there`, async () => {
+    // Arrange
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-parent-cli-')),
+    )
+    const root = join(directory, 'project'),
+      outside = join(directory, 'outside'),
+      command = fileURLToPath(
+        new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
+      )
+    try {
+      await mkdir(root)
+      await mkdir(outside)
+      await symlink(outside, join(root, linkName), 'junction')
+
+      // Act
+      const prepared = spawnSync(
+        process.execPath,
+        [
+          command,
+          '--prepare',
+          '--project',
+          root,
+          '--output',
+          join(root, outputSetting),
+        ],
+        { encoding: 'utf8' },
+      )
+
+      // Assert
+      assert.deepEqual(
+        { status: prepared.status, stderr: prepared.stderr },
+        {
+          status: 1,
+          stderr: `Error: The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, linkName)}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.\n`,
+        },
+      )
+      assert.deepEqual(await readdir(outside), [])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the folder outside the project behind a link at a parent of the Wiki output, when a stage is already there (prepared by a build before this fix, or through the folder's own path); fails_when=the publish resolves the link and moves the stage into an output beyond it; why_new=Cycle 0046 /ship finding F1: the parents of the output were never looked at by any entry point; seam=none
+test('a publish whose output lies behind a link at its parent in the project is refused and moves nothing beyond the link', async () => {
+  // Arrange: a candidate prepared for the folder outside the project, then published through the link in the project.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-parent-publish-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(root, 'wiki-link'), 'junction')
+    const { stage } = await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: join(outside, 'wiki'),
+    })
+    await writeStage(stage, root, '<h1>Candidate</h1>')
+
+    // Act / Assert
+    await assert.rejects(
+      publishWiki({
+        projectRoot: root,
+        outputDirectory: join(root, 'wiki-link/wiki'),
+        stageDirectory: join(root, 'wiki-link', basename(stage)),
+      }),
+      {
+        message: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, 'wiki-link')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      },
+    )
+    assert.deepEqual(await readdir(outside), [basename(stage)])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki in a folder outside the project behind a link at a parent of the output in the project; fails_when=recovery resolves the link and writes its journal, a temporary manifest and a restored manifest beyond it; why_new=Cycle 0046 /ship finding F1: `--recover` shares the unchecked path resolution with `--prepare` and the publish; seam=none
+test('a recovery whose output lies behind a link at its parent in the project is refused and leaves the Wiki beyond the link as it is', async () => {
+  // Arrange: a Wiki published into the folder outside the project, whose manifest was then edited.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-parent-recover-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside'),
+    stage = join(outside, 'first')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(root, 'wiki-link'), 'junction')
+    await writeStage(
+      stage,
+      root,
+      '<h1>Published</h1>',
+      undefined,
+      join(outside, 'wiki'),
+    )
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: join(outside, 'wiki'),
+      stageDirectory: stage,
+    })
+    await writeFile(
+      join(outside, 'wiki/codebook-wiki.json'),
+      '{accidental edit',
+    )
+
+    // Act / Assert
+    await assert.rejects(
+      recoverWikiPublication({
+        projectRoot: root,
+        outputDirectory: join(root, 'wiki-link/wiki'),
+      }),
+      {
+        message: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, 'wiki-link')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      },
+    )
+    assert.equal(
+      await readFile(join(outside, 'wiki/codebook-wiki.json'), 'utf8'),
+      '{accidental edit',
+    )
+    assert.deepEqual(await readdir(outside), ['wiki'])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who chose an output folder outside the project and reaches it through a link of their own; fails_when=the check of the folders on the way to the output refuses a link outside the project too, so a configured output outside it can no longer be prepared; why_new=Cycle 0046 /ship finding F1: the fix refuses links only once the path is inside the project; seam=none
+test('an output outside the project reached through a link outside it is still prepared, in the folder the link leads to', async () => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-link-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(directory, 'outside-link'), 'junction')
+
+    // Act
+    const prepared = await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: join(directory, 'outside-link/wiki'),
+    })
+
+    // Assert
+    assert.deepEqual(
+      { output: prepared.output, stageFolder: dirname(prepared.stage) },
+      { output: join(outside, 'wiki'), stageFolder: outside },
+    )
+    assert.deepEqual(await readdir(prepared.stage), [
+      'codebook-publication.json',
+    ])
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

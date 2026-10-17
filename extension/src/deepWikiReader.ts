@@ -36,6 +36,7 @@ import type {
   WikiIncludedSource,
 } from './utils/answerDeepWikiQuestion'
 import { describeWikiUpdate } from './utils/describeWikiUpdate'
+import { findLinkOnWikiPath } from './utils/findLinkOnWikiPath'
 import {
   inspectDeepWikiFreshness,
   type WikiFreshness,
@@ -123,7 +124,27 @@ const qaClient = `(function () {
   }, true);
 })();`
 
-/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}). @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
+/**
+ * Refuses to read a Wiki whose folder's path in the project passes through a link or a file, which the publisher refuses to write through too; called by {@link readDeepWikiManifest} before it reads the manifest, so the reader neither opens nor serves a Wiki outside the project that a cloned repository's link leads to.
+ * @param outputDirectory - Resolved Wiki output.
+ * @param projectRoot - Canonical opened repository.
+ * @throws A sentence that names the folder, the entry on its path and the two ways on, when {@link findLinkOnWikiPath} finds such an entry.
+ * @example
+ * await assertNoLinkOnWikiPath('/repo/.codebook/wiki', '/repo') // rejects while `.codebook` is a link: The Wiki folder /repo/.codebook/wiki lies behind a link or a file in the project (/repo/.codebook), …
+ */
+async function assertNoLinkOnWikiPath(
+  outputDirectory: string,
+  projectRoot: string,
+): Promise<void> {
+  const linkedEntry = await findLinkOnWikiPath(projectRoot, outputDirectory)
+  // A link on the path would have the reader read and serve files outside the project.
+  if (linkedEntry !== undefined)
+    throw new Error(
+      `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${linkedEntry}), and Codebook reads no Wiki through it. Replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project.`,
+    )
+}
+
+/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), also none on the Wiki folder's path in the project ({@link findLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When a folder on the Wiki folder's path in the project is a link or a file, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
   projectRoot: string,
@@ -133,6 +154,7 @@ export async function readDeepWikiManifest(
   revision?: string
   excludedPaths: string[]
 }> {
+  await assertNoLinkOnWikiPath(outputDirectory, projectRoot)
   // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
   const manifestBytes = await readWikiFileToOpen(
     join(outputDirectory, WIKI_MANIFEST_FILE),
