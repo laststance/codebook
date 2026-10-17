@@ -114,7 +114,7 @@ export class HostBrowser {
   }
 
   /**
-   * Names the directory of this run's managed profile folder and of the folders a killed editor left, the same for both; read by {@link launch} for a managed browser only, and handed to {@link startAbandonedProfileSweep}.
+   * Names the directory of this run's managed profile folder and of the folders a killed editor left, the same for both; read by {@link launch} for the profile folder and by {@link startAbandonedProfileSweep} for the sweep, so both use the same directory; only a managed browser reads it.
    * @returns The directory a test named; else this user's directory of {@link managedProfileRoot} on this system.
    * @example this.managedRoot // => '/tmp' on Linux, 'C:\Users\learner\AppData\Local\Codebook\browser-profiles' on Windows
    */
