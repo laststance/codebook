@@ -21,6 +21,7 @@ import { currentStorageOwner } from './currentStorageOwner'
 import { isFolderOfItsOwn } from './isFolderOfItsOwn'
 import { listPlacedClaims } from './listPlacedClaims'
 import { placeStorageLock } from './placeStorageLock'
+import { PREPARED_LOCK_SUFFIX } from './preparedLockSuffix'
 import {
   readLiveWikiUpdateMarker,
   type WikiUpdateMarker,
@@ -262,7 +263,7 @@ async function removeExpiredPreparations(
 ): Promise<void> {
   const parentDirectory = dirname(markerPath),
     preparedClaimPrefix = `${basename(markerPath)}.takeover-`,
-    preparedMarkerPrefix = `${basename(markerPath)}.pending-`
+    preparedMarkerPrefix = `${basename(markerPath)}${PREPARED_LOCK_SUFFIX}`
   for (const name of await readdir(parentDirectory).catch(() => [])) {
     const path = join(parentDirectory, name)
     if (name.startsWith(preparedClaimPrefix))
@@ -455,7 +456,7 @@ async function changeOwnMarker(
  * await replaceMarker('/repo/.codebook/wiki.update-run.json', '{"pid":4242,…,"watchEndedAtMs":1790000900000}')
  */
 async function replaceMarker(markerPath: string, text: string): Promise<void> {
-  const besidePath = `${markerPath}.pending-${randomUUID()}`
+  const besidePath = `${markerPath}${PREPARED_LOCK_SUFFIX}${randomUUID()}`
   try {
     await writeFile(besidePath, text, {
       mode: WIKI_UPDATE_MARKER_FILE_MODE,

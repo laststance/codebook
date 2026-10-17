@@ -14,10 +14,11 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import os, { hostname, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
 
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import type * as placementModule from '../utils/placeStorageLock'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
 
@@ -26,6 +27,7 @@ import {
   ANOTHER_ID_OF_NO_PROCESS,
   ID_OF_NO_PROCESS,
 } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 import { realProcessStart } from './utils/realProcessStart'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
@@ -640,6 +642,49 @@ test('a lock file a killed window prepared but never placed is removed by the ne
   // Assert
   assert.equal(outcome, 'written')
   assert.deepEqual(await readdir(directory), ['writer.lock.pending-of-4343'])
+})
+
+// Value: protects=the file the lock's own placement prepares stays one the sweep finds, when its window is killed before the link gives it the lock's name; fails_when=the placement names its prepared file differently from what the sweep looks for (the two spell the name each on their own), so every killed window leaves a file in the storage for good; why_new=Cycle 0046 /ship review T12: every sweep test wrote the prepared file by hand, so a drift of the writer's name survived them; seam=node:fs/promises link of a loaded placeStorageLock, at which its window is killed (the link never returns and nothing after it runs) and the process probe
+test('the file a window’s real lock placement prepared is removed by the next write when that window was killed at its link', async (context) => {
+  // Arrange: a window of exited process 4194305 prepares its lock with the real placement and is killed at the link.
+  const directory = await storageDirectory(context)
+  let reportKillAtTheLink!: () => void
+  const killedAtTheLink = new Promise<void>((resolveKill) => {
+    reportKillAtTheLink = resolveKill
+  })
+  const { placeStorageLock: placeLockOfTheKilledWindow } = await loadModule<
+    typeof placementModule
+  >(resolve(__dirname, '../utils/placeStorageLock.js'), {
+    'node:fs/promises': {
+      ...fsPromises,
+      link: (): Promise<never> => {
+        reportKillAtTheLink()
+        return new Promise<never>(() => {})
+      },
+    },
+  })
+  void placeLockOfTheKilledWindow(join(directory, 'writer.lock'), {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+  })
+  await killedAtTheLink
+  const leftByTheKill = (await readdir(directory)).map((name) =>
+    name.replace(/[0-9a-f-]{36}$/, '<uuid>'),
+  )
+  answerProcessProbes(context, [ID_OF_NO_PROCESS])
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+
+  // Assert
+  assert.deepEqual(
+    { leftByTheKill, outcome, entriesAfterTheWrite: await readdir(directory) },
+    {
+      leftByTheKill: ['writer.lock.pending-<uuid>'],
+      outcome: 'written',
+      entriesAfterTheWrite: [],
+    },
+  )
 })
 
 // Value: protects=an ordinary write does not list the whole private storage directory (every study archive, sidecar and recording) for leftovers that exist only after a killed window (Cycle 0045 review PL-3); fails_when=every hold of the storage lock sweeps; why_new=no test counted the sweep's listings; seam=the directory listing of node:fs/promises

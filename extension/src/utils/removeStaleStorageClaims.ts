@@ -5,6 +5,7 @@ import { isFolderOfItsOwn } from './isFolderOfItsOwn'
 import { isLeftEmpty } from './isLeftEmpty'
 import { isStaleStorageLock } from './isStaleStorageLock'
 import { listPlacedClaims } from './listPlacedClaims'
+import { PREPARED_LOCK_SUFFIX } from './preparedLockSuffix'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { StorageOwnerIdentity } from './readRecordedOwner'
 import { removeWithoutFollowing } from './removeWithoutFollowing'
@@ -58,14 +59,14 @@ async function removeStalePlacedClaims(
     await removeStaleOwnerFile(join(claimDirectory, claimName), judgement)
 }
 
-/** Removes the stale siblings of the lock that never got their final name: prepared claims `<lock>.takeover-<name>` and prepared locks `<lock>.pending-<name>`. @example await removeStalePreparations('/storage/learning/writer.lock', judgement) */
+/** Removes the stale siblings of the lock that never got their final name: prepared claims `<lock>.takeover-<name>` and prepared locks `<lock>.pending-<name>`, named as {@link placeStorageLock} names them ({@link PREPARED_LOCK_SUFFIX}). @example await removeStalePreparations('/storage/learning/writer.lock', judgement) */
 async function removeStalePreparations(
   lockPath: string,
   judgement: LeftoverJudgement,
 ): Promise<void> {
   const storageDirectory = dirname(lockPath),
     preparedClaimPrefix = `${basename(lockPath)}.takeover-`,
-    preparedLockPrefix = `${basename(lockPath)}.pending-`
+    preparedLockPrefix = `${basename(lockPath)}${PREPARED_LOCK_SUFFIX}`
   for (const name of await readdir(storageDirectory).catch(() => [])) {
     const path = join(storageDirectory, name)
     if (name.startsWith(preparedClaimPrefix))
