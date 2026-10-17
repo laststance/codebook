@@ -117,9 +117,9 @@ interface RepositoryControls {
     signal: AbortSignal,
     origin: RepositorySelection,
   ): Promise<void>
-  /** Says whether the learner is known to type in the active text editor now, by a fresh sign of the learner's own hand there ({@link StudyWorkspace.knowsLearnerTypesInActiveEditor}); asked when an agent's cold Wiki entry begins (row 694). Without it nothing is known. */
+  /** Says whether the learner is known to type in the active text editor now, by a fresh sign of the learner's own hand there ({@link StudyWorkspace.knowsLearnerTypesInActiveEditor}); asked when an agent's cold Wiki entry begins (row 694). Without it nothing is known. @example this.controls.knowsLearnerTypesInActiveEditor?.() // => true one second after the learner typed in auth.ts; false a minute after the learner's last key there */
   knowsLearnerTypesInActiveEditor?(): boolean
-  /** Names the column of the Study pane while its document reports that it has the keyboard ({@link StudyWorkspace.studyPaneKeyboardColumn}); asked first whenever an agent's cold Wiki entry begins, before the active text editor, which the editor goes on reporting while the learner works in the pane (rows 705 and 729). Without it no pane is known. */
+  /** Names the column of the Study pane while its document reports that it has the keyboard ({@link StudyWorkspace.studyPaneKeyboardColumn}); asked first whenever an agent's cold Wiki entry begins, before the active text editor, which the editor goes on reporting while the learner works in the pane (rows 705 and 729). Without it no pane is known. @example this.controls.studyPaneKeyboardColumn?.() // => 2 after the learner clicked into the Study pane in the second group; undefined while auth.ts is the active editor */
   studyPaneKeyboardColumn?(): vscode.ViewColumn | undefined
 }
 
