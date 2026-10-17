@@ -3221,6 +3221,51 @@ test('a published page carries a Content-Security-Policy that lets only the shel
   }
 })
 
+// Value: protects=the theme button and the offline note of every page published from a Windows checkout with core.autocrlf=true, or from a VSIX packaged from one, where the reader shell has CRLF line endings; fails_when=the publisher hashes and writes the shell's script with its CRLF bytes, while a browser's HTML parser reads every CRLF and lone CR as LF before a Content-Security-Policy hashes an inline script, so the page's own policy names a hash that matches nothing and the shell's script is blocked, opened from disk and under the reader alike, and the reader's known hash no longer names it either; why_new=Cycle 0046 /ship Codex structured review CX5 (P2); seam=a copy of the page renderer whose `node:fs/promises` reads the reader shell with CRLF line endings, by a loader hook (scripts/tests/utils/crlfShellHooks.mjs)
+test('a page rendered from a reader shell with CRLF line endings is written with LF line endings, and its policy names the hash of its script as a browser reads it, the known one', async () => {
+  // Arrange: a copy of the page renderer that reads the shell as a Windows checkout with core.autocrlf=true holds it.
+  register(new URL('./utils/crlfShellHooks.mjs', import.meta.url))
+  const { renderWikiPages: renderFromCrlfShell } = await import(
+    new URL('../../skills/codebook/render-wiki.mjs?crlf-shell', import.meta.url)
+      .href
+  )
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-crlf-shell-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+
+    // Act
+    const page = (
+      await renderFromCrlfShell(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert: no carriage return anywhere in the page, the policy in the head, and the script the policy names as a browser hashes it.
+    const shellScript = /<script>([\s\S]*?)<\/script>/.exec(page)?.[1] ?? ''
+    assert.deepEqual(
+      {
+        hasCarriageReturn: page.includes('\r'),
+        policy:
+          /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(
+            page,
+          )?.[1],
+        scriptHash: createHash('sha256').update(shellScript).digest('base64'),
+      },
+      {
+        hasCarriageReturn: false,
+        policy:
+          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        scriptHash: 'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; seam=none
 test('a page that links to a relative path, a fragment, a web, mail or editor address, and shows an event attribute and a javascript: link only as escaped text or in a comment, is published as authored', async () => {
   // Arrange

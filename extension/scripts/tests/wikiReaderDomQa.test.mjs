@@ -6,8 +6,8 @@ import { test } from 'node:test'
 // Read as text and never imported: loading the script publishes a Wiki, starts its reader and opens a browser.
 const scriptUrl = new URL('../wiki-reader-dom-qa.mjs', import.meta.url)
 
-// Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout), and the cases that read the rail entry's link in Chrome's accessibility tree (the unit suites compare the entry as text, never what Chrome computes from it); fails_when=a case is removed or renamed without notice, so a size, a focus ring or a description the cycle's rows and findings name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83, 84, 132 and 137 (design review DR-8 to DR-11, ND-3), rows 330 and 343 (the sentences of a watch past its bound and of a learner's file in the way grew; their case holds the rail's bound), finding 600 (Chrome for Testing on C55 described the entry's link as "package.json :31"), /ship finding F2, follow-up N5 and repeat review SC1 (script in a page's content, or written straight into a page file, must not run under the reader nor from disk); seam=none
-test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600 with a refused start, the watch-bound and learner-file end sentences and a conflict, a long source path, the open control’s name and description in Chrome’s accessibility tree, the single column, the missing-page line, two pages whose headings carry the reader’s ids, a page whose content carries script, served and opened from disk, and a page file with a script written into it', async () => {
+// Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout), and the cases that read the rail entry's link in Chrome's accessibility tree (the unit suites compare the entry as text, never what Chrome computes from it); fails_when=a case is removed or renamed without notice, so a size, a focus ring or a description the cycle's rows and findings name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83, 84, 132 and 137 (design review DR-8 to DR-11, ND-3), rows 330 and 343 (the sentences of a watch past its bound and of a learner's file in the way grew; their case holds the rail's bound), finding 600 (Chrome for Testing on C55 described the entry's link as "package.json :31"), /ship finding F2, follow-up N5 and repeat review SC1 (script in a page's content, or written straight into a page file, must not run under the reader nor from disk), and Codex review CX5 (the shell's script of a page published from a shell with CRLF line endings must run); seam=none
+test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600 with a refused start, the watch-bound and learner-file end sentences and a conflict, a long source path, the open control’s name and description in Chrome’s accessibility tree, the single column, the missing-page line, two pages whose headings carry the reader’s ids, a page whose content carries script, served and opened from disk, a page file with a script written into it, and a Wiki published from a reader shell with CRLF line endings', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
 
@@ -47,6 +47,7 @@ test('the Wiki reader DOM check measures the open control and its states, the ro
     'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, the status region and the rail entry’s target get ids of their own, and the keyboard help is named by its own title',
     'a page whose content carries an event attribute and a javascript: link, as a Wiki published before the publisher refused them, runs neither under the reader, while the shell’s theme button and the reader’s own script work',
     'a script written straight into a page file of the Wiki folder does not run under the reader, while the script of the shell of 0.2.29.0 that page carries (its theme button) and the reader’s own script run',
+    'a page the publisher rendered from a reader shell with CRLF line endings, as a Windows checkout holds it, runs its theme button under the reader and opened from disk',
     'a page opened from disk whose content carries an event attribute and a javascript: link runs neither, while the shell’s theme button works and the page says it is an offline copy',
   ])
 })
@@ -83,9 +84,13 @@ test('the Wiki reader DOM check loads its flow from a file without eval, and rea
 test('the Wiki reader DOM check runs the steps of a page a second time on the same content in the shell of 0.2.29.0, and that shell is the file the tag v0.2.29.0 shipped', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
-  const shellOf02290 = await readFile(
-    new URL('../fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
-  )
+  // Read with LF line endings, as the check reads it, so a checkout that holds it with CRLF names the same file.
+  const shellOf02290 = (
+    await readFile(
+      new URL('../fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
+      'utf8',
+    )
+  ).replace(/\r\n?/g, '\n')
 
   // Act: the steps of a page, how often the check runs them, what it adds to the name of a case of the second run, and the shell's digest.
   const stepsOfAPage = /const stepsOfAPage = \[([^\]]+)\]/

@@ -874,7 +874,10 @@ test('the reader’s policy names the hash of the one script the shell of this b
         'fixtures',
         'reader-shell-0.2.29.0.txt',
       ),
-    ].map((path) => readFile(path, 'utf8')),
+    ].map(async (path) =>
+      // A browser reads every CRLF and lone CR of a page as LF before it hashes an inline script, and the publisher writes the shell so; a checkout may hold the files with CRLF.
+      (await readFile(path, 'utf8')).replace(/\r\n?/g, '\n'),
+    ),
   )
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shells-')),

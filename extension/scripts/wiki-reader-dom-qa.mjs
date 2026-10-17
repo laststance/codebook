@@ -433,14 +433,19 @@ async function publishSampleWiki() {
       ),
     )
     // The overview and one page of the package manifest are printed into the shell of 0.2.29.0, so the rules the reader injects are laid out against the stylesheet a site of that build carries, and the entry it adds is read there.
-    const shell = await readFile(
-      new URL('../skills/codebook/reader-shell.html', import.meta.url),
-      'utf8',
-    )
-    const shellOf02290 = await readFile(
-      new URL('./fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
-      'utf8',
-    )
+    // Both shells are read with LF line endings, as the publisher reads its shell and a browser reads a page, also from a checkout that holds them with CRLF.
+    const shell = (
+      await readFile(
+        new URL('../skills/codebook/reader-shell.html', import.meta.url),
+        'utf8',
+      )
+    ).replace(/\r\n?/g, '\n')
+    const shellOf02290 = (
+      await readFile(
+        new URL('./fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
+        'utf8',
+      )
+    ).replace(/\r\n?/g, '\n')
     for (const pagePath of [
       PAGE_IN_THE_SHELL_OF_02290,
       PACKAGE_MANIFEST_PAGES.inTheShellOf02290,
@@ -490,6 +495,87 @@ async function publishSampleWiki() {
       join(projectRoot, 'src/a.ts'),
       '// changed after the publish\n',
     )
+  } catch (error) {
+    await remove()
+    throw error
+  }
+  return { projectRoot, outputDirectory, remove }
+}
+
+/**
+ * Publishes a one-page Wiki with a copy of the shipped publisher whose reader shell has CRLF line endings, as a Windows checkout with `core.autocrlf=true` writes it and a VSIX packaged from such a checkout carries it: the publisher, the page renderer and the diagram renderer are copied as they are, the shell with every line ending as CRLF.
+ * @returns {Promise<{ projectRoot: string, outputDirectory: string, remove: () => Promise<void> }>} The project's root, the Wiki's folder and a `remove` that deletes the temporary folder.
+ * @throws When a file cannot be copied or written, or the publisher refuses the candidate; the temporary folder is removed first.
+ * @example
+ * const crlf = await publishWikiFromCrlfShell() // crlf.outputDirectory => '/tmp/codebook-wiki-crlf-shell-x/crlf/.codebook/wiki'
+ */
+async function publishWikiFromCrlfShell() {
+  const temporaryFolder = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-crlf-shell-')),
+  )
+  const remove = () => rm(temporaryFolder, { recursive: true, force: true })
+  const skill = join(temporaryFolder, 'skill')
+  const projectRoot = join(temporaryFolder, 'crlf')
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  const source = 'export const value = 1\n'
+  try {
+    await mkdir(skill)
+    for (const name of [
+      'publish-wiki.mjs',
+      'render-wiki.mjs',
+      'render-wiki-diagrams.mjs',
+      'reader-shell.html',
+    ]) {
+      const text = await readFile(
+        new URL(`../skills/codebook/${name}`, import.meta.url),
+        'utf8',
+      )
+      await writeFile(
+        join(skill, name),
+        name === 'reader-shell.html' ? text.replace(/\r?\n/g, '\r\n') : text,
+      )
+    }
+    const publisher = await import(
+      pathToFileURL(join(skill, 'publish-wiki.mjs')).href
+    )
+    await mkdir(join(projectRoot, 'src'), { recursive: true })
+    await writeFile(join(projectRoot, 'src/a.ts'), source)
+    const { stage } = await publisher.prepareWikiStage({
+      projectRoot,
+      outputDirectory,
+    })
+    await writeFile(
+      join(stage, 'codebook-wiki.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        readerVersion: 2,
+        repositoryRoot: projectRoot,
+        pages: [
+          {
+            path: 'index.html',
+            title: 'Overview',
+            section: 'Guide',
+            contentHtml:
+              '<h2 id="start">Start</h2><p>Explained from source.</p>',
+            sources: [{ path: 'src/a.ts', line: 1 }],
+            outline: [{ id: 'start', label: 'Start' }],
+          },
+        ],
+        assets: [],
+        excludedPaths: [],
+        includedSources: [
+          {
+            path: 'src/a.ts',
+            sha256: createHash('sha256').update(source).digest('hex'),
+          },
+        ],
+      }),
+    )
+    await publisher.publishWiki({
+      projectRoot,
+      outputDirectory,
+      stageDirectory: stage,
+    })
   } catch (error) {
     await remove()
     throw error
@@ -2023,6 +2109,34 @@ async function check(page, options, collected) {
       },
     )
   }
+  const useWikiPublishedFromCrlfShell = async () => {
+    // Arrange: a Wiki the shipped publisher rendered from a reader shell with CRLF line endings, served by a reader of its own and opened from disk.
+    await page.setViewportSize({ width: 1200, height: 720 })
+    const used = {}
+    for (const [place, address] of [
+      ['served', options.crlfShellUrl],
+      ['fromDisk', options.crlfShellFile],
+    ]) {
+      await page.goto(address)
+      // Act: the theme button is pressed, as a learner does.
+      await page.click('button#theme-toggle')
+      used[place] = await page.evaluate(() => ({
+        theme: document.documentElement.dataset.theme ?? null,
+        protocol: location.protocol,
+      }))
+    }
+    // Assert
+    record(
+      'a page the publisher rendered from a reader shell with CRLF line endings, as a Windows checkout holds it, runs its theme button under the reader and opened from disk',
+      used,
+      {
+        isServedByTheReader: used.served.protocol === 'http:',
+        doesServedThemeButtonSwitchTheTheme: used.served.theme === 'dark',
+        isOpenedFromDisk: used.fromDisk.protocol === 'file:',
+        doesThemeButtonFromDiskSwitchTheTheme: used.fromDisk.theme === 'dark',
+      },
+    )
+  }
   const useOfflinePageWithContentScript = async () => {
     // Arrange: the same chapter opened from disk, where no reader serves it and only the page's own policy holds; the image fails to load.
     await page.setViewportSize({ width: 1200, height: 720 })
@@ -2091,6 +2205,7 @@ async function check(page, options, collected) {
     usePageWithContentScript,
     useOfflinePageWithContentScript,
     usePageWithPlantedScript,
+    useWikiPublishedFromCrlfShell,
   ])
     await step()
 }
@@ -2102,6 +2217,7 @@ const report = {
   cases: [],
 }
 const wiki = await publishSampleWiki()
+const crlfWiki = await publishWikiFromCrlfShell()
 /** The update states the check's reader can answer, each as the extension's window would hold it when the page asks; an ended run ends at the moment it is chosen, after the sample Wiki was published, so no publish counts as one that came after it. */
 const updateStatuses = {
   idle: () => ({ state: 'idle' }),
@@ -2159,6 +2275,7 @@ await new Promise((resolveListening) =>
   updateStatusControl.listen(0, '127.0.0.1', resolveListening),
 )
 let reader
+let crlfReader
 let isBrowserOpen = false
 try {
   reader = await startDeepWikiReader(
@@ -2168,6 +2285,13 @@ try {
     async () => ANSWER,
     'vscode',
     () => answeredUpdateStatus,
+  )
+  // The Wiki published from a reader shell with CRLF line endings has a reader of its own.
+  crlfReader = await startDeepWikiReader(
+    crlfWiki.outputDirectory,
+    crlfWiki.projectRoot,
+    async () => ANSWER,
+    'vscode',
   )
   // The flow reaches `run-code` as one function in a file it loads itself, written by {@link readerDomFlowText}: a step that throws then ends as one failed case after the cases that passed.
   const flowPath = `${output}/flow.js`
@@ -2194,6 +2318,9 @@ try {
       offlinePageWithContentScript: pathToFileURL(
         join(wiki.outputDirectory, PAGE_WITH_CONTENT_SCRIPT),
       ).href,
+      crlfShellUrl: crlfReader.url,
+      crlfShellFile: pathToFileURL(join(crlfWiki.outputDirectory, 'index.html'))
+        .href,
     }),
   )
   await command(['open', 'about:blank'], 'open')
@@ -2213,9 +2340,13 @@ try {
     async () => {
       if (reader) await reader.close()
     },
+    async () => {
+      if (crlfReader) await crlfReader.close()
+    },
     () =>
       new Promise((resolveClosed) => updateStatusControl.close(resolveClosed)),
     wiki.remove,
+    crlfWiki.remove,
   ])
 }
 console.log(

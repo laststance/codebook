@@ -97,7 +97,7 @@ function validatePages(manifest) {
   }
 }
 
-/** Names the shell's one inline script by its hash, as a Content-Security-Policy names a script, for the policy every published page carries in its head: that policy lets the shell's own script run and no script a page's content may carry (an event attribute, a `javascript:` address), also when the page is opened from disk, where no reader sends a policy. Under the reader its header policy holds too, and the two agree: the shell's script carries the reader's nonce and this hash, and the reader's own script file is the page's own origin (`'self'`). The script holds no template field, so the template's script is the published one. Called by {@link renderWikiPages} once. @throws When the shell holds another number of inline scripts, or one with a template field. @example shellScriptHashOf('<script>run()</script>') // => "'sha256-…'" */
+/** Names the shell's one inline script by its hash, as a Content-Security-Policy names a script, for the policy every published page carries in its head: that policy lets the shell's own script run and no script a page's content may carry (an event attribute, a `javascript:` address), also when the page is opened from disk, where no reader sends a policy. Under the reader its header policy holds too, and the two agree: the shell's script carries the reader's nonce and this hash, and the reader's own script file is the page's own origin (`'self'`). The script holds no template field, so the template's script is the published one; the template comes with LF line endings, as a browser reads the page, so the hash is the one a browser computes and the one the reader knows (`WIKI_SHELL_SCRIPT_HASHES`) on every checkout. Called by {@link renderWikiPages} once. @throws When the shell holds another number of inline scripts, or one with a template field. @example shellScriptHashOf('<script>run()</script>') // => "'sha256-…'" */
 const shellScriptHashOf = template => {
   const scripts = [...template.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(([, text]) => text);
   if (scripts.length !== 1 || scripts[0].includes('{{')) throw new Error('The reader shell must hold one inline script without template fields.');
@@ -113,7 +113,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     if (!source || !safePath(source.path) || !/^[a-f0-9]{64}$/.test(source.sha256) || indexedSources.has(source.path)) throw new Error('The Wiki source index has an invalid path, hash or duplicate.');
     indexedSources.set(source.path, source);
   }
-  const template = await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8'), shellScriptHash = shellScriptHashOf(template);
+  // A Windows checkout with core.autocrlf (and a VSIX packaged from one) holds the shell with CRLF line endings; a browser reads every CRLF and lone CR as LF before it hashes an inline script, so the pages are written, and their script hashed, with LF line endings.
+  const template = (await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8')).replace(/\r\n?/g, '\n'), shellScriptHash = shellScriptHashOf(template);
   const sourceLines = new Map(), pages = new Map();
   // The reader finds its own elements by id (the form, the question field, the answer, the theme button, the description of the entry's link, the status region), so an id of the shell or of its page scripts on an element of a page's content would stand twice in the served page. Such a content id is renamed on its page and in every link to it; nothing changes in the agent's page data.
   const readerIds = new Set([...[...template.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]), ...READER_ELEMENT_IDS]);

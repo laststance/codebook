@@ -6613,7 +6613,7 @@ async function check(page, options, collected) {
 
 /**
  * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
- * @param shell - The text of `skills/codebook/reader-shell.html`.
+ * @param shell - The text of `skills/codebook/reader-shell.html`, with LF line endings as the publisher reads it.
  * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control as the publisher prints it: the link with its label alone and, beside it, the file and line it opens, shown and, as written, as the link's description.
  * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
  * @example
@@ -6676,11 +6676,14 @@ try {
     flowPath,
     readerDomFlowText(check, {
       html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      // With LF line endings, as the publisher writes a page and a browser hashes its script, also from a checkout that holds the shell with CRLF.
       wikiShell: wikiShellPage(
-        await readFile(
-          new URL('../skills/codebook/reader-shell.html', import.meta.url),
-          'utf8',
-        ),
+        (
+          await readFile(
+            new URL('../skills/codebook/reader-shell.html', import.meta.url),
+            'utf8',
+          )
+        ).replace(/\r\n?/g, '\n'),
       ),
       message,
       output,
