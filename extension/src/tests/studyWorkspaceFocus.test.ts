@@ -6,6 +6,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   workspaceHarness,
   configuredWorkspaceHarness,
+  readerSeams,
 } from './studyWorkspaceHarness'
 // The chat part has the keyboard, so no text editor proves the main editor the active part and the measurement borrows the first group; a learner's file in front of the second group proves it, and the tests after these show that it borrows nothing then (Cycle 0046 row 663).
 for (const boundary of ['primary response', 'main measurement'] as const)
@@ -3281,3 +3282,66 @@ for (const host of ['VS Code', 'Cursor'] as const)
       await harness.close()
     }
   })
+
+// Value: protects=the Study's and the Wiki's arrangement beside VS Code's floating window of text editors: while a text editor of a floating window with two groups has the keyboard, the layout read answers that window's grid, so the learner's file in its first group, column 2, is no proof that the main editor answered (row 663's proof read it as one: two measured groups, and column 2 is in front of one of them); the measurement borrows the main editor's first group and measures the main editor's one group; fails_when=StudyWorkspace.readMainEditorGrid takes any measured column's text editor for the main editor's while another part holds text editors, measures the floating window's two groups as the main editor's columns 1 and 2, and the arrangement puts its panes into the floating window's group; why_new=Cycle 0046 row 689; seam=useNativeLayout with one main group, addFloatingEditorWindow (VS Code's floating window of two groups) and its focus, the first-group focus command, readerSeams' measureMainEditorGrid and the native commands
+test("a layout read while a text editor of VS Code's floating window with two groups has the keyboard borrows the main editor's first group and measures the main editor's one group", async () => {
+  // Arrange: the main editor shows login-form.tsx; the learner works in notes.ts, in the first group of a floating window of two groups (columns 2 and 3).
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const floating = harness.addFloatingEditorWindow(['notes.ts', 'readme.md'])
+  floating.focus(0)
+  const keyboardBefore = harness
+    .focusedSource()
+    ?.document.uri.path.split('/')
+    .at(-1)
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const measured = await readerSeams(harness).measureMainEditorGrid()
+
+    // Assert: the main editor's one group was measured after the borrow; the borrowed keyboard stays in the main editor, since no command gives a floating window's text editor its focus back in both editors.
+    assert.deepEqual(
+      {
+        keyboardBefore,
+        measured,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        keyboardAfter: harness
+          .focusedSource()
+          ?.document.uri.path.split('/')
+          .at(-1),
+      },
+      {
+        keyboardBefore: 'notes.ts',
+        measured: [1],
+        focusCommands: ['workbench.action.focusFirstEditorGroup'],
+        keyboardAfter: 'login-form.tsx',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the presentation state's confirmation beside VS Code's floating window of text editors: a passive layout read while that window's text editor has the keyboard answers the floating window's grid, and the reader does not take it for the main editor's, so it reads the scope as unknown; fails_when=StudyWorkspace.hasMainEditorFocus takes the text editor of any column within the read's count for the main editor's focus and readPassivePresentationLayout answers the floating window's two groups as the main editor's layout; why_new=Cycle 0046 row 689 (the passive reads' half); seam=useNativeLayout with one main group, addFloatingEditorWindow and its focus, readerSeams' readPassiveLayout
+test("a passive layout read while a text editor of VS Code's floating window with two groups has the keyboard reads no main editor's layout", async () => {
+  // Arrange: as above; the learner works in notes.ts in the floating window's first group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const floating = harness.addFloatingEditorWindow(['notes.ts', 'readme.md'])
+  floating.focus(0)
+  try {
+    // Act
+    const layout = await readerSeams(harness).readPassiveLayout()
+
+    // Assert
+    assert.equal(layout, undefined)
+  } finally {
+    await harness.close()
+  }
+})

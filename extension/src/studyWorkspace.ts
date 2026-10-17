@@ -68,6 +68,7 @@ import {
   STUDY_CLOSE_KEYBOARD_MESSAGE,
   STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
   STUDY_EDITOR_GROUP_COUNT,
+  EDITOR_TAB_INPUT_KINDS,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
   STUDY_REFRESH_INTERVAL_MS,
@@ -214,6 +215,7 @@ import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
 import { hasRowAtMinimumHeight } from './utils/hasRowAtMinimumHeight'
+import { holdsEditorTab } from './utils/holdsEditorTab'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
@@ -17253,6 +17255,9 @@ export class StudyWorkspace {
     return (
       column >= vscode.ViewColumn.One &&
       column <= groupCount &&
+      // A column beyond the first proves the main editor only while no other part holds editors (row 689).
+      (column === vscode.ViewColumn.One ||
+        this.holdsOnlyChatsBeyond(groupCount)) &&
       Boolean(
         vscode.window.activeTextEditor?.viewColumn === column ||
         ownedPanelFocused,
@@ -17291,12 +17296,38 @@ export class StudyWorkspace {
     const editor = vscode.window.activeTextEditor,
       column = editor?.viewColumn
     if (!editor || column === undefined || column > groupCount) return false
+    // A column beyond the first proves the main editor only while no other part holds editors (row 689).
+    if (
+      column > vscode.ViewColumn.One &&
+      !this.holdsOnlyChatsBeyond(groupCount)
+    )
+      return false
     const front = vscode.window.tabGroups.all.find(
       (group) => group.viewColumn === column,
     )?.activeTab?.input
     return (
       front instanceof vscode.TabInputText &&
       front.uri.toString() === editor.document.uri.toString()
+    )
+  }
+
+  /**
+   * Says whether every group after the first `groupCount` columns holds no editor, only chats or tabs without input, so that a text editor in one of those columns is the main editor's; asked by {@link isActiveTextEditorInFrontOfGroup} and {@link hasMainEditorFocus} for a column beyond the first (Cycle 0046 row 689).
+   * The extension API counts the groups of every editor part, the main editor's first (VS Code 1.140.0 `workbench.desktop.main.js` 699:19807, 1106:181094), and a layout read answers for the focused part (993:31655). Beside VS Code's floating window of text editors with at least as many groups as the main editor's plus one, the active text editor of that window's first group stands in a column within the count of the window's own grid, which the read answered for: a proof by that column measured the floating window as the main editor. A chat part (Cursor's Agent chat, 3.23.12 `workbench.desktop.main.js` 17269:27859; VS Code's chat moved into a floating window) holds no text editor, and the first column is always the main editor's.
+   * @param groupCount - The number of groups a layout read counted.
+   * @returns `true` when no group after those columns holds an editor's tab ({@link holdsEditorTab}); `false` when one does.
+   * @example this.holdsOnlyChatsBeyond(2) // => false beside VS Code's floating window that shows readme.md in column 3
+   */
+  private holdsOnlyChatsBeyond(groupCount: number): boolean {
+    const editorInputKinds = [
+      vscode.TabInputText,
+      vscode.TabInputWebview,
+      ...EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)),
+    ]
+    return !vscode.window.tabGroups.all.some(
+      (group) =>
+        group.viewColumn > groupCount &&
+        holdsEditorTab(group, editorInputKinds),
     )
   }
 

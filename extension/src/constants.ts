@@ -454,6 +454,17 @@ export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
 /** The height VS Code and Cursor give an editor group at least (their `DEFAULT_EDITOR_MIN_DIMENSIONS`, 220 × 70 px: the tab row and as much again). A hidden editor area reports every stacked group at this height. */
 export const EDITOR_GROUP_MINIMUM_HEIGHT_PX = 70
+/**
+ * The tab input classes of editors besides `TabInputText` and `TabInputWebview`, by the names under which both editors' extension hosts export them on `vscode` (a diff, a custom editor, a notebook and its diff, a terminal in the editor area); a host that exports one of them not is asked for it in vain and skips it. A group that holds such a tab belongs to a part with editors, not to a chat part (Cycle 0046 row 689).
+ * @example EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)) // => [TabInputTextDiff, TabInputCustom, …]
+ */
+export const EDITOR_TAB_INPUT_KINDS = [
+  'TabInputTextDiff',
+  'TabInputCustom',
+  'TabInputNotebook',
+  'TabInputNotebookDiff',
+  'TabInputTerminal',
+] as const
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
 export const PRESENTATION_READING_ANCHORS = [

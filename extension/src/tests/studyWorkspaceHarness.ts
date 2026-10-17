@@ -374,6 +374,10 @@ export async function workspaceHarness(
       }
     | undefined
   let separatePartLayoutReport: unknown
+  /** VS Code's floating window of text editors (an editor moved into a new window, then split there), whose groups the extension API counts after the main editor's; see `addFloatingEditorWindow` (Cycle 0046 rows 688 and 689). `active` while the window is the focused one: a layout read is answered for its own grid (1.140.0 993:31655). */
+  let floatingEditorWindow:
+    | { groups: (typeof groups)[number][]; layout: unknown; active: boolean }
+    | undefined
   type SourceEditor = {
     group?: (typeof groups)[number]
     document: { uri: Uri; getText(): string }
@@ -3350,6 +3354,10 @@ export async function workspaceHarness(
               const previousGroup = activeTabGroup
               returnHiddenEditorArea()
               activeTabGroup = focusedGroup
+              // VS Code's numbered command counts every window's groups: a floating window's group raises that window (987:4284).
+              if (floatingEditorWindow)
+                floatingEditorWindow.active =
+                  floatingEditorWindow.groups.includes(focusedGroup)
               // VS Code expands a minimized row it activates (row 691).
               if (modelsVsCodeStackedRowSizing)
                 expandMinimizedRow(focusedColumn)
@@ -3373,6 +3381,8 @@ export async function workspaceHarness(
             } else focusChatInput()
           }
           if (name === 'workbench.action.focusFirstEditorGroup') {
+            // The first group is the main window's: focusing it makes that window the focused one.
+            if (floatingEditorWindow) floatingEditorWindow.active = false
             const previousEditor = focusedSourceEditor(),
               previousGroup = activeTabGroup,
               primaryGroup = groups.find((group) => group.viewColumn === 1)!
@@ -3468,7 +3478,9 @@ export async function workspaceHarness(
             }
             // The active separate part answers for itself, also while a view has the keyboard beside Cursor's chat part, and a hidden editor area reports its stacked groups collapsed.
             let reportedLayout = editorLayout
-            if (separateEditorPart?.lastActive)
+            if (floatingEditorWindow?.active)
+              reportedLayout = floatingEditorWindow.layout
+            else if (separateEditorPart?.lastActive)
               reportedLayout =
                 separatePartLayoutReport ?? separateEditorPart.layout
             else if (panelMaximized)
@@ -5599,6 +5611,32 @@ export async function workspaceHarness(
     keepMainPartActiveAtFocusAgent(): void {
       keepsMainPartActiveAtFocusAgent = true
     },
+    /**
+     * Opens VS Code 1.140.0's floating window of text editors beside the main editor: one learner's file per group, the groups counted after the main editor's (`workbench.desktop.main.js` 699:19807, 1106:181094), a layout read answered for the floating window's own grid while it is the focused window (993:31655), `workbench.action.focusFirstEditorGroup` focusing the main window's first group, and a numbered focus command of a floating group's column raising that window (987:4284). Not modelled: panes in the floating window and its close (Cycle 0046 rows 688 and 689).
+     * @param filenames - The learner's file of each group of the floating window, from its first group on.
+     * @returns `focus(index)`: the learner's click into the text editor of that group, after which the floating window is the focused one.
+     * @example
+     * const floating = harness.addFloatingEditorWindow(['notes.ts', 'readme.md'])
+     * floating.focus(0) // notes.ts in column 2 has the keyboard; a layout read answers the floating window's two groups
+     */
+    addFloatingEditorWindow(filenames: string[]) {
+      const opened = filenames.map((filename) => {
+        const column = groups.length + 1
+        nativeGroup(column, true)
+        return openDraftTab(filename, column)
+      })
+      floatingEditorWindow = {
+        groups: opened.map((draft) => draft.group),
+        layout: { orientation: 0, groups: filenames.map(() => ({})) },
+        active: false,
+      }
+      return {
+        focus(index: number): void {
+          giveDraftKeyboard(opened[index]!)
+          floatingEditorWindow!.active = true
+        },
+      }
+    },
     useNativeLayout(layout: unknown): void {
       // Replacing the fixture's native desktop closes its real pane handles and removes their old editors, rather than leaving invisible owners alive.
       for (const current of [...panels]) current.dispose()
@@ -6736,6 +6774,16 @@ export function readerSeams(harness: {
     isLiveArrangement: (): boolean => reader['liveComposition'],
     /** Says whether an agent's next request would read the keyboard's place as the learner's own (no Codebook pane active): the reading of rows 613 and 654 that decides whether the request gives the keyboard back or keeps it and tells where it is. @example readerSeams(harness).knowsLearnersPlace() // => false right after the reader's render of a pause gave the captured source the keyboard */
     knowsLearnersPlace: (): boolean => reader['knowsLearnersPlace'](undefined),
+    /** Measures the main editor as an arrangement does before its effects ({@link StudyWorkspace.readMainEditorGrid}), and names the view columns of the groups it measured as the main editor's. @example await readerSeams(harness).measureMainEditorGrid() // => [1] beside VS Code's floating window */
+    /** Reads the main editor's layout without borrowing focus, as the presentation state's confirmation does ({@link StudyWorkspace.readPassivePresentationLayout}): the layout, or `undefined` when the read cannot tell that the main editor answered. @example await readerSeams(harness).readPassiveLayout() // => undefined while VS Code's floating window of text editors is the focused one */
+    readPassiveLayout: (): Promise<unknown> =>
+      reader['readPassivePresentationLayout'](),
+    measureMainEditorGrid: async (): Promise<number[]> =>
+      // The reader's arrays come from its own module context; the test compares an array of its own.
+      Array.from(
+        (await reader['readMainEditorGrid'](undefined, () => {})).groups,
+        (group) => group.viewColumn,
+      ),
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */
     checkpoint: (
       ...input: Parameters<WorkspaceReader['checkpoint']>
