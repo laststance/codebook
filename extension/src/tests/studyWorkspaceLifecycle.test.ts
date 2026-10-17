@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
 
+import { REPOSITORY_SOURCE_SCHEME } from '../constants'
 import type { PresentationPoseCapture } from '../presentationSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -4286,6 +4287,176 @@ test('a run that ends with its Application pane active sends no keyboard command
     removeDisposalObserver()
     harness.changeWindowFocus(true)
     harness.reader['settleKeyboardAfterRunClosedPane'] = settleKeyboard
+    await harness.close()
+  }
+})
+
+/**
+ * Shows a copy of a cited source the way the Repository Wiki shows its citation: a `codebook-repository-source` document of this workspace into the given column, without preview; the reader's own target is the first column (RepositoryReader.openSource).
+ * @param harness - A workspace harness whose reader has its library.
+ * @param column - The column the copy is shown into.
+ * @param pinned - Whether the learner pins the copy's tab afterwards.
+ * @returns The copy's tab.
+ * @example const copy = await showWikiCitationCopy(harness, 1, false)
+ */
+async function showWikiCitationCopy(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  column: number,
+  pinned: boolean,
+) {
+  const library = await harness.reader.learningStorage()
+  const uri = harness.editor.Uri.from({
+    scheme: REPOSITORY_SOURCE_SCHEME,
+    authority: library.workspaceKey,
+    path: '/architecture/1/module/0/login-form.tsx',
+  })
+  await harness.editor.window.showTextDocument(
+    { uri, getText: () => 'export const total = 48;\n' },
+    { viewColumn: column, preview: false },
+  )
+  const tab = harness.groups
+    .find((group) => group.viewColumn === column)!
+    .tabs.find(
+      (candidate) =>
+        Reflect.get(candidate.input, 'uri')?.toString() === uri.toString(),
+    )!
+  tab.isPinned = pinned
+  return tab
+}
+
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the learner's groups after Close Study Workspace when the Repository Wiki showed its citation into the first column while the recording's Application stood there in a group of its own (the Wiki's target is the first column: VS Code c59-vs-444, where the copy kept that group after the Close and the next Wiki open, and c59-vs-567); fails_when=Close retires only the Study's own tabs, so the Application's group stays at column 1 with the copy alone and still locked, beside the learner's groups, and Close Repository Wiki keeps that copy as its group's only tab; why_new=Cycle 0046 row 682; seam=articleRecordingLayoutHarness (the learner's two stacked groups, the recording with its Application in its own locked group), a codebook-repository-source copy shown into column 1 as the Wiki shows it, the reader's Close and the groups
+  test(`in ${host}, a Wiki citation copy shown into the recording Application's own group leaves with that group at Close Study Workspace, so no Codebook group stays`, async () => {
+    // Arrange: the recording is open with its Application alone in a locked group at column 1; the Wiki's citation was shown into column 1.
+    const harness = await articleRecordingLayoutHarness(true, true)
+    try {
+      if (host === 'Cursor') {
+        harness.useHostAppName('Cursor')
+        harness.addSeparateEditorPart()
+        harness.replaceGroupObjectsOnTabChanges()
+      }
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      await showWikiCitationCopy(harness, 1, false)
+      const beforeClose = harness.groups.map((group) => ({
+        column: group.viewColumn,
+        locked: Boolean(group.locked),
+        tabs: group.tabs.map((tab) => tab.label),
+      }))
+
+      // Act
+      await harness.reader.close()
+
+      // Assert: the copy stood beside the Application in its group; after the Close the learner's two groups (and Cursor's chat part) are the only ones, none locked.
+      assert.deepEqual(beforeClose[0], {
+        column: 1,
+        locked: true,
+        tabs: ['codebook · Application', 'login-form.tsx'],
+      })
+      assert.deepEqual(
+        harness.groups.map((group) => ({
+          column: group.viewColumn,
+          locked: Boolean(group.locked),
+          tabs: group.tabs.map((tab) => tab.label),
+        })),
+        [
+          { column: 1, locked: false, tabs: ['article-source.ts'] },
+          { column: 2, locked: false, tabs: ['codebook · Repository Wiki'] },
+          ...(host === 'Cursor'
+            ? [{ column: 3, locked: false, tabs: ['New Agent'] }]
+            : []),
+        ],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=a copy of a cited source the learner pinned: the learner chose to keep it, so Close Study Workspace leaves it, with the group it stands in; fails_when=row 682's retirement of the Wiki's copies in the groups Codebook created also closes a copy the learner pinned there; why_new=Cycle 0046 row 682 (its bound, as row 641's rule keeps a pinned copy); seam=articleRecordingLayoutHarness, a codebook-repository-source copy shown into column 1 and pinned, the reader's Close and the groups
+test('a Wiki citation copy the learner pinned in the recording Application’s own group stays at Close Study Workspace, with that group', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const copy = await showWikiCitationCopy(harness, 1, true)
+
+    // Act
+    await harness.reader.close()
+
+    // Assert: the pinned copy keeps its group at column 1, before the learner's two groups.
+    assert.deepEqual(
+      harness.groups.map((group) => group.tabs.map((tab) => tab.label)),
+      [
+        ['login-form.tsx'],
+        ['article-source.ts'],
+        ['codebook · Repository Wiki'],
+      ],
+    )
+    assert.equal(harness.groups[0]!.tabs[0], copy)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's window after Close of a Study whose captured source the editor gave a group of its own, when the Repository Wiki's citation copy stands in that group too (Cursor c59-5-cu-cold: the live arrangement's Source group held the copy beside the captured sources and kept it after the Close); fails_when=Close retires the captured source's group only when it is empty, so that group stays with the copy alone; why_new=Cycle 0046 row 682; seam=presentation.createViewport (the MCP-first preparation), the fake editor's own group for a text shown beyond the grid, a codebook-repository-source copy shown into that group, the reader's Close and the groups
+test('a Wiki citation copy in the group the editor gave the captured source leaves with that group at Close Study Workspace', async () => {
+  // Arrange: an MCP run prepared the Application at column 1 beside the learner's group; the Living book Open shows the captured source at column 3, where the editor gives it a group of its own, and the Wiki's copy is shown there too.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.focusMutableDraft()
+  const learnersTabs = [...harness.groups[0]!.tabs]
+  harness.presentationPreferences.set('codebook.presentation.v1', {
+    version: 1,
+    mode: 'living-book',
+  })
+  const reader = harness.createReader(),
+    viewport = await reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+  try {
+    await reader.open()
+    const library = await reader.learningStorage()
+    const uri = harness.editor.Uri.from({
+      scheme: REPOSITORY_SOURCE_SCHEME,
+      authority: library.workspaceKey,
+      path: '/architecture/1/module/0/login-form.tsx',
+    })
+    await harness.editor.window.showTextDocument(
+      { uri, getText: () => 'export const total = 48;\n' },
+      { viewColumn: 3, preview: false },
+    )
+    const sourceGroupTabs = harness.groups[2]!.tabs.map((tab) => tab.label)
+    viewport.close()
+
+    // Act
+    await reader.close()
+
+    // Assert: the captured source's group held the copy beside the source; after the Close the learner's group stands alone with its own tabs.
+    assert.deepEqual(sourceGroupTabs, [
+      'Captured-overview.mts',
+      'login-form.tsx',
+    ])
+    assert.deepEqual(
+      harness.groups.map((group) => group.tabs),
+      [learnersTabs],
+    )
+  } finally {
+    viewport.close()
+    await reader.dispose()
     await harness.close()
   }
 })

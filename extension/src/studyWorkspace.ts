@@ -52,6 +52,7 @@ import {
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   REPLAY_COVERED_LABEL,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
+  REPOSITORY_SOURCE_SCHEME,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
   REPOSITORY_READER_DEBOUNCE_MS,
@@ -8705,17 +8706,62 @@ export class StudyWorkspace {
   }
 
   /**
-   * Limits {@link closeOwnedEditorTabs} to captured source and a current panel's native group, so rebuilt inherited tabs cannot become owned by their view type alone.
+   * Limits {@link closeOwnedEditorTabs} to captured source, a current panel's native group, and a Repository Wiki copy in a group Codebook created for this Study ({@link isWikiCopyInCreatedGroup}), so rebuilt inherited tabs cannot become owned by their view type alone.
    * @param group - The current native group of the tab, reread after every awaited close.
    * @param tab - A current native tab, never a saved wrapper.
-   * @returns Whether this reader owns the source or holds the pane in the tab's current column.
+   * @returns Whether this reader owns the source, holds the pane in the tab's current column, or the tab is a Wiki copy in one of its created groups.
    * @example this.ownsClosingTab(group, tab) // => false for an inherited Study tab beside this reader's Study in another group
    */
   private ownsClosingTab(group: vscode.TabGroup, tab: vscode.Tab): boolean {
     return (
-      this.isOwnPaneOrSourceTab(tab) &&
-      (this.ownsCapturedSourceTab(tab) ||
-        this.closingPanelOf(tab)?.viewColumn === group.viewColumn)
+      (this.isOwnPaneOrSourceTab(tab) &&
+        (this.ownsCapturedSourceTab(tab) ||
+          this.closingPanelOf(tab)?.viewColumn === group.viewColumn)) ||
+      this.isWikiCopyInCreatedGroup(group, tab)
+    )
+  }
+
+  /**
+   * Tells whether a tab is an unpinned copy of a cited source the Repository Wiki of this workspace showed (`codebook-repository-source`) standing in a group Codebook created for this Study: the Application's own group, the Study Context's, or the captured source's ({@link retireEmptyCreatedGroups} names the same groups); asked by {@link ownsClosingTab}, so Close retires such a copy with the Study's own tabs and the group goes with them (Cycle 0046 row 682).
+   * The Wiki shows a citation into the first column, which is the Application's own group while the Study stands there (VS Code c59-vs-444 and c59-vs-567), and a created Source group can hold one too (Cursor c59-5-cu-cold); without this a group Codebook created stayed after Close with the copy alone, still locked, and Close Repository Wiki keeps a copy that is its group's only tab. A pinned copy is the learner's and keeps its group.
+   * @param group - The tab's current native group.
+   * @param tab - A current native tab.
+   * @returns `true` for such a copy in such a group; `false` in a learner's group, also beside a parked Application, and before the library exists.
+   * @example this.isWikiCopyInCreatedGroup(applicationGroup, citedCopyTab) // => true while the Study's Application stands in its own group
+   */
+  private isWikiCopyInCreatedGroup(
+    group: vscode.TabGroup,
+    tab: vscode.Tab,
+  ): boolean {
+    const identity = this.editorGroupIdentities.get(group)
+    return (
+      identity !== undefined &&
+      !tab.isPinned &&
+      tab.input instanceof vscode.TabInputText &&
+      tab.input.uri.scheme === REPOSITORY_SOURCE_SCHEME &&
+      tab.input.uri.authority === this.library?.workspaceKey &&
+      this.createdGroupIdentities().has(identity)
+    )
+  }
+
+  /**
+   * Names the groups Codebook created for this Study and may retire: the Application's group while it is its own (a parked Application stands in a learner's group), its allocation still to retire, the groups its record names, the Study Context's created group and the captured source's; read by {@link isWikiCopyInCreatedGroup}.
+   * @returns The identities of those groups; empty while none stands.
+   * @example this.createdGroupIdentities().has(this.editorGroupIdentities.get(group)!) // => true for the Application's own group
+   */
+  private createdGroupIdentities(): ReadonlySet<symbol> {
+    const owned = this.applicationGroup
+    const identities = [
+      owned?.parked ? undefined : owned?.identity,
+      owned?.retiringIdentity,
+      ...this.recordedStudyGroups,
+      this.readerCreatedContextGroup,
+      this.sourceDerivedGroup?.identity,
+    ]
+    return new Set(
+      identities.filter(
+        (identity): identity is symbol => identity !== undefined,
+      ),
     )
   }
 
