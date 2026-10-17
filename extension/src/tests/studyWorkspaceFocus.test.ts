@@ -3119,3 +3119,29 @@ test("the fake editor goes on naming Cursor's chat group after the first group t
     await harness.close()
   }
 })
+
+// Value: protects=reader tests that hold a tab group object across a whole tab-model event meeting each editor as it is: VS Code 1.140.0 keeps the API object of every group that is still there and updates it (`extensionHostProcess.js` 173:41428 `let u=l.get(c.groupId);if(u)return u.acceptModelUpdate(c)`, the object cached at 173:38735), while Cursor 3.23.12 makes a new object for every group (131:33431 `const d=new rIe(c,…)`); fails_when=the VS Code model replaces its group objects at such an event, so a test passes on identities VS Code keeps, or the Cursor model keeps them; why_new=Cycle 0046 row 669 (evidence: VS Code keeps the objects, so the row's premise does not hold; this test holds the model to it); seam=the workspace harness's group lock command, which both editors answer with a whole new tab model, in the model that keeps group objects and in the one that replaces them
+for (const host of ['VS Code', 'Cursor'] as const)
+  test(`the fake editor of ${host} ${host === 'VS Code' ? 'keeps' : 'replaces'} every tab group object at a whole tab-model event, as ${host} does`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    if (host === 'Cursor') harness.replaceGroupObjectsOnTabChanges()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const tabGroups = harness.editor.window.tabGroups
+    const before = [...tabGroups.all]
+    try {
+      // Act
+      await harness.editor.commands.executeCommand(
+        'workbench.action.lockEditorGroup',
+      )
+
+      // Assert
+      assert.deepEqual(
+        tabGroups.all.map((group, index) => group === before[index]),
+        host === 'VS Code' ? [true, true] : [false, false],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
