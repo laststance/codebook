@@ -319,6 +319,7 @@ test('a removal whose first move the Trash refuses moves nothing and leaves the 
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [])
   assert.deepEqual(await filesBelow(storage.directory), filesBefore)
@@ -343,6 +344,7 @@ test('a removal whose archive move the Trash refuses is reported as partly moved
   assert.deepEqual(first, {
     outcome: 'partly-moved',
     cause: `Trash refused ${study.id}.study.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(
     listedAfterFirst.map((entry) => [entry.id, entry.metadata]),
@@ -575,6 +577,7 @@ test('a removal whose first file move the Trash refuses after the ledger was rew
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}.study.meta.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [])
   assert.equal((await readFile(ledgerPath)).equals(ledgerBefore), true)
@@ -604,6 +607,7 @@ test('a removal of a study that has only its archive, refused by the Trash, move
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}.study.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [])
   assert.equal((await readFile(ledgerPath)).equals(ledgerBefore), true)
@@ -746,6 +750,7 @@ test('a removal that moved nothing leaves a ledger read from a historical file w
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}.study.meta.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(await storage.library.readProgress(), progressBefore)
   assert.equal(progressBefore.selection?.studyId, study.id)
@@ -868,6 +873,7 @@ test('a removal whose sidecar move the Trash refuses after the evidence moved is
   assert.deepEqual(removal, {
     outcome: 'partly-moved',
     cause: `Trash refused ${study.id}.study.meta.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [
     join('..', 'agent', study.instanceId, study.runId),
@@ -909,6 +915,7 @@ test('a removal whose evidence move the Trash refuses after the recording moved 
   assert.deepEqual(first, {
     outcome: 'partly-moved',
     cause: `Trash refused ${study.runId}`,
+    trashRefused: true,
   })
   assert.deepEqual(movedByFirst, [join('recordings.v2', study.id)])
   assert.deepEqual(evidenceLeftByFirst, ['events.jsonl'])

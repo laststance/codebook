@@ -4349,6 +4349,79 @@ test('after the Trash refused a removal, a run refused on the full library names
   }
 })
 
+// Value: protects=the remedy a full library names after a removal that another window's recording stopped before any move; fails_when=that refusal counts as a refusal of the Trash, so the next full library says "this editor could not move a saved study to the Trash in this session" and offers no deletion, although the Trash was never asked; why_new=Cycle 0046 review AF1: every outcome but a move counted as the Trash's refusal; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('after a removal refused because another window of this machine still records the study, a run refused on the full library still offers to delete a saved study', async (context: TestContext) => {
+  // Arrange: a library full at one study, whose recording another live window of this machine still writes.
+  const harness = await workspaceHarness()
+  try {
+    harness.setSavedStudyCapacity(1)
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const otherWindow = await idleChild(context)
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await requestRemoval(harness, study.id)
+
+    // Act
+    const refused = await startRun(harness)
+
+    // Assert
+    assert.deepEqual(
+      {
+        removal: harness.reader.inspect().view!.studyRemoval?.status,
+        moved: harness.trashMoves,
+        refusal: refused.record.error?.message,
+      },
+      { removal: 'failed', moved: [], refusal: FULL_LIBRARY_REFUSAL },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the remedy a full library names after a removal of a study of which nothing was left by then; fails_when="Study archive is unavailable." counts as a refusal of the Trash, so the next full library offers no deletion, although the Trash was never asked; why_new=Cycle 0046 review AF1; seam=the library directory, from which the test removes one study's files by hand after the list showed it, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('after a removal refused because nothing was left of the study, a run refused on the full library still offers to delete a saved study', async () => {
+  // Arrange: two saved studies and a limit of one; the first one's files are removed by hand after the list showed it.
+  const harness = await workspaceHarness()
+  try {
+    const gone = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    harness.setSavedStudyCapacity(1)
+    const directory = harness.reader.inspect().libraryDirectory!
+    await rm(join(directory, `${gone.id}.study.v3.json`))
+    await rm(join(directory, `${gone.id}.study.meta.v3.json`))
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await requestRemoval(harness, gone.id)
+
+    // Act
+    const refused = await startRun(harness)
+
+    // Assert
+    assert.deepEqual(
+      {
+        removal: structuredClone(harness.reader.inspect().view!.studyRemoval),
+        moved: harness.trashMoves,
+        refusal: refused.record.error?.message,
+      },
+      {
+        removal: {
+          status: 'failed',
+          studyId: gone.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Study archive is unavailable.`,
+        },
+        moved: [],
+        refusal: FULL_LIBRARY_REFUSAL,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a study a newer Codebook saved is shown with the sentence that says what to do, is no storage failure, and is not half deleted by a Codebook that does not know its files; fails_when=its note counts as an error Retry storage should answer, or a delete request opens the Trash dialog for it (RT-1, DX-15, PC-4.1); why_new=the reader never listed a newer format; seam=the library directory, into which the test writes a file as a newer Codebook would name it
 test('a saved study in a newer format is listed with its note, adds no storage error and is refused when the learner asks to delete it', async () => {
   // Arrange: one saved study, saved again in format 5 by a newer Codebook.

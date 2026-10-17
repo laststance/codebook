@@ -81,6 +81,7 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
  * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `recordedOnAnotherHost` when a recording of the study names another host whose run may still write it.
  * - `partly-moved`: a step failed after at least one path went to the Trash; the study is still listed and a second removal finishes it.
+ * Either failure carries `trashRefused` when the Trash itself refused a move, so the caller tells that from a refusal before any move.
  */
 export type StudyRemoval =
   | { outcome: 'moved'; unreleasedLock?: string }
@@ -89,6 +90,8 @@ export type StudyRemoval =
       cause: string
       /** Only for `nothing-moved` refused because a recording names another host whose run may still write it ({@link RecordingOnAnotherHost}); the caller asks the learner whether to move it anyway. */
       recordedOnAnotherHost?: RecordingOnAnotherHost
+      /** `true` when the Trash itself refused a move: the mover threw for a path, and that path is still in the library. Absent for every refusal before a move (another window's recording, a study of which nothing is left, a held storage lock). */
+      trashRefused?: true
     }
 
 /** Judges whether a run may still write one recording directory ({@link recordingMayStillBeWritten}), as the caller's list or removal judges it. */
@@ -142,6 +145,8 @@ type StudyRemovalChanges = {
   movedPathCount: number
   /** The ledger's bytes before this removal rewrote it; absent while the ledger is untouched, `null` when the rewrite created the repository ledger file (it was projected from a historical file). */
   ledgerBytesBefore?: Buffer | null
+  /** Set when the mover threw for a path that is still in the library: the Trash itself refused it. */
+  trashRefused?: true
 }
 
 /** The format of a study that has an archive: a known format, or `newer` for one this Codebook does not know yet. */
@@ -1020,8 +1025,11 @@ export class LearningLibrary {
             try {
               await moveToTrash(path)
             } catch (error) {
-              // A mover that rejects after the path left the library still moved it.
-              if (!(await this.isGone(path))) throw error
+              // A mover that rejects after the path left the library still moved it; one whose path stays is the Trash's own refusal.
+              if (!(await this.isGone(path))) {
+                changes.trashRefused = true
+                throw error
+              }
             }
             changes.movedPathCount += 1
           }
@@ -1266,23 +1274,27 @@ export class LearningLibrary {
    * @returns
    * - `partly-moved` when at least one path went to the Trash
    * - `nothing-moved` when no path moved; a rewritten ledger is written back to its bytes first, and the cause names both failures when that write-back fails
-   * @example await this.failedRemoval('Trash refused a.study.v3.json', { movedPathCount: 0 }) // => { outcome: 'nothing-moved', cause: 'Trash refused a.study.v3.json' }
+   * Either carries `trashRefused` when the Trash itself refused the move that stopped the removal.
+   * @example await this.failedRemoval('Trash refused a.study.v3.json', { movedPathCount: 0, trashRefused: true }) // => { outcome: 'nothing-moved', cause: 'Trash refused a.study.v3.json', trashRefused: true }
    */
   private async failedRemoval(
     cause: string,
     changes: StudyRemovalChanges,
   ): Promise<StudyRemoval> {
-    if (changes.movedPathCount > 0) return { outcome: 'partly-moved', cause }
+    const refusal = changes.trashRefused ? { trashRefused: true as const } : {}
+    if (changes.movedPathCount > 0)
+      return { outcome: 'partly-moved', cause, ...refusal }
     if (changes.ledgerBytesBefore === undefined)
-      return { outcome: 'nothing-moved', cause }
+      return { outcome: 'nothing-moved', cause, ...refusal }
     try {
       await this.restoreLedger(changes.ledgerBytesBefore)
-      return { outcome: 'nothing-moved', cause }
+      return { outcome: 'nothing-moved', cause, ...refusal }
     } catch (error) {
       // No file of the study left the library, so the study is whole; only the ledger lost its two references to it.
       return {
         outcome: 'nothing-moved',
         cause: `${cause}; the learner ledger could not be written back: ${thrownMessage(error)}`,
+        ...refusal,
       }
     }
   }

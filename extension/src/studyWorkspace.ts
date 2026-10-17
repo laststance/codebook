@@ -21772,7 +21772,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover, and tells the service whether the study left the library; called by {@link moveStudyFilesWithLearnersChoice}.
+   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover, and tells the service when the study left the library or the Trash itself refused a move (`trashRefused`), which decides whether a full library offers deletion in this window; called by {@link moveStudyFilesWithLearnersChoice}.
    * For a run of this window the removal runs inside {@link StudyService.withEvidenceHeld}, so no explanation is written into the evidence directory while it moves.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
@@ -21803,9 +21803,9 @@ export class StudyWorkspace {
     const removal = await (service && record
       ? service.withEvidenceHeld(record, remove)
       : remove())
-    // A refusal that waits for the learner's choice is no answer of the Trash; any other outcome decides, not each path: a path the Trash rejected after it was already gone still left the library.
-    if (!(removal.outcome === 'nothing-moved' && removal.recordedOnAnotherHost))
-      service?.recordStudyRemoval(removal.outcome === 'moved')
+    // Only the Trash's own refusal of a move makes this window unable to remove; a refusal before any move (another window's recording, a study of which nothing is left, a held lock, the learner's choice still to come) leaves what the window knew. A path the Trash rejected after it was already gone still left the library.
+    if (removal.outcome === 'moved') service?.recordStudyRemoval(true)
+    else if (removal.trashRefused) service?.recordStudyRemoval(false)
     return removal
   }
 
