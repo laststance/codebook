@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { CHAT_KEYBOARD_RETURNED_MESSAGES } from '../constants'
+import { StudyError } from '../errors'
 import { RecordingStore } from '../recordingStore'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -4741,6 +4742,117 @@ test('an agent’s replay open while the chat view has the keyboard leaves the k
         'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
         'Codebook showed the replay an agent asked for without bringing its controls to the front, so a chat or a terminal there keeps its place and your keyboard. To play it, click Learning summary at the top of the secondary side bar (View: Toggle Secondary Side Bar Visibility shows the bar) or the codebook tab of the bottom panel (View: Toggle Panel Visibility shows the panel).',
       ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own replay open after an agent's codebook_playback open was refused for a stale revision: it is the learner's open, so the learner's active file gets the keyboard back after the Application group's placement, the Learning summary comes to the front with the keyboard, and no agent sentence is told; fails_when=the refused open leaves its mark (StudyService.playback's catch does not forget it), so the learner's next open of the same study, which the controller gives the revision the mark names, enters as the agent's: the chat view keeps the keyboard, the summary stays behind it and the agent's two sentences are told (row 613); why_new=T2, Cycle 0046 /ship review: no test reached the forget of a refused agent open; seam=recordedReaderHarness, the reader's close, useNativeLayout, leaveEmptyGroup, focusMutableDraft, focusChatInSecondarySideBar, the service's playback (the codebook_playback tool's handler) with a stale expectedRevision, the reader's openRecording (the learner's open), textDocumentShows, viewFocusCommands, keyboardInView and the information messages
+test('a learner’s replay open after an agent’s open was refused for a stale revision is the learner’s own: the learner’s file gets the keyboard back, the Learning summary comes to the front, and no agent sentence is told', async () => {
+  // Arrange: a saved recording, the reader closed, actions.ts the active editor of the first group and the chat view with the keyboard; an agent's open names a revision the controller does not have and is refused.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusChatInSecondarySideBar()
+    let refusal: unknown
+    try {
+      harness.service.playback({
+        instanceId: harness.service.instanceId,
+        studyId: harness.studyId,
+        action: 'open',
+        expectedRevision: harness.controller.state().revision + 5,
+      })
+    } catch (error) {
+      refusal = error
+    }
+    const showsBefore = harness.textDocumentShows().length,
+      viewFocusBefore = harness.viewFocusCommands.length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act: the learner opens the same recording.
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal: refusal instanceof StudyError ? refusal.code : refusal,
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus),
+        viewFocus: harness.viewFocusCommands.slice(viewFocusBefore),
+        keyboardInView: harness.keyboardInView(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal: 'STALE_PLAYBACK',
+        shownWithKeyboard: [
+          { name: 'actions.ts', viewColumn: 2, preserveFocus: false },
+        ],
+        viewFocus: [
+          { command: 'codebook.observedMoments.focus', preserveFocus: false },
+          { command: 'codebook.learningSummary.focus', preserveFocus: false },
+        ],
+        keyboardInView: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own reopen of a recording that an agent's codebook_playback open found already shown: the controller answered that open without a load, so the learner's later reopen, after the learner stopped the historical debugger session, is the learner's and brings the Learning summary to the front with the keyboard, telling no agent sentence; fails_when=the open answered without a load leaves its mark (StudyService.playback does not forget it when the controller's revision stays the expected one), so the reload the learner's reopen starts, which the controller gives the revision the mark names, enters as the agent's: the summary is focused without the keyboard (row 613); why_new=T2, Cycle 0046 /ship review: no test reached the forget of an agent open answered without a load; seam=recordedReaderHarness, useNativeLayout, leaveEmptyGroup, focusMutableDraft, the reader's openRecording (the learner's opens), the service's playback (the codebook_playback tool's handler) with the current revision, endHistoricalDebugSession (the learner's Stop on the historical session, after which an open reloads), viewFocusCommands and the information messages
+test('a learner’s reopen of a recording an agent’s open found already shown is the learner’s own: the Learning summary comes to the front with the keyboard and no agent sentence is told', async () => {
+  // Arrange: the learner opened a saved recording; an agent's open of the same recording is answered without a load; the learner then stops the historical debugger session, so the next open reloads the recording.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const revisionBeforeAgent = harness.controller.state().revision
+    const agentAnswer = harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: revisionBeforeAgent,
+    })
+    harness.endHistoricalDebugSession()
+    await harness.controller.settle()
+    const viewFocusBefore = harness.viewFocusCommands.length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act: the learner opens the same recording again.
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert: the agent's open was answered at the revision it named, so it started no load.
+    assert.deepEqual(
+      {
+        agentAnswerRevision: agentAnswer.revision - revisionBeforeAgent,
+        readiness: harness.controller.state().readiness,
+        viewFocus: harness.viewFocusCommands.slice(viewFocusBefore),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        agentAnswerRevision: 0,
+        readiness: 'ready',
+        viewFocus: [
+          { command: 'codebook.learningSummary.focus', preserveFocus: false },
+        ],
+        messages: [],
+      },
     )
   } finally {
     await harness.close()
