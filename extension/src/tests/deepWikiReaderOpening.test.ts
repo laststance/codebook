@@ -403,7 +403,7 @@ test('Open LLM Wiki on a Wiki whose `.codebook` folder in the project is a link 
     { errors: window.errors, readersStarted: window.readers.length },
     {
       errors: [
-        `Codebook could not open DeepWiki: Error: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder, or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
+        `Codebook could not open DeepWiki: Error: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
       ],
       readersStarted: 0,
     },

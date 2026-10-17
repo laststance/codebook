@@ -796,7 +796,7 @@ test('a Wiki folder that is itself a link or a file, or leads out of the project
   )
 })
 
-// Value: protects=the learner whose repository carries a folder on the Wiki folder's path, `.codebook` for the default output, as a link; fails_when=the refusal has no sentence of its own, so the page shows "Update stopped: it would overwrite your own file in the Wiki folder (.codebook)", or it reuses the sentence of the Wiki folder itself and names the wrong folder, or it lacks the advice for a link to the learner's own Wiki folder; why_new=Cycle 0046 /ship finding F1: the start check refuses a link on the path with a cause of its own; repeat review D1: the sentence gained that advice and plainer words; seam=none
+// Value: protects=the learner whose repository carries a folder on the Wiki folder's path, `.codebook` for the default output, as a link; fails_when=the refusal has no sentence of its own, so the page shows "Update stopped: it would overwrite your own file in the Wiki folder (.codebook)", or it reuses the sentence of the Wiki folder itself and names the wrong folder, or it lacks the advice for a link to the learner's own Wiki folder; why_new=Cycle 0046 /ship finding F1: the start check refuses a link on the path with a cause of its own; repeat review D1: the sentence gained that advice and plainer words; repeat design review PD6: the advice names a folder of the learner's, which the link above the Wiki folder leads to; seam=none
 test('a link on the Wiki folder’s path in the project is named as the reason no update started, with the two ways to give the publisher a folder of its own', () => {
   // Arrange
   const refused: WikiUpdateStatus = {
@@ -815,7 +815,7 @@ test('a link on the Wiki folder’s path in the project is named as the reason n
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update not started (21:10): the Wiki folder’s path in the project passes through a link or a file (.codebook), and the publisher writes only into the project’s own folders, so nothing was written. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.',
+    'Update not started (21:10): the Wiki folder’s path in the project passes through a link or a file (.codebook), and the publisher writes only into the project’s own folders, so nothing was written. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.',
   )
 })
 

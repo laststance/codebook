@@ -462,7 +462,7 @@ export function describeWikiUpdate(
       return (
         'the Wiki folder’s path in the project passes through a link or a file (' +
         named +
-        '), and the publisher writes only into the project’s own folders, so nothing was written. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.'
+        '), and the publisher writes only into the project’s own folders, so nothing was written. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.'
       )
     return undefined
   }

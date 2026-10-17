@@ -23,6 +23,6 @@ export async function assertNoLinkOnWikiPath(
   throw new Error(
     linkedEntry === outputDirectory
       ? `The Wiki folder ${outputDirectory} is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`
-      : `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${linkedEntry}), and Codebook reads no Wiki through it: replace it with a real folder, or set codebook.wikiOutputDirectory to a folder outside the project`,
+      : `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${linkedEntry}), and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
   )
 }
