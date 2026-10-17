@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -859,6 +859,89 @@ test('a run that the maintenance turn ends for an evidence write failure names t
       journaledReasons: [
         'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
       ],
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read for a run whose saved study was removed while it ran (its archive and evidence directory removed by hand or by another Codebook window, which Retry storage reports as archive-removed): the maintenance turn ends the run for the evidence write that failed, and its terminal reason, its error and the reason it journals as run.failed name that failure and the removal, without the internal storage path the write's error names; fails_when=the write's raw error ("ENOENT: no such file or directory, open '<global storage>/…/events.jsonl'") becomes the cause in the terminal reason since row 653 (the release's own failure, the run's cleanupError, is not this test's: it still names the path); why_new=Cycle 0046 row 667 (the 653 fork's finding 3); seam=StudyService.excludeHistory with 'archive-removed', as StudyWorkspace calls it, the run's evidence directory removed, an event recorded after that, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed)
+test('a run whose saved study was removed while it ran ends at the maintenance turn with a terminal reason that names the failed evidence write and the removal and no storage path', async (context) => {
+  // Arrange: a prepared run whose study left the library; its evidence directory is gone, so the next event's append fails.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-during-run',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  service.excludeHistory(record, 'archive-removed')
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  const writeFailureNamesPath = Boolean(
+    runtime.evidence.failure?.includes(runtime.evidence.directory),
+  )
+
+  // Act
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      writeFailureNamesPath,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+      failureNamesPath: JSON.stringify([
+        state.terminalReason,
+        state.error,
+        journaledReasons,
+      ]).includes(runtime.evidence.directory),
+    },
+    {
+      writeFailureNamesPath: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      journaledReasons: [
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      ],
+      failureNamesPath: false,
     },
   )
 })

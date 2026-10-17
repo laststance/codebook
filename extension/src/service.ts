@@ -2297,7 +2297,7 @@ export class StudyService {
           new StudyError(
             'EVIDENCE_UNAVAILABLE',
             'Evidence buffering or persistence failed.',
-            evidenceFailure,
+            this.evidenceFailureCause(record, evidenceFailure),
           ),
         )
         record.runtime?.fail(record.error.message)
@@ -2316,6 +2316,25 @@ export class StudyService {
           record.error ??= studyErrorNamingCause(domainError(error))
         })
     }
+  }
+
+  /**
+   * Names the cause of a run's evidence failure for the run's error, which becomes its terminal reason and the reason its runtime journals as `run.failed`; called by {@link StudyService.maintain} when the run's evidence has failed.
+   * A run whose saved study was removed while it ran (its archive left the library by hand or through another window; this window's delete refuses a run that has not stopped) lost its evidence directory with it: the write's raw error names that internal storage path, which {@link StudyService.state} keeps out of the run resource too, so the removal's own sentence is the cause (Cycle 0046 row 667).
+   * @param record - The run whose evidence failed.
+   * @param failure - The evidence's failure, as {@link Evidence} keeps it.
+   * @returns
+   * - For a run whose saved study was removed: {@link historyExclusionReason} of its removal
+   * - Otherwise: `failure` itself
+   * @example
+   * this.evidenceFailureCause(record, 'Error: ENOSPC: no space left on device, write') // => 'Error: ENOSPC: no space left on device, write'
+   * this.evidenceFailureCause(removedRecord, "Error: ENOENT: no such file or directory, open '…/events.jsonl'")
+   * // => "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window."
+   */
+  private evidenceFailureCause(record: StudyRecord, failure: string): string {
+    return isStudyRemovalExclusion(record.historyExcluded)
+      ? historyExclusionReason(record.historyExcluded)
+      : failure
   }
 
   /**
