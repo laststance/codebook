@@ -6678,6 +6678,14 @@ for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
             .at(-1),
           'composer.focusComposer',
         )
+        // The entry owns the final return to the chat, so the preparation of its Application shows no file of the learner's with the keyboard on the way (since row 712 its capture finds that file's group, and its own return would show it).
+        assert.deepEqual(
+          harness
+            .textDocumentShows()
+            .filter((shown) => !shown.preserveFocus)
+            .map((shown) => shown.name),
+          [],
+        )
         assert.equal(chat.focused(), true)
       } finally {
         await harness.close()
