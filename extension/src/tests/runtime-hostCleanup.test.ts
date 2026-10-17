@@ -979,6 +979,36 @@ test('on Windows a managed browser creates its profile folder below the user’s
   )
 })
 
+// Value: protects=the short, fixed /tmp of a managed run on macOS (and Linux), which Chrome and the debugger resolve: a browser given no root creates its profile folder there and sweeps abandoned folders there, not in the user's long temp folder (/var/folders/… on macOS) nor in a Windows root (TC6, Cycle 0046 repeat testing review); fails_when=the browser's root ignores the system it runs on (a call site that names 'win32'), so macOS and Linux put profiles below the user's folders; why_new=only the Windows row reached the browser's own choice of root; seam=the system the adapter reads (`process.platform` of its loaded context), a home folder, a temp folder and a local application data folder of that context that must not be used, the browser given no root of its own, and the sweep's stand-in, which notes the root it is asked to sweep; no_claim=the real macOS, where /tmp resolves to /private/tmp, which the expected value reads
+test(
+  'on macOS a managed browser creates its profile folder in /tmp and sweeps abandoned folders there, not in the user’s long temp folder',
+  { skip: process.platform === 'win32' && 'the row creates a folder in /tmp' },
+  async (context) => {
+    // Arrange: a managed browser on macOS, given no profile root, whose loaded context answers a long temp folder that must not be used.
+    const sweptRoots: string[] = []
+    const managed = await managedBrowser(context, {
+      platform: 'darwin',
+      rootChosenByTheBrowser: true,
+      removeAbandonedProfiles: async (root) => {
+        sweptRoots.push(root)
+        return []
+      },
+    })
+    // Act
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    const profile = profileOf(managed.events)
+    await managed.browser.close()
+    // Assert
+    assert.deepEqual(
+      { profileFolderIn: dirname(profile), sweptRoots },
+      { profileFolderIn: await realpath('/tmp'), sweptRoots: ['/tmp'] },
+    )
+  },
+)
+
 // Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
   // Arrange: three folders lie in the profile root when the next run starts. The killed editor's marker names an id no process can have: the id of a child that just exited could be given to another process before the sweep judges it.
