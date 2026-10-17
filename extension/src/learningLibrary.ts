@@ -17,6 +17,7 @@ import {
   PROGRESS_V3_FILE,
   PROGRESS_V4_FILE,
   PROGRESS_REPOSITORY_FILE,
+  RECORDING_SEAL_FILE,
   RECORDING_STORAGE_FORMATS,
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
@@ -83,6 +84,15 @@ export type StudyRemoval =
 
 /** Judges whether a run may still write one recording directory ({@link recordingMayStillBeWritten}), as the caller's list or removal judges it. */
 type RecordingJudge = (recording: string) => Promise<boolean>
+
+/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): whether any writer may still write it, and whether a run of another window may. */
+type RemovalWriterVerdict = {
+  mayStillBeWritten: boolean
+  byAnotherWindow: boolean
+}
+
+/** The {@link RemovalWriterVerdict} of each recording directory of a study. */
+type RemovalWriterVerdicts = Map<string, RemovalWriterVerdict>
 
 /** What {@link LearningLibrary.removeStudy} has changed so far, read when a step fails to tell `nothing-moved` from `partly-moved`. @example const changes: StudyRemovalChanges = { movedPathCount: 0 } */
 type StudyRemovalChanges = {
@@ -319,33 +329,91 @@ export class LearningLibrary {
     return false
   }
 
-  /** Says whether a run of another editor window may still write one of a study's recording directories ({@link recordingMayStillBeWritten}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link removeStudy} before the first move. @example await this.isRecordedByAnotherWindow(['/…/recordings.v2/<id>']) // => true while another window records that run */
+  /** Says whether a run of another editor window may still write one of a study's recording directories, as the removal judged its writers ({@link verdictUnderLock}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link refuseUnlessRemovable} before the first move. @example await this.isRecordedByAnotherWindow(['/…/recordings.v2/<id>'], judge) // => true while another window records that run */
   private async isRecordedByAnotherWindow(
     recordings: string[],
+    byAnotherWindow: RecordingJudge,
   ): Promise<boolean> {
     for (const recording of recordings)
-      if (await recordingMayStillBeWritten(recording, 'ignored')) return true
+      if (await byAnotherWindow(recording)) return true
     return false
   }
 
   /**
-   * Refuses the removal of a study before its first move; called by {@link removeStudy} under the storage lock.
+   * Judges the writers of a study's recordings before its removal takes the storage lock; called by {@link removeStudy}.
+   * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}).
+   * @param identity - The validated study id.
+   * @returns For each recording directory of the study: whether it may still be written by any writer, and whether a run of another window may still write it ({@link recordingMayStillBeWritten} with `ignored`).
+   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { mayStillBeWritten: true, byAnotherWindow: true } } while another window records that run
+   */
+  private async writerVerdictsOf(
+    identity: string,
+  ): Promise<RemovalWriterVerdicts> {
+    const starts: ProcessStartsOfList = new Map()
+    const verdicts: RemovalWriterVerdicts = new Map()
+    for (const recording of await this.recordingPaths(identity))
+      verdicts.set(recording, {
+        mayStillBeWritten: await recordingMayStillBeWritten(
+          recording,
+          'counts',
+          starts,
+        ),
+        byAnotherWindow: await recordingMayStillBeWritten(
+          recording,
+          'ignored',
+          starts,
+        ),
+      })
+    return verdicts
+  }
+
+  /**
+   * Judges one recording again under the storage lock, with one look and no question to the system: a recording sealed since the removal judged it is no longer written, and one the removal did not judge (it appeared since) counts as written, so nothing of the study moves; called by {@link refuseUnlessRemovable}.
+   * @param recording - The recording directory.
+   * @param verdicts - What {@link writerVerdictsOf} found before the lock.
+   * @param question - Which verdict is asked for.
+   * @returns The verdict, or `false` for a recording that is sealed now.
+   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts, 'byAnotherWindow') // => false once that recording is sealed
+   */
+  private async verdictUnderLock(
+    recording: string,
+    verdicts: RemovalWriterVerdicts,
+    question: keyof RemovalWriterVerdict,
+  ): Promise<boolean> {
+    const isSealed = await lstat(join(recording, RECORDING_SEAL_FILE)).then(
+      () => true,
+      () => false,
+    )
+    if (isSealed) return false
+    return verdicts.get(recording)?.[question] ?? true
+  }
+
+  /**
+   * Refuses the removal of a study before its first move; called by {@link removeStudy} under the storage lock, with the writers it judged before it ({@link writerVerdictsOf}).
    * @param paths - The study's paths as {@link studyPaths} found them.
+   * @param verdicts - The writers of the study's recordings, as judged before the lock.
    * @throws
    * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
    * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window may still write one of its recordings ({@link isRecordedByAnotherWindow}): that window would fail its next append and save the archive again
-   * @example await this.refuseUnlessRemovable(paths) // returns for a saved study whose recordings nobody else writes
+   * @example await this.refuseUnlessRemovable(paths, verdicts) // returns for a saved study whose recordings nobody else writes
    */
-  private async refuseUnlessRemovable(paths: StudyPaths): Promise<void> {
+  private async refuseUnlessRemovable(
+    paths: StudyPaths,
+    verdicts: RemovalWriterVerdicts,
+  ): Promise<void> {
     // What is left of a study without its archive is removed like a study.
     if (
       !paths.archives.length &&
       !(await this.isLeftWithoutArchive(paths, (recording) =>
-        recordingMayStillBeWritten(recording),
+        this.verdictUnderLock(recording, verdicts, 'mayStillBeWritten'),
       ))
     )
       throw new StudyArchiveUnavailableError()
-    if (await this.isRecordedByAnotherWindow(paths.recordings))
+    if (
+      await this.isRecordedByAnotherWindow(paths.recordings, (recording) =>
+        this.verdictUnderLock(recording, verdicts, 'byAnotherWindow'),
+      )
+    )
       throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
   }
 
@@ -825,49 +893,57 @@ export class LearningLibrary {
     const identity = studyIdSchema.parse(id)
     // The lock call also rejects when its release fails after the steps ran; what they settled then decides the outcome.
     let settled: StudyRemoval | undefined
-    return this.locked(async (): Promise<StudyRemoval> => {
-      const paths = await this.studyPaths(
-        identity,
-        await this.newerFormatOf(identity),
+    // The writers of the study's recordings are judged before the storage lock is taken; under it they are only looked at again.
+    return this.writerVerdictsOf(identity)
+      .then((verdicts) =>
+        this.locked(async (): Promise<StudyRemoval> => {
+          const paths = await this.studyPaths(
+            identity,
+            await this.newerFormatOf(identity),
+          )
+          await this.refuseUnlessRemovable(paths, verdicts)
+          // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
+          const progress = await this.readProgress().catch(() => undefined),
+            ledger = progress && withoutStudyReferences(progress, identity)
+          const changes: StudyRemovalChanges = { movedPathCount: 0 }
+          const trash = (path: string) => async (): Promise<void> => {
+            try {
+              await moveToTrash(path)
+            } catch (error) {
+              // A mover that rejects after the path left the library still moved it.
+              if (!(await this.isGone(path))) throw error
+            }
+            changes.movedPathCount += 1
+          }
+          const steps: (() => Promise<void>)[] = [
+            ...paths.recordings.map(trash),
+            // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
+            (): Promise<void> =>
+              unlink(recordingOwnerRecordPath(this.directory, identity)).catch(
+                () => undefined,
+              ),
+            // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
+            ...(evidenceDirectory
+              ? [
+                  (): Promise<void> =>
+                    this.trashEvidence(evidenceDirectory, trash),
+                ]
+              : []),
+            ...paths.playback.map(trash),
+            // Learner decisions name no study; only the two navigation references to the removed study are dropped.
+            ...(ledger
+              ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
+              : []),
+            ...paths.sidecars.map(trash),
+            ...paths.archives.map(trash),
+          ]
+          settled = await this.runRemovalSteps(steps, changes)
+          return settled
+        }),
       )
-      await this.refuseUnlessRemovable(paths)
-      // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
-      const progress = await this.readProgress().catch(() => undefined),
-        ledger = progress && withoutStudyReferences(progress, identity)
-      const changes: StudyRemovalChanges = { movedPathCount: 0 }
-      const trash = (path: string) => async (): Promise<void> => {
-        try {
-          await moveToTrash(path)
-        } catch (error) {
-          // A mover that rejects after the path left the library still moved it.
-          if (!(await this.isGone(path))) throw error
-        }
-        changes.movedPathCount += 1
-      }
-      const steps: (() => Promise<void>)[] = [
-        ...paths.recordings.map(trash),
-        // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
-        (): Promise<void> =>
-          unlink(recordingOwnerRecordPath(this.directory, identity)).catch(
-            () => undefined,
-          ),
-        // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
-        ...(evidenceDirectory
-          ? [(): Promise<void> => this.trashEvidence(evidenceDirectory, trash)]
-          : []),
-        ...paths.playback.map(trash),
-        // Learner decisions name no study; only the two navigation references to the removed study are dropped.
-        ...(ledger
-          ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
-          : []),
-        ...paths.sidecars.map(trash),
-        ...paths.archives.map(trash),
-      ]
-      settled = await this.runRemovalSteps(steps, changes)
-      return settled
-    }).catch((error): StudyRemoval =>
-      removalAfterLockFailure(settled, thrownMessage(error)),
-    )
+      .catch((error): StudyRemoval =>
+        removalAfterLockFailure(settled, thrownMessage(error)),
+      )
   }
 
   /**

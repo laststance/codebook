@@ -14,19 +14,23 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { basename, join, relative } from 'node:path'
+import { basename, join, relative, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { isDeepStrictEqual } from 'node:util'
 
+import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { readProcessStart } from '../utils/readProcessStart'
+import { recordingMayStillBeWritten } from '../utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
+import type * as lockModule from '../utils/withStorageLock'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 
 /**
  * Creates a private learning directory with a study library and a recording store that share it and one limit, plus a Trash outside it.
@@ -1647,6 +1651,75 @@ test('a saved study whose unsealed recording this window’s own process started
         `${study.id}.study.meta.v3.json`,
         `${study.id}.study.v3.json`,
       ],
+    },
+  )
+})
+
+// Value: protects=another editor window's writes to the shared storage (a recording's start, an archive's save, a playback position) while this window removes a study whose recording that window still writes; fails_when=the removal judges the recordings' writers under the storage lock, where a judgement can ask the system for a process's start (a PowerShell of up to 3 s on Windows), so the other window's write in that time meets the lock and is refused at once; why_new=Cycle 0046 repeat review P2: R9's judgement ran under the lock; seam=the judgement of the loaded library, which looks at the lock file and lets another window (its own copy of the storage lock, with a queue of its own) write while it judges
+test('a removal judges the writers of the study’s recordings before it takes the storage lock, so a write of another window meanwhile is not refused', async (context) => {
+  // Arrange: a saved study whose recording another live window still writes; while this window judges that writer, the other window writes to the storage.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const { withStorageLock: lockOfTheOtherWindow } = await loadModule<
+    typeof lockModule
+  >(resolve(__dirname, '../utils/withStorageLock.js'), {}, { Error })
+  const whileJudging: { isLockHeld: boolean; writeOfTheOtherWindow: string }[] =
+    []
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    {
+      './utils/recordingMayStillBeWritten': {
+        recordingMayStillBeWritten: async (
+          ...judging: Parameters<typeof recordingMayStillBeWritten>
+        ): Promise<boolean> => {
+          whileJudging.push({
+            isLockHeld: await lstat(
+              join(storage.directory, 'writer.lock'),
+            ).then(
+              () => true,
+              () => false,
+            ),
+            writeOfTheOtherWindow: await lockOfTheOtherWindow(
+              storage.directory,
+              async () => 'written',
+            ).catch((error: Error) => error.message),
+          })
+          return recordingMayStillBeWritten(...judging)
+        },
+      },
+    },
+    { Error },
+  )
+  const library = new ObservedLibrary(
+    storage.directory,
+    storage.workspaceKey,
+    () => 4,
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, whileJudging, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      whileJudging: [
+        { isLockHeld: false, writeOfTheOtherWindow: 'written' },
+        { isLockHeld: false, writeOfTheOtherWindow: 'written' },
+      ],
+      moved: [],
     },
   )
 })
