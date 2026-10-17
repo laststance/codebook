@@ -4020,6 +4020,47 @@ test('a breakpoint in a skipped file whose stacks the adapter declared invalid b
   }
 })
 
+// Value: protects=the rule that a stop the editor dropped stays dropped: the learner's own session stopped with the adapter's preserveFocusHint and then went on (the editor's continue request), which drops what the editor stored of that stop; an invalidated stack afterwards is noted as for a session with no stored stop, a stop that does not keep the focus, so when the editor's own handling then shows the session's stop (its paused file opened preserving the focus over the learner's file, then its frame) that file gets the keyboard; fails_when=noteSessionWentOn keeps the stored stop, so the invalidation is noted with the old stop's preserveFocusHint, no hand-over is armed, and the paused file that covers the learner's file keeps no keyboard while the window body has it; why_new=Cycle 0046 TR5 (the repeat testing review of R5: the drop of the stored stop at the session's resume had no test); seam=pauseDebugger with keepsFocus, staysInBackground and pausedFile, continueDebugSession (the editor's continue request), invalidateStacksOfStopInBackground, showStopKeepingFocus; no_claim=a native order of an invalidation right after a resume, and whether the editor then shows a stop without a new stopped event
+test("an invalidated stack after a learner's stop with preserveFocusHint went on is noted as a stop that does not keep the focus, so the editor's handling of it hands its paused file the keyboard", async () => {
+  // Arrange: the reader is open under Codebook's contributed default, and the learner works in a file in column 2; their own session stopped with the adapter's preserveFocusHint, which the editor kept in the background, and then went on.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.pauseDebugger({
+      session: 'learner-node',
+      staysInBackground: true,
+      keepsFocus: true,
+      pausedFile: 'actions.ts',
+    })
+    harness.continueDebugSession('learner-node')
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the adapter declares the session's stacks invalid; then the editor's own handling opens actions.ts preserving the focus and reports its frame.
+    harness.invalidateStacksOfStopInBackground('learner-node', {
+      filename: 'actions.ts',
+      deemphasized: false,
+    })
+    harness.showStopKeepingFocus('learner-node', 'actions.ts', 2)
+
+    // Assert: the paused file is shown with the keyboard once, and the window body has none.
+    assert.deepEqual(
+      {
+        shows: harness.textDocumentShows().slice(showsBefore),
+        keyboardOnBody: harness.keyboardOnBody(),
+      },
+      {
+        shows: [{ name: 'actions.ts', viewColumn: 2, preserveFocus: false }],
+        keyboardOnBody: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner whose own debug session stops while they work in a file, within the R7 bound that counts from the paused file's activation (40 ms in Cursor, 300 ms in VS Code): the paused file gets the keyboard when the editor opens it, not only when the stop's frame is reported up to 105 ms later; fails_when=the hand-over waits for the frame report, so the window body keeps the keyboard between the paused file's activation and the frame (about 10 ms more in Cursor, 9 to 12 ms of C54 and C55's frame-minus-file); why_new=Cycle 0046, the latency of finding 603's frame-report resolution (C55: a BODY sample 24 ms after the activation in Cursor); seam=pauseDebugger with staysInBackground and pausedFile (the editor's stackTrace request and the adapter's answer), openPausedFileKeepingFocus, reportStopFrame
 test("the paused file of a learner's stop gets the keyboard when the editor opens it, before the stop's frame is reported", async () => {
   // Arrange: the reader is open under Codebook's contributed default; the learner works in a file in column 2, and their own debug session stops at a breakpoint in actions.ts.
