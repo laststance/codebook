@@ -1,3 +1,5 @@
+import type * as vscode from 'vscode'
+
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 
 /**
@@ -466,6 +468,7 @@ export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
 export const EDITOR_GROUP_MINIMUM_HEIGHT_PX = 70
 /**
  * The tab input classes of editors besides `TabInputText` and `TabInputWebview`, by the names under which both editors' extension hosts export them on `vscode` (a diff, a custom editor, a notebook and its diff, a terminal in the editor area); a host that exports one of them not is asked for it in vain and skips it. A group that holds such a tab belongs to a part with editors, not to a chat part (Cycle 0046 row 689).
+ * Each name must be an export of the editor's API types (`@types/vscode`), so a misspelled name fails the type check instead of being skipped as a missing export (Cycle 0046 T7). The import of those types is erased from the emitted module, which is also loaded where the editor's API does not exist.
  * @example EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)) // => [TabInputTextDiff, TabInputCustom, …]
  */
 export const EDITOR_TAB_INPUT_KINDS = [
@@ -474,7 +477,7 @@ export const EDITOR_TAB_INPUT_KINDS = [
   'TabInputNotebook',
   'TabInputNotebookDiff',
   'TabInputTerminal',
-] as const
+] as const satisfies readonly (keyof typeof vscode)[]
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
 export const PRESENTATION_READING_ANCHORS = [
