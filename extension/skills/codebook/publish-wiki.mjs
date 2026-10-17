@@ -50,9 +50,21 @@ const isInProject = (root, path) => { const within = relative(root, path); retur
 /** Looks at one entry without following it; called by {@link enteredProjectAt} and {@link requireRegularFolder}. @returns The entry's status, or undefined when nothing stands there. @example await lookAt('/repo/.codebook') // => undefined in a project without it */
 const lookAt = path => lstat(path).catch(error => { if (isMissing(error)) return undefined; throw error; });
 
+/** Whether an entry is a directory as a look without following answers it: no link and no file. Called by {@link isOwnFolder}. @example isRegularFolder(await lstat('/repo/.codebook/wiki')) // => true for a folder */
+const isRegularFolder = stat => stat.isDirectory() && !stat.isSymbolicLink();
+
+/** Whether an entry is a folder of the project's own: a directory as a look without following answers it and, where `mustStayInProject` holds, one whose real path stays in the project, so a junction on Windows to another volume, which lstat calls a directory, is none. Called by {@link requireOwnFolder} and {@link requireRegularFolder}. @example await isOwnFolder('/repo/.codebook', stat, '/repo', true) // => false while `.codebook` leads out of the project */
+const isOwnFolder = async (path, stat, root, mustStayInProject) => isRegularFolder(stat) && (!mustStayInProject || isInProject(root, await realpath(path)));
+
+/** The refusal of a Wiki folder that is no folder of its own, for {@link locations}; the same sentence for a link, a file and a junction that leads out of the project. @example outputRefusalOf('/repo/.codebook/wiki') // => 'The Wiki folder /repo/.codebook/wiki is a link, a file or a folder that leads out of the project. …' */
+const outputRefusalOf = path => 'The Wiki folder ' + path + ' is a link, a file or a folder that leads out of the project. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.';
+
+/** The refusal of a stage beside the Wiki folder that is no folder of its own, for {@link locations}; its step is the stage's own. @example stageRefusalOf('/repo/.codebook/wiki.stage-1') // => 'The Wiki stage /repo/.codebook/wiki.stage-1 is a link, a file or a folder that leads out of the project. …' */
+const stageRefusalOf = path => 'The Wiki stage ' + path + ' is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.';
+
 /** Refuses an entry on the output's path inside the project that is no folder of the project's own: a link, a file, or a folder whose real path leaves the project (a junction on Windows that lstat calls a directory). Called by {@link enteredProjectAt} for the folders above the output, and by {@link requireRegularFolder} for the output and its stage. @example await requireOwnFolder('/repo/wiki-link', stat, '/repo') // throws while wiki-link is a link */
 async function requireOwnFolder(path, stat, root) {
-  if (!stat.isDirectory() || stat.isSymbolicLink() || !isInProject(root, await realpath(path)))
+  if (!(await isOwnFolder(path, stat, root, true)))
     throw new Error('The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.');
 }
 
@@ -77,15 +89,11 @@ async function requireOwnFoldersToOutput(requested, root) {
   return hasEntered;
 }
 
-/** Whether an entry is a directory as a look without following answers it: no link and no file. Called by {@link requireRegularFolder}. @example isRegularFolder(await lstat('/repo/.codebook/wiki')) // => true for a folder */
-const isRegularFolder = stat => stat.isDirectory() && !stat.isSymbolicLink();
 
-/** Refuses a Wiki folder or a stage beside it that is a link, a file or a special file, and, when the output lies inside the project, one whose real path leaves the project (a junction on Windows to another volume, which lstat calls a directory), by the rule {@link requireOwnFolder} holds the folders above it to; a path that holds nothing yet passes. Called by {@link locations} for the output and the stage. @example await requireRegularFolder('/repo/.codebook/wiki', '/repo', true) // throws while wiki is a junction to another volume */
-async function requireRegularFolder(path, root, isOutputInProject) {
+/** Refuses a Wiki folder or a stage beside it that is no folder of its own, with the sentence `refusalOf` words for it: a link, a file or a special file, and, when the output lies inside the project, a folder whose real path leaves the project (a junction on Windows to another volume, which lstat calls a directory), by the rule {@link requireOwnFolder} holds the folders above it to; a path that holds nothing yet passes. Called by {@link locations} for the output and the stage. @example await requireRegularFolder('/repo/.codebook/wiki', '/repo', true, outputRefusalOf) // throws while wiki is a junction to another volume */
+async function requireRegularFolder(path, root, isOutputInProject, refusalOf) {
   const stat = await lookAt(path);
-  if (!stat) return;
-  if (!isRegularFolder(stat)) throw new Error('The Wiki directory must be regular: ' + path);
-  if (isOutputInProject) await requireOwnFolder(path, stat, root);
+  if (stat && !(await isOwnFolder(path, stat, root, isOutputInProject))) throw new Error(refusalOf(path));
 }
 
 /** Resolves paths for {@link prepareWikiStage}, {@link publishWiki} and recovery without following directory aliases. @example await locations('/repo', '/repo/.codebook/wiki') */
@@ -101,7 +109,8 @@ async function locations(projectRoot, outputDirectory, stageDirectory, createPar
   const stage = stageDirectory === undefined ? undefined : join(await realpath(dirname(resolve(stageDirectory))), basename(resolve(stageDirectory)));
   if (stage !== undefined && (dirname(stage) !== dirname(output) || stage === output)) throw new Error('The Wiki stage must be a distinct sibling of its output.');
   // The output and the stage themselves are held to the rule of the folders above them: the prior Wiki is read and the new one written there.
-  for (const path of [output, stage].filter(Boolean)) await requireRegularFolder(path, root, isOutputInProject);
+  await requireRegularFolder(output, root, isOutputInProject, outputRefusalOf);
+  if (stage !== undefined) await requireRegularFolder(stage, root, isOutputInProject, stageRefusalOf);
   return { root, output, stage, journal: output + '.publish-journal.json' };
 }
 

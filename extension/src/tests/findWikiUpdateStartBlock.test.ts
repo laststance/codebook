@@ -387,7 +387,10 @@ test('a link at the Wiki folder’s own path refuses the update at its start wit
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
-    await assert.rejects(wiki.prepare(), /The Wiki directory must be regular/)
+    await assert.rejects(
+      wiki.prepare(),
+      /^Error: The Wiki folder .* is a link, a file or a folder that leads out of the project\. Nothing was written\./,
+    )
   } finally {
     await wiki.cleanup()
   }
@@ -629,7 +632,10 @@ test('a Wiki folder that is a link is named before the journal of an unfinished 
 
     // Assert
     assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
-    await assert.rejects(wiki.prepare(), /The Wiki directory must be regular/)
+    await assert.rejects(
+      wiki.prepare(),
+      /^Error: The Wiki folder .* is a link, a file or a folder that leads out of the project\. Nothing was written\./,
+    )
   } finally {
     await wiki.cleanup()
   }

@@ -2129,10 +2129,12 @@ async function publishedWikiMovedOutBehindALink({ prepareNext = false } = {}) {
   return { directory, root, output, movedOut, next }
 }
 
-/** The refusal of an entry on the output's path inside the project that is no folder of the project's own, for the path it names. */
-const refusalOfLinkedEntry = (path) =>
-  `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${path}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`
-
+/** The refusal of the Wiki folder itself when it is no folder of its own, for the path it names. */
+const refusalOfWikiFolder = (path) =>
+  `The Wiki folder ${path} is a link, a file or a folder that leads out of the project. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`
+/** The refusal of a stage beside the Wiki folder when it is no folder of its own, for the path it names. */
+const refusalOfStage = (path) =>
+  `The Wiki stage ${path} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`
 // Value: protects=the folder outside the project that a `.codebook` junction to a volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher's walk trusts lstat and no longer compares a folder's real path with the project, so it prepares its stage beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of requireOwnFolder had no test); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, by a loader hook (scripts/tests/utils/wrongLookHooks.mjs)
 test('the publisher refuses a folder on the output’s path in the project that lstat calls a directory although its real path leaves the project, names it and writes nothing there', async () => {
   // Arrange: a copy of the publisher whose lstat answers for a link what stat answers, and a project whose `.codebook` is a link to a folder outside it.
@@ -2208,7 +2210,7 @@ for (const step of ['--prepare', 'publish', '--recover'])
           beside: (await readdir(join(wiki.root, '.codebook'))).sort(),
           behind: (await readdir(wiki.movedOut)).sort(),
         },
-        { refusal: refusalOfLinkedEntry(wiki.output), beside, behind },
+        { refusal: refusalOfWikiFolder(wiki.output), beside, behind },
       )
     } finally {
       await rm(wiki.directory, { recursive: true, force: true })
@@ -2264,7 +2266,7 @@ test('a publish whose candidate beside the Wiki in the project is a folder that 
         beside: (await readdir(join(root, '.codebook'))).sort(),
       },
       {
-        refusal: refusalOfLinkedEntry(next),
+        refusal: refusalOfStage(next),
         candidate: candidateBefore,
         wiki: wikiBefore,
         beside: ['next', 'wiki'],
