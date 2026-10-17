@@ -8099,6 +8099,46 @@ test('Cancel in the dialog about a recording that names another host moves nothi
   }
 })
 
+// Value: protects=a saved study whose recording (header alone) names a process of this computer that is alive but began, by the clock, after the recording: another process that got the id, or the writer itself after a step of the clock; fails_when=the wall-clock comparison is taken as certain, so the writer counts as gone and the removal moves the recording without the learner's choice; why_new=Cycle 0046 Codex review CX13; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording names a live process of this computer begun after the recording reaches the dialog, and Remove Anyway moves it', async (context: TestContext) => {
+  // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const laterProcess = await idleChild(context)
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: laterProcess.pid!, hostname: hostname() },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`], ['Remove Anyway']],
+        moved: [
+          study.id,
+          `${study.id}.study.meta.v3.json`,
+          `${study.id}.study.v3.json`,
+        ],
+        studyRemoval: 'moved',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a study whose recording another editor window of this machine is still writing, which the learner gets no way to remove; fails_when=a writer this machine can prove alive (its record names this machine, and the live process has the recorded start) is offered "Remove Anyway", so the learner removes a recording while it is written; why_new=Cycle 0046 OCR review OC1: only a writer this machine cannot probe gets the learner's choice; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a saved study whose recording a live window of this machine is still writing is refused, and no Remove Anyway is offered', async (context: TestContext) => {
   // Arrange

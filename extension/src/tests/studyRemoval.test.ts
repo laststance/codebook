@@ -1543,9 +1543,10 @@ test('a recording whose header names an editor of another machine is listed but 
       removal: {
         outcome: 'nothing-moved',
         cause: `This study's recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}, and Codebook cannot tell from this computer whether that run still records.`,
-        recordedOnAnotherHost: {
+        unconfirmedWriter: {
           host: 'another-machine',
           startedAt: header.createdAt,
+          place: 'another-computer',
         },
       },
       moved: [],

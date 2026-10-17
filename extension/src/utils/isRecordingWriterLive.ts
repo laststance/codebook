@@ -27,12 +27,14 @@ export type ProcessStartsOfList = Map<number, Promise<string | undefined>>
  * What a judgement found of a recording's writer.
  * - `may-run`: a writer of this machine that may still run (a live process that is the writer, as far as this machine can tell)
  * - `on-another-host`: a writer that may still run only because the recording names another host (its header alone, or a record of another machine), which this machine cannot probe; `host` is the name the recording gives it
+ * - `unconfirmed-here`: a recording with its header alone, of this host, whose process id a live process has that began, by the clock, after the recording; that is another process that got the id, or the writer itself after a step of the clock: no comparison of wall-clock times is certain, so this is neither `gone` nor remembered
  * - `gone`: the writer is gone, for good
  * - `left-to-caller`: this process's own recording, which the caller judges itself (`ignored`)
  */
 export type RecordingWriterState =
   | { kind: 'may-run' }
   | { kind: 'on-another-host'; host: string }
+  | { kind: 'unconfirmed-here'; host: string }
   | { kind: 'gone' }
   | { kind: 'left-to-caller' }
 
@@ -88,7 +90,7 @@ async function writerStateByRecord(
 }
 
 /**
- * Says whether the process that has a recording writer's id now began after the recording was created, beyond the tolerance of a corrected clock: then it is another process, and the writer is gone; called by {@link writerStateByHeader} for a live process id of this host.
+ * Says whether the process that has a recording writer's id now began after the recording was created, beyond the tolerance of a corrected clock: then it is likely another process that got the id, but a step of the clock can make the writer itself look so, since a Linux start is computed from clock ticks and the boot time; called by {@link writerStateByHeader} for a live process id of this host, which answers `unconfirmed-here` then.
  * @param header - What the header says of the writer.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns `true` when the process began later than the recording's creation plus {@link STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS}; `false` when it began before, and when its start cannot be read: it may be the writer.
@@ -138,7 +140,8 @@ async function isThisProcessWriter(
  * @returns
  * - for this process's own recording ({@link isThisProcessWriter}), whatever host name the header gives: `left-to-caller` with `ignored`, `may-run` with `counts`
  * - `on-another-host` for a writer of another host name, which cannot be probed
- * - `gone` for a process of this host that is gone, and for one that began after the recording was created (its id went to another process: {@link hasIdGoneToALaterProcess})
+ * - `gone` for a process of this host that is gone
+ * - `unconfirmed-here` for a live process of this host that began, by the clock, after the recording was created ({@link hasIdGoneToALaterProcess}): not certain, so the learner decides
  * - `may-run` for a live process of this host that began before the recording was created
  * @example await writerStateByHeader({ owner: { pid: 2 ** 22 + 1, hostname: hostname() }, createdAt }, 'counts', readStart) // => { kind: 'gone' }
  */
@@ -158,7 +161,7 @@ async function writerStateByHeader(
     return { kind: 'on-another-host', host: owner.hostname }
   if (isProcessGone(owner.pid)) return { kind: 'gone' }
   return (await hasIdGoneToALaterProcess(header, readStart))
-    ? { kind: 'gone' }
+    ? { kind: 'unconfirmed-here', host: owner.hostname }
     : { kind: 'may-run' }
 }
 

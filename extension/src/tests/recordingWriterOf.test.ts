@@ -145,8 +145,8 @@ function isPresent(path: string): Promise<boolean> {
   )
 }
 
-// Value: protects=the place of a crashed window's recording in the library when its process id went to another process of this machine; fails_when=a recording of 0.2.29.0 (a header, no record of its writer) is judged by its process id alone, so any process that got the id keeps the recording "being written" for good: the list hides it, a removal refuses it, and it still counts against the library's limit; why_new=Cycle 0046 /ship review R10 (a): no process start was compared for a recording; seam=the recording's header, which names a live child process of the test that began after the recording's creation time
-test('a recording made by 0.2.29.0 on this host whose writer’s process id went to a process begun after the recording was created has a writer that is gone', async (context) => {
+// Value: protects=the place of a crashed window's recording in the library when its process id went to another process of this machine, and a live writer whose start a step of the clock moved; fails_when=a recording of 0.2.29.0 (a header, no record of its writer) is judged by its process id alone, so any process that got the id keeps the recording "being written" for good (R10 (a)), or the wall-clock comparison is taken as certain, so a live writer after a clock step counts as gone, is remembered so, and is removed without the learner's choice (CX13); why_new=Cycle 0046 /ship review R10 (a), and Codex review CX13: no comparison of wall-clock times is certain; seam=the recording's header, which names a live child process of the test that began after the recording's creation time
+test('a recording made by 0.2.29.0 on this host whose writer’s process id a live process has that began after the recording was created has a writer this computer cannot confirm', async (context) => {
   // Arrange: the recording was created ten minutes ago by a window that crashed; a process that began just now has its id.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -161,7 +161,7 @@ test('a recording made by 0.2.29.0 on this host whose writer’s process id went
   const writer = await writerOf(recording.folder)
 
   // Assert
-  assert.deepEqual(writer, { kind: 'gone' })
+  assert.deepEqual(writer, { kind: 'unconfirmed-here', host: hostname() })
 })
 
 // Value: protects=the recording of a crashed window on a computer whose host name changed since (macOS names itself after the network); fails_when=the writer is judged by the host name in the header, which is no longer this machine's, so the recording counts as written on another machine for good; why_new=Cycle 0046 /ship review R10 (b): the record of the writer's full identity is new; seam=the header and the record of the writer, which name the old host name, this editor's machine id and a process id of no process

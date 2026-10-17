@@ -95,8 +95,8 @@ import {
 } from './learnerSchemas'
 import {
   LearningLibrary,
-  type RecordingOfAnotherHostRule,
-  type RecordingOnAnotherHost,
+  type UnconfirmedWriterRule,
+  type UnconfirmedWriter,
   type StudyRemoval,
 } from './learningLibrary'
 import type {
@@ -21723,8 +21723,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because a recording of the study names another host whose run may still write it, asks the learner whether to move it anyway ({@link askRemovalOfRecordingOnAnotherHost}); called by {@link moveSavedStudy}.
-   * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link RecordingOfAnotherHostRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
+   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because a recording of the study names another host whose run may still write it, asks the learner whether to move it anyway ({@link askRemovalOfUnconfirmedWriter}); called by {@link moveSavedStudy}.
+   * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link UnconfirmedWriterRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
    * @returns What the removal changed on disk; `undefined` when the learner chose Cancel, and nothing changed.
@@ -21735,13 +21735,9 @@ export class StudyWorkspace {
     evidenceDirectory?: string,
   ): Promise<StudyRemoval | undefined> {
     const removal = await this.moveStudyFiles(studyId, evidenceDirectory)
-    if (removal.outcome !== 'nothing-moved' || !removal.recordedOnAnotherHost)
+    if (removal.outcome !== 'nothing-moved' || !removal.unconfirmedWriter)
       return removal
-    if (
-      !(await this.askRemovalOfRecordingOnAnotherHost(
-        removal.recordedOnAnotherHost,
-      ))
-    )
+    if (!(await this.askRemovalOfUnconfirmedWriter(removal.unconfirmedWriter)))
       return undefined
     return this.moveStudyFiles(studyId, evidenceDirectory, 'move')
   }
@@ -21750,12 +21746,12 @@ export class StudyWorkspace {
    * Asks the learner, in a modal dialog, whether to move a study whose recording may still be written on another computer: the dialog names the host the recording gives and the time it started, and offers "Remove Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
    * @param recording - The host the recording names and its start.
    * @returns `true` for "Remove Anyway"; `false` for Cancel or a dismissed dialog.
-   * @example await this.askRemovalOfRecordingOnAnotherHost({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z' }) // => true after "Remove Anyway"
+   * @example await this.askRemovalOfUnconfirmedWriter({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z' }) // => true after "Remove Anyway"
    */
-  private async askRemovalOfRecordingOnAnotherHost({
+  private async askRemovalOfUnconfirmedWriter({
     host,
     startedAt,
-  }: RecordingOnAnotherHost): Promise<boolean> {
+  }: UnconfirmedWriter): Promise<boolean> {
     const messages = studyRemovalMessages()
     const answer = await vscode.window.showWarningMessage(
       messages.recordedOnAnotherHostTitle,
@@ -21776,14 +21772,14 @@ export class StudyWorkspace {
    * For a run of this window the removal runs inside {@link StudyService.withEvidenceHeld}, so no explanation is written into the evidence directory while it moves.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
-   * @param recordingOfAnotherHost - `move` only after the learner chose "Remove Anyway" ({@link askRemovalOfRecordingOnAnotherHost}).
+   * @param unconfirmedWriterRule - `move` only after the learner chose "Remove Anyway" ({@link askRemovalOfUnconfirmedWriter}).
    * @returns What the removal changed on disk.
    * @example await this.moveStudyFiles(studyId, evidenceDirectory) // => { outcome: 'moved' }
    */
   private async moveStudyFiles(
     studyId: string,
     evidenceDirectory?: string,
-    recordingOfAnotherHost: RecordingOfAnotherHostRule = 'refuse',
+    unconfirmedWriterRule: UnconfirmedWriterRule = 'refuse',
   ): Promise<StudyRemoval> {
     const remove = (): Promise<StudyRemoval> =>
       this.library!.removeStudy(
@@ -21796,7 +21792,7 @@ export class StudyWorkspace {
             }),
           ),
         evidenceDirectory,
-        recordingOfAnotherHost,
+        unconfirmedWriterRule,
       )
     const service = this.service,
       record = this.recordOfStudy(studyId)
