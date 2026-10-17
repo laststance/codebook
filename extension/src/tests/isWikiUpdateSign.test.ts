@@ -68,20 +68,35 @@ test('a command that names a folder beside the Wiki’s folder, or mentions the 
   assert.deepEqual(signs, [false, false, false, false, false, false])
 })
 
-// Value: protects=the first sign of an update in the chat's terminal, however the chat quotes its paths; fails_when=reading the command by its argument boundaries loses the publisher's command when its paths are quoted, follow a change of folder, or name the Wiki's folder with a trailing slash, so a working chat is stopped at the bound; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); seam=none
-test('the publisher run with the Wiki’s folder as its exact --output value is a step of an update, quoted or unquoted, after a change of folder and with a trailing slash', () => {
+// Value: protects=the first sign of an update in the chat's terminal, however the chat quotes the publisher's path; fails_when=reading the command by its argument boundaries loses the bundled publisher as the script Node.js runs when its path is quoted or follows a change of folder, so a working chat whose output is written relative to the project is stopped at the bound; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); repeat maintainability review MT10: the rule of the bundled publisher has a test of its own; seam=none
+test('a command that runs the bundled publisher as the script of Node.js is a step of an update, quoted or unquoted and after a change of folder, also with an output written relative to the project', () => {
   // Act
   const signs = [
     'node /extensions/codebook/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki',
     'node "/extensions/codebook/skills/codebook/publish-wiki.mjs" --project "/repo" --output "/repo/.codebook/wiki"',
     "cd /repo && node '/extensions/codebook/skills/codebook/publish-wiki.mjs' --recover --project . --output .codebook/wiki",
-    'node --no-warnings ./publish.mjs --output /repo/.codebook/wiki/',
   ].map((commandLine) =>
     isWikiUpdateSign({ kind: 'command', commandLine }, PLACES),
   )
 
   // Assert
-  assert.deepEqual(signs, [true, true, true, true])
+  assert.deepEqual(signs, [true, true, true])
+})
+
+// Value: protects=the first sign of an update whose command names the Wiki's folder itself as an argument, whatever program runs it; fails_when=reading the command by its argument boundaries no longer takes an argument with a trailing slash for the Wiki's folder, so a working chat is stopped at the bound; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); repeat maintainability review MT10: the rule of the Wiki's folder as an argument has a test of its own; seam=none
+test('a command whose argument is exactly the Wiki’s folder is a step of an update whatever program it runs, also with a trailing slash', () => {
+  // Act
+  const sign = isWikiUpdateSign(
+    {
+      kind: 'command',
+      commandLine:
+        'node --no-warnings ./publish.mjs --output /repo/.codebook/wiki/',
+    },
+    PLACES,
+  )
+
+  // Assert
+  assert.equal(sign, true)
 })
 
 // Value: protects=the same reading of a command on Windows, where a path's backslash is no escape and the drive letter may be spelled in either case; fails_when=the backslashes of a path are read as escapes, so the publisher's command is not recognised, or a folder beside the Wiki counts; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); seam=the platform, which the test names
