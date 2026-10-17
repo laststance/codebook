@@ -1432,3 +1432,79 @@ test('a recording that is still being written for a study that is not saved yet 
     true,
   )
 })
+
+// Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so the recording is listed as what is left of a removed study and a removal of its id moves it away while the other editor writes it; why_new=Cycle 0046 /ship review T1: the "another machine" half of recordingMayStillBeWritten had no test, and dropping it survived every test; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
+test('a recording whose header names an editor of another machine is neither listed nor moved, although no process of its id runs on this machine', async (context) => {
+  // Arrange: one reserved recording without a saved study; its header names an editor on another machine, with a process id no process here has.
+  const storage = await removalStorage(context, 4)
+  const instanceId = randomUUID(),
+    runId = randomUUID()
+  const ofAnotherMachine = `${instanceId}_${runId}`
+  await storage.recordings.start(
+    {
+      workspaceKey: storage.workspaceKey,
+      studyId: ofAnotherMachine,
+      instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: 'repository-browser',
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  const headerPath = join(
+    storage.directory,
+    'recordings.v2',
+    ofAnotherMachine,
+    'header.json',
+  )
+  const header: { owner: { pid: number; hostname: string } } = JSON.parse(
+    await readFile(headerPath, 'utf8'),
+  )
+  await writeFile(
+    headerPath,
+    JSON.stringify({
+      ...header,
+      owner: {
+        ...header.owner,
+        pid: ID_OF_NO_PROCESS,
+        hostname: 'another-machine',
+      },
+    }),
+  )
+
+  // Act
+  const listed = await storage.library.list()
+  const removal = await storage.library.removeStudy(
+    ofAnotherMachine,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal,
+      moved: storage.moved,
+      isRecordingInPlace: await lstat(
+        join(storage.directory, 'recordings.v2', ofAnotherMachine),
+      ).then(
+        (entry) => entry.isDirectory(),
+        () => false,
+      ),
+    },
+    {
+      listed: [],
+      removal: {
+        outcome: 'nothing-moved',
+        cause: 'Study archive is unavailable.',
+      },
+      moved: [],
+      isRecordingInPlace: true,
+    },
+  )
+})
