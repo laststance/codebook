@@ -180,6 +180,8 @@ async function readerHarness(context: TestContext) {
   /** What the arrangement's keyboard return answers ({@link RepositoryReaderModule.RepositoryKeyboardReturn}): `undefined` while the arrangement gives none, `true` when it gives the chat its keyboard back, `false` when it cannot. */
   let keyboardReturnAnswer: boolean | undefined,
     keyboardReturns = 0
+  /** What happens in the editor while the arrangement's keyboard return runs, before it answers; see `answerKeyboardReturn`. */
+  let duringKeyboardReturn: (() => void) | undefined
   const notices: string[] = []
   let sourceDocumentGate: { entered(): void; wait: Promise<void> } | undefined
   let sourceDisplayGate: { entered(): void; wait: Promise<void> } | undefined
@@ -708,6 +710,7 @@ async function readerHarness(context: TestContext) {
         // The arrangement's return, asked after the Wiki is shown: a chat tab that gets its keyboard back has it, and no text editor is active.
         return async () => {
           keyboardReturns++
+          duringKeyboardReturn?.()
           if (answer) {
             activeEditor = undefined
             for (const listener of focusListeners) listener()
@@ -822,10 +825,13 @@ async function readerHarness(context: TestContext) {
     },
     /**
      * Makes the arrangement answer a keyboard return the way {@link StudyWorkspace.arrangeRepository} does after its measurement borrowed the keyboard from Cursor's chat tab: `true` gives the chat its keyboard back, `false` says that it stays where the measurement left it.
-     * @example harness.answerKeyboardReturn(true)
+     * @param answer - The return's answer.
+     * @param during - What happens in the editor while the return runs, before it answers: a learner's click into a file, for the reader's check of a newer choice (Cycle 0046 T5).
+     * @example harness.answerKeyboardReturn(false, () => harness.focusUnrelatedDraft('notes.ts'))
      */
-    answerKeyboardReturn(answer: boolean): void {
+    answerKeyboardReturn(answer: boolean, during?: () => void): void {
       keyboardReturnAnswer = answer
+      duringKeyboardReturn = during
     },
     keyboardReturns: () => keyboardReturns,
     notices,
@@ -1315,6 +1321,41 @@ test("an agent's cold Wiki open that cannot give back the keyboard its layout bo
   assert.deepEqual(harness.notices, [
     'Codebook opened the Repository Wiki an agent asked for, and the Wiki has the keyboard now: arranging the Wiki beside its cited source needed the focus of the first editor group, and Codebook could not give the keyboard back to where you were typing. Click where you want to type.',
   ])
+})
+
+// Value: protects=the learner's newer choice during an agent's cold Wiki open (codebook_open_book) whose arrangement cannot give back the keyboard its layout borrowed: while the give-back runs, the learner clicks into notes.ts; that file keeps the keyboard, no reveal takes the focus to the Wiki, and the learner is told nothing; fails_when=returnAgentEntryKeyboard does not check the focus it retained before the give-back (unchanged.assertRetained), so it answers 'kept', the Wiki is revealed with the focus over the learner's file and the sentence that the Wiki has the keyboard is told; why_new=Cycle 0046 T5 (/ship's pre-landing review: the 'newer' answer had no test); seam=readerHarness with useColdLayout, requireSourceFocus, answerKeyboardReturn(false, during) (the new hook that runs inside the arrangement's give-back), focusUnrelatedDraft, focusChat, openFromAgent, revealFocus and the fake window's information notices; no_claim=the native order of a click that lands while the editor answers the give-back's commands
+test("an agent's cold Wiki open whose give-back fails while the learner clicks into a file leaves the keyboard in that file, reveals no Wiki with the focus and tells nothing", async (context) => {
+  // Arrange: as above; while the arrangement's give-back runs, the learner clicks into notes.ts in the first group, and the give-back then answers that the keyboard stays where the measurement left it.
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.requireSourceFocus()
+  harness.answerKeyboardReturn(false, () => {
+    harness.focusUnrelatedDraft('notes.ts')
+  })
+  harness.focusChat()
+
+  // Act
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+
+  // Assert: the arrangement was asked once; notes.ts keeps the keyboard, no reveal took the focus, and nothing was told.
+  assert.deepEqual(
+    {
+      keyboardReturns: harness.keyboardReturns(),
+      focusedFile: harness.focusedSource()?.document.uri.path.split('/').at(-1),
+      revealFocus: harness.revealFocus,
+      notices: harness.notices,
+    },
+    {
+      keyboardReturns: 1,
+      focusedFile: 'notes.ts',
+      revealFocus: [],
+      notices: [],
+    },
+  )
 })
 
 // Value: protects=the learner's own front tab in the first group after an agent's Wiki open (codebook_open_book while no Wiki and no Study arrangement is open) is closed with Close Repository Wiki: the read-only cited-source tab the reader showed in front of the learner's file goes with the Wiki, the learner's file is in front again, and the chat keeps the keyboard; fails_when=RepositoryReader.close disposes only the Wiki panel, so a Codebook tab the learner never chose keeps covering the learner's file after the Wiki is gone (C57 2c in VS Code 1.140.0: `codebook-repository-source://…/login-form.tsx` in front of the learner's app/ui/login-form.tsx); why_new=Cycle 0046 row 641; seam=readerHarness with useColdLayout, focusUnrelatedDraft (the learner's login-form.tsx in front of the first group), focusChat, openFromAgent, close, the fake tabGroups.close, firstGroupTabs and focusedSource
