@@ -621,6 +621,16 @@ export async function workspaceHarness(
   class TestReplayDebugger {
     available = true
     private closed = false
+    /** The stop this fake presents now, by what the real owner compares (`ReplayDebugger.selected`): a new object for each new snapshot, label or source, dropped by {@link invalidate}. */
+    private selection?: {
+      snapshot: ReplayDebugSnapshot | undefined
+      label: string
+      sourceUri?: string
+    }
+    /** The selection whose native model this fake selected, or for which the host registers no command, as the real owner keeps `modelSelectionSettledFor` (F6): a later presentation of the same selection selects nothing again. */
+    private modelSelectionSettledFor?: TestReplayDebugger['selection']
+    /** Positive discovery of {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, kept as the real owner keeps `registeredNativeFocusCommand` (F6). */
+    private registeredNativeFocusCommand = false
     /**
      * Registers the fake owner so {@link loadHistoricalDebugValues} and {@link endHistoricalDebugSession} can notify the workspace, as the real owner does.
      * @throws When an earlier owner is still registered: the editor accepts one descriptor factory per debug type.
@@ -658,13 +668,25 @@ export async function workspaceHarness(
           'Historical debugger closed. Reopen the learning replay to restore it.',
         )
       historicalDebugPresentations.push({ snapshot, label, sourceDocument })
-      // A stop with values selects the native model, as the real owner does before it waits for Variables (row 721).
+      // As for the real owner, a new snapshot, label or source is a new selection; the same one keeps its object.
+      if (
+        !this.selection ||
+        this.selection.snapshot !== snapshot ||
+        this.selection.label !== label ||
+        this.selection.sourceUri !== sourceDocument?.uri
+      )
+        this.selection = { snapshot, label, sourceUri: sourceDocument?.uri }
+      // A stop with values selects the native model once per selection, as the real owner does before it waits for Variables (row 721, F6).
       if (
         snapshot?.frames.some((frame) => frame.scopes.length) &&
         sourceDocument &&
-        !activeStackItem
+        !activeStackItem &&
+        this.modelSelectionSettledFor !== this.selection
       )
-        await this.selectNativeInspectionModel(sourceDocument.uri)
+        await this.selectNativeInspectionModel(
+          sourceDocument.uri,
+          this.selection,
+        )
       // A held presentation models native Run and Debug still loading the recorded values.
       const held = nextHistoricalDebugPresentation
       // A hold reserved for a recorded stop lets earlier gap presentations pass and stays armed.
@@ -676,20 +698,30 @@ export async function workspaceHarness(
       return historicalDebugInspection
     }
     /**
-     * Selects the native debugger model of a presented stop as the real owner does (`ReplayDebugger.selectNativeInspectionModel`): where the host registers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, it runs that command with `null`, which the fake editor answers by revealing the stop's source (`revealHistoricalStopSource`). The real owner runs it only once native Call Stack fetched the stop and while no other debug session is active, which the fake reads as no live stop the editor reports (Cycle 0046 row 721).
+     * Selects the native debugger model of a presented stop as the real owner does (`ReplayDebugger.selectNativeInspectionModel`): where the host registers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, it runs that command with `null`, which the fake editor answers by revealing the stop's source (`revealHistoricalStopSource`). The real owner runs it only once native Call Stack fetched the stop and while no other debug session is active, which the fake reads as no live stop the editor reports (Cycle 0046 row 721), and once per selection, asking the host for its commands until it found the command (F6).
      * @param sourceUri - The stop's captured source, whose document the recorded frame names.
-     * @example await this.selectNativeInspectionModel(capturedSourceUri) // the captured source's group is the active one, its text editor the active text editor
+     * @param selection - The presented selection, noted as settled once its model was selected or the host has no command for it.
+     * @example await this.selectNativeInspectionModel(capturedSourceUri, this.selection) // the captured source's group is the active one, its text editor the active text editor
      */
     private async selectNativeInspectionModel(
       sourceUri: string,
+      selection: TestReplayDebugger['selection'],
     ): Promise<void> {
-      const commands = await this.editor.commands.getCommands(true)
-      if (!commands.includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND)) return
+      // As for the real owner, only a positive discovery is kept; a host without the command is asked again at its next selection.
+      if (!this.registeredNativeFocusCommand)
+        this.registeredNativeFocusCommand = (
+          await this.editor.commands.getCommands(true)
+        ).includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND)
+      if (!this.registeredNativeFocusCommand) {
+        this.modelSelectionSettledFor = selection
+        return
+      }
       historicalStopSource = sourceUri
       await this.editor.commands.executeCommand(
         NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
         null,
       )
+      this.modelSelectionSettledFor = selection
     }
     /**
      * Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter.
@@ -733,6 +765,8 @@ export async function workspaceHarness(
     invalidate(label = 'Not recorded at this moment'): void {
       historicalDebugInvalidations++
       historicalDebugInvalidationLabels.push(label)
+      // As for the real owner, the emptied session shows no stop, so the next presentation is a new selection.
+      this.selection = undefined
     }
     /** Mirrors the real owner: a second call returns at once, and the registration ends only when the first call finishes stopping the session. @example await debuggerView.dispose() */
     async dispose(): Promise<void> {
