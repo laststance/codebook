@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -236,6 +237,40 @@ test('an entry the look calls a directory although it leads elsewhere, and that 
       outcome: `ENOTEMPTY: rmdir '${linkPath}'`,
       listed: [],
       isTheLinkStillThere: true,
+      kept: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=the files of a folder a link leads to when a running program renames a folder the walk is emptying and puts that link at its path between the walk's look and its listing: the walk confirms that the path still names the directory it looked at (device and file id) before it removes anything below it, stops with an error that names the folder, and removes nothing through the link (CX6, /ship Codex adversarial review); fails_when=the walk lists the path through the link and removes the entries of the folder the link leads to by their names below the path; why_new=the walk's JSDoc named this race as a limit; seam=a file system stand-in whose listing of one folder first renames it and puts a link (a junction on Windows) to the kept folder in its place
+test('a folder that a running program replaces by a link between the walk’s look and its listing stops the walk with an error that says so, and the folder the link leads to keeps every file', async (context) => {
+  // Arrange: a folder with a file of the same name as one in `kept`; right before the walk lists it, a program renames it and puts a link to `kept` at its path.
+  const folder = await folderWithKeptFiles(context)
+  const swapped = join(folder, 'swapped')
+  await mkdir(swapped)
+  await writeFile(join(swapped, 'notes.txt'), 'own')
+  const removeWhileSwapped = await loadWalkOn({
+    ...realFileSystem,
+    readdir: async (path: string) => {
+      if (path === swapped) {
+        await rename(swapped, join(folder, 'moved-away'))
+        await symlink(join(folder, 'kept'), swapped, 'junction')
+      }
+      return readdir(path)
+    },
+  })
+
+  // Act
+  const outcome = await removeWhileSwapped(swapped).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, kept: await entriesBelow(join(folder, 'kept')) },
+    {
+      outcome: `The folder ${swapped} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
       kept: ['notes.txt', 'photos', 'photos/holiday.txt'],
     },
   )
