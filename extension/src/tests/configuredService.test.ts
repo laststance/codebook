@@ -946,6 +946,82 @@ test('a run whose saved study was removed while it ran ends at the maintenance t
   )
 })
 
+// Value: protects=what an agent and the learner read about the release of a run whose saved study was removed while it ran: the release's final evidence write fails too, since the evidence directory left with the archive, and the run's cleanupError and the explicit retry's error (Stop, as the stop tool and the Study's stop control ask it) name that failed write and the removal, without the internal storage path the write's error names; fails_when=StudyService.stopRecord makes the release's raw error ("Evidence write failed: Error: ENOENT: no such file or directory, open '<global storage>/…/events.jsonl'") the cleanupError's cause and rethrows it to the retry; why_new=Cycle 0046 row 686 (row 667 fixed the terminal reason only); seam=StudyService.excludeHistory with 'archive-removed', as StudyWorkspace calls it, the run's evidence directory removed, an event recorded after that, maintain, the run resource and StudyService.stop
+test('a run whose saved study was removed while it ran keeps a release failure that names the failed evidence write and the removal and no storage path', async (context) => {
+  // Arrange: a prepared run whose study left the library; its evidence directory is gone, so the next event's append and the release's final write fail.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-during-release',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  service.excludeHistory(record, 'archive-removed')
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  const writeFailureNamesPath = Boolean(
+    runtime.evidence.failure?.includes(runtime.evidence.directory),
+  )
+
+  // Act: the maintenance turn ends the run and its release fails; then the learner's Stop asks for the release again.
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  const retryFailure = await service
+    .stop({ instanceId: service.instanceId, runId: record.id })
+    .then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      cleanupError: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      writeFailureNamesPath,
+      cleanupError: state.cleanupError,
+      retryFailure,
+      failureNamesPath: JSON.stringify([
+        state.cleanupError,
+        retryFailure,
+      ]).includes(runtime.evidence.directory),
+    },
+    {
+      writeFailureNamesPath: true,
+      cleanupError: {
+        code: 'RUNTIME_FAILED',
+        message: 'The study operation failed.',
+        cause:
+          "Error: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      retryFailure:
+        "Error: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      failureNamesPath: false,
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange

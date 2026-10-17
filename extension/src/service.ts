@@ -2911,12 +2911,35 @@ export class StudyService {
     try {
       await attempt
     } catch (error) {
-      record.cleanupError = domainError(error)
+      const failure = this.releaseFailure(record, error)
+      record.cleanupError = domainError(failure)
       record.stopPromise = undefined
-      throw error
+      throw failure
     } finally {
       record.stopping = false
     }
+  }
+
+  /**
+   * Names why a run's release failed, for its `cleanupError` and for every caller of {@link StudyService.stopRecord} that reports that failure (the stop tool, the error of a run that ended without one at the maintenance turn, an incomplete shutdown); called by {@link StudyService.stopRecord} when the release threw.
+   * A run whose saved study was removed while it ran lost its evidence directory with the archive, so the release's final evidence write fails too, and that write's raw error names the internal storage path, which {@link StudyService.evidenceFailureCause} keeps out of the run's error (row 667): the failed write and the removal's own sentence name it instead (Cycle 0046 row 686). A release that threw while the evidence still wrote failed for its own reason, which stays its cause.
+   * @param record - The run whose release threw.
+   * @param error - What the release threw.
+   * @returns
+   * - For a run whose saved study was removed and whose evidence failed: an error that names the failed evidence write and the removal ({@link historyExclusionReason})
+   * - Otherwise: `error` itself
+   * @example
+   * this.releaseFailure(removedRecord, new Error("Evidence write failed: Error: ENOENT: no such file or directory, open '…/events.jsonl'")).message
+   * // => "Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window."
+   * this.releaseFailure(record, new Error('owned browser close: timed out')).message // => 'owned browser close: timed out'
+   */
+  private releaseFailure(record: StudyRecord, error: unknown): unknown {
+    return isStudyRemovalExclusion(record.historyExcluded) &&
+      record.runtime?.evidence.failure
+      ? new Error(
+          `Evidence write failed: ${historyExclusionReason(record.historyExcluded)}`,
+        )
+      : error
   }
 
   /** Returns the original preparing receipt even after later transitions, allowing safe same-key retries. @example this.receipt(record).runId */
