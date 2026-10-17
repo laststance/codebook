@@ -4978,8 +4978,8 @@ async function cursorSelectionRefusedAfterInsertion() {
  * Makes the agent's cold Study selection (codebook_presentation select) and reads where the keyboard went, for row 718's tests of a refusal after the borrow and the insertion.
  * @param harness - The harness {@link cursorSelectionRefusedAfterInsertion} opened.
  * @param chat - Its chat part.
- * @returns The refusal's message, the commands that move the keyboard, the documents shown with the keyboard, the keyboard's place and the sentences told.
- * @example const outcome = await refusedSelectionOutcome(harness, chat)
+ * @returns The refusal's message and its cause (the `causeDetail` of the StudyError the service answered with, which names what refused it), the commands that move the keyboard, the documents shown with the keyboard, the keyboard's place and the sentences told.
+ * @example const outcome = await refusedSelectionOutcome(harness, chat) // outcome.cause === 'Error: Native layout command failed' after a failed lock
  */
 async function refusedSelectionOutcome(
   harness: Awaited<ReturnType<typeof workspaceHarness>>,
@@ -4991,7 +4991,7 @@ async function refusedSelectionOutcome(
   const commandsBefore = harness.commands.length,
     showsBefore = harness.textDocumentShows().length,
     messagesBefore = harness.informationMessages.length
-  const refusal = await harness.service
+  const error = await harness.service
     .selectPresentation({
       instanceId: harness.service.instanceId,
       presentationId: selection.presentationId,
@@ -5001,10 +5001,12 @@ async function refusedSelectionOutcome(
     })
     .then(
       () => undefined,
-      (error: unknown) => String(error),
+      (refused: unknown) => refused,
     )
   return {
-    refusal,
+    refusal: error === undefined ? undefined : String(error),
+    // The service answers every refusal with the same sentence; its cause names what refused the selection (row 734).
+    cause: error instanceof StudyError ? error.causeDetail : undefined,
     keyboardCommands: harness.commands
       .slice(commandsBefore)
       .filter((command) =>
@@ -5049,6 +5051,7 @@ test('in Cursor beside its chat part, an agent’s cold Study selection refused 
     assert.deepEqual(outcome, {
       refusal:
         'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      cause: 'Error: Native layout command failed',
       keyboardCommands: [
         'workbench.action.focusFirstEditorGroup',
         'workbench.action.newGroupAbove',
@@ -5079,6 +5082,7 @@ test('in Cursor beside its chat part, an agent’s cold Study selection from the
     assert.deepEqual(outcome, {
       refusal:
         'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      cause: 'Error: Native layout command failed',
       keyboardCommands: [
         'workbench.action.focusFirstEditorGroup',
         'workbench.action.focusFirstEditorGroup',
@@ -5115,6 +5119,7 @@ test('in Cursor beside its chat part, an agent’s cold Study selection refused 
     assert.deepEqual(outcome, {
       refusal:
         'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      cause: 'Error: Native layout command failed',
       keyboardCommands: [
         'workbench.action.focusFirstEditorGroup',
         'workbench.action.newGroupAbove',
@@ -5163,6 +5168,7 @@ test('in Cursor beside its chat part, an agent’s cold Study selection refused 
     assert.deepEqual(outcome, {
       refusal:
         'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      cause: 'Error: Native layout command failed',
       keyboardCommands: [
         'workbench.action.focusFirstEditorGroup',
         'workbench.action.newGroupAbove',
@@ -5286,6 +5292,8 @@ test('in Cursor beside its chat part, an agent’s cold Study selection from the
       {
         refusal:
           'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        cause:
+          'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
         keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
         shownWithKeyboard: [],
         keyboardOnBody: false,
@@ -5332,6 +5340,8 @@ test('in Cursor beside its chat part, an agent’s cold Study selection from the
     assert.deepEqual(outcome, {
       refusal:
         'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      cause:
+        'Error: The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.',
       keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
       shownWithKeyboard: [],
       keyboardOnBody: false,
@@ -5378,6 +5388,7 @@ test('in Cursor beside its chat part, an agent’s cold Study selection from the
       {
         refusal:
           'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        cause: 'Error: Native layout command failed',
         keyboardCommands: [
           'workbench.action.focusFirstEditorGroup',
           'workbench.action.focusFirstEditorGroup',
