@@ -5440,6 +5440,141 @@ test('in Cursor, an agent’s Return Current from a replay leaves the keyboard i
   }
 })
 
+// Value: protects=the learner's newer place during an agent's Return Current from a replay beside Cursor's Agent chat part (row 723's order): after the measurement borrowed the first group and the editor applied the Study layout, while it answers the arrangement's receipt read, the learner opens a new empty group right of the main editor's last group (workbench.action.newGroupRight), which the editor names with no active tab and no active text editor; the Return answers, the empty group keeps the keyboard as the learner's place and is not taken for the chat's tab, the chat gets none back and nothing is told; fails_when=namesAnotherEditorPartsTab asks of the named group's front tab without its guard for a group that has none, so the chat return (the function retainForeignTabFocus answers, from finishCurrentReturn) breaks on the empty group and the agent's Return answers with "TypeError: Cannot destructure property 'input' of 'undefined' …"; why_new=Cycle 0046 row 727 (the coverage audit of /ship: the guard active.activeTab !== undefined had no test; the read right after the borrow is no such order, since the arrangement's own guard refuses the Return there before the chat return is asked); seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus, leavePaneFocusUnreportedBesideChat, focusMutableDraft, the service's playback and returnToCurrent, holdNextCommand on the layout's runCommands and on the receipt read after it, focusEmptyGroup (the new seam), the command log and the information messages; no_claim=what Cursor does with the keyboard of a learner's new empty group beyond root's probe (named in its own column, no tab, no active text editor, the page focus in the group's container), and whether the layout the Return applied is confirmed
+test('in Cursor, an agent’s Return Current from a replay leaves the keyboard in the empty group the learner opened while the arrangement’s receipt was read, and the chat gets none back', async () => {
+  // Arrange: as in row 723's test; after the editor applied the Study layout, while it answers the receipt read, the learner opens a new empty group right of the main editor's last group.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focus()
+    const state = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const layoutCommands = harness.holdNextCommand('runCommands')
+    void layoutCommands.started.then(() => {
+      const receiptRead = harness.holdNextCommand('vscode.getEditorLayout')
+      void receiptRead.started.then(() => {
+        harness.focusEmptyGroup(4)
+        receiptRead.release()
+      })
+      layoutCommands.release()
+    })
+
+    // Act
+    const refusal = await harness.service
+      .returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    await harness.controller.settle()
+
+    // Assert: the Return answered; the empty group is named with no tab in front and no text editor is active, only the borrow's focus command ran, the chat has no keyboard, and nothing was told.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        refusal,
+        named: `${named.viewColumn}:${named.tabs.length}:${named.activeTab?.label}`,
+        activeTextEditor: harness.editor.window.activeTextEditor,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal: undefined,
+        named: '4:0:undefined',
+        activeTextEditor: undefined,
+        keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+        chatHasKeyboard: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the fidelity of the workspace harness's new empty group, on which the tests of rows 714 and 727 with a learner's empty group rest: from the moment the editor tells its group and tab listeners, the new group is named in its own column right of the main editor's last group, shows no tab and no active tab, and no text editor is reported active, as root's probe of Cursor 3.23.12 saw after workbench.action.newGroupRight; fails_when=the fake names the new group only after its group event, keeps a tab in it, or keeps reporting the text editor that had the keyboard, so a reader test of a learner's empty group passes by another path; why_new=Cycle 0046 rows 714 and 727 (the coverage audit of /ship); seam=workspaceHarness's two columns, Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, which rebuilds the group objects), focusMutableDraft, the editor's onDidChangeTabs and onDidChangeTabGroups, focusEmptyGroup; no_claim=VS Code's own answer to newGroupRight, which the fake models the same way
+  test(`the fake editor names the learner’s new empty group with no tab and reports no active text editor already while it tells its group and tab listeners (${host})`, async () => {
+    // Arrange: auth.ts in the second group has the keyboard; a listener of groups and one of tabs read the named group and the active text editor.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    if (host === 'Cursor') {
+      harness.addSeparateEditorPart()
+      harness.leavePaneFocusUnreportedBesideChat()
+    }
+    try {
+      harness.focusMutableDraft('auth.ts', 2)
+      const readInListeners: string[] = []
+      /** Names the named group's column, tab count and front tab, and the active text editor's file, as a listener reads them. */
+      const readNamedGroup = (listener: string): void => {
+        const named = harness.editor.window.tabGroups.activeTabGroup
+        readInListeners.push(
+          `${listener}:${named.viewColumn}:${named.tabs.length}:${named.activeTab?.label}:${harness.editor.window.activeTextEditor?.document.uri.path.split('/').at(-1)}`,
+        )
+      }
+      const tabGroups = harness.editor.window.tabGroups.onDidChangeTabGroups(
+          () => readNamedGroup('groups'),
+        ),
+        tabs = harness.editor.window.tabGroups.onDidChangeTabs(() =>
+          readNamedGroup('tabs'),
+        )
+
+      // Act: the learner opens a new empty group right of the second group.
+      harness.focusEmptyGroup(3)
+      tabGroups.dispose()
+      tabs.dispose()
+
+      // Assert: every listener read the empty third group with no text editor, and so it stays after them, with the page focus in that group's container.
+      const named = harness.editor.window.tabGroups.activeTabGroup
+      assert.deepEqual(
+        {
+          readInListeners,
+          namedAfter: `${named.viewColumn}:${named.tabs.length}:${named.activeTab?.label}`,
+          activeTextEditorAfter: harness.editor.window.activeTextEditor,
+          keyboardOnBody: harness.keyboardOnBody(),
+        },
+        {
+          readInListeners: [
+            'groups:3:0:undefined:undefined',
+            'tabs:3:0:undefined:undefined',
+          ],
+          namedAfter: '3:0:undefined',
+          activeTextEditorAfter: undefined,
+          keyboardOnBody: true,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 for (const host of ['VS Code', 'Cursor'] as const)
   // Value: protects=the fidelity of the workspace harness's terminal in the editor area that keeps the text editor report, on which row 727's tests rest: the text editor that had the keyboard stays reported as the active text editor from the moment the editor tells its tab and group listeners of the terminal, as focusWebviewTabKeepingTextEditorReport keeps it for a webview; fails_when=the fake sets the kept report only after it told the listeners, so a reader that reads the active text editor in them finds none and a test of the stale report passes by another path; why_new=Cycle 0046 row 733 (CodeRabbit on b5f8bf97..ec8a8ec3); seam=workspaceHarness's two columns, Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, which rebuilds the group objects), focusMutableDraft, the editor's onDidChangeTabs and onDidChangeTabGroups, focusEditorTerminal with keepsTextEditorReport
   test(`the fake editor reports the text editor that had the keyboard behind a terminal opened in the editor area already while it tells its tab and group listeners (${host})`, async () => {

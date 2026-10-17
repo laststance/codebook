@@ -1112,8 +1112,19 @@ export async function workspaceHarness(
       (staleNamedGroup && replaced(staleNamedGroup))
     )
   }
-  /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
-  function nativeGroup(column: number, preserveLayout = false) {
+  /**
+   * Mirrors native group creation for the layout-return regressions without changing older fixtures.
+   * @param column - The new group's view column; an existing main group of that column is answered as it is.
+   * @param preserveLayout - Keeps the measured grid as it is.
+   * @param activate - Names the new group as the active one before the group event announces it, as the learner's own new group is (`focusEmptyGroup`, Cycle 0046 rows 714 and 727).
+   * @returns The group of that column.
+   * @example nativeGroup(3).viewColumn // 3
+   */
+  function nativeGroup(
+    column: number,
+    preserveLayout = false,
+    activate = false,
+  ) {
     const existing = groups.find(
       (group) =>
         group !== separateEditorPart?.group && group.viewColumn === column,
@@ -1153,6 +1164,8 @@ export async function workspaceHarness(
           .filter((candidate) => candidate !== separateEditorPart?.group)
           .map(() => ({})),
       }
+    // The editor's group event already names a group the learner opened as the active one.
+    if (activate) activeTabGroup = group
     if (replacesGroupObjectsOnTabChanges) {
       // Cursor names the opened group and gives every surviving group a new object in the same event.
       replaceGroupObjects([], group)
@@ -6493,6 +6506,33 @@ export async function workspaceHarness(
       else changedGroups({ opened: [], closed: [], changed: [previous, group] })
       if (!reported) activeTextEditorChanged(undefined)
       return tab
+    },
+    /**
+     * Opens a new empty group right of the main editor's last group and gives it the keyboard, as the learner's `workbench.action.newGroupRight` from that group does in Cursor 3.23.12 (root's probe of 2026-10-18): the editor names the new group in its own column, which shows no tab (`activeTab` undefined, no tabs), reports no active text editor, and the page focus is in the empty group's container, which this model counts as the page body; the tab and group listeners are told (Cycle 0046 rows 714 and 727).
+     * @param column - The new group's view column, the one after the main editor's last group.
+     * @returns The new empty group.
+     * @example harness.focusEmptyGroup(4) // a new empty group in column 4 is named, and no text editor is active
+     */
+    focusEmptyGroup(column: number) {
+      const lastMainColumn = Math.max(
+        ...groups
+          .filter((group) => group !== separateEditorPart?.group)
+          .map((group) => group.viewColumn),
+      )
+      assert.equal(
+        column,
+        lastMainColumn + 1,
+        'The new group stands right of the main editor’s last group',
+      )
+      leaveChatForMainEditor()
+      keyboardOnBody = true
+      keyboardInView = false
+      innerFocusedPanel = undefined
+      const group = nativeGroup(column, false, true)
+      for (const listener of tabChangeListeners)
+        listener({ opened: [], closed: [], changed: [] })
+      activeTextEditorChanged(undefined)
+      return group
     },
     addOpaqueTab(label: string, column: number) {
       const tab = {
