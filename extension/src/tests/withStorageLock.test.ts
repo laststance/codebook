@@ -932,3 +932,40 @@ test('a link or a file where a private storage folder should be is refused with 
     },
   )
 })
+
+// Value: protects=a learner at whose private storage folder a link stands that leads nowhere (the folder it pointed to was moved or deleted); fails_when=the folder's creation fails with ENOENT through the link and that failure is thrown before the path is looked at, so the learner reads the system's text ("ENOENT: no such file or directory, mkdir …"), which names no step; or the write does not run once the link is removed; why_new=Cycle 0046 /ship review T3: row 311's test had no link that leads nowhere, and an early throw of the creation's failure survived every test; seam=none, the real entries (the link is a junction on Windows, which every user may create)
+test('a link that leads nowhere where a private storage folder should be is refused with the folder’s path, that it is a link and what to do, and after the learner removes the link the write runs', async (context) => {
+  // Arrange: a link at the storage path to a folder that does not exist.
+  const root = await storageDirectory(context)
+  const linkToNowhere = join(root, 'link-to-nowhere')
+  await symlink(join(root, 'moved-away'), linkToNowhere, 'junction')
+  let writes = 0
+  const write = (): Promise<string> =>
+    withStorageLock(linkToNowhere, async () => {
+      writes += 1
+      return 'written'
+    }).catch((error: Error) => error.message)
+
+  // Act
+  const refusal = await write()
+  const writesAtTheRefusal = writes
+  // The sentence is followed to the letter: the link is removed.
+  await unlink(linkToNowhere)
+  const writeAfterwards = await write()
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      writesAtTheRefusal,
+      writeAfterwards,
+      entriesOfTheRoot: await readdir(root),
+    },
+    {
+      refusal: `Learning storage is not a regular directory: ${linkToNowhere}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+      writesAtTheRefusal: 0,
+      writeAfterwards: 'written',
+      entriesOfTheRoot: ['link-to-nowhere'],
+    },
+  )
+})
