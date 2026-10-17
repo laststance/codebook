@@ -731,6 +731,8 @@ export class StudyWorkspace {
   private sourceKeyboardPlacedAtMs?: number
   /** Says that the learner's last move the editor reported, while Codebook moved no focus, made the captured source the active text editor ({@link endSourceKeyboardPlacementAtLearnersMove}): a known place for {@link knowsLearnersPlace} while that source stays the active text editor (row 654). */
   private learnerMovedToSource = false
+  /** Set while an Application preparation gives the keyboard back after its placement ({@link returnPreparationFocusAsCodebook}): Codebook's own focus change, which {@link endSourceKeyboardPlacementAtLearnersMove} takes for no move of the learner's (Cycle 0046 row 692). */
+  private returningPreparationFocus = false
   /** The file and the editor group of the preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. The tab is known by its document and view column, never by its object: Cursor's extension host builds every tab object anew whenever the editor sends its whole tab model, and an object taken before then keeps answering what it answered last. */
   private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
@@ -12184,7 +12186,7 @@ export class StudyWorkspace {
 
   /**
    * Ends the note that Codebook's own placement gave the captured source the keyboard ({@link noteSourceKeyboardPlacement}) once the editor reports another active text editor while no presentation change, Return or arrangement of Codebook's runs and no render shows the captured source, and notes whether that move landed on the captured source; called by the active-text-editor listener of {@link watchKeyboardOutsideEditors} (row 654).
-   * A render's display ({@link renderSelection}, from its show until it settles, while {@link pendingSourceDisplay} names it) is Codebook's own too: a background render's pause take shows the captured source with the keyboard over the file the debugger focused, and an evidence reentry gives it the keyboard in place of a copy it retires ({@link retireMovedSourceCopies}); neither is the learner's move (row 684). The broader `loading` is not used: it also lasts through a render's wait for its predecessor and a history load, where a reported change is the learner's.
+   * A render's display ({@link renderSelection}, from its show until it settles, while {@link pendingSourceDisplay} names it) is Codebook's own too: a background render's pause take shows the captured source with the keyboard over the file the debugger focused, and an evidence reentry gives it the keyboard in place of a copy it retires ({@link retireMovedSourceCopies}); neither is the learner's move (row 684). The broader `loading` is not used: it also lasts through a render's wait for its predecessor and a history load, where a reported change is the learner's. So is an Application preparation's focus return, which gives the keyboard back where the preparation took it ({@link returnPreparationFocusAsCodebook}, row 692).
    * Such a change is the learner's move: a click, a key, or a command such as the editor's numbered group focus, which moves no caret and so leaves no sign for {@link noteLearnersSelection}. A copy of the captured source the learner moved to is then the learner's place ({@link knowsLearnersPlace}): an agent's Return gives it the keyboard back and {@link retireMovedSourceCopies} keeps it. The editor reports nothing when the keyboard goes from a file to the terminal or a view and back, so a move it does not report cannot be told.
    * @param editor - The active text editor the editor reports now, `undefined` for none (the chat, a pane).
    * @example this.endSourceKeyboardPlacementAtLearnersMove(vscode.window.activeTextEditor) // after the learner's numbered group focus onto the captured source: the placement is the learner's now
@@ -12192,13 +12194,14 @@ export class StudyWorkspace {
   private endSourceKeyboardPlacementAtLearnersMove(
     editor: vscode.TextEditor | undefined,
   ): void {
-    // Codebook's own focus changes while it places or returns, or while a render shows the captured source, are no move of the learner's (row 684).
+    // Codebook's own focus changes while it places or returns, while an Application preparation gives the keyboard back (row 692), or while a render shows the captured source (row 684), are no move of the learner's.
     if (
       this.presentationTransition !== undefined ||
       this.presentationOperation !== undefined ||
       this.returningCurrent !== undefined ||
       this.arranging !== undefined ||
       this.placingPresentation ||
+      this.returningPreparationFocus ||
       this.pendingSourceDisplay !== undefined
     )
       return
@@ -13293,13 +13296,17 @@ export class StudyWorkspace {
           forAgentRun,
         }): Promise<void> => {
           if (!stillCurrent()) return
-          await returnFocus(signal, stillCurrent, assertPlaced, {
-            onlyEditorPart,
-            forAgentRun,
-            tookKeyboard:
-              sourceFocusTookKeyboard || lockTookKeyboard || proofKeptKeyboard,
-            ownedByReturn,
-          })
+          await this.returnPreparationFocusAsCodebook(() =>
+            returnFocus(signal, stillCurrent, assertPlaced, {
+              onlyEditorPart,
+              forAgentRun,
+              tookKeyboard:
+                sourceFocusTookKeyboard ||
+                lockTookKeyboard ||
+                proofKeptKeyboard,
+              ownedByReturn,
+            }),
+          )
           assertCurrent()
         }
       }
@@ -13367,6 +13374,24 @@ export class StudyWorkspace {
         assertPlaced,
         preparation,
       })
+  }
+
+  /**
+   * Runs an Application preparation's focus return as Codebook's own focus change, so the active text editor the editor reports meanwhile is no move of the learner's ({@link returningPreparationFocus}, read by {@link endSourceKeyboardPlacementAtLearnersMove}); called by the focus return {@link reserveApplicationGroup} answers, once the preparation is placed.
+   * That return gives the keyboard back where it was before the preparation took it, with `showTextDocument` and `preserveFocus` false for a text editor ({@link capturePresentationFocus}): the captured source a Study selection of Codebook's left the keyboard on stays Codebook's placement (row 642), and the learner's place stays as unknown as it was (rows 613 and 654). Taken for the learner's move, it made a Live entry's reentry keep that copy of the captured source beside the one it shows below the Application, and an agent's next request read the copy as the learner's known place (Cycle 0046 row 692).
+   * @param focusReturn - The preparation's focus return.
+   * @returns Once the focus return settled; the flag is cleared whether it resolved or threw.
+   * @example await this.returnPreparationFocusAsCodebook(() => returnFocus(signal, stillCurrent, assertPlaced, preparation))
+   */
+  private async returnPreparationFocusAsCodebook(
+    focusReturn: () => Promise<void>,
+  ): Promise<void> {
+    this.returningPreparationFocus = true
+    try {
+      await focusReturn()
+    } finally {
+      this.returningPreparationFocus = false
+    }
   }
 
   /**

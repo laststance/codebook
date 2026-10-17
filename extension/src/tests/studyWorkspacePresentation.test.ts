@@ -6291,6 +6291,89 @@ test('an agent’s Return Current keeps the Study’s copy of the captured sourc
   }
 })
 
+for (const situation of [
+  { host: 'VS Code', entry: 'the learner’s Open Study Workspace' },
+  { host: 'Cursor', entry: 'the learner’s Open Study Workspace' },
+  { host: 'Cursor', entry: 'the reader’s own Live entry of the agent’s run' },
+] as const)
+  // Value: protects=the one-tab-per-capture rule of row 627 and the learner's second group when the Live arrangement is entered after an agent's Study selection left the keyboard on the captured source in front of the second learner group (row 613; in Cursor beside its chat part when the chat's Focus Agent was refused) and the agent started a run: the Application's preparation takes the keyboard for its new group and gives it back to that copy, which is Codebook's own focus change, so the copy's keyboard stays Codebook's placement and the entry's reentry below the Application retires the copy and gives the source below the Application the keyboard (row 642); fails_when=the preparation's focus return (returnPreparationFocus, showTextDocument with preserveFocus false) is taken for the learner's move onto the copy (endSourceKeyboardPlacementAtLearnersMove), so the reentry keeps the copy with the keyboard: the run's capture is shown twice, over auth.ts, until Close; why_new=Cycle 0046 row 692 (its scenario found this; the fixer's further finding); seam=useNativeLayout with two learner groups (leaveEmptyGroup, focusMutableDraft), addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, the chat's focusTab and failNextCommand on Cursor's Focus Agent, focusChatInSecondarySideBar for VS Code's chat view, the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), stopOwnTimer and the reader's open and refresh (the learner's Open Study Workspace, the reader's timer), harness.groups and the active text editor
+  test(`${situation.entry} after an agent’s Study selection left the keyboard on the captured source and a run started shows the run’s source once, below the Application, and gives the second learner group its front tab back (${situation.host})`, async () => {
+    // Arrange: the learner's groups G1 [actions.ts] and G2 [auth.ts]; the agent selected the Study from its chat, which left the keyboard on the captured source in front of G2, and started a run the reader has not entered yet.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat =
+      situation.host === 'Cursor' ? harness.addSeparateEditorPart() : undefined
+    try {
+      harness.leaveEmptyGroup(1)
+      harness.leaveEmptyGroup(2)
+      harness.focusMutableDraft('auth.ts', 2)
+      harness.focusMutableDraft('actions.ts', 1)
+      if (chat) {
+        harness.leavePaneFocusUnreportedBesideChat()
+        chat.focusTab()
+        harness.failNextCommand('composer.focusComposer')
+      } else harness.focusChatInSecondarySideBar()
+      const selection = harness.reader.presentationState()
+      await harness.service.selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      const keyboardAfterSelect =
+        harness.editor.window.activeTextEditor?.document.uri.path
+          .split('/')
+          .at(-1)
+      readerSeams(harness).stopOwnTimer()
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await harness.service.record(receipt).preparation
+
+      // Act
+      if (situation.entry === 'the learner’s Open Study Workspace')
+        await harness.reader.open()
+      else await readerSeams(harness).refresh()
+
+      // Assert: the Application above the run's captured source, which is shown once and has the keyboard; the second learner group shows auth.ts in front.
+      assert.deepEqual(
+        {
+          keyboardAfterSelect,
+          groups: harness.groups.map((group) => ({
+            column: group.viewColumn,
+            tabs: group.tabs.map((tab) =>
+              'uri' in tab.input
+                ? `${tab === group.activeTab ? '*' : ''}${tab.input.uri.path.split('/').at(-1)}`
+                : `${tab === group.activeTab ? '*' : ''}${'viewType' in tab.input ? tab.input.viewType : 'chat'}`,
+            ),
+          })),
+          activeTextEditor: {
+            name: harness.editor.window.activeTextEditor?.document.uri.path
+              .split('/')
+              .at(-1),
+            column: harness.editor.window.activeTextEditor?.viewColumn,
+          },
+        },
+        {
+          keyboardAfterSelect: 'Captured-overview.mts',
+          groups: [
+            { column: 1, tabs: ['*codebook.scopedBrowser'] },
+            { column: 2, tabs: ['actions.ts', '*Captured-theme.ts'] },
+            { column: 3, tabs: ['*auth.ts'] },
+            ...(chat ? [{ column: 4, tabs: ['*chat'] }] : []),
+          ],
+          activeTextEditor: { name: 'Captured-theme.ts', column: 2 },
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the chat input's keyboard in VS Code when an agent starts a run right after its own Study selection, without Return Current: the reader's next refresh (every 250 ms, well before the run's Application viewport) enters the Live arrangement as the agent's run, so no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=that entry prepares the Application as the learner's and its focus return shows the captured source, the active text editor, with the keyboard, and nothing tells the learner; why_new=Cycle 0046 finding on codebook_start (the reader's own Live entry of a run); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), the reader's refresh as its timer runs it, textDocumentShows and the information messages
 test('an agent’s run started right after its own Study selection, while the chat view has the keyboard, enters Live with no file given the keyboard and says once that the Application’s group has it', async () => {
   // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again.
