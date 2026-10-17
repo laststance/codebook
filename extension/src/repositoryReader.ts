@@ -512,6 +512,8 @@ export class RepositoryReader {
         this.loading = false
         // A refused agent's read leaves no copy of its own behind (row 696).
         this.retireCopyOfRefusedOpen(generation)
+        // A refused Return leaves nothing that a later selection of the Wiki would complete (AD1).
+        if (this.deferredReturn) this.expireDeferredReturn()
         this.publish()
       }
       throw error
@@ -1700,23 +1702,29 @@ export class RepositoryReader {
       ])
     }
     const placeBefore = focusPlace()
-    const expire = (): void => {
-      this.sourceDeferred = false
-      this.forgetDeferredReturn()
-    }
     // Only a change of the focus that lands on the Wiki keeps the Return.
     const observe = (): void => {
-      if (focusPlace() !== placeBefore && !this.hasNativeWikiFocus()) expire()
+      if (focusPlace() !== placeBefore && !this.hasNativeWikiFocus())
+        this.expireDeferredReturn()
     }
     this.deferredReturnWatch = [
       vscode.window.tabGroups.onDidChangeTabs((event) => {
         // The editor's own activation of a closed tab's neighbour is no choice of the learner's.
-        if (event.closed.length) expire()
+        if (event.closed.length) this.expireDeferredReturn()
         else observe()
       }),
       vscode.window.tabGroups.onDidChangeTabGroups(observe),
       vscode.window.onDidChangeActiveTextEditor(observe),
     ]
+  }
+
+  /**
+   * Ends a command's deferred Return with the preview of its cited source ({@link sourceDeferred}), so no later selection of the Wiki completes it; called when {@link watchDeferredReturn} expires it and by {@link open} when the Return's open is refused (Cycle 0046 AD1).
+   * @example this.expireDeferredReturn() // the palette's Return will not restore the article layout any more
+   */
+  private expireDeferredReturn(): void {
+    this.sourceDeferred = false
+    this.forgetDeferredReturn()
   }
 
   /**

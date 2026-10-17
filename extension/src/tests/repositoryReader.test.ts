@@ -2399,6 +2399,70 @@ test('a palette Return to Wiki survives a tab-group event that leaves the focus 
   )
 })
 
+for (const refusal of ['unreadable source', 'learner click'] as const)
+  // Value: protects=the learner's layout after a palette Return to Wiki whose open was refused (the cited source could not be read, or the learner clicked into notes.ts while the Return loaded): a refused open leaves no deferred Return behind, so a later activation of the Wiki restores no article layout and shows no cited source; fails_when=the catch of RepositoryReader.open keeps the deferred Return and its cited-source preview of the refused open and no watch ever ends them, so the later activation restores the layout and shows the source, R6's symptom on the error path; why_new=Cycle 0046 AD1 (/ship's adversarial review of 3acd3daf..66434afd, probe "PROBE TR1-during-load"); seam=readerHarness with focusChat, requireSourceFocus, open with preserveNativeInput, the source service's inspect made to fail once (unreadable source) or holdRenderer with focusUnrelatedDraft and switchTabGroup(true) (the learner's click while the Wiki renders the Return's article), focusWiki, arrangements and shown; no_claim=the wording of the refusal, which the reader's own error reports
+  test(`a palette Return to Wiki refused for ${refusal === 'unreadable source' ? 'an unreadable cited source' : 'the learner’s click into a file during its load'} leaves no Return behind, so a later Wiki activation restores no article layout`, async (context) => {
+    // Arrange: the Wiki is open and the chat has the keyboard.
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.focusChat()
+    harness.requireSourceFocus()
+    const inspect = harness.store.sources.inspect.bind(harness.store.sources)
+    let failsNextInspect = refusal === 'unreadable source'
+    context.mock.method(
+      harness.store.sources,
+      'inspect',
+      async (...args: Parameters<typeof inspect>) => {
+        if (failsNextInspect) {
+          failsNextInspect = false
+          throw new Error('The cited source could not be read.')
+        }
+        return inspect(...args)
+      },
+    )
+    const renderer =
+      refusal === 'learner click' ? harness.holdRenderer(true) : undefined
+    const arrangementsBefore = harness.arrangements(),
+      shownBefore = harness.shown.length
+
+    // Act: the palette's Return to Wiki is refused; later the Wiki is activated.
+    const opening = harness.reader
+      .open(
+        {
+          ...harness.selection,
+          nodeId: 'order',
+          location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+        },
+        undefined,
+        true,
+        true,
+      )
+      .then(
+        () => 'answered',
+        () => 'refused',
+      )
+    if (renderer) {
+      await renderer.started
+      harness.focusUnrelatedDraft('notes.ts')
+      harness.switchTabGroup(true)
+      renderer.release()
+    }
+    const outcome = await opening
+    harness.focusWiki()
+    await harness.deliverTabEvents()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // Assert: the Return was refused, and the later activation restored no layout and showed no cited source.
+    assert.deepEqual(
+      {
+        outcome,
+        arrangements: harness.arrangements() - arrangementsBefore,
+        shown: harness.shown.length - shownBefore,
+      },
+      { outcome: 'refused', arrangements: 0, shown: 0 },
+    )
+  })
+
 test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
   // Arrange
   const harness = await readerHarness(context)
