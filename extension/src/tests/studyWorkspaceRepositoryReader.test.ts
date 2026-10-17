@@ -557,3 +557,111 @@ test('the fake editor leaves the keyboard on the page body when a pane is create
     await harness.close()
   }
 })
+
+/**
+ * Opens the first citation of the two-citation Wiki as an agent's cold codebook_open_book beside Cursor's chat part, from the precondition of row 696's native rounds: the chat input has the keyboard (Focus Agent) while Cursor names the learner's main group 2; the cold layout borrows the first group and gives the chat its keyboard back with Focus Agent, after which Cursor names group 1 while the chat has the keyboard (C60 c60-cu-7d2 0-before.json).
+ * @returns The harness, its chat part, the Wiki reader, the first citation's selection and the book store to dispose.
+ * @example const { harness, wiki, selection } = await agentFirstCitationBesideCursorChat()
+ */
+async function agentFirstCitationBesideCursorChat() {
+  const { harness, chat } = await cursorBesideChatPart()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.focusMutableDraft('auth.ts', 2)
+  await harness.editor.commands.executeCommand('composer.focusComposer')
+  const { selection, books } = await publishTwoCitationWiki(harness)
+  const wiki = harness.createRepositoryWikiReader()
+  await wiki.openFromAgent({
+    ...selection,
+    instanceId: harness.service.instanceId,
+  })
+  return { harness, chat, wiki, selection, books }
+}
+
+// Value: protects=an agent's second codebook_open_book of the same article's other citation beside Cursor's chat part, after its first cold open borrowed the first group and gave the chat its keyboard back: the reader's own copy shown without the keyboard is answered by Cursor's rebuild, which moves its name from the stale group 1 to the chat part's group, the part that already had the keyboard; that is no learner's move, so the open completes as row 652 designs, with one copy in the first group, and the chat keeps its keyboard; fails_when=RepositoryReader's focus receipt takes that group name change for the learner's, refuses the open with "Native focus changed during repository navigation; the newer learner focus was preserved." (RUNTIME_FAILED to the agent) and leaves the first citation's copy beside the second (C60 c60-cu-7d, c60-cu-7d2: two codebook-repository-source tabs in group 1 until Close); why_new=Cycle 0046 row 696; seam=workspaceHarness's Cursor model (cursorBesideChatPart; a rebuild for a tab opened in the main editor names the chat part's group while the chat part is the active one with its input focused), Focus Agent, createRepositoryWikiReader's openFromAgent, textDocumentShows and the first group's tabs
+test("an agent's second citation open beside Cursor's chat part, after its first cold open gave the chat its keyboard back, shows its copy in place of the first and leaves the chat its keyboard", async () => {
+  // Arrange: the agent's first cold open showed module.ts in the first group, and the chat has its keyboard again while Cursor names group 1.
+  const { harness, chat, wiki, selection, books } =
+    await agentFirstCitationBesideCursorChat()
+  const namedBefore = harness.editor.window.tabGroups.activeTabGroup.viewColumn
+  try {
+    // Act: the agent opens the article's second citation, order.ts.
+    const refusal = await wiki
+      .openFromAgent({
+        ...selection,
+        anchorIndex: 1,
+        instanceId: harness.service.instanceId,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the open answered; order.ts is the first group's one copy, shown without the keyboard, and the chat has the keyboard.
+    assert.deepEqual(
+      {
+        namedBefore,
+        refusal,
+        shows: harness.textDocumentShows(),
+        firstGroup: harness.groups[0]!.tabs.map((tab) => tab.label),
+        firstGroupFront: harness.groups[0]!.activeTab?.label,
+        chatHasKeyboard: chat.focused(),
+      },
+      {
+        namedBefore: 1,
+        refusal: undefined,
+        shows: [
+          { name: 'module.ts', viewColumn: 1, preserveFocus: true },
+          { name: 'order.ts', viewColumn: 1, preserveFocus: true },
+        ],
+        firstGroup: ['article-source.ts', 'login-form.tsx', 'order.ts'],
+        firstGroupFront: 'order.ts',
+        chatHasKeyboard: true,
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's first group when an agent's second citation open is refused for the learner's own newer focus (the learner clicked into notes.ts, another file of group 2, while the reader showed the copy): the refused open leaves no copy of its own behind, so the first citation's copy stays the group's one copy and notes.ts keeps the keyboard; fails_when=the refusal leaves the copy its show put in front of the first group, so two codebook-repository-source tabs stand there until Close Repository Wiki (row 683 keeps the reader's record; the copy must not stay either); why_new=Cycle 0046 row 696; seam=workspaceHarness's Cursor model, Focus Agent, changeAfterNextSourceDisplay (the learner's click into notes.ts right after the show), createRepositoryWikiReader's openFromAgent and the first group's tabs
+test("an agent's citation open refused for the learner's click right after its copy was shown closes that copy again and leaves the copy before it", async () => {
+  // Arrange: as above; the learner will click into notes.ts in group 2 right after the reader shows the second copy.
+  const { harness, wiki, selection, books } =
+    await agentFirstCitationBesideCursorChat()
+  harness.changeAfterNextSourceDisplay(() => {
+    harness.focusMutableDraft('notes.ts', 2)
+  })
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({
+        ...selection,
+        anchorIndex: 1,
+        instanceId: harness.service.instanceId,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: refused as the learner's newer focus; module.ts is the first group's one copy again, and notes.ts has the keyboard.
+    assert.deepEqual(
+      {
+        refusal,
+        firstGroup: harness.groups[0]!.tabs.map((tab) => tab.label),
+        keyboard: harness.editor.window.activeTextEditor?.document.uri.path
+          .split('/')
+          .at(-1),
+      },
+      {
+        refusal: NAVIGATION_FOCUS_REFUSAL,
+        firstGroup: ['article-source.ts', 'login-form.tsx', 'module.ts'],
+        keyboard: 'notes.ts',
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})

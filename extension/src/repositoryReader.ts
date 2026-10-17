@@ -34,6 +34,7 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { repositoryHtml } from './ui/repositoryHtml'
 import { adoptLateNameOfAcquiredGroup } from './utils/adoptLateNameOfAcquiredGroup'
+import { adoptOwnQuietCopyShow } from './utils/adoptOwnQuietCopyShow'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
@@ -141,6 +142,13 @@ export class RepositoryReader {
   private sourceUri?: vscode.Uri
   /** The URIs of the cited-source copies this reader showed ({@link openSource}) that are still open: the copies its Wiki's close and its next citation retire, and no other (Cycle 0046 row 662). Each citation has a URI of its own ({@link openSourceDocument}); a URI whose last copy closed is forgotten ({@link forgetClosedCitedSources}, row 677). */
   private readonly shownCitedSources = new Set<string>()
+  /** The citation's copy an agent's read of the open Wiki shows without the keyboard ({@link showQuietCopy}), for the open that shows it, until that open settles: the native focus changes its show explains ({@link isOwnQuietCopyShowPlace}), and whether the show opened a tab that a refused open must close again ({@link retireCopyOfRefusedOpen}); Cycle 0046 row 696. */
+  private quietCopyShow?: {
+    uri: string
+    generation: number
+    opensTab: boolean
+    shown: boolean
+  }
   /** A primary file keeps its native input until the learner selects the Wiki; {@link revealDeferredSource} then pays this preview. */
   private sourceDeferred = false
   /** A command outside Study defers its original layout until the learner selects Wiki; {@link revealDeferredSource} completes that Return. */
@@ -489,6 +497,8 @@ export class RepositoryReader {
       if (generation === this.generation && !this.disposed) {
         this.error = String(error)
         this.loading = false
+        // A refused agent's read leaves no copy of its own behind (row 696).
+        this.retireCopyOfRefusedOpen(generation)
         this.publish()
       }
       throw error
@@ -496,6 +506,7 @@ export class RepositoryReader {
       // A superseded caller cannot clear a newer opening's focus guard.
       if (this.openingGeneration === generation)
         this.openingGeneration = undefined
+      this.endQuietCopyShow(generation)
       initialFocus.dispose()
       coldFocus?.dispose()
       sourceFocus?.dispose()
@@ -1412,14 +1423,92 @@ export class RepositoryReader {
     assertBackgroundInput()
     this.sourceDeferred = this.shouldDeferSourcePreview(initiatingEditor)
     if (!this.sourceDeferred)
-      await this.openSource(
+      await this.showQuietCopy(
         selection,
         book,
         generation,
-        true,
+        prepared.uri,
         assertBackgroundInput,
       )
     return { uri: prepared.uri, assertFocused: assertBackgroundInput }
+  }
+
+  /**
+   * Shows a citation's copy without the keyboard for an agent's read of the open Wiki, for {@link prepareBackgroundSource}, and notes it for the rest of that open ({@link quietCopyShow}): the native focus changes its own show causes are no learner's ({@link isOwnQuietCopyShowPlace}), and a refused open closes the tab its show opened ({@link retireCopyOfRefusedOpen}); Cycle 0046 row 696.
+   * @param selection - The citation to show.
+   * @param book - Its book.
+   * @param generation - The open's generation.
+   * @param uri - The copy's URI ({@link openSourceDocument}).
+   * @param assertBackgroundInput - The open's check of the learner's input before the show.
+   * @example await this.showQuietCopy(selection, book, generation, prepared.uri, assertBackgroundInput) // order.ts in front of the first group, the chat keeps the keyboard
+   */
+  private async showQuietCopy(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+    generation: number,
+    uri: vscode.Uri,
+    assertBackgroundInput: () => void,
+  ): Promise<void> {
+    const show = {
+      uri: uri.toString(),
+      generation,
+      opensTab: !this.isOpenInAnyGroup(uri.toString()),
+      shown: false,
+    }
+    this.quietCopyShow = show
+    await this.openSource(selection, book, generation, true, () => {
+      assertBackgroundInput()
+      // The show is about to put the copy on screen: from here on a refused open closes it again.
+      show.shown = true
+    })
+  }
+
+  /**
+   * Says whether the editor names a group that the reader's own quiet copy show explains while no text editor is active ({@link showQuietCopy}), for {@link adoptOwnQuietCopyShow} in {@link retainNativeFocus}: the first group with the copy in front, or, beside Cursor's chat part, the group of its chat, whose tab has no input that is a text editor or a webview (Cursor gives its composer tab none, 3.23.12 `workbench.desktop.main.js` 17269:27859), which Cursor's rebuild names after Focus Agent (C60 c60-cu-7d2, row 696). The keyboard was already in that chat: no text editor was active before the show, or the receipt would see its loss.
+   * @returns `true` during such a show for those groups; `false` without one, while a text editor is active, and for any other group.
+   * @example this.isOwnQuietCopyShowPlace() // => true right after Cursor's rebuild named its chat part's group for the order.ts copy
+   */
+  private isOwnQuietCopyShowPlace(): boolean {
+    const show = this.quietCopyShow
+    if (!show || vscode.window.activeTextEditor) return false
+    const group = vscode.window.tabGroups.activeTabGroup,
+      input = group.activeTab?.input
+    // The copy came to the front of the first group, which the editor names.
+    if (group.viewColumn === vscode.ViewColumn.One)
+      return (
+        input instanceof vscode.TabInputText &&
+        input.uri.toString() === show.uri
+      )
+    return (
+      group.activeTab !== undefined &&
+      !(input instanceof vscode.TabInputText) &&
+      !(input instanceof vscode.TabInputWebview)
+    )
+  }
+
+  /**
+   * Closes the copy a refused agent's read showed, when its show opened that tab, so the refused open leaves no copy behind (Cycle 0046 row 696); called by {@link open} when an open of its own generation fails. The rules of {@link closeCitedSourceTabs} hold: a pinned copy, a copy the learner reads in ({@link isReadInByLearner}) and a group's only tab stay. A copy that was open before the show stays too, and so does the reader's record of the copy, which forgets its URI once its last tab closed ({@link forgetClosedCitedSources}).
+   * @param generation - The refused open's generation.
+   * @example this.retireCopyOfRefusedOpen(generation) // the order.ts copy the refused read showed leaves the first group
+   */
+  private retireCopyOfRefusedOpen(generation: number): void {
+    const show = this.quietCopyShow
+    if (show?.generation !== generation || !show.shown || !show.opensTab) return
+    const keyboard = vscode.window.activeTextEditor
+    this.closeCitedSourceTabs(
+      (uri, group) =>
+        uri !== show.uri || this.isReadInByLearner(uri, group, keyboard),
+    )
+  }
+
+  /**
+   * Ends the note of an open's quiet copy show once that open settled ({@link quietCopyShow}); called by {@link open}'s end, which leaves a newer open's note as it is.
+   * @param generation - The settled open's generation.
+   * @example this.endQuietCopyShow(generation)
+   */
+  private endQuietCopyShow(generation: number): void {
+    if (this.quietCopyShow?.generation === generation)
+      this.quietCopyShow = undefined
   }
 
   /** Keeps a Return layout or focused primary file untouched during {@link prepareBackgroundSource}. @example this.shouldDeferSourcePreview(vscode.window.activeTextEditor) */
@@ -1744,6 +1833,12 @@ export class RepositoryReader {
         initial,
         current,
         wikiSelectedBesideTextEditor(),
+      )
+      // The reader's own quiet copy show for an agent's read changes only the named group: the copy's or, in Cursor, its chat part's (row 696).
+      initial = adoptOwnQuietCopyShow(
+        initial,
+        current,
+        this.isOwnQuietCopyShowPlace(),
       )
       // The editor naming the acquired target's own group late, once, after the receipt took its stale name of another group (Cursor names its chat part's group until its tab model is rebuilt), is no newer input either (row 660).
       ;({ retained: initial, staleNameAccepted } = adoptLateNameOfAcquiredGroup(

@@ -972,10 +972,25 @@ export async function workspaceHarness(
           closed,
           changed: [...replacements.values()],
         },
-        keepsStaleName && staleNamedGroup
-          ? replaced(staleNamedGroup)
-          : undefined,
+        keepsStaleName ? nameAfterNewTabRebuild(replaced) : undefined,
       )
+  }
+  /**
+   * Names the group the rebuild a tab opened in the main editor brings names in Cursor's model, for `replaceGroupObjects`: the group Cursor's editor groups service holds active (`workbench.desktop.main.js` 17269:31013), which a display does not change. While Cursor's chat part is the active part with its input focused, that is the chat part's group, also when the extension host still named a main group: the reader's own copy shown without the keyboard in the first group moved the name from that stale group 1 to the chat part's group 3 (C60 c60-cu-7d2, the show at 149 ms and the groups event at 153 ms; Cycle 0046 row 696). Otherwise the stale name stays, the chat's group among them (row 674).
+   * @param replaced - The new object of a group the rebuild kept.
+   * @returns The named group's new object; `undefined` when no group is named stale and the chat part is not the active one.
+   * @example nameAfterNewTabRebuild(replaced) // => the chat part's group after Focus Agent
+   */
+  function nameAfterNewTabRebuild(
+    replaced: (group: (typeof groups)[number]) => (typeof groups)[number],
+  ): (typeof groups)[number] | undefined {
+    if (
+      separateEditorPart?.lastActive &&
+      separateEditorPart.focused &&
+      !separateEditorPart.floatingVsCodeChat
+    )
+      return separateEditorPart.group
+    return staleNamedGroup && replaced(staleNamedGroup)
   }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {

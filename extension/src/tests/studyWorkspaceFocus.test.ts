@@ -3217,6 +3217,45 @@ test("the fake editor names Cursor's groups beside its chat part as the native p
   }
 })
 
+// Value: protects=reader tests beside Cursor's chat part meeting the group name Cursor gives after a tab opened in the main editor without the keyboard while Focus Agent left its chat input the keyboard: the rebuild names the group Cursor's editor groups service holds active, the chat part's, also when the extension host named a main group (C60 c60-cu-7d2: the reader's copy shown at 149 ms with preserveFocus moved the name from group 1 to the chat part's group 3 at 153 ms); a tab opened with the keyboard keeps the stale name as row 674 has it; fails_when=the fake keeps naming the main group after that rebuild, so a reader test passes where Cursor refused the agent's second citation open (row 696); why_new=Cycle 0046 row 696; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, Focus Agent and showTextDocument with preserveFocus
+test("the fake editor names Cursor's chat part's group after a tab opened without the keyboard in the main editor while Focus Agent left the chat input the keyboard", async () => {
+  // Arrange: G1 shows login-form.tsx and G2 the learner's notes.md, which had the keyboard last; then Focus Agent gave the chat input the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const notes = harness.focusMutableDraft('notes.md', 2)
+  harness.leavePaneFocusUnreportedBesideChat()
+  await harness.editor.commands.executeCommand('composer.focusComposer')
+  const tabGroups = harness.editor.window.tabGroups
+  const namedBefore = tabGroups.activeTabGroup.viewColumn
+  try {
+    // Act: a tab of notes.md opens in front of the first group without the keyboard.
+    await harness.editor.window.showTextDocument(notes.document, {
+      viewColumn: 1,
+      preserveFocus: true,
+    })
+
+    // Assert
+    assert.deepEqual(
+      {
+        namedBefore,
+        namedAfter: tabGroups.activeTabGroup.viewColumn,
+        chatHasKeyboard: chat.focused(),
+        activeTextEditor: harness.editor.window.activeTextEditor,
+      },
+      {
+        namedBefore: 2,
+        namedAfter: 3,
+        chatHasKeyboard: true,
+        activeTextEditor: undefined,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests that hold a tab group object across a whole tab-model event meeting each editor as it is: VS Code 1.140.0 keeps the API object of every group that is still there and updates it (`extensionHostProcess.js` 173:41428 `let u=l.get(c.groupId);if(u)return u.acceptModelUpdate(c)`, the object cached at 173:38735), while Cursor 3.23.12 makes a new object for every group (131:33431 `const d=new rIe(c,…)`); fails_when=the VS Code model replaces its group objects at such an event, so a test passes on identities VS Code keeps, or the Cursor model keeps them; why_new=Cycle 0046 row 669 (evidence: VS Code keeps the objects, so the row's premise does not hold; this test holds the model to it); seam=the workspace harness's group lock command, which both editors answer with a whole new tab model, in the model that keeps group objects and in the one that replaces them
 for (const host of ['VS Code', 'Cursor'] as const)
   test(`the fake editor of ${host} ${host === 'VS Code' ? 'keeps' : 'replaces'} every tab group object at a whole tab-model event, as ${host} does`, async () => {
