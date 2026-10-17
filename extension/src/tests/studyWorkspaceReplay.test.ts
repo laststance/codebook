@@ -5175,6 +5175,87 @@ test('in Cursor, an agent’s Return Current from the saved replay its cold sele
   }
 })
 
+// Value: protects=the chat's keyboard at an agent's Return Current from a replay beside Cursor's Agent chat part when the learner's file is in front of the first group, the Application pane behind it: the learner opened login-form.tsx there and clicked into the chat input, so the editor names that file's group with no active text editor; the Return shows the live captured source quietly in place of the replay's, which closes, while the chat input has the keyboard, so Cursor names its chat part's group (rows 696 and 702); the measurement then borrows the first group with workbench.action.focusFirstEditorGroup, after which Cursor reports login-form.tsx as the active text editor and keeps naming the chat part's group (row 673); the Return gives the chat its keyboard back with Focus Agent and tells the arrangement's sentence once, as after row 711's borrow through the captured source; fails_when=the give-back reads the chat part's group the editor names as a move of the keyboard away from the first group the measurement left it in (leftByMeasurement asked for the first column or the column named at the capture), so no Focus Agent runs and the learner's login-form.tsx keeps the keyboard the measurement gave it, untold; why_new=Cycle 0046 row 723; seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus (the click into the chat input), leavePaneFocusUnreportedBesideChat, focusMutableDraft, the service's playback and returnToCurrent, the command log, textDocumentShows and the information messages
+test('in Cursor, an agent’s Return Current from a replay while the learner’s file is in front of the first group gives the chat its keyboard back after borrowing the first group, while Cursor names its chat part’s group', async () => {
+  // Arrange: an agent's replay open arranged the Study workspace; the learner opened login-form.tsx in front of the first group, over the Application pane, and clicked into the chat input.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focus()
+    const namedBefore = `${harness.editor.window.tabGroups.activeTabGroup.viewColumn}:${harness.editor.window.tabGroups.activeTabGroup.activeTab?.label}`,
+      state = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      showsBefore = harness.textDocumentShows().length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    const returned = await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.reader.contentRevision,
+    })
+    await harness.controller.settle()
+
+    // Assert: the measurement borrowed the first group while the chat part's group stayed the named one, Focus Agent ran last, and the arrangement's sentence was told once.
+    assert.deepEqual(
+      {
+        namedBefore,
+        layoutConfirmed: returned.layoutConfirmed,
+        contentTab: returned.reader.contentTab,
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus)
+          .map((shown) => `${shown.name}@${shown.viewColumn}`),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        namedAfter:
+          harness.editor.window.tabGroups.activeTabGroup.activeTab?.label,
+        chatHasKeyboard: chat.focused(),
+        arrangementSentences: harness.informationMessages
+          .slice(messagesBefore)
+          .filter(
+            (message) =>
+              message.message === CHAT_KEYBOARD_RETURNED_MESSAGES.arrangement,
+          ).length,
+      },
+      {
+        namedBefore: '1:login-form.tsx',
+        layoutConfirmed: true,
+        contentTab: 'live',
+        shownWithKeyboard: [],
+        keyboardCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'composer.focusComposer',
+        ],
+        namedAfter: 'New Agent',
+        chatHasKeyboard: true,
+        arrangementSentences: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of where the keyboard is after an agent's replay open (codebook_playback open) beside Cursor's Agent chat part while the chat tab has the keyboard: the preparation's measurement borrows the first group, Focus Agent gives the chat its keyboard back, and the arrangement's sentence is told the first time in an editor session only, so the next replay open in that session says nothing (C59 c59-cu-656a told nothing because round c59-cu-650 had told the sentence in the same extension host, after its reload: the notification shows in that round's recording at 7 to 8.5 s, and both rounds' observers share the host's time origin 1792204656982); fails_when=the replay open gives the chat its keyboard back without the sentence the first time, or tells it again each time; why_new=Cycle 0046 row 678 (evidence: not a defect; this test holds the rule the native rounds followed); seam=recordedReaderHarness, useNativeLayout, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, the service's playback and the reader's close, the command log and the information messages
 test('in Cursor, an agent’s replay open from the chat tab gives the chat its keyboard back and says so the first time in an editor session only', async () => {
   // Arrange: Cursor's Agent chat as a tab of its own editor part has the keyboard; the learner's login-form.tsx is in front of the first group, and the reader is closed.

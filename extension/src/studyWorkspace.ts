@@ -3039,11 +3039,12 @@ export class StudyWorkspace {
             ? active.activeTab.input.uri.toString()
             : undefined,
         panes = this.studyPanePositions()
-      // The focus is given back only from where the arrangement or its measurement left it, and never to a group a Study pane uses or one that is gone. The arrangement leaves it on a Codebook pane, the captured source or the learner's file it focused. The measurement leaves it in the first group, which the editor names then, or still names the group it named before: Cursor reports no focus of a pane beside the chat.
+      // The focus is given back only from where the arrangement or its measurement left it, and never to a group a Study pane uses or one that is gone. The arrangement leaves it on a Codebook pane, the captured source or the learner's file it focused. The measurement leaves it in the first group, which the editor names then, or still names the group it named before: Cursor reports no focus of a pane beside the chat. Its chat part's group, named since a tab closed during the arrangement, stays named over the first group's text editor the borrow focused (row 723).
       const leftByMeasurement =
         this.mainEditorFocusBorrows !== borrowsBefore &&
         (active.viewColumn === vscode.ViewColumn.One ||
-          active.viewColumn === target?.viewColumn)
+          active.viewColumn === target?.viewColumn ||
+          this.isFirstGroupEditorUnderAnotherPartsName(active))
       if (
         !vscode.window.state.focused ||
         (!heldByAnotherPart &&
@@ -3089,13 +3090,40 @@ export class StudyWorkspace {
   private isCapturedSourceUnderAnotherPartsName(
     active: vscode.TabGroup,
   ): boolean {
-    const input = active.activeTab?.input
     return (
       this.sourceUri !== undefined &&
-      !(input instanceof vscode.TabInputText) &&
-      !(input instanceof vscode.TabInputWebview) &&
+      this.namesAnotherEditorPartsTab(active) &&
       vscode.window.activeTextEditor?.document.uri.toString() ===
         this.sourceUri.toString()
+    )
+  }
+
+  /**
+   * Says whether the first group's text editor a layout read's borrow focused has the keyboard while the editor names another editor part's group: after `workbench.action.focusFirstEditorGroup` beside Cursor 3.23.12's chat part, the first group's text editor is reported as the active text editor and the group named before stays named until a group event (row 673), and that is the chat part's group once a tab closed while the chat input had the keyboard (row 702's probe, step 6), as the replay's captured source closes at an agent's Return Current (row 711's order); asked by the function {@link retainForeignTabFocus} answers for its measurement's borrow, so the chat gets its keyboard back as after row 711's borrow through the captured source (Cycle 0046 row 723).
+   * @param active - The group the editor names as active now.
+   * @returns `true` while the named group's front tab is neither a text tab nor a webview (the chat's tab) and the active text editor is the one in front of the first group ({@link isActiveTextEditorInFrontOfGroup}); `false` otherwise.
+   * @example this.isFirstGroupEditorUnderAnotherPartsName(vscode.window.tabGroups.activeTabGroup) // => true after Return Current's measurement focused the learner's login-form.tsx in front of the first group beside Cursor's chat part, once the replay's captured source closed under the chat's name
+   */
+  private isFirstGroupEditorUnderAnotherPartsName(
+    active: vscode.TabGroup,
+  ): boolean {
+    return (
+      this.namesAnotherEditorPartsTab(active) &&
+      this.isActiveTextEditorInFrontOfGroup(vscode.ViewColumn.One)
+    )
+  }
+
+  /**
+   * Says whether the group the editor names shows another editor part's tab in front, Cursor's chat (its composer tab has no input, 3.23.12 `workbench.desktop.main.js` 17269:27859), rather than a text tab or a webview of the main editor; asked by {@link isCapturedSourceUnderAnotherPartsName} (row 711) and {@link isFirstGroupEditorUnderAnotherPartsName} (row 723).
+   * @param active - The group the editor names as active now.
+   * @returns `true` while that group's front tab is neither a text tab nor a webview; `false` otherwise.
+   * @example this.namesAnotherEditorPartsTab(vscode.window.tabGroups.activeTabGroup) // => true while Cursor names its chat part's group
+   */
+  private namesAnotherEditorPartsTab(active: vscode.TabGroup): boolean {
+    const input = active.activeTab?.input
+    return (
+      !(input instanceof vscode.TabInputText) &&
+      !(input instanceof vscode.TabInputWebview)
     )
   }
 
