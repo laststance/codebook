@@ -788,6 +788,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/currentStorageOwner.test.ts',
     'extension/src/tests/dropSecondNameOfMovedFile.test.ts',
     'extension/src/tests/hashFileSha256.test.ts',
+    'extension/src/tests/isFolderOfItsOwn.test.ts',
     'extension/src/tests/isFromEarlierBoot.test.ts',
     'extension/src/tests/isProcessGone.test.ts',
     'extension/src/tests/isRecordedOwnerGone.test.ts',
@@ -893,7 +894,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
@@ -1325,7 +1326,10 @@ const WINDOWS_JOB_TEST_KINDS = [
   },
   { kind: 'the process listing', tests: ['listProcesses'] },
   { kind: 'the removal walk', tests: ['removeWithoutFollowing'] },
-  { kind: 'the folder listing', tests: ['listFolderTreeWithoutFollowing'] },
+  {
+    kind: 'the folder listing',
+    tests: ['listFolderTreeWithoutFollowing', 'isFolderOfItsOwn'],
+  },
 ]
 
 // Value: protects=a maintainer who reads in the guide, or at the head of the workflow, what the Windows job tests, how it runs and which files its filter leaves out; fails_when=the job gains a test file of a kind neither document names, a kind they name has no test file in the job any more, the two documents name different kinds, or the guide states another way of running or other left-out files than the workflow has; why_new=Cycle 0046 row 237: the guide named three kinds and one left-out file while the job ran twenty-four files of ten kinds and left out two; seam=none
