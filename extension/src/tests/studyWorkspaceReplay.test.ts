@@ -5089,6 +5089,73 @@ test('in Cursor, an agent’s Return Current right after its cold Study selectio
   }
 })
 
+// Value: protects=the learner's knowledge of where the keyboard is after an agent's replay open (codebook_playback open) beside Cursor's Agent chat part while the chat tab has the keyboard: the preparation's measurement borrows the first group, Focus Agent gives the chat its keyboard back, and the arrangement's sentence is told the first time in an editor session only, so the next replay open in that session says nothing (C59 c59-cu-656a told nothing because round c59-cu-650 had told the sentence in the same extension host, after its reload: the notification shows in that round's recording at 7 to 8.5 s, and both rounds' observers share the host's time origin 1792204656982); fails_when=the replay open gives the chat its keyboard back without the sentence the first time, or tells it again each time; why_new=Cycle 0046 row 678 (evidence: not a defect; this test holds the rule the native rounds followed); seam=recordedReaderHarness, useNativeLayout, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, the service's playback and the reader's close, the command log and the information messages
+test('in Cursor, an agent’s replay open from the chat tab gives the chat its keyboard back and says so the first time in an editor session only', async () => {
+  // Arrange: Cursor's Agent chat as a tab of its own editor part has the keyboard; the learner's login-form.tsx is in front of the first group, and the reader is closed.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focusTab()
+    const arrangementSentence =
+      'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.'
+    const openReplay = async () => {
+      const commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
+      harness.service.playback({
+        instanceId: harness.service.instanceId,
+        studyId: harness.studyId,
+        action: 'open',
+        expectedRevision: harness.controller.state().revision,
+      })
+      await harness.controller.settle()
+      return {
+        lastKeyboardCommand: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          )
+          .at(-1),
+        chatHasKeyboard: chat.focused(),
+        toldArrangement: harness.informationMessages
+          .slice(messagesBefore)
+          .filter((message) => message.message === arrangementSentence).length,
+      }
+    }
+
+    // Act: the agent opens the replay, closes the reader and opens it again from the chat.
+    const first = await openReplay()
+    await harness.reader.close()
+    chat.focusTab()
+    const second = await openReplay()
+
+    // Assert
+    assert.deepEqual(
+      { first, second },
+      {
+        first: {
+          lastKeyboardCommand: 'composer.focusComposer',
+          chatHasKeyboard: true,
+          toldArrangement: 1,
+        },
+        second: {
+          lastKeyboardCommand: 'composer.focusComposer',
+          chatHasKeyboard: true,
+          toldArrangement: 0,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's terminal and its keyboard in the bottom panel when an agent opens a recording through codebook_playback in VS Code: the Observed moments view's focus command opens its container in place of the terminal even with the focus kept (1.140.0 workbench.desktop.main.js 1639:157156 -> openView 1639:152215 -> doOpenComposite 1106:186495, hideActiveComposite 1106:190002), which hides the terminal and drops its keyboard; the agent's entry leaves the panel as it is, and the one sentence told once names both places where the replay's controls wait; fails_when=the agent's replay open still focuses the moments view while it is not shown, or tells nothing about where the controls wait; why_new=Cycle 0046 row 621; seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusTerminalInBottomPanel (the panel's terminal with the keyboard), the service's playback (the codebook_playback handler), viewFocusCommands, keyboardInView, terminalInFrontOfPanel and the information messages
 test('an agent’s replay open in VS Code while the learner types in the bottom panel’s terminal keeps the terminal in front with its keyboard and says where the replay controls wait', async () => {
   // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner types in the terminal of the bottom panel.
