@@ -1,6 +1,6 @@
 import { WIKI_PUBLISH_STAGE_INFIX } from '../constants'
 
-/** The publisher's script, which every update runs to prepare, render and publish; a command line that names it is a step of an update. */
+/** The file name of the publisher's script, which every update runs to prepare, render and publish. Only a command that runs the bundled script, `<skillDirectory>/publish-wiki.mjs`, as its program or as the script after Node.js, is a step of an update by it ({@link isUpdateCommandLine}); a command that only names the file is none. */
 const PUBLISHER_SCRIPT_NAME = 'publish-wiki.mjs'
 
 /** Something the editor reported while an update waited for the chat's first answer: a `file` document that was opened, by its path, or a command that started in a terminal, by its command line. */
