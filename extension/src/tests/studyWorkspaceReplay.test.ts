@@ -5853,6 +5853,94 @@ test('in Cursor, an agent’s replay open refused right after its borrow of the 
   }
 })
 
+// Value: protects=the chat's keyboard and the truth of what the learner is told when an agent's replay open beside Cursor's Agent chat part is refused right after its borrow of the first group, after an earlier presentation focus request (codebook_presentation focus) was refused for the learner's newer choice: that request is no owner of presentationYieldedToLearner, so its refusal (retainPresentationPlacement's yieldFocusToLearner) leaves the flag set through the Study's close; the open notes its own refusal from its start, so the chat still gets its keyboard back with Focus Agent and the one sentence says that nothing was arranged; fails_when=an owning entry of open does not clear the flag when it begins, so the earlier request's flag reads as the open's own refusal for the learner and the chat gets nothing back and nothing is told; why_new=Cycle 0046 row 736 (the coverage audit of /ship: the reset when an owning open() entry begins had no test); seam=recordedReaderHarness, useHostAppName, the reader's open, changePresentation with action focus, holdPanelActivity on the Study pane with the learner's focusMutableDraft draft taking the keyboard during it, the reader's close, useNativeLayout, addSeparateEditorPart and its focus, leavePaneFocusUnreportedBesideChat, focusMutableDraft, the service's playback and the controller's state, holdNextCommand on workbench.action.focusFirstEditorGroup with failNextCommand on the layout read after it, the command log and the information messages; no_claim=whether a refused focus request should clear the flag itself (each owner clears it when it begins and when it ends, and only owners read it)
+test('in Cursor, an agent’s replay open refused right after its borrow still gives the chat its keyboard back and says that nothing was arranged after an earlier focus request was refused for the learner’s newer choice', async () => {
+  // Arrange: the Study is open; a focus request for the Study pane is refused because the learner's draft took the keyboard while the pane's activity was held; the Study is closed, and row 678's setup follows with the chat input holding the keyboard; the layout read right after the open's borrow of the first group will fail.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.open()
+    const opened = harness.reader.presentationState()
+    const draft = harness.focusMutableDraft()
+    const held = harness.holdPanelActivity('codebook.studyContext')
+    const focusRefusal = Promise.resolve()
+      .then(() =>
+        harness.reader.changePresentation({
+          presentationId: opened.presentationId,
+          expectedRevision: opened.presentationControlRevision,
+          mode: opened.mode,
+          action: 'focus',
+        }),
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    await held.started
+    draft.focus()
+    held.release()
+    const refusedFocus = await focusRefusal
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focus()
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const borrow = harness.holdNextCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    void borrow.started.then(() => {
+      harness.failNextCommand('vscode.getEditorLayout')
+      borrow.release()
+    })
+
+    // Act
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+
+    // Assert: the focus request was refused; the replay's open failed after the borrow, Focus Agent gave the chat its keyboard back, and the one sentence says that nothing was arranged.
+    assert.deepEqual(
+      {
+        refusedFocus,
+        reason: harness.controller.state().reason,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusedFocus:
+          'Error: Study focus could not be confirmed. Read current presentation state before retrying.',
+        reason: 'Error: Native layout command failed',
+        keyboardCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'composer.focusComposer',
+        ],
+        chatHasKeyboard: true,
+        messages: [
+          'Codebook could not finish arranging its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's newer input when an agent's replay open beside Cursor's Agent chat part is refused for it: during the layout read right after the measurement borrowed the first group, the learner changed login-form.tsx there, and the open is refused with "The primary editor content or selection changed during scope measurement; the newer learner focus was preserved."; the chat gets no keyboard back over the learner's edit and nothing is told; fails_when=open's refusal path gives the chat its keyboard back after any refusal, so Focus Agent takes the keyboard from the file the learner works in; why_new=Cycle 0046 row 736 (its learner-change half, row 732's rule); seam=as above, with focusMutableDraft's replaceContent and holdNextCommand on the layout read after the borrow
 test('in Cursor, an agent’s replay open refused for the learner’s change of the first group’s file during its layout read gives the chat no keyboard and tells nothing', async () => {
   // Arrange: row 678's setup; the learner will change login-form.tsx during the layout read right after the measurement's borrow.
