@@ -454,12 +454,16 @@ for (const cursor of [false, true])
 for (const stage of ['App move', 'App group close'])
   for (const later of ['cancellation', 'newer source', 'Close'])
     test(`article Return drains its accepted ${stage} after ${later} and preserves the retained renderer or newer input`, async () => {
-      // Arrange
+      // Arrange: the learner's uneven rows, which the Application group's removal does not give back by itself, as the split view keeps distributed rows only (row 703).
       const harness = await articleRecordingLayoutHarness(true, true),
         cancellation = new AbortController()
       let release = (): void => {},
         releaseInitialRead = (): void => {}
       try {
+        harness.useNativeLayout({
+          orientation: 1,
+          groups: [{ size: 250 }, { size: 300 }],
+        })
         await harness.reader.openRepositoryEvidence(
           harness.binding,
           true,
@@ -542,7 +546,7 @@ for (const stage of ['App move', 'App group close'])
           )
           assert.deepEqual(harness.editorLayout(), {
             orientation: 1,
-            groups: [{ size: 161 }, { size: 162 }],
+            groups: [{ size: 250 }, { size: 300 }],
           })
         }
       } finally {

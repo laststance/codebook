@@ -4637,7 +4637,7 @@ for (const arrangement of ['live', 'replay'] as const)
     const harness = recorded ?? (await workspaceHarness())
     harness.useNativeLayout({
       orientation: 1,
-      groups: [{ size: 161 }, { size: 162 }],
+      groups: [{ size: 250 }, { size: 300 }],
     })
     let live: { close(): void } | undefined
     let restoreNativeClose = (): void => {}
@@ -4690,11 +4690,11 @@ for (const arrangement of ['live', 'replay'] as const)
       // Assert: the Read resized the groups; the Close ended the maximization and then applied the layout of before the Read.
       assert.deepEqual(layoutAtFirstNativeClose, {
         orientation: 1,
-        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
+        groups: [{ size: 125 }, { size: 250 }, { size: 175 }],
       })
       assert.deepEqual(beforeRead, {
         orientation: 1,
-        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
+        groups: [{ size: 125 }, { size: 250 }, { size: 175 }],
       })
       assert.deepEqual(duringRead, {
         maximized: true,
@@ -4722,10 +4722,10 @@ for (const arrangement of ['live', 'replay'] as const)
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
-            // The Application row's removal gives the learner's rows their heights back, as the split view does, so the layout of before the Open is not applied again (row 703).
+            'vscode.setEditorLayout',
           ],
           maximized: false,
-          layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
+          layout: { orientation: 1, groups: [{ size: 250 }, { size: 300 }] },
           learnersTabs: [1, 1],
         },
       )
@@ -5224,7 +5224,7 @@ for (const arrangement of ['live', 'replay'] as const)
     const harness = recorded ?? (await workspaceHarness())
     harness.useNativeLayout({
       orientation: 1,
-      groups: [{ size: 161 }, { size: 162 }],
+      groups: [{ size: 250 }, { size: 300 }],
     })
     let live: { close(): void } | undefined
     let restoreNativeClose = (): void => {}
@@ -5274,7 +5274,7 @@ for (const arrangement of ['live', 'replay'] as const)
       // Assert
       assert.deepEqual(layoutAtFirstNativeClose, {
         orientation: 1,
-        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
+        groups: [{ size: 125 }, { size: 250 }, { size: 175 }],
       })
       assert.deepEqual(duringEnlarge, {
         maximized: true,
@@ -5302,10 +5302,10 @@ for (const arrangement of ['live', 'replay'] as const)
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
-            // The Application row's removal gives the learner's rows their heights back, as the split view does, so the layout of before the Open is not applied again (row 703).
+            'vscode.setEditorLayout',
           ],
           maximized: false,
-          layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
+          layout: { orientation: 1, groups: [{ size: 250 }, { size: 300 }] },
           learnersTabs: [1, 1],
         },
       )
@@ -5477,7 +5477,7 @@ for (const order of [
     const harness = await workspaceHarness()
     harness.useNativeLayout({
       orientation: 1,
-      groups: [{ size: 161 }, { size: 162 }],
+      groups: [{ size: 250 }, { size: 300 }],
     })
     let live: { close(): void } | undefined
     let restoreNativeClose = (): void => {}
@@ -5517,7 +5517,7 @@ for (const order of [
       // Assert
       assert.deepEqual(layoutAtFirstNativeClose, {
         orientation: 1,
-        groups: [{ size: 109 }, { size: 107 }, { size: 107 }],
+        groups: [{ size: 125 }, { size: 250 }, { size: 175 }],
       })
       assert.deepEqual(
         {
@@ -5537,10 +5537,10 @@ for (const order of [
           gridCommands: [
             'workbench.action.minimizeOtherEditors',
             'vscode.setEditorLayout',
-            // The Application row's removal gives the learner's rows their heights back, as the split view does, so the layout of before the Open is not applied again (row 703).
+            'vscode.setEditorLayout',
           ],
           maximized: false,
-          layout: { orientation: 1, groups: [{ size: 161 }, { size: 162 }] },
+          layout: { orientation: 1, groups: [{ size: 250 }, { size: 300 }] },
         },
       )
     } finally {
