@@ -20,6 +20,7 @@ import {
 import { runInNewContext } from 'node:vm'
 
 import type { BrowserViewportFactory } from '../runtimeSupport/browserViewport'
+import { Cdp } from '../runtimeSupport/cdp'
 import type * as HostModule from '../runtimeSupport/hostBrowser'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
@@ -119,6 +120,7 @@ async function managedBrowser(
       './browserViewport.js': {
         BrowserViewport: class {
           close(): void {}
+          async attach(): Promise<void> {}
         },
       },
       './utils/profileProcesses': {
@@ -786,7 +788,7 @@ for (const { system, platform, intervalMs } of [
   { system: 'Windows', platform: 'win32', intervalMs: 500 },
   { system: 'Linux', platform: 'linux', intervalMs: 50 },
 ] as const)
-  // Value: protects=the close of a managed run on Windows, where each look for the browser's processes starts a PowerShell scan of every process (Get-CimInstance Win32_Process, hundreds of milliseconds or more): the looks are spaced 500 ms apart, while Linux and macOS, whose `ps` answers in milliseconds, keep 50 ms (F7, Cycle 0046 /ship review); fails_when=the wait looks again 50 ms after each scan on Windows too, so the scans run nearly back to back for as long as the browser takes to exit; why_new=the wait's interval had no test; seam=the system the adapter reads (`process.platform` of its loaded context), the stand-in for the profile's processes, which counts the looks, and the faked setTimeout of the wait's pause; no_claim=the same interval of attachViewport's wait for the browser's start, which this harness does not reach
+  // Value: protects=the close of a managed run on Windows, where each look for the browser's processes starts a PowerShell scan of every process (Get-CimInstance Win32_Process, hundreds of milliseconds or more): the looks are spaced 500 ms apart, while Linux and macOS, whose `ps` answers in milliseconds, keep 50 ms (F7, Cycle 0046 /ship review); fails_when=the wait looks again 50 ms after each scan on Windows too, so the scans run nearly back to back for as long as the browser takes to exit; why_new=the wait's interval had no test; seam=the system the adapter reads (`process.platform` of its loaded context), the stand-in for the profile's processes, which counts the looks, and the faked setTimeout of the wait's pause; no_claim=the same interval of attachViewport's wait for the browser's start, which the start-wait rows below cover (TR6)
   test(`on ${system}, the close of a managed browser looks for its profile’s processes again only ${intervalMs} ms after a look that found them`, async (context) => {
     // Arrange: a managed browser whose processes are still there at the first two looks and gone at the third; no sweep of abandoned folders runs. The answer of each look is noted, since the wait's pause starts only once the look has answered.
     let answeredLooks = 0
@@ -836,6 +838,95 @@ for (const { system, platform, intervalMs } of [
         (event) => event.type === 'browser.managed-exit-verified',
       ),
       true,
+    )
+  })
+
+// TR6, Cycle 0046 repeat testing review: the wait for the owned Chrome's start (attachViewport) lists the processes at the same pace as the close's wait for its exit.
+for (const { system, platform, intervalMs } of [
+  { system: 'Windows', platform: 'win32', intervalMs: 500 },
+  { system: 'Linux', platform: 'linux', intervalMs: 50 },
+] as const)
+  // Value: protects=the start of a managed run on Windows, where each look for the owned Chrome's processes starts a PowerShell scan of every process: the wait for the browser's start looks again only 500 ms after a look that found nothing, while Linux and macOS keep 50 ms (F7); fails_when=attachViewport's wait drops its interval and looks again 50 ms after each scan on Windows too; why_new=TR6, Cycle 0046 repeat testing review (only the close's wait had a test); seam=the system the adapter reads (`process.platform` of its loaded context), the stand-in for the profile's processes, which counts the looks and finds the browser at the second, the viewport's stand-in, which attaches at once, a CDP stand-in that answers the version, and the faked setTimeout of the wait's pause
+  test(`on ${system}, the wait for a managed browser's start looks for its profile’s processes again only ${intervalMs} ms after a look that found none`, async (context) => {
+    // Arrange: a launched managed browser whose processes appear at the second look and are gone again from the third, so its close ends at once; no sweep of abandoned folders runs. The answer of each look is noted, since the wait's pause starts only once the look has answered.
+    let answeredLooks = 0
+    const managed = await managedBrowser(context, {
+      platform,
+      removeAbandonedProfiles: async () => [],
+      processesOfProfile: (look) => {
+        answeredLooks = look
+        return look === 2
+          ? [
+              {
+                pid: 4242,
+                command: 'chrome --remote-debugging-pipe --user-data-dir=x',
+              },
+            ]
+          : []
+      },
+    })
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    /** A connection whose browser answers every request with its version at once. */
+    class AnsweringSocket extends EventTarget {
+      send(message: string): void {
+        const request = JSON.parse(message)
+        this.dispatchEvent(
+          new MessageEvent('message', {
+            data: JSON.stringify({
+              id: request.id,
+              result: { product: 'Chrome/test' },
+            }),
+          }),
+        )
+      }
+      close(): void {
+        this.dispatchEvent(new Event('close'))
+      }
+    }
+    const cdp = new Cdp(new AnsweringSocket(), () => undefined)
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    /** Lets real work run (the look's resolve of the folder) until a condition holds, for at most 1,000 real turns, and then one turn more, in which the wait starts its pause after a look's answer. */
+    const afterRealTurnsUntil = async (
+      reached: () => boolean,
+    ): Promise<void> => {
+      for (let turn = 0; turn < 1_000 && !reached(); turn += 1)
+        await nextEventLoopTurn()
+      await nextEventLoopTurn()
+    }
+    // Act: the start wait looks once; once that look has answered, the faked clock moves to 1 ms before the interval and then to the interval itself.
+    const attaching = managed.browser.attachViewport(
+      cdp,
+      new AbortController().signal,
+    )
+    await afterRealTurnsUntil(() => answeredLooks >= 1)
+    const looksAtFirst = managed.processProbes.length
+    context.mock.timers.tick(intervalMs - 1)
+    await afterRealTurnsUntil(() => managed.processProbes.length >= 2)
+    const looksJustBeforeInterval = managed.processProbes.length
+    context.mock.timers.tick(1)
+    await afterRealTurnsUntil(() => answeredLooks >= 2)
+    const looksAtInterval = managed.processProbes.length
+    await attaching
+    await managed.browser.close()
+    // Assert
+    assert.deepEqual(
+      {
+        looksAtFirst,
+        looksJustBeforeInterval,
+        looksAtInterval,
+        processesJournaled: managed.events.some(
+          (event) => event.type === 'browser.managed-processes',
+        ),
+      },
+      {
+        looksAtFirst: 1,
+        looksJustBeforeInterval: 1,
+        looksAtInterval: 2,
+        processesJournaled: true,
+      },
     )
   })
 
