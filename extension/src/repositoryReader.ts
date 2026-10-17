@@ -1314,11 +1314,11 @@ export class RepositoryReader {
 
   /**
    * Shows a citation's copy and notes its URI as one this reader showed ({@link shownCitedSources}); called by {@link openSource} for every display of a citation.
-   * The URI is noted before the display, so a copy the editor shows although a later check refuses the citation is this reader's too (row 662). A show the editor itself refuses put no copy on screen: the URI is forgotten again unless this reader had shown it before, so a copy of that URI an earlier reader left, which the learner reads in, is not retired with this reader's Wiki (row 683).
+   * The URI is noted before the display, so a copy the editor shows although a later check refuses the citation is this reader's too (row 662). A show the editor refuses before it opens anything put no copy on screen: the URI is forgotten again unless this reader had shown it before, so a copy of that URI an earlier reader left, which the learner reads in, is not retired with this reader's Wiki (row 683). The extension host can refuse after the editor opened the copy, too: when the editor it got back is no longer the current one, because the learner switched tabs meanwhile ("Could NOT open editor for … because another editor opened in the meantime.", Cursor's server `extensionHostProcess.js` 201:91131, VS Code 1.140.0 295:85754). A copy that was not open before the show and is open now is that display's, and stays this reader's, so its Wiki's close and the next citation retire it (Cycle 0046 row 701).
    * @param uri - The citation's copy.
    * @param show - The display, `vscode.window.showTextDocument` with the citation's options.
    * @returns The editor the display answered.
-   * @throws The display's refusal, once the URI is forgotten again where this display alone noted it.
+   * @throws The display's refusal, once the URI is forgotten again where this display alone noted it and left no copy of its own.
    * @example const editor = await this.showCitedSourceCopy(uri, () => vscode.window.showTextDocument(document, options))
    */
   private async showCitedSourceCopy(
@@ -1326,13 +1326,15 @@ export class RepositoryReader {
     show: () => Thenable<vscode.TextEditor>,
   ): Promise<vscode.TextEditor> {
     const key = uri.toString(),
-      shownBefore = this.shownCitedSources.has(key)
+      shownBefore = this.shownCitedSources.has(key),
+      openBefore = this.isOpenInAnyGroup(key)
     this.shownCitedSources.add(key)
     try {
       return await show()
     } catch (error) {
-      // Only a URI this display noted goes; one an earlier display noted stays the reader's.
-      if (!shownBefore) this.shownCitedSources.delete(key)
+      // Only a URI this display noted goes, and only while the display left no copy of its own: an earlier display's URI, and a copy the refused display still opened, stay the reader's.
+      if (!shownBefore && (openBefore || !this.isOpenInAnyGroup(key)))
+        this.shownCitedSources.delete(key)
       throw error
     }
   }

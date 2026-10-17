@@ -185,6 +185,8 @@ async function readerHarness(context: TestContext) {
   let sourceDisplayGate: { entered(): void; wait: Promise<void> } | undefined
   /** The editor's refusal of the next document show, once; see `rejectNextSourceDisplay`. */
   let sourceDisplayRefusal: Error | undefined
+  /** Whether the next document show opens its tab and is refused after that, once; see `rejectNextSourceDisplayAfterOpeningItsTab`. */
+  let refusesSourceDisplayAfterOpening = false
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined
   let layoutResponseGate: { entered(): void; wait: Promise<void> } | undefined
   let nativeCitationActivation = false
@@ -425,8 +427,19 @@ async function readerHarness(context: TestContext) {
                   value.input.uri.toString() === document.uri.toString(),
               ),
               tab = openTab ?? { input: new TabInputText(document.uri) }
+            const frontBefore = sourceGroup.activeTab
             if (!openTab) sourceGroup.tabs.push(tab)
             sourceGroup.activeTab = tab
+            // The editor opened the copy's tab, the learner's tab came to the front again before the answer, and the extension host refuses the editor it no longer knows (`rejectNextSourceDisplayAfterOpeningItsTab`).
+            if (refusesSourceDisplayAfterOpening) {
+              refusesSourceDisplayAfterOpening = false
+              fireTabChange(openTab ? { changed: [tab] } : { opened: [tab] })
+              sourceGroup.activeTab = frontBefore
+              if (frontBefore) fireTabChange({ changed: [frontBefore] })
+              throw new Error(
+                `Could NOT open editor for "${document.uri.toString()}" because another editor opened in the meantime.`,
+              )
+            }
             // A foreground native source display activates its main group before its text-editor receipt; Cursor keeps naming its chat part's group instead, since a tab that opens in the main editor's active group is no group activation for its tab model (Cursor 3.23.12 17269:31013).
             if (
               !options?.preserveFocus &&
@@ -875,6 +888,13 @@ async function readerHarness(context: TestContext) {
      */
     rejectNextSourceDisplay(message: string): void {
       sourceDisplayRefusal = new Error(message)
+    },
+    /**
+     * Makes the next `showTextDocument` open the document's tab in the first group and then reject, once, as both editors' extension hosts do when the editor they opened is no longer the current one by the time the main side answers (Cursor's server `extensionHostProcess.js` 201:91131, VS Code 1.140.0 295:85754: "Could NOT open editor for … because another editor opened in the meantime."): the learner switched back to the tab in front before it meanwhile, and the document's tab stays in the group behind that tab (Cycle 0046 row 701).
+     * @example harness.rejectNextSourceDisplayAfterOpeningItsTab() // the order.ts copy stays in the first group, behind login-form.tsx
+     */
+    rejectNextSourceDisplayAfterOpeningItsTab(): void {
+      refusesSourceDisplayAfterOpening = true
     },
     holdSourceDisplay() {
       let entered!: () => void, release!: () => void
@@ -1837,6 +1857,52 @@ test('a cited-source copy the reader showed itself still leaves with Close Repos
         front: 'file:login-form.tsx',
       },
       closedTabs: ['module.ts'],
+    },
+  )
+})
+
+// Value: protects=the learner's first group after a citation's display the extension host refused although the editor had opened the copy: the learner switched back to the tab in front of the first group while the copy opened, so the editor the host got back was no longer the current one ("Could NOT open editor for … because another editor opened in the meantime.", Cursor's server extensionHostProcess.js 201:91131, VS Code 1.140.0 295:85754), and the copy's tab stays behind the learner's tab; that copy is still this reader's, so Close Repository Wiki retires it with the copy before it; fails_when=RepositoryReader.showCitedSourceCopy forgets every URI a rejected show noted for the first time (row 683), so neither Close Repository Wiki nor the next citation retires the copy, which stays in the learner's first group; why_new=Cycle 0046 row 701 (open-code-review of cc231f08..e6a3daeb); seam=readerHarness, focusUnrelatedDraft, open, rejectNextSourceDisplayAfterOpeningItsTab (the editor's open, the learner's tab in front again, the host's refusal), open of the second citation, close, deliverTabEvents, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy whose display was refused after the editor opened its tab leaves with Close Repository Wiki', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx; the learner follows the second citation, order.ts, whose copy the editor opens while the learner switches back to the tab in front before it, the module.ts copy, and the extension host refuses the display.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.rejectNextSourceDisplayAfterOpeningItsTab()
+  const refusal = await harness.reader
+    .open({ ...harness.selection, anchorIndex: 1 })
+    .then(
+      () => undefined,
+      (error: unknown) => String(error).split(' because ')[1],
+    )
+  const afterRefusal = harness.firstGroupTabs()
+
+  // Act
+  harness.reader.close()
+  await harness.deliverTabEvents()
+
+  // Assert: both copies the reader showed left with the Wiki, and login-form.tsx is the first group's only tab.
+  assert.deepEqual(
+    {
+      refusal,
+      afterRefusal,
+      afterClose: harness.firstGroupTabs(),
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      refusal: 'another editor opened in the meantime.',
+      afterRefusal: {
+        tabs: [
+          'file:login-form.tsx',
+          'codebook-repository-source:module.ts',
+          'codebook-repository-source:order.ts',
+        ],
+        front: 'codebook-repository-source:module.ts',
+      },
+      afterClose: {
+        tabs: ['file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
+      closedTabs: ['module.ts', 'order.ts'],
     },
   )
 })
