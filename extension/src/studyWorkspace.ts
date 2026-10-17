@@ -13824,7 +13824,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the column of the Study pane while it is the editor's active pane and its document reports that it has the keyboard ({@link reportsKeyboard}); asked through the Repository Wiki reader's `studyPaneKeyboardColumn` control when an agent's cold Wiki entry begins without an active text editor ({@link RepositoryReader.open}, codebook_open_book, Cycle 0046 row 705), so that a Wiki created in front of that pane gives the keyboard back to the learner who worked there.
+   * Names the column of the Study pane while it is the editor's active pane and its document reports that it has the keyboard ({@link reportsKeyboard}); asked through the Repository Wiki reader's `studyPaneKeyboardColumn` control first whenever an agent's cold Wiki entry begins, before the active text editor, which the editor goes on reporting while the learner works in the pane ({@link RepositoryReader.open}, codebook_open_book, Cycle 0046 rows 705 and 729), so that a Wiki created in front of that pane gives the keyboard back to the learner who worked there.
    * @returns The pane's view column then; `undefined` without the Study pane, while another editor is the active one, and while its document reports no keyboard.
    * @example workspace.studyPaneKeyboardColumn() // => 2 after the learner moved the Study pane into the second group and clicked into it
    */

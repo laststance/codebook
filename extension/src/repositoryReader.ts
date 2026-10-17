@@ -119,7 +119,7 @@ interface RepositoryControls {
   ): Promise<void>
   /** Says whether the learner is known to type in the active text editor now, by a fresh sign of the learner's own hand there ({@link StudyWorkspace.knowsLearnerTypesInActiveEditor}); asked when an agent's cold Wiki entry begins (row 694). Without it nothing is known. */
   knowsLearnerTypesInActiveEditor?(): boolean
-  /** Names the column of the Study pane while its document reports that it has the keyboard ({@link StudyWorkspace.studyPaneKeyboardColumn}); asked when an agent's cold Wiki entry begins without an active text editor (row 705). Without it no pane is known. */
+  /** Names the column of the Study pane while its document reports that it has the keyboard ({@link StudyWorkspace.studyPaneKeyboardColumn}); asked first whenever an agent's cold Wiki entry begins, before the active text editor, which the editor goes on reporting while the learner works in the pane (rows 705 and 729). Without it no pane is known. */
   studyPaneKeyboardColumn?(): vscode.ViewColumn | undefined
 }
 
