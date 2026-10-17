@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises'
+import { lstat, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -15,6 +15,7 @@ import {
   readRecordedOwner,
   type StorageOwnerIdentity,
 } from '../../utils/readRecordedOwner'
+import { removeWithoutFollowing } from '../../utils/removeWithoutFollowing'
 import { withoutBootTime } from '../../utils/withoutBootTime'
 
 import { listProcesses, type ListedProcess } from './listProcesses'
@@ -22,11 +23,12 @@ import { profileProcesses } from './profileProcesses'
 
 /**
  * Removes one profile folder when no process uses it as its profile; called by {@link sweepProfile} for a folder whose owner is gone.
+ * The folder is removed by {@link removeWithoutFollowing}, which unlinks every link inside it as a name: the recursive `rm` of Node.js follows a link it cannot unlink on Windows and empties the folder the link leads to.
  * @param profile - The profile folder.
  * @param processes - The one process listing of the sweep ({@link ProfileSweep}), made at its first folder whose owner is gone.
  * @returns
  * - `true` when the folder was removed
- * - `false` when a process still runs with it, when the processes cannot be listed, and when the removal fails: the folder stays
+ * - `false` when a process still runs with it, when the processes cannot be listed, and when the removal fails: what was not removed stays
  * @example
  * await removeUnusedProfile('/tmp/codebook-browser-a1b2c3', sweep.processes()) // => true
  */
@@ -36,11 +38,29 @@ async function removeUnusedProfile(
 ): Promise<boolean> {
   try {
     if ((await profileProcesses(profile, await processes)).length) return false
-    await rm(profile, { recursive: true, force: true })
+    await removeWithoutFollowing(profile)
     return true
   } catch {
     return false
   }
+}
+
+/**
+ * Says whether a profile folder is a real directory of this user, before its owner marker is read; called by {@link sweepProfile} for each candidate folder.
+ * Why: the profile root is the shared `/tmp`, where another user of the machine can make a folder with the profile prefix and a marker that names a gone process of this machine. Such a folder is never judged, so it is neither removed nor counted.
+ * @param profile - The candidate folder.
+ * @returns
+ * - `true` for a real directory (looked at without following a link) whose owner is the user this process runs as; on Windows, which has no user id (`process.getuid` is absent), for every real directory
+ * - `false` for a folder of another user, for a link, and for a path that cannot be looked at
+ * @example
+ * await isOwnProfileFolder('/tmp/codebook-browser-a1b2c3') // => true for a folder this user's editor made
+ * await isOwnProfileFolder('/tmp/codebook-browser-planted') // => false for a folder another user made
+ */
+async function isOwnProfileFolder(profile: string): Promise<boolean> {
+  const entry = await lstat(profile).catch(() => undefined)
+  if (!entry?.isDirectory()) return false
+  // Windows has no user id to compare: there every real directory is judged by its marker, as before.
+  return process.getuid === undefined || entry.uid === process.getuid()
 }
 
 /** What one sweep has done so far: how many folders with a readable owner marker it judged, which is what its bound counts, and the folders it removed; `processes` gives the sweep's one process listing, made when it is first asked for, and `readStart` reads a process's start and keeps what the sweep has read. */
@@ -53,10 +73,10 @@ type ProfileSweep = {
 
 /**
  * Judges one profile folder by its owner marker, removes it when its owner is gone and nothing uses it, and records both in the sweep; called by {@link removeAbandonedProfiles} for each real directory with the profile prefix.
- * A folder without a readable marker is never touched, whoever made it, and is not counted: it takes none of the sweep's bound.
+ * A folder of another user ({@link isOwnProfileFolder}) and a folder without a readable marker are never touched, whoever made them, and are not counted: they take none of the sweep's bound.
  * @param profile - The profile folder.
  * @param judgedBy - The identity of this process without its boot time ({@link withoutBootTime}), by which the marker's owner is judged.
- * @param sweep - The running sweep: its `judgedCount` grows by one for a folder with a readable marker, and `removed` gains the folder when it was removed. A folder whose owner may still run ({@link isRecordedOwnerGone}), that a process still uses, or whose removal failed is counted and stays.
+ * @param sweep - The running sweep: its `judgedCount` grows by one for a folder of this user with a readable marker, and `removed` gains the folder when it was removed. A folder whose owner may still run ({@link isRecordedOwnerGone}), that a process still uses, or whose removal failed is counted and stays.
  * @example
  * await sweepProfile('/tmp/codebook-browser-a1b2c3', { hostname: 'workstation' }, sweep) // sweep: { judgedCount: 1, removed: ['/tmp/codebook-browser-a1b2c3'] } after the editor that made it was killed
  */
@@ -65,6 +85,8 @@ async function sweepProfile(
   judgedBy: StorageOwnerIdentity,
   sweep: ProfileSweep,
 ): Promise<void> {
+  // A folder another user made in the shared root is not this editor's to judge, whatever its marker says.
+  if (!(await isOwnProfileFolder(profile))) return
   const owner = await readRecordedOwner(
     join(profile, MANAGED_PROFILE_OWNER_FILE),
   )
@@ -79,13 +101,13 @@ async function sweepProfile(
 /**
  * Removes the browser profile folders that a killed editor left behind, so that they do not pile up in the profile root; started by {@link HostBrowser.launch} beside a managed run's start, which does not wait for it, and awaited by {@link HostBrowser.close}.
  *
- * A folder is removed only on proof that Codebook made it and nothing uses it: it is a real directory, it carries the owner marker
+ * A folder is removed only on proof that Codebook made it for this user and nothing uses it: it is a real directory of the user this process runs as ({@link isOwnProfileFolder}; Windows has no user id to compare), it carries the owner marker
  * ({@link MANAGED_PROFILE_OWNER_FILE}), the marker's process is gone from this machine, also when another process has its id now ({@link isRecordedOwnerGone}, judged without a boot time,
  * see {@link withoutBootTime}), and no process runs with the folder as its profile. A folder without a readable marker is never touched, whoever made it.
- * One sweep judges at most {@link MANAGED_PROFILE_SWEEP_LIMIT} marked folders; the folders without a marker that builds before the marker left behind
- * take none of that bound, so they cannot keep the marked folders listed after them from being looked at. The processes are listed once per sweep, at its first folder
+ * One sweep judges at most {@link MANAGED_PROFILE_SWEEP_LIMIT} marked folders; the folders without a marker that builds before the marker left behind,
+ * and the folders of other users, take none of that bound, so they cannot keep the marked folders listed after them from being looked at. The processes are listed once per sweep, at its first folder
  * whose owner is gone, and every such folder is matched against that one listing. A listing that fails, runs longer than its time bound or prints more than its limit
- * ({@link listProcesses}) removes nothing: every folder stays for a later run, like a folder whose removal fails. The starts of the marker's processes are kept for the sweep, so the folders of one running editor cost one read;
+ * ({@link listProcesses}) removes nothing: every folder stays for a later run, like a folder whose removal fails. A folder is removed by {@link removeWithoutFollowing}: a link inside it is removed as a name, and the files it leads to stay. The starts of the marker's processes are kept for the sweep, so the folders of one running editor cost one read;
  * a kept start never calls an owner gone.
  *
  * @param root - The directory that holds the profile folders: {@link MANAGED_PROFILE_ROOT} in the product, a directory of their own in tests.

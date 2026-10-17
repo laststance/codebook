@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import * as fileSystem from 'node:fs/promises'
 import {
   mkdir,
   mkdtemp,
@@ -12,17 +13,21 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import {
   listProcesses,
   type ListedProcess,
 } from '../runtimeSupport/utils/listProcesses'
+import type * as sweepModule from '../runtimeSupport/utils/removeAbandonedProfiles'
 import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandonedProfiles'
 import { readProcessStart } from '../utils/readProcessStart'
+import type * as removalModule from '../utils/removeWithoutFollowing'
 
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 import { standInForPs } from './utils/standInForPs'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
@@ -152,6 +157,102 @@ test('a link named like a profile folder is left, and the marked folder it point
     'Default',
     'codebook-owner.json',
   ])
+})
+
+// Value: protects=the files of this user that a folder another user planted in the shared /tmp could lead the sweep to: a folder named like a profile with a marker naming a gone process of this machine is never judged unless this user owns it (F3, Cycle 0046 /ship review); fails_when=the sweep judges a folder by its marker alone, so it removes another user's folder, whose content that user may swap for a link while the removal lists it; why_new=every sweep test made its folders as this user; seam=the look without following (`lstat`) the loaded sweep is given, which names another user as the folder's owner; no_claim=Windows, which has no user id and keeps today's judgement by the marker
+test(
+  'a marked profile folder of a killed editor that another user owns is left untouched and not counted as removed',
+  { skip: process.platform === 'win32' && 'Windows has no user id' },
+  async (context) => {
+    // Arrange: a folder with the marker of a gone process of this machine, whose look names another user as its owner.
+    const root = await profileRoot(context)
+    const folder = join(root, 'codebook-browser-of-another-user')
+    await profileFolder(folder, {
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'workstation',
+    })
+    const { removeAbandonedProfiles: sweepAsAnotherUsersFolder } =
+      await loadModule<typeof sweepModule>(
+        resolve(
+          __dirname,
+          '../runtimeSupport/utils/removeAbandonedProfiles.js',
+        ),
+        {
+          'node:fs/promises': {
+            ...fileSystem,
+            lstat: async (path: string) => {
+              const entry = await fileSystem.lstat(path)
+              return Object.assign(entry, { uid: entry.uid + 1 })
+            },
+          },
+        },
+      )
+    const processes = countingLister()
+    // Act
+    const removed = await sweepAsAnotherUsersFolder(
+      root,
+      { hostname: 'workstation' },
+      processes.list,
+    )
+    // Assert: the loaded sweep's answer is copied into this test's realm before it is compared.
+    assert.deepEqual([...removed], [])
+    assert.equal(processes.listings(), 0)
+    assert.deepEqual((await readdir(folder)).sort(), [
+      'Default',
+      'codebook-owner.json',
+    ])
+  },
+)
+
+// Value: protects=the files a link inside a profile folder of a killed editor leads to, when the system refuses to unlink that link (Windows for a link this user may not delete, a junction to a volume) (F3, Cycle 0046 /ship review); fails_when=the sweep removes the folder with the recursive `rm` of Node.js, which after the refused unlink looks at the link with `stat`, takes it for the folder it leads to and empties that folder; why_new=every sweep test removed folders without a link inside; seam=a file system whose unlink of a link answers EPERM, with the removal of Node.js as it runs on Windows for a caller that still uses it (fileSystemWhoseLinksResistRemoval), and the process lister the sweep is given
+test('a profile folder of a killed editor that holds a link the system refuses to unlink is not removed through the link: the folder the link leads to keeps every file and is never listed', async (context) => {
+  // Arrange: a marked folder whose editor is gone, with a link inside it to a folder of the learner outside the profile root.
+  const root = await profileRoot(context),
+    elsewhere = await profileRoot(context)
+  const linkedFolder = join(elsewhere, 'a-folder-of-the-learner')
+  await mkdir(linkedFolder)
+  await writeFile(join(linkedFolder, 'notes.txt'), 'kept')
+  const folder = join(root, 'codebook-browser-killed')
+  await profileFolder(folder, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+  })
+  const link = join(folder, 'a-link-inside')
+  await symlink(linkedFolder, link, 'junction')
+  const resisting = fileSystemWhoseLinksResistRemoval()
+  const walkWhereLinksResist = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    { 'node:fs/promises': resisting.fileSystem },
+  )
+  const { removeAbandonedProfiles: sweepWhereLinksResist } = await loadModule<
+    typeof sweepModule
+  >(resolve(__dirname, '../runtimeSupport/utils/removeAbandonedProfiles.js'), {
+    'node:fs/promises': resisting.fileSystem,
+    '../../utils/removeWithoutFollowing': walkWhereLinksResist,
+  })
+  // Act
+  const removed = await sweepWhereLinksResist(
+    root,
+    { hostname: 'workstation' },
+    countingLister().list,
+  )
+  // Assert: the link the system keeps is still in the folder, which is not counted as removed, and nothing behind the link was listed or removed. The loaded sweep's answer is copied into this test's realm.
+  assert.deepEqual(
+    {
+      removed: [...removed],
+      linkedFolder: await readdir(linkedFolder),
+      listedThroughTheLink: resisting.listed.filter(
+        (path) => path === link || path === linkedFolder,
+      ),
+      linkInTheFolder: (await readdir(folder)).includes('a-link-inside'),
+    },
+    {
+      removed: [],
+      linkedFolder: ['notes.txt'],
+      listedThroughTheLink: [],
+      linkInTheFolder: true,
+    },
+  )
 })
 
 test('a marked profile folder of an earlier kernel boot is removed although a process with its id runs now, and a boot time alone removes nothing', async (context) => {
