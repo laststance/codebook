@@ -66,7 +66,7 @@ import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
-import { isProcessGone } from './utils/isProcessGone'
+import { isRecordingWriterLive } from './utils/isRecordingWriterLive'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
@@ -349,7 +349,7 @@ export class RecordingStore {
             ? seal.status === 'complete'
               ? 'finalized'
               : 'partial'
-            : this.ownerState(header, writer),
+            : await this.ownerState(header, writer),
           endMs: seal?.endMs,
           lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs,
           reason:
@@ -476,7 +476,7 @@ export class RecordingStore {
       ? seal.status === 'complete'
         ? 'finalized'
         : 'partial'
-      : this.ownerState(header, this.active.get(studyId))
+      : await this.ownerState(header, this.active.get(studyId))
     return {
       header,
       entries,
@@ -957,15 +957,26 @@ export class RecordingStore {
       : undefined
   }
 
-  /** Keeps uncertain live/PID-reused owners unfinalized; only a local process that {@link isProcessGone} finds absent establishes interruption. @example this.ownerState(header) // 'interrupted' */
-  private ownerState(
+  /**
+   * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id, with a process id that went to a later process counted as gone).
+   * @param header - The recording's header.
+   * @param writer - This session's writer of the recording, if any.
+   * @returns `recording` or `partial` from this session's writer; otherwise `unfinalized` or `interrupted`.
+   * @example await this.ownerState(header) // => 'interrupted' for a crashed editor whose process id another process has now
+   */
+  private async ownerState(
     header: RecordingHeader,
     writer?: RecordingWriter,
-  ): RecordingIndex['status'] {
+  ): Promise<RecordingIndex['status']> {
     if (writer && header.owner.sessionId === this.sessionId)
       return writer.state().status === 'recording' ? 'recording' : 'partial'
-    if (header.owner.hostname !== hostname()) return 'unfinalized'
-    return isProcessGone(header.owner.pid) ? 'interrupted' : 'unfinalized'
+    // A writer that may still run (of another machine, or a live process that began before the recording) leaves the end unknown; one that is gone interrupted the recording.
+    return (await isRecordingWriterLive(
+      recordingOwnerRecordPath(this.learningDirectory, header.studyId),
+      header,
+    ))
+      ? 'unfinalized'
+      : 'interrupted'
   }
 
   /** Selects the highest existing recording directory and pins multi-file reads to that format. @example await this.location(studyId, 2) */

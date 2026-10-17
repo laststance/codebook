@@ -27,13 +27,36 @@ import {
   type RecordingLimits,
 } from '../recordingStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { useEditorMachineId } from '../utils/currentStorageOwner'
+import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
+
+import { idleChild } from './utils/idleChild'
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
   'base64',
 )
 const workspaceKey = sha256('recording-workspace')
+
+/**
+ * Rewrites the record of a recording's writer that this build keeps beside the recordings ({@link recordingOwnerRecordPath}), for a test that names another editor process or another host name there, as it does in the header.
+ * @param learningDirectory - The learning directory of the test's store.
+ * @param studyId - The recording's study id.
+ * @param change - The fields to put in the record.
+ * @example await rewriteWriterRecord(directory, binding.studyId, { pid: 2_147_483_647 })
+ */
+async function rewriteWriterRecord(
+  learningDirectory: string,
+  studyId: string,
+  change: Record<string, unknown>,
+): Promise<void> {
+  const path = recordingOwnerRecordPath(learningDirectory, studyId)
+  const record: Record<string, unknown> = JSON.parse(
+    await readFile(path, 'utf8'),
+  )
+  await writeFile(path, JSON.stringify({ ...record, ...change }))
+}
 
 /** Gives recording regressions private real files and explicit fault injection, without claiming browser/native capture. @example const { store, binding } = await recordingHarness(context) */
 async function recordingHarness(
@@ -274,6 +297,8 @@ test('a torn journal exposes only the verified prefix and never invents an end t
       owner: { ...header.owner, pid: 2_147_483_647 },
     }),
   )
+  // The dead owner is named where a window of this build names its writer too: in the record beside the recordings.
+  await rewriteWriterRecord(directory, binding.studyId, { pid: 2_147_483_647 })
   await appendFile(
     join(store.path(binding.studyId), 'frames.jsonl'),
     '{"type":"frame"',
@@ -311,6 +336,89 @@ test('a recording whose owner process answers EPERM stays unfinalized, not inter
   )
   // Assert
   assert.equal(reopened.status, 'unfinalized')
+})
+
+// Value: protects=the status another window shows for the recording of a crashed editor whose process id went to another process of this machine; fails_when=the writer is judged by its process id alone, so the recording stays "unfinalized" (its end unknown, as if still written) for as long as any process has that id; why_new=Cycle 0046 /ship review N1: the status used the rule R10 replaced in recordingMayStillBeWritten; seam=the header and the record of the writer (removed, as for a recording of 0.2.29.0, and then naming the later process), with a live child process of the test that began after the recording's creation time
+test('a recording whose writer’s process id went to a process begun after the recording was created shows as interrupted to another window, with and without the record of its writer', async (context) => {
+  // Arrange: two recordings created ten minutes ago by a window that crashed; a process that began just now has its id. The first has no record of its writer (a recording of 0.2.29.0); the second's record names that id with the start of the window that wrote it.
+  const first = await recordingHarness(context),
+    second = await recordingHarness(context)
+  const laterProcess = await idleChild(context)
+  for (const { store, binding } of [first, second]) {
+    const writer = await store.start(binding, 0)
+    writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' })
+    await writer.flush()
+    const header = await store.header(binding.studyId)
+    await writeFile(
+      join(store.path(binding.studyId), 'header.json'),
+      JSON.stringify({
+        ...header,
+        owner: { ...header.owner, pid: laterProcess.pid! },
+        createdAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      }),
+    )
+  }
+  await rm(recordingOwnerRecordPath(first.directory, first.binding.studyId))
+  // The record keeps the start of the window that wrote it, this test process's, which the later process does not have.
+  await rewriteWriterRecord(second.directory, second.binding.studyId, {
+    pid: laterProcess.pid!,
+  })
+
+  // Act
+  const statuses = {
+    withoutRecord: (
+      await new RecordingStore(first.directory, workspaceKey).read(
+        first.binding.studyId,
+      )
+    ).status,
+    withRecord: (
+      await new RecordingStore(second.directory, workspaceKey).read(
+        second.binding.studyId,
+      )
+    ).status,
+  }
+
+  // Assert
+  assert.deepEqual(statuses, {
+    withoutRecord: 'interrupted',
+    withRecord: 'interrupted',
+  })
+})
+
+// Value: protects=the status another window shows for the recording of a crashed editor on a computer whose host name changed since (macOS names itself after the network); fails_when=the writer is judged by the host name in the header, which is no longer this machine's, so the recording stays "unfinalized" for good; why_new=Cycle 0046 /ship review N1; seam=the header and the record of the writer, which name the old host name and a process id of no process, with this editor's machine id in the record
+test('a recording whose writer’s host name has changed since shows as interrupted to another window once the record of its writer names a process of this machine that is gone', async (context) => {
+  // Arrange
+  useEditorMachineId('machine-a', undefined)
+  context.after(() => useEditorMachineId(undefined, undefined))
+  const { directory, binding, store } = await recordingHarness(context),
+    writer = await store.start(binding, 0)
+  writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' })
+  await writer.flush()
+  const header = await store.header(binding.studyId)
+  await writeFile(
+    join(store.path(binding.studyId), 'header.json'),
+    JSON.stringify({
+      ...header,
+      owner: {
+        ...header.owner,
+        pid: 2_147_483_647,
+        hostname: 'laptop.home-network',
+      },
+    }),
+  )
+  await rewriteWriterRecord(directory, binding.studyId, {
+    pid: 2_147_483_647,
+    hostname: 'laptop.home-network',
+  })
+
+  // Act
+  const listed = await new RecordingStore(directory, workspaceKey).list()
+
+  // Assert
+  assert.deepEqual(
+    listed.map((entry) => ({ studyId: entry.studyId, status: entry.status })),
+    [{ studyId: binding.studyId, status: 'interrupted' }],
+  )
 })
 
 test('a failed final seal never advertises a completed recording even when the terminal journal record exists', async (context) => {
