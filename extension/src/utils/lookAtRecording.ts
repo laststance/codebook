@@ -10,7 +10,7 @@ import {
 } from '../constants'
 import { recordingHeaderSchema } from '../recordingSchemas'
 
-import { readBoundedFile } from './readBoundedFile'
+import { readWikiRegularFile } from './readWikiRegularFile'
 import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
 /** The owner a recording's header names and when the recording was created, read without the rest of the header, whose other fields depend on the recording's format. */
@@ -32,6 +32,26 @@ export type RecordingLook = {
 }
 
 /**
+ * Reads the writer and the creation time a recording's header names, for {@link lookAtRecording}: only a regular file of at most {@link MAX_RECORDING_HEADER_BYTES}, opened without following a link and without waiting on a pipe ({@link readWikiRegularFile}), as the reads of the Wiki's metadata are.
+ * Why: the list and the removal read every unsealed recording's header, and a named pipe at `header.json` would hold that read, and the editor's process with it, for good.
+ * @param directory - The directory of one recording.
+ * @returns The header's writer and creation time; `undefined` for a link, a pipe, a device, a folder, a larger file and one that does not parse, as for a header that cannot be read.
+ * @example await readHeaderOwner('/…/recordings.v2/<study id>') // => { owner: { pid: 4242, hostname: 'workstation', sessionId }, createdAt }
+ */
+async function readHeaderOwner(
+  directory: string,
+): Promise<RecordingLook['header']> {
+  const read = await readWikiRegularFile(join(directory, RECORDING_HEADER_FILE))
+  if (!read || read.bytes.length > MAX_RECORDING_HEADER_BYTES) return undefined
+  try {
+    return headerOwnerSchema.parse(JSON.parse(read.bytes.toString()))
+  } catch {
+    // A header that does not parse names no writer.
+    return undefined
+  }
+}
+
+/**
  * Looks at one recording directory without asking the system about any process: its seal, its header's writer and creation time, and whether the record of its writer is there; called by {@link recordingWriterOf} before it judges the writer, and by {@link LearningLibrary.removeStudy}, which looks before its storage lock and again under it, where no slow question may run.
  * @param directory - The directory of one recording, `<learning directory>/recordings.vN/<study id>`.
  * @returns What is there ({@link RecordingLook}).
@@ -44,12 +64,7 @@ export async function lookAtRecording(
     () => true,
     () => false,
   )
-  const header = await readBoundedFile(
-    join(directory, RECORDING_HEADER_FILE),
-    MAX_RECORDING_HEADER_BYTES,
-  )
-    .then((bytes) => headerOwnerSchema.parse(JSON.parse(bytes.toString())))
-    .catch(() => undefined)
+  const header = await readHeaderOwner(directory)
   const hasWriterRecord = await lstat(
     recordingOwnerRecordPath(dirname(dirname(directory)), basename(directory)),
   ).then(

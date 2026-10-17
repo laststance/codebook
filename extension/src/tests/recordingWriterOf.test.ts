@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { closeSync, constants as fsConstants, openSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -703,5 +705,65 @@ test('the saved studies list reads the start of each writer process once per lis
       readsOfTheFirstList: [writers.liveWindow, writers.laterProcess].sort(),
       readsOfTheSecondList: [writers.liveWindow],
     },
+  )
+})
+
+/**
+ * Answers what a call gave within a bound, or `timed out`, so a test of a read that may wait for good ends either way.
+ * @param calling - The call.
+ * @param boundMs - How long the test waits.
+ * @returns The call's answer, or `timed out`.
+ * @example await withinBound(library.list(), 5_000) // => [] or 'timed out'
+ */
+async function withinBound<Answer>(
+  calling: Promise<Answer>,
+  boundMs: number,
+): Promise<Answer | 'timed out'> {
+  let timer: NodeJS.Timeout | undefined
+  const timedOut = new Promise<'timed out'>((resolveTimedOut) => {
+    timer = setTimeout(() => resolveTimedOut('timed out'), boundMs)
+  })
+  try {
+    return await Promise.race([calling, timedOut])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Value: protects=every list of Saved studies and every removal while a named pipe stands at a recording's header.json (a damaged or hostile storage folder); fails_when=the header is opened as a file that may block, so the open waits for a writer of the pipe for good and holds the list, the removal and the editor's process; why_new=Cycle 0046 adversarial review AD11; seam=a named pipe made at the header's path; on Windows, which has no named pipes in a folder, the test is skipped
+test('a named pipe at a recording’s header neither holds the list of saved studies nor the removal of its study', async (context) => {
+  if (process.platform === 'win32')
+    return context.skip('Windows has no named pipe in a folder')
+  // Arrange: a run that saved no study, whose header is a named pipe.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const headerPath = join(recording.folder, 'header.json')
+  await rm(headerPath)
+  execFileSync('mkfifo', [headerPath])
+  // A read that waits on the pipe is let go at the end, so the test process can end in any case.
+  context.after(() => {
+    try {
+      closeSync(
+        openSync(headerPath, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK),
+      )
+    } catch {
+      // Nothing waits on the pipe.
+    }
+  })
+
+  // Act
+  const listed = await withinBound(storage.library.list(), 5_000)
+  const removal = await withinBound(
+    storage.library.removeStudy(recording.studyId, async () => undefined),
+    5_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed: listed === 'timed out' ? listed : listed.map((entry) => entry.id),
+      removal: removal === 'timed out' ? removal : removal.outcome,
+    },
+    { listed: [recording.studyId], removal: 'moved' },
   )
 })
