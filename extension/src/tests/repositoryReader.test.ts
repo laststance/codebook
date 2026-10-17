@@ -107,9 +107,20 @@ async function readerHarness(context: TestContext) {
   const focusListeners = new Set<() => void>(),
     windowFocusListeners = new Set<(state: { focused: boolean }) => void>(),
     selectionListeners = new Set<(event?: NativeSelectionEvent) => void>(),
-    tabListeners = new Set<() => void>(),
+    tabListeners = new Set<(event: NativeTabChange) => void>(),
     groupListeners = new Set<() => void>()
   type NativeTab = { input: TabInputText | TabInputWebview; isPinned?: boolean }
+  /** The tab-model change the editor reports with onDidChangeTabs: the tabs it opened, closed and changed (vscode.TabChangeEvent). */
+  type NativeTabChange = {
+    opened: NativeTab[]
+    closed: NativeTab[]
+    changed: NativeTab[]
+  }
+  /** Reports a change of the fake tab model to every onDidChangeTabs listener, with the tabs it opened, closed or changed (row 677: the reader forgets a copy whose last tab closed). @example fireTabChange({ closed: [copy] }) */
+  const fireTabChange = (change: Partial<NativeTabChange> = {}): void => {
+    const event = { opened: [], closed: [], changed: [], ...change }
+    for (const listener of tabListeners) listener(event)
+  }
   const sourceGroup: {
     viewColumn: number
     tabs: NativeTab[]
@@ -119,6 +130,8 @@ async function readerHarness(context: TestContext) {
   const learnerEditors = new Map<NativeTab, NativeEditor>()
   /** The tabs the reader asked the editor to close, as their URIs. */
   const closedTabs: string[] = []
+  /** Every tab closed, by the reader or by the learner, the last one last: the editor's list for Reopen Closed Editor. */
+  const recentlyClosedTabs: NativeTab[] = []
   const otherGroup: typeof sourceGroup = { viewColumn: 2, tabs: [] }
   /** Names a group's tabs in their order as `scheme:file name` (a text tab) or view type (a pane), and its front tab, for {@link firstGroupTabs} and {@link wikiGroupTabs}. @example namedGroupTabs(sourceGroup) // => { tabs: ['file:login-form.tsx'], front: 'file:login-form.tsx' } */
   const namedGroupTabs = (
@@ -144,7 +157,7 @@ async function readerHarness(context: TestContext) {
       if (!group.tabs.includes(tab)) continue
       group.tabs = group.tabs.filter((value) => value !== tab)
       if (group.activeTab === tab) group.activeTab = group.tabs.at(-1)
-      for (const listener of tabListeners) listener()
+      fireTabChange({ closed: [tab] })
     }
   }
   let activeGroup = sourceGroup
@@ -341,10 +354,11 @@ async function readerHarness(context: TestContext) {
                     ? tab.input.uri.toString()
                     : tab.input.viewType,
                 )
-              for (const listener of tabListeners) listener()
+              recentlyClosedTabs.push(...closing)
+              fireTabChange({ closed: closing })
               return true
             },
-            onDidChangeTabs(callback: () => void) {
+            onDidChangeTabs(callback: (event: NativeTabChange) => void) {
               tabListeners.add(callback)
               return {
                 dispose(): void {
@@ -427,7 +441,7 @@ async function readerHarness(context: TestContext) {
                 }
               }
               // Replay the ordinary Cursor trace: target tab, missing text editor, initial caret, requested command selection.
-              for (const listener of tabListeners) listener()
+              fireTabChange(openTab ? { changed: [tab] } : { opened: [tab] })
               await pauseAt('target tab')
               activeEditor = undefined
               for (const listener of focusListeners) listener()
@@ -511,7 +525,7 @@ async function readerHarness(context: TestContext) {
                 if (nativeWikiSelection) {
                   activeGroup = otherGroup
                   otherGroup.activeTab = wikiTab
-                  for (const listener of tabListeners) listener()
+                  fireTabChange({ changed: [wikiTab] })
                   for (const listener of groupListeners) listener()
                   // The recording Summary keeps keyboard while Wiki replaces its selected source tab, then the editor disappears.
                   if (retireWikiTextEditor) {
@@ -584,21 +598,20 @@ async function readerHarness(context: TestContext) {
               otherGroup.activeTab = studyTab
               activeGroup = otherGroup
               activeEditor = undefined
-              for (const listener of tabListeners) listener()
+              fireTabChange({ opened: [studyTab] })
               for (const listener of groupListeners) listener()
             }
             closeStudyPanel = (): void => {
               // Close removes the Study tab, so its group selects the Wiki tab again before the focus command lands.
+              const isStudyTab = (tab: NativeTab): boolean =>
+                tab.input instanceof TabInputWebview &&
+                tab.input.viewType === 'mainThreadWebview-codebook.studyContext'
+              const studyTabs = otherGroup.tabs.filter(isStudyTab)
               otherGroup.tabs = otherGroup.tabs.filter(
-                (tab) =>
-                  !(
-                    tab.input instanceof TabInputWebview &&
-                    tab.input.viewType ===
-                      'mainThreadWebview-codebook.studyContext'
-                  ),
+                (tab) => !isStudyTab(tab),
               )
               otherGroup.activeTab = wikiTab
-              for (const listener of tabListeners) listener()
+              fireTabChange({ closed: studyTabs })
               activateWikiPanel()
             }
             activateWikiPanel = (): void => {
@@ -630,7 +643,17 @@ async function readerHarness(context: TestContext) {
       },
     },
   )
-  const createReader = () =>
+  /** The onDidChangeTabs listeners a reader registers while it is made, for its own lifetime (row 677: it forgets a copy whose last tab closed); {@link focusListenerCount} leaves them out, since it counts the receipts a navigation takes and must give back. */
+  const readerLifetimeListeners = new Set<(event: NativeTabChange) => void>()
+  /** Makes a reader on the fake editor and notes the tab listeners its construction registered ({@link readerLifetimeListeners}). @example const fresh = createReader() */
+  const createReader = () => {
+    const listenersBefore = new Set(tabListeners)
+    const made = createReaderOnFakeEditor()
+    for (const listener of tabListeners)
+      if (!listenersBefore.has(listener)) readerLifetimeListeners.add(listener)
+    return made
+  }
+  const createReaderOnFakeEditor = () =>
     new boundary.RepositoryReader({
       storage: async () => library,
       connect: async () => {
@@ -851,12 +874,20 @@ async function readerHarness(context: TestContext) {
       return { started, release }
     },
     focusedSource: () => activeEditor,
+    /** Counts the editor listeners a navigation's focus receipts hold, without each reader's own lifetime tab listener ({@link readerLifetimeListeners}). @example harness.focusListenerCount() // => 0 once an open completed */
     focusListenerCount: () =>
       focusListeners.size +
       windowFocusListeners.size +
       selectionListeners.size +
-      tabListeners.size +
+      [...tabListeners].filter(
+        (listener) => !readerLifetimeListeners.has(listener),
+      ).length +
       groupListeners.size,
+    /** Counts the lifetime tab listeners of the readers that are not disposed yet ({@link readerLifetimeListeners}). @example harness.readerTabListenerCount() // => 1 for the harness's own reader */
+    readerTabListenerCount: () =>
+      [...tabListeners].filter((listener) =>
+        readerLifetimeListeners.has(listener),
+      ).length,
     selectSource(line: number, character: number, kind = 3): void {
       assert.ok(activeEditor)
       activeEditor.selections = [
@@ -875,13 +906,14 @@ async function readerHarness(context: TestContext) {
     roundtripCitationTab(): void {
       const citation = sourceGroup.activeTab,
         editor = activeEditor
-      sourceGroup.activeTab = {
+      const unrelated = {
         input: new TabInputText(Uri.file(join(root, 'unrelated-draft.txt'))),
       }
-      for (const listener of tabListeners) listener()
+      sourceGroup.activeTab = unrelated
+      fireTabChange({ changed: [unrelated] })
       activeEditor = editor
       sourceGroup.activeTab = citation
-      for (const listener of tabListeners) listener()
+      fireTabChange({ changed: citation ? [citation] : [] })
     },
     switchTabGroup(toSource = false): void {
       activeGroup = toSource ? sourceGroup : otherGroup
@@ -957,7 +989,7 @@ async function readerHarness(context: TestContext) {
       otherGroup.activeTab = tab
       activeGroup = otherGroup
       for (const listener of focusListeners) listener()
-      for (const listener of tabListeners) listener()
+      fireTabChange({ opened: [tab] })
     },
     hideWiki(): void {
       hideWikiPanel()
@@ -1013,8 +1045,51 @@ async function readerHarness(context: TestContext) {
           { anchor: new Position(0, 0), active: new Position(0, 0) },
         ],
       }
-      for (const listener of tabListeners) listener()
+      // A move to another group opens the tab there before it closes it in its own group (VS Code 1.140.0 `workbench.desktop.main.js` 1106:78557; Cursor 3.23.12 17501:40995).
+      fireTabChange({ opened: [copy] })
+      fireTabChange({ closed: [copy] })
       for (const listener of groupListeners) listener()
+      for (const listener of focusListeners) listener()
+    },
+    /**
+     * Closes the tab in front of the first group by hand, as the learner's click on its close button does: the group brings its most recently active other tab to the front with that tab's editor and the keyboard, and the editor reports the closed tab; the reader asked for nothing, so {@link closedTabs} records nothing.
+     * @example harness.closeFrontSourceTabByHand() // the module.ts copy closed; the learner's login-form.tsx is in front again
+     */
+    closeFrontSourceTabByHand(): void {
+      const closing = sourceGroup.activeTab
+      assert.ok(closing)
+      sourceGroup.tabs = sourceGroup.tabs.filter((tab) => tab !== closing)
+      sourceGroup.activeTab = sourceGroup.tabs.at(-1)
+      recentlyClosedTabs.push(closing)
+      activeEditor = sourceGroup.activeTab
+        ? learnerEditors.get(sourceGroup.activeTab)
+        : undefined
+      fireTabChange({ closed: [closing] })
+      for (const listener of focusListeners) listener()
+    },
+    /**
+     * Runs Reopen Closed Editor in the first group: the editor opens the resource of the tab closed last again, a new tab with the same URI, in front of the group and with the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1598:87610; Cursor 3.23.12 18385:80118), and reports the opened tab.
+     * @example harness.reopenClosedEditor() // the module.ts copy is in front of the first group again
+     */
+    reopenClosedEditor(): void {
+      const closed = recentlyClosedTabs.pop()
+      assert.ok(closed && closed.input instanceof TabInputText)
+      const uri = closed.input.uri,
+        // The reader's content provider gives the reopened copy the text it gave the closed one.
+        text =
+          openedSources.find((value) => value.uri.toString() === uri.toString())
+            ?.text ?? '',
+        reopened = { input: new TabInputText(uri) }
+      sourceGroup.tabs.push(reopened)
+      sourceGroup.activeTab = reopened
+      activeEditor = {
+        document: { uri, version: 1, getText: () => text },
+        viewColumn: 1,
+        selections: [
+          { anchor: new Position(0, 0), active: new Position(0, 0) },
+        ],
+      }
+      fireTabChange({ opened: [reopened] })
       for (const listener of focusListeners) listener()
     },
     /** Closes the Wiki's tab by hand, as the learner's click on its close button does: the editor disposes the panel. @example harness.closeWikiTabByHand() */
@@ -1615,6 +1690,120 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
       },
       closedTabs: ['order.ts'],
     },
+  )
+})
+
+// Value: protects=a cited-source copy the learner closed and brought back with Reopen Closed Editor while the Wiki stays open: the copy is the learner's now, so Close Repository Wiki leaves it in front of the first group; fails_when=the reader keeps the URI of every copy it ever showed, takes the reopened copy, which has the same URI, for its own and closes it with the Wiki; why_new=Cycle 0046 row 677 (the 652 and 662 forks' finding 3); seam=readerHarness, focusUnrelatedDraft, open, closeFrontSourceTabByHand and reopenClosedEditor (the learner's close and Reopen Closed Editor, with the editor's tab events), close, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy the learner closed and reopened stays in front of the first group when the Wiki closes', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx; the learner closes that copy and brings it back with Reopen Closed Editor.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.closeFrontSourceTabByHand()
+  harness.reopenClosedEditor()
+
+  // Act
+  harness.reader.close()
+
+  // Assert: the reopened module.ts copy is still in front of the learner's file; the reader closed nothing.
+  assert.deepEqual(
+    { afterClose: harness.firstGroupTabs(), closedTabs: harness.closedTabs },
+    {
+      afterClose: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=a cited-source copy the reader itself retired when the learner followed the next citation, and which the learner then brought back with Reopen Closed Editor: the copy is the learner's now, so Close Repository Wiki closes only the next citation's copy; fails_when=the URI of the retired copy stays among the copies the reader showed, so the reopened copy is closed with the Wiki; why_new=Cycle 0046 row 677 (a copy the reader's own retirement closed is forgotten too); seam=readerHarness, focusUnrelatedDraft, open of two citations, reopenClosedEditor (the learner's Reopen Closed Editor of the copy the reader closed), close, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy the next citation retired and the learner reopened stays when the Wiki closes, and the next citation’s copy leaves', async (context) => {
+  // Arrange: the learner follows module.ts and then order.ts, which retires the module.ts copy; the learner brings that copy back with Reopen Closed Editor.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  await harness.reader.open({ ...harness.selection, anchorIndex: 1 })
+  harness.reopenClosedEditor()
+  const beforeClose = harness.firstGroupTabs()
+
+  // Act
+  harness.reader.close()
+
+  // Assert: the reopened module.ts copy stays; the order.ts copy the reader showed left with the Wiki.
+  assert.deepEqual(
+    {
+      beforeClose,
+      afterClose: harness.firstGroupTabs(),
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      beforeClose: {
+        tabs: [
+          'file:login-form.tsx',
+          'codebook-repository-source:order.ts',
+          'codebook-repository-source:module.ts',
+        ],
+        front: 'codebook-repository-source:module.ts',
+      },
+      afterClose: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: ['module.ts', 'order.ts'],
+    },
+  )
+})
+
+// Value: protects=row 652's retirement of a copy this reader showed that the learner only moved: a move to another group is no close of the copy (the editor opens it in its new group before it closes it in its old one), so the copy stays the reader's and the next citation retires it once the learner has left it; fails_when=the reader forgets a copy at the close half of a move, so a copy the learner dragged beside the Wiki and left stays there for good; why_new=Cycle 0046 row 677 (its bound: only a copy whose last tab closed is forgotten); seam=readerHarness, focusUnrelatedDraft, open, moveFrontSourceTabToWikiGroup (opened, then closed, as the editors report a move), focusSourceEditor and switchTabGroup (the learner's click back into login-form.tsx), open of the next citation, wikiGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy the learner moved beside the Wiki and left is retired by the next citation, as a copy the reader showed', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts; the learner drags that copy beside the Wiki, reads in it, and clicks back into login-form.tsx.
+  const harness = await readerHarness(context)
+  const draft = harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.moveFrontSourceTabToWikiGroup()
+  harness.switchTabGroup(true)
+  harness.focusSourceEditor(draft)
+
+  // Act: the learner follows the article's second citation, order.ts.
+  await harness.reader.open({ ...harness.selection, anchorIndex: 1 })
+
+  // Assert: the moved module.ts copy left the Wiki's group; the order.ts copy is in front of the learner's file.
+  assert.deepEqual(
+    {
+      firstGroup: harness.firstGroupTabs(),
+      wikiGroup: harness.wikiGroupTabs(),
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      firstGroup: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:order.ts'],
+        front: 'codebook-repository-source:order.ts',
+      },
+      wikiGroup: {
+        tabs: ['mainThreadWebview-codebook.repositoryWiki'],
+        front: 'mainThreadWebview-codebook.repositoryWiki',
+      },
+      closedTabs: ['module.ts'],
+    },
+  )
+})
+
+// Value: protects=the editor after the extension disposes a Repository Wiki reader (a change of the workspace's folders): the tab listener by which the reader forgets a closed copy (row 677) is released with its other registrations, so the reader made in its place is the only one that listens; fails_when=the listener is not among the registrations dispose releases, and a disposed reader goes on reacting to the editor's tabs; why_new=Cycle 0046 row 677 (its listener's lifetime); seam=the reader harness's count of each reader's lifetime tab listener, createReader and dispose
+test('a Repository Wiki reader the extension disposes stops listening to the editor’s tabs', async (context) => {
+  // Arrange: a second reader beside the harness's own.
+  const harness = await readerHarness(context),
+    replaced = harness.createReader()
+  const listenersBefore = harness.readerTabListenerCount()
+
+  // Act
+  await replaced.dispose()
+
+  // Assert
+  assert.deepEqual(
+    { listenersBefore, listenersAfter: harness.readerTabListenerCount() },
+    { listenersBefore: 2, listenersAfter: 1 },
   )
 })
 

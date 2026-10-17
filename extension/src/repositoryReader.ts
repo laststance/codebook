@@ -116,7 +116,7 @@ export class RepositoryReader {
   private statusGeneration = 0
   private refreshTimer?: ReturnType<typeof setTimeout>
   private sourceUri?: vscode.Uri
-  /** The URIs of the cited-source copies this reader showed ({@link openSource}): the copies its Wiki's close and its next citation retire, and no other (Cycle 0046 row 662). Each citation has a URI of its own ({@link openSourceDocument}). */
+  /** The URIs of the cited-source copies this reader showed ({@link openSource}) that are still open: the copies its Wiki's close and its next citation retire, and no other (Cycle 0046 row 662). Each citation has a URI of its own ({@link openSourceDocument}); a URI whose last copy closed is forgotten ({@link forgetClosedCitedSources}, row 677). */
   private readonly shownCitedSources = new Set<string>()
   /** A primary file keeps its native input until the learner selects the Wiki; {@link revealDeferredSource} then pays this preview. */
   private sourceDeferred = false
@@ -187,6 +187,9 @@ export class RepositoryReader {
         )
           this.scheduleRefresh()
       }),
+      vscode.window.tabGroups.onDidChangeTabs((event) =>
+        this.forgetClosedCitedSources(event.closed),
+      ),
     )
     // A reader made after a change of the folders or a restart of the extension host retires the copies the reader before it left (row 652).
     this.retireCopiesOfEarlierReaders()
@@ -884,6 +887,39 @@ export class RepositoryReader {
     return (
       uri === keyboard?.document.uri.toString() &&
       group.viewColumn === keyboard.viewColumn
+    )
+  }
+
+  /**
+   * Forgets the cited-source copies whose last tab closed, so that {@link retireCitedSourceTabs} and {@link retireStaleCitedSources} retire only the copies this reader showed that are still its own and {@link shownCitedSources} holds no URI of a closed copy; called for every change of the editor's tabs (Cycle 0046 row 677).
+   * A copy the learner closed and brings back is the learner's: Reopen Closed Editor opens the closed editor's resource again, with the same URI (VS Code 1.140.0 `workbench.desktop.main.js` 1598:87610; Cursor 3.23.12 18385:80118), and the reader's content provider gives it its text. A copy the learner drags to another group stays this reader's: the editor opens it in the target group before it closes it in its own (VS Code 1106:78557; Cursor 17501:40995), so it is still open when that close is reported. A copy this reader shows again is its own again ({@link openSource}).
+   * @param closed - The tabs the change closed.
+   * @example this.forgetClosedCitedSources(event.closed) // the module.ts copy the learner closed is no longer this reader's
+   */
+  private forgetClosedCitedSources(closed: readonly vscode.Tab[]): void {
+    for (const tab of closed) {
+      const uri =
+        tab.input instanceof vscode.TabInputText
+          ? tab.input.uri.toString()
+          : undefined
+      // A URI still shown by another tab, such as the copy the learner moved to another group, stays this reader's.
+      if (uri && !this.isOpenInAnyGroup(uri)) this.shownCitedSources.delete(uri)
+    }
+  }
+
+  /**
+   * Says whether any group of the window shows a text tab of a URI; asked by {@link forgetClosedCitedSources} once a tab of that URI closed.
+   * @param uri - The tab's URI, as a string.
+   * @returns `true` while a text tab of the URI is open in any group; `false` once none is.
+   * @example this.isOpenInAnyGroup(copy.toString()) // => true while the module.ts copy the learner moved stands in the Wiki's group
+   */
+  private isOpenInAnyGroup(uri: string): boolean {
+    return vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === uri,
+      ),
     )
   }
 
