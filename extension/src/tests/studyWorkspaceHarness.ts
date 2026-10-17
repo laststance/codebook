@@ -1022,20 +1022,31 @@ export async function workspaceHarness(
     activeTextEditorChanged(undefined)
     groupFocusedBeforeInsertion = previouslyFocusedGroup
   }
-  /** Names the group that held the keyboard before the last native group insertion as active again while the inserted group still holds no tab; see `reactivatePreviousGroupAfterInsertion`. @example reactivatePreviousGroup() */
+  /** Names the group that held the keyboard before the last native group insertion as active again while the inserted group still holds no tab; see `reactivatePreviousGroupAfterInsertion`. The change lists that group alone, as both editors send an activated group (Cursor 3.23.12 `workbench.desktop.main.js` 17269:28251, `extensionHostProcess.js` 131:33740). @example reactivatePreviousGroup() */
   function reactivatePreviousGroup(): void {
     if (
       !groupFocusedBeforeInsertion ||
       !groups.includes(groupFocusedBeforeInsertion)
     )
       return
-    const inserted = activeTabGroup
     activeTabGroup = groupFocusedBeforeInsertion
     changedGroups({
       opened: [],
       closed: [],
-      changed: [groupFocusedBeforeInsertion, inserted],
+      changed: [groupFocusedBeforeInsertion],
     })
+  }
+  /**
+   * Changes a group's lock as both editors do: a lock that changes fires the group model's `GROUP_LOCKED` change, for which the tab model service sends the extension host a whole new tab model naming the active group (Cursor 3.23.12 `workbench.desktop.main.js` 17264:18055, 17269:31902, 17269:31013; VS Code 1.140.0 705:29187, 725:7861, 725:7244), and the extension host fires one change that lists every group (`extensionHostProcess.js` 131:33177); a lock that changes nothing sends nothing. Cursor's model gives every group a new object; the VS Code model keeps them, as the rest of this harness does. Called by the fake `workbench.action.lockEditorGroup` and `workbench.action.unlockEditorGroup`, and by `lockGroupAsLearner`.
+   * @param group - The group whose lock is set.
+   * @param locked - The lock it gets.
+   * @example setGroupLock(activeTabGroup, true) // the whole tab model is reported once
+   */
+  function setGroupLock(group: (typeof groups)[number], locked: boolean): void {
+    if (Boolean(group.locked) === locked) return
+    group.locked = locked
+    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
+    else changedGroups({ opened: [], closed: [], changed: [...groups] })
   }
   /** Counts native layout leaves so shrinking a grid merges only its removed groups in these tests. @example nativeGroupCount({ groups: [{}, {}] }) // 2 */
   function nativeGroupCount(value: unknown): number {
@@ -2865,14 +2876,14 @@ export async function workspaceHarness(
               reactivatesPreviousGroupBeforeLock = false
               reactivatePreviousGroup()
             }
-            activeTabGroup.locked = true
+            setGroupLock(activeTabGroup, true)
             // The editor names the group that held the keyboard before the insertion again as the lock settles, while the new group is still empty.
             if (reactivatesPreviousGroupLater) reactivatePreviousGroup()
             return
           }
           // The editor unlocks only the group it names as active.
           if (name === 'workbench.action.unlockEditorGroup') {
-            activeTabGroup.locked = false
+            setGroupLock(activeTabGroup, false)
             return
           }
           if (
@@ -5102,6 +5113,16 @@ export async function workspaceHarness(
      */
     reactivatePreviousGroupBeforeLock(): void {
       reactivatesPreviousGroupBeforeLock = true
+    },
+    /**
+     * Locks a group as the learner's View: Lock Editor Group does, without moving the keyboard: the editor reports the whole tab model once (see `setGroupLock`), and the extension API cannot read the lock.
+     * @param column - The view column of the group the learner locked.
+     * @example harness.lockGroupAsLearner(1)
+     */
+    lockGroupAsLearner(column: number): void {
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      assert.ok(group, 'No group at that column')
+      setGroupLock(group, true)
     },
     /**
      * Makes the fake editor answer Cursor's Focus Agent (`composer.focusComposer`) before its chat input has the keyboard, which the chat takes a moment later, just before the editor runs the given one of the reader's following commands: Cursor 3.23.12 runs the command without awaiting the chat's opening (`workbench.desktop.main.js` 17914:19364 `n.handleOpenComposer(…)` in an `async run` that returns nothing; 18566:8949 dispatches to `handleOpenComposerEditor` without awaiting it, which awaits `openComposer` before the input is focused, 18566:8204). In C57 rounds c57-cursor-1f and 1f2 an agent's first run after a reload failed right after its Application stood in its new group (Cycle 0046 row 646).

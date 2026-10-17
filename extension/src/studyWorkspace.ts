@@ -224,6 +224,7 @@ import { isSameEditorLayoutShape } from './utils/isSameEditorLayoutShape'
 import { isWikiGroupBesideTextEditor } from './utils/isWikiGroupBesideTextEditor'
 import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { libraryHasRoom } from './utils/libraryHasRoom'
+import { listsEveryTabGroup } from './utils/listsEveryTabGroup'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
@@ -12968,11 +12969,12 @@ export class StudyWorkspace {
       allocated = identity
       assertCurrent()
       this.assertApplicationLockTarget(group, originals)
-      await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
+      const lockReport = await this.lockActiveEditorGroup()
       assertCurrent()
-      // Cursor can activate the group that held the keyboard again before the lock reaches it (row 644).
+      // Cursor can activate the group that held the keyboard again before the lock reaches it (row 644), or only after it (row 650).
       const lockTookKeyboard = await this.keepLockOnApplicationGroup(
         identity,
+        lockReport,
         assertCurrent,
       )
       this.claimApplicationAllocation(identity, grid.groups.length + 1)
@@ -13605,21 +13607,68 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves the lock of {@link reserveApplicationGroup} onto the new Application group when it reached another group; called right after `workbench.action.lockEditorGroup`, which takes no argument and locks the editor's active group (VS Code 1.140.0 `workbench.desktop.main.js` 987:12723 with 981:147922; Cursor 3.23.12 11684:15251 with 11678:92078).
-   * Cursor can activate the group that held the keyboard before the insertion (the first group, whose Application pane the reservation focused) again before the lock reaches the editor: the lock then locks that group, and the tab model, whose events arrive in order with the command's answer, names it as the lock answers (C57 round 1b: the learner's first group stayed locked through Close, the Application's group stood unlocked; Cycle 0046 row 644). The extension API cannot read a group's lock, so a named group other than the new one is taken as the group the lock reached: a learner's group gets the lock taken off again, an earlier window's leftover, which holds no learner tab, keeps its own lock (row 591), and the new group, at column 1, is focused and locked.
+   * Locks the editor's active group for {@link reserveApplicationGroup} and names the group the lock changed, which the extension API cannot read otherwise; called once, right after {@link assertApplicationLockTarget}, in place of a bare `workbench.action.lockEditorGroup`.
+   * The command takes no argument and locks the group the editor names as active when it runs (Cursor 3.23.12 `workbench.desktop.main.js` 11684:15251 with 11678:92962 and 11678:65035; VS Code 1.140.0 987:12723 with 981:147922). A group's lock that changes fires its model's `GROUP_LOCKED` change (kind 3) and nothing else (Cursor 17264:18055, VS Code 705:29187); the editor's tab model service has no case for that kind and sends the extension host a whole new tab model, marking as active the group the editor names at that moment, the group the lock just locked (Cursor 17269:31902 and 17269:31013, VS Code 725:7861 and 725:7244). The extension host replaces every group with it and fires one change that lists every group (Cursor `extensionHostProcess.js` 131:33177), while a group the editor only activates is sent alone (131:33740, from 17269:28251). That model is sent while the command runs, before its answer, and the extension host takes the messages in the order they were sent (48:19868), so it reaches this listener before the command's answer; a group Cursor activates after the lock reaches it only afterwards, whether or not before Codebook reads the tab model (row 650).
+   * @returns
+   * - `reported: true` with the identity of the group the first whole tab model during the command names as active, the group the lock changed; the identity is `undefined` for a group Codebook does not know.
+   * - `reported: false` when no whole tab model arrived: the lock changed no group, because the group it reached was locked already (a learner's lock, an earlier window's leftover).
+   * @example const lockReport = await this.lockActiveEditorGroup() // => { reported: true, identity: applicationGroupIdentity } when the lock reached the new Application group
+   */
+  private async lockActiveEditorGroup(): Promise<{
+    reported: boolean
+    identity: symbol | undefined
+  }> {
+    let report: { reported: boolean; identity: symbol | undefined } = {
+      reported: false,
+      identity: undefined,
+    }
+    const listener = vscode.window.tabGroups.onDidChangeTabGroups((event) => {
+      // Only the first whole tab model counts: a group activated afterwards comes alone, and names no lock.
+      if (
+        report.reported ||
+        !listsEveryTabGroup(event, vscode.window.tabGroups.all)
+      )
+        return
+      report = {
+        reported: true,
+        identity: this.editorGroupIdentities.get(
+          vscode.window.tabGroups.activeTabGroup,
+        ),
+      }
+    })
+    try {
+      await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
+    } finally {
+      listener.dispose()
+    }
+    return report
+  }
+
+  /**
+   * Moves the lock of {@link reserveApplicationGroup} onto the new Application group when it reached another group; called right after {@link lockActiveEditorGroup}, which names the group the lock changed.
+   * Cursor can activate the group that held the keyboard before the insertion (the first group, whose Application pane the reservation focused) again before the lock reaches the editor: the lock then locks that group (C57 round 1b: the learner's first group stayed locked through Close, the Application's group stood unlocked; Cycle 0046 row 644). Cursor can also activate it only after the lock reached the new group, and the tab model then names that group as the lock answers although its lock is the learner's own or none (row 650). So only the group whose lock {@link lockActiveEditorGroup} shows changed is unlocked again, and only while it holds a learner's tab and is still the active one (an earlier window's leftover keeps its own lock, row 591); a lock the learner had set is never removed. Whenever the new group was not the one locked, it is focused, at column 1, and locked.
    * @param identity - The new Application group's identity ({@link newApplicationGroup}).
+   * @param lockReport - What {@link lockActiveEditorGroup} answered for the reservation's lock.
    * @param assertCurrent - The preparation's lifetime and cancellation guard.
    * @returns `true` when the new group had to be focused, which took the keyboard; `false` when the lock reached it.
    * @throws When the new group is not the active one after its focus.
-   * @example const lockTookKeyboard = await this.keepLockOnApplicationGroup(identity, assertCurrent) // => false in VS Code
+   * @example const lockTookKeyboard = await this.keepLockOnApplicationGroup(identity, lockReport, assertCurrent) // => false in VS Code
    */
   private async keepLockOnApplicationGroup(
     identity: symbol,
+    lockReport: Awaited<ReturnType<StudyWorkspace['lockActiveEditorGroup']>>,
     assertCurrent: () => void,
   ): Promise<boolean> {
+    // The lock's own tab model names the new group: the lock reached it, whatever the editor names afterwards (row 650).
+    if (lockReport.reported && lockReport.identity === identity) return false
     const named = vscode.window.tabGroups.activeTabGroup
-    if (this.editorGroupIdentities.get(named) === identity) return false
-    if (this.learnersTabKeysOf(named).length > 0)
+    // Only the learner's group the lock is shown to have changed gets its lock taken off again (row 644); a lock the learner had set, or one the editor reports no change of, stays.
+    if (
+      lockReport.reported &&
+      lockReport.identity !== undefined &&
+      this.editorGroupIdentities.get(named) === lockReport.identity &&
+      this.learnersTabKeysOf(named).length > 0
+    )
       await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
     await vscode.commands.executeCommand(
       'workbench.action.focusFirstEditorGroup',
