@@ -804,6 +804,8 @@ export class StudyWorkspace {
   private mainEditorFocusBorrows = 0
   /** How often {@link focusApplicationSourceGroup} focused the main editor's first group for an Application preparation's new group; {@link performPresentation} compares it with {@link mainEditorFocusBorrows} for a refusal that comes after either (Cycle 0046 row 718). */
   private applicationFocusBorrows = 0
+  /** How often {@link readMainEditorGrid} gave such a borrowed keyboard back itself, to the Study pane or the text editor that had it ({@link giveKeyboardBackBeyondMainEditor} among them); {@link captureRepositoryKeyboardReturn} compares it with {@link mainEditorFocusBorrows}, since an agent's cold Wiki is created in front of that editor afterwards and hides it (Cycle 0046 row 719). */
+  private mainEditorFocusReturns = 0
   /** Positive host-lifetime discovery retained by {@link chatFocusCommand}; absent commands remain discoverable later. */
   private registeredChatFocusCommand = false
   /** The main layout Codebook confirmed last, read and written as {@link layoutReceipt}. */
@@ -6844,15 +6846,22 @@ export class StudyWorkspace {
 
   /**
    * Captures, before a Wiki arrangement's first effect, how to give back the keyboard its measurement may borrow ({@link readMainEditorGrid} focuses the first group beside another editor part, Cursor's chat); {@link arrangeRepository} answers it to {@link RepositoryReader.open}, which asks it once an agent's Wiki is shown (codebook_open_book, row 620).
-   * @returns The return: `true` when no measurement borrowed the keyboard, when the measurement gave a Study pane or a text editor its focus back itself, or when the foreign tab that had it (Cursor's chat tab) got it back ({@link retainForeignTabFocus}); `false` when it stays where the measurement left it.
+   * @returns The return: `true` when no measurement borrowed the keyboard, when the measurement gave every keyboard it borrowed back itself to the Study pane or the text editor that had it ({@link mainEditorFocusReturns}; the Wiki created in front of that editor afterwards hides it, and the reader's covered-editor settle decides then, row 719), when that pane or editor has the keyboard again, or when the foreign tab that had it (Cursor's chat tab) got it back ({@link retainForeignTabFocus}); `false` when it stays where the measurement left it.
    * @example const keyboardReturn = this.captureRepositoryKeyboardReturn() // await keyboardReturn() => true after composer.focusComposer
    */
   private captureRepositoryKeyboardReturn(): RepositoryKeyboardReturn {
     const borrowsBefore = this.mainEditorFocusBorrows,
+      returnsBefore = this.mainEditorFocusReturns,
       giveBack = this.retainForeignTabFocus(undefined),
       isPlaceFocusedAgain = this.retainEditorKeyboardPlace()
     return async (): Promise<boolean> => {
       if (this.mainEditorFocusBorrows === borrowsBefore) return true
+      // The measurement gave each borrowed keyboard back itself, before the Wiki was created in front of the editor that got it (row 719).
+      if (
+        this.mainEditorFocusBorrows - borrowsBefore ===
+        this.mainEditorFocusReturns - returnsBefore
+      )
+        return true
       // Without a foreign tab the learner had a Study pane or a text editor, which the measurement focuses again only in the main editor.
       return giveBack ? giveBack().catch(() => false) : isPlaceFocusedAgain()
     }
@@ -17605,6 +17614,8 @@ export class StudyWorkspace {
       PRESENTATION_READY_TIMEOUT_MS,
       signal,
     )
+    // The measurement gave the keyboard back itself (row 719).
+    this.mainEditorFocusReturns++
   }
 
   /**
@@ -18010,6 +18021,8 @@ export class StudyWorkspace {
         )
         assertCurrent()
         assertGroups()
+        // The measurement gave the keyboard back itself (row 719).
+        this.mainEditorFocusReturns++
       } else if (
         !useCitation &&
         editor &&
@@ -18079,6 +18092,8 @@ export class StudyWorkspace {
         await restoreReading(restored, signal)
         assertCurrent()
         assertGroups()
+        // The measurement gave the keyboard back itself (row 719).
+        this.mainEditorFocusReturns++
       } else if (!useCitation && editor && editorColumn !== undefined) {
         // A text editor beyond the measured columns is another part's, VS Code's floating window's (row 708).
         if (editor.document.version !== documentVersion)
