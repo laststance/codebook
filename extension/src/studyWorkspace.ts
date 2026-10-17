@@ -958,7 +958,7 @@ export class StudyWorkspace {
     >
   }
   private presentationMovedFocus = false
-  /** Whether the running presentation change was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732). */
+  /** Whether the running presentation change or Return to current pause was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732), and neither does {@link returnCurrentSelection} (row 735). Each of them clears it when it begins. */
   private presentationYieldedToLearner = false
   private presentationPoseRequest?: PresentationPoseCapture
   private presentationPose?: PresentationPose
@@ -8439,6 +8439,8 @@ export class StudyWorkspace {
         requester === 'learner' ? this.learnersKeyboardPlace() : undefined,
       borrowsBefore = this.focusBorrowCount()
     this.returningCurrent = requester
+    // The Return notes its own refusal for the learner's newer input, as a presentation change does (row 735).
+    this.presentationYieldedToLearner = false
     let arranged = false
     try {
       this.historyRequest++
@@ -8458,7 +8460,9 @@ export class StudyWorkspace {
         await this.open(undefined, 'presentation', false, requester === 'agent')
       arranged = true
     } finally {
-      // A chat given its keyboard back after a Return refused once Codebook borrowed the main editor is told that nothing was arranged (row 731).
+      const yieldedToLearner = this.presentationYieldedToLearner
+      this.presentationYieldedToLearner = false
+      // A chat given its keyboard back after a Return refused once Codebook borrowed the main editor is told that nothing was arranged (row 731); a Return refused for the learner's newer input gives nothing back (row 735).
       await this.finishCurrentReturn(
         lifetime,
         returnForeignFocus,
@@ -8466,6 +8470,7 @@ export class StudyWorkspace {
         !arranged && this.focusBorrowCount() !== borrowsBefore
           ? 'refusedArrangement'
           : undefined,
+        yieldedToLearner,
       )
     }
   }
@@ -8476,14 +8481,16 @@ export class StudyWorkspace {
    * @param returnForeignFocus - The existing native focus return, if another editor part originally held the keyboard.
    * @param learnersPlace - Where the learner's own Return was pressed ({@link learnersKeyboardPlace}); `undefined` for an agent's Return and for a place the editor does not tell.
    * @param chatCause - Why a chat gets its keyboard back, for its sentence ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}): `'refusedArrangement'` for a Return refused after Codebook focused the main editor's first group (Cycle 0046 row 731); left out, the return's own rule tells the arrangement's sentence after a measurement's borrow.
+   * @param yieldedToLearner - Whether the Return was refused for the learner's newer input ({@link yieldFocusToLearner}): then the keyboard stays where the learner has it and nothing is told, as after a presentation change refused so (Cycle 0046 rows 732 and 735).
    * @returns After restoring retained focus or preserving a newer window, tab or source selection.
-   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus, undefined, 'refusedArrangement')
+   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus, undefined, 'refusedArrangement', false)
    */
   private async finishCurrentReturn(
     lifetime: number,
     returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
     learnersPlace?: ReturnType<StudyWorkspace['learnersKeyboardPlace']>,
     chatCause?: ChatKeyboardReturnCause,
+    yieldedToLearner = false,
   ): Promise<void> {
     const assertRetainedFocus = this.retainPresentationPlacement(),
       selections = JSON.stringify(vscode.window.activeTextEditor?.selections)
@@ -8502,7 +8509,8 @@ export class StudyWorkspace {
       }
     }
     try {
-      if (!stillCurrent()) return
+      // The learner's newer input that refused the Return keeps the keyboard, untold.
+      if (yieldedToLearner || !stillCurrent()) return
       // A chat of another editor part that had the keyboard gets it back first; the learner's own place is settled only otherwise.
       if (await returnForeignFocus?.(false, stillCurrent, chatCause)) return
       if (!stillCurrent()) return
@@ -14030,7 +14038,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Ends a presentation change's ownership of the focus for a learner's newer input, where the change is refused for that input and the refusal says so ("…the newer learner focus was preserved."): {@link presentationMovedFocus} is cleared, so nothing is restored after the placement, and {@link presentationYieldedToLearner} is set, so {@link performPresentation}'s refusal gives back no keyboard a borrow took either (Cycle 0046 row 728), not even to a chat (row 732). Called at each such refusal, also by {@link readMainEditorGrid} and the placement's guards.
+   * Ends a presentation change's ownership of the focus for a learner's newer input, where the change is refused for that input and the refusal says so ("…the newer learner focus was preserved."): {@link presentationMovedFocus} is cleared, so nothing is restored after the placement, and {@link presentationYieldedToLearner} is set, so {@link performPresentation}'s refusal gives back no keyboard a borrow took either (Cycle 0046 row 728), not even to a chat (row 732), nor does a refused Return to current pause ({@link returnCurrentSelection}, row 735). Called at each such refusal, also by {@link readMainEditorGrid} and the placement's guards.
    * @example
    * this.yieldFocusToLearner()
    * throw new Error('The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.')

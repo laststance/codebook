@@ -5567,6 +5567,83 @@ test('in Cursor, an agent’s Return Current from a replay refused right after i
   }
 })
 
+// Value: protects=the learner's newer input when an agent's Return Current from a replay beside Cursor's Agent chat part (row 723's order) is refused for it: during the layout read right after the measurement borrowed the first group, the learner changed login-form.tsx there, and the Return is refused with "The primary editor content or selection changed during scope measurement; the newer learner focus was preserved."; the chat gets no keyboard back over the learner's edit and nothing is told; fails_when=finishCurrentReturn gives the chat its keyboard back after any refusal, so Focus Agent takes the keyboard from the file the learner works in and the refusedArrangement sentence is told; why_new=Cycle 0046 row 735 (the OCR delegate's review of b5f8bf97..ec8a8ec3: Return Current lacked row 732's rule); seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus, leavePaneFocusUnreportedBesideChat, focusMutableDraft and its replaceContent, the service's playback and returnToCurrent, holdNextCommand on workbench.action.focusFirstEditorGroup and on the layout read after it, the command log and the information messages
+test('in Cursor, an agent’s Return Current from a replay refused for the learner’s change of the first group’s file during its layout read gives the chat no keyboard and tells nothing', async () => {
+  // Arrange: as in row 723's test; the learner will change login-form.tsx during the layout read right after the measurement's borrow of the first group.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    const loginForm = harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focus()
+    const state = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const borrow = harness.holdNextCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    void borrow.started.then(() => {
+      const readAfterBorrow = harness.holdNextCommand('vscode.getEditorLayout')
+      void readAfterBorrow.started.then(() => {
+        loginForm.replaceContent('export const changedByLearner = true\n')
+        readAfterBorrow.release()
+      })
+      borrow.release()
+    })
+
+    // Act
+    const refusal = await harness.service
+      .returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    await harness.controller.settle()
+
+    // Assert: refused for the learner's change after the borrow; only the borrow's focus command ran, the chat has no keyboard, and nothing was told.
+    assert.deepEqual(
+      {
+        refusal,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal:
+          'Error: The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.',
+        keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+        chatHasKeyboard: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of where the keyboard is after an agent's replay open (codebook_playback open) beside Cursor's Agent chat part while the chat tab has the keyboard: the preparation's measurement borrows the first group, Focus Agent gives the chat its keyboard back, and the arrangement's sentence is told the first time in an editor session only, so the next replay open in that session says nothing (C59 c59-cu-656a told nothing because round c59-cu-650 had told the sentence in the same extension host, after its reload: the notification shows in that round's recording at 7 to 8.5 s, and both rounds' observers share the host's time origin 1792204656982); fails_when=the replay open gives the chat its keyboard back without the sentence the first time, or tells it again each time; why_new=Cycle 0046 row 678 (evidence: not a defect; this test holds the rule the native rounds followed); seam=recordedReaderHarness, useNativeLayout, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, the service's playback and the reader's close, the command log and the information messages
 test('in Cursor, an agent’s replay open from the chat tab gives the chat its keyboard back and says so the first time in an editor session only', async () => {
   // Arrange: Cursor's Agent chat as a tab of its own editor part has the keyboard; the learner's login-form.tsx is in front of the first group, and the reader is closed.
