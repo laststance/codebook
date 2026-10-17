@@ -2252,6 +2252,57 @@ test('selecting Wiki during a Return freshness check completes that Return witho
 })
 
 // Value: protects=the learner's layout and keyboard after Return to Wiki from the Command Palette while the Study pane had the keyboard: the Return waits for the learner's own selection of the Wiki, and a Study close that removes the Study's tab makes the editor select the Wiki by itself, which is no such selection, so the article's layout is not restored and no cited source is shown; fails_when=the deferred Return has no expiry and runs on any later activation of the Wiki, also one the editor made after closing a neighbouring tab, minutes later, rearranging the grid and possibly giving the cited source the keyboard; why_new=Cycle 0046 R6 (the red team review of /ship); seam=readerHarness with hideWiki, focusStudy, requireSourceFocus, open with preserveNativeInput (the palette's Return), closeStudy (the Study tab's close, then the editor's activation of the Wiki), arrangements and shown; no_claim=a time bound for the deferral, which this rule does not need
+// Value: protects=the learner's layout when the Study closes while a palette Return to Wiki made from the Study pane still loads its article: the Study's close makes the editor select the Wiki by itself, which is no selection of the learner's, so the Return's open ends without restoring the article's layout or showing its cited source; fails_when=the watch of the deferred Return begins only after the open's own completion step, so the open finds the Wiki selected at its end and completes the Return over the editor's selection (probe "PROBE R6-turns" at 15 to 30 turns: atClose watch 0, deferred, arrangements 1); why_new=Cycle 0046 AD2 (/ship's adversarial review of 3acd3daf..66434afd); seam=readerHarness with hideWiki, focusStudy, requireSourceFocus, open with preserveNativeInput, holdRenderer(true) (the article's render held, so the close lands inside the open), closeStudy, arrangements and shown; no_claim=the native timing of a close during the load, which the held render stands for
+test('a palette Return to Wiki from the Study pane does not restore the article layout when the Study closes while the Return still loads', async (context) => {
+  // Arrange: the Wiki is open behind the Study pane, which has the keyboard; the palette's Return to Wiki loads its article, whose render is held.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+  harness.focusStudy()
+  harness.requireSourceFocus()
+  const renderer = harness.holdRenderer(true)
+  const arrangementsBefore = harness.arrangements(),
+    shownBefore = harness.shown.length
+  const opening = harness.reader
+    .open(
+      {
+        ...harness.selection,
+        nodeId: 'order',
+        location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+      },
+      undefined,
+      true,
+      true,
+    )
+    .then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+  try {
+    await renderer.started
+
+    // Act: the Study closes while the article still renders; its tab leaves the Wiki's group, and the editor selects the Wiki.
+    harness.closeStudy()
+    await harness.deliverTabEvents()
+    renderer.release()
+    const outcome = await opening
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // Assert: the Return's open answered, and no layout was restored and no cited source was shown.
+    assert.deepEqual(
+      {
+        outcome,
+        arrangements: harness.arrangements() - arrangementsBefore,
+        shown: harness.shown.length - shownBefore,
+      },
+      { outcome: 'answered', arrangements: 0, shown: 0 },
+    )
+  } finally {
+    renderer.release()
+    await opening
+  }
+})
+
 test('a palette Return to Wiki from the Study pane does not restore the article layout when a Study close makes the editor select the Wiki', async (context) => {
   // Arrange: the Wiki is open behind the Study pane, which has the keyboard; the learner runs Return to Wiki from the Command Palette, which defers the article's layout.
   const harness = await readerHarness(context)

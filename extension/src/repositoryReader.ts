@@ -409,6 +409,8 @@ export class RepositoryReader {
       if (background && selection && book) {
         // An external Return cannot arrange source panes over the input it must preserve.
         this.deferredReturn = restoreReadingLayout ? selection : undefined
+        // The Return waits for the learner's own selection of the Wiki from here on, also during this open's own loading (R6, AD2).
+        if (this.deferredReturn) this.watchDeferredReturn()
         anchoredSource = await this.prepareBackgroundSource(
           selection,
           book,
@@ -495,9 +497,6 @@ export class RepositoryReader {
           )
       } else {
         await this.completeDeferredReturn(signal, initialFocus)
-        // A Return still deferred waits for the learner's own selection of the Wiki only (R6).
-        if (generation === this.generation && this.deferredReturn)
-          this.watchDeferredReturn()
       }
       // The citation shown for this article replaces an earlier citation's copy; a citation that waits for the Wiki's selection replaces it once shown (row 652).
       if (
@@ -1683,7 +1682,7 @@ export class RepositoryReader {
   }
 
   /**
-   * Keeps a command's deferred Return ({@link deferredReturn}) for the learner's own selection of the Wiki only; called by {@link open} once its background entry (Return to Wiki from the Command Palette) left the Return deferred, with the learner's input elsewhere.
+   * Keeps a command's deferred Return ({@link deferredReturn}) for the learner's own selection of the Wiki only; called by {@link open} as soon as its background entry (Return to Wiki from the Command Palette) defers the Return, with the learner's input elsewhere, so the watch covers the open's own loading too: a Study close while the Return loads makes the editor select the Wiki, and the open's completion step must not take that for the learner's selection (Cycle 0046 AD2).
    * The Return and its cited source's preview ({@link sourceDeferred}) expire at the first change of the native focus that does not land on the Wiki, and at any tab the editor closes: the editor activates a neighbour of a closed tab or group by itself (a Study close that removes its panes' groups, a neighbouring group's close), and a Wiki it activates so is no selection of the learner's. Without this, such an activation, minutes later, restored the article's layout and could give the cited source the keyboard (Cycle 0046 R6). A selection of the Wiki that changes no other place keeps the Return for {@link revealDeferredSource}.
    * @example this.watchDeferredReturn() // after the palette's Return to Wiki while the learner types in auth.ts
    */
