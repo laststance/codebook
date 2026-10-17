@@ -277,6 +277,81 @@ test('only the first run failure is kept in the journal after the evidence refus
   }
 })
 
+// Value: protects=the journal of a stopped run whose evidence refused an event past its bound and that already ended with its kept run.failed: an explanation accepted after the end (a learning summary saved after the result) whose save then failed is journaled as explanation.failed past the refusal too, once, so the journal's bounds are exceeded by one event of each failure type at most; fails_when=the one failure kept past a refusal is counted across both types, so the kept run.failed drops the stopped run's explanation.failed and nothing journals why its explanation was not committed (row 699's rule); why_new=Cycle 0046 row 706 (the rows 686 to 701 fixer's findings); seam=a recorder with a bound of one event, a refused event, the run's failure, then two explanation failures
+test("a stopped run's explanation failure after a refusal and the run's kept failure is journaled once beside that failure", async () => {
+  // Arrange: the bound of one event is reached, the second event is refused, and the run's failure is kept past the refusal.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-'))
+  const evidence = new Evidence(directory, {
+    maxEvents: 1,
+    retainedBytes: 10_000,
+    queuedBytes: 10_000,
+  })
+  try {
+    evidence.record('first')
+    evidence.record('overflow')
+    evidence.recordFailure(
+      'Evidence buffering or persistence failed. Cause: Evidence buffering limit exceeded',
+    )
+
+    // Act: two explanations of the stopped run fail to be written.
+    evidence.recordFailure(
+      'Explanation was not committed. Cause: Evidence buffering limit exceeded',
+      'explanation.failed',
+    )
+    evidence.recordFailure(
+      'Explanation was not committed. Cause: Evidence buffering limit exceeded (second)',
+      'explanation.failed',
+    )
+    await evidence.flush().catch(() => undefined)
+
+    // Assert
+    const fileLines = (await readFile(join(directory, 'events.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    assert.deepEqual(
+      {
+        journal: evidence.events.map(({ sequence, type, detail }) => ({
+          sequence,
+          type,
+          detail,
+        })),
+        file: fileLines.map(({ sequence, type }) => ({ sequence, type })),
+        failure: evidence.failure,
+      },
+      {
+        journal: [
+          { sequence: 1, type: 'first', detail: {} },
+          {
+            sequence: 2,
+            type: 'run.failed',
+            detail: {
+              reason:
+                'Evidence buffering or persistence failed. Cause: Evidence buffering limit exceeded',
+            },
+          },
+          {
+            sequence: 3,
+            type: 'explanation.failed',
+            detail: {
+              reason:
+                'Explanation was not committed. Cause: Evidence buffering limit exceeded',
+            },
+          },
+        ],
+        file: [
+          { sequence: 1, type: 'first' },
+          { sequence: 2, type: 'run.failed' },
+          { sequence: 3, type: 'explanation.failed' },
+        ],
+        failure: 'Evidence buffering limit exceeded',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true })
+  }
+})
+
 // Value: protects=the size bound of the one run failure the evidence keeps past a refusal: its reason (a stack or an adapter's message may be of any length) is cut so that its detail fits the event detail limit and says where it was cut, in the journal every reader reads and in events.jsonl, while the refusal stays the evidence's failure; fails_when=the failure past the refusal is kept at its full length, so the journal's overshoot of its bounds has no size bound (the whole reason is held in memory and written); why_new=Cycle 0046 row 698 (CodeRabbit's review of cc231f08..e6a3daeb); seam=a recorder with a bound of one event and a reason of 100,000 characters
 test('the one run failure kept past a refusal is cut to the event detail limit and says where it was cut', async () => {
   // Arrange: the bound of one event is reached, and the second event is refused.

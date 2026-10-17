@@ -42,8 +42,8 @@ export class Evidence {
   private pending: Promise<void>
   private retainedBytes = 0
   private queuedBytes = 0
-  /** Set once {@link Evidence.recordFailure} kept a run's failure past a refusal, so the journal's bounds are exceeded by that one event at most. */
-  private isFailureKeptPastRefusal = false
+  /** The failure types {@link Evidence.recordFailure} already kept past a refusal, so the journal's bounds are exceeded by one event of each type at most (Cycle 0046 row 706). */
+  private readonly failureTypesKeptPastRefusal = new Set<JournaledFailureType>()
 
   constructor(
     readonly directory: string,
@@ -69,10 +69,10 @@ export class Evidence {
 
   /**
    * Journals a run's failure as `run.failed`, also once the evidence refused further events or failed to write them, so the journal every reader reads (the run's events resource, the end of its recording, the replay's paused intervals) ends with the run's failure (Cycle 0046 row 666); called by {@link ConfiguredBrowserRun.fail}, which journals a run's failure once, and, as `explanation.failed`, by {@link StudyService.explain} for an explanation whose save failed after its run ended (row 699): a `run.failed` after the end would read as the end of a failed run.
-   * Past a refusal the event is kept in {@link Evidence.events} and appended to `events.jsonl` while that file can still be written; the first failure stays the evidence's {@link Evidence.failure}, and only one failure is kept past a refusal. Its reason is cut so that its detail fits {@link EVENT_DETAIL_LIMIT_BYTES}, ending with {@link CUT_TEXT_MARKER} where it was cut ({@link cutTextToFit}): the journal's bounds are exceeded by one event at most, and that event by one line of bounded size, as long as a stack or an adapter's message may be (row 698). The same limit is the one the run's events resource shows an event's detail whole within.
+   * Past a refusal the event is kept in {@link Evidence.events} and appended to `events.jsonl` while that file can still be written; the first failure stays the evidence's {@link Evidence.failure}, and one failure of each type is kept past a refusal, so a stopped run whose kept `run.failed` ended its journal still journals why its explanation was not committed (row 706); a later failure of a type already kept is not, as a later explanation's save repeats the failure the evidence refuses with. Its reason is cut so that its detail fits {@link EVENT_DETAIL_LIMIT_BYTES}, ending with {@link CUT_TEXT_MARKER} where it was cut ({@link cutTextToFit}): the journal's bounds are exceeded by one event of each type at most, and each such event by one line of bounded size, as long as a stack or an adapter's message may be (row 698). The same limit is the one the run's events resource shows an event's detail whole within.
    * @param reason - The failure, as its caller was given it.
    * @param type - The event's type: `run.failed` for the run's own failure, `explanation.failed` for an explanation of an ended run.
-   * @returns The journaled event; an event that is not kept for a second failure past a refusal.
+   * @returns The journaled event; an event that is not kept for a second failure of its type past a refusal.
    * @example
    * evidence.failure // => 'Evidence buffering limit exceeded'
    * evidence.recordFailure('Selected debugger terminated')
@@ -85,9 +85,9 @@ export class Evidence {
     const receipt = this.receiptOf(type, { reason })
     if (!this.refuses(receipt.bytes)) return this.retain(receipt)
     this.failure ??= 'Evidence buffering limit exceeded'
-    // One failure past the refusal, so the journal's bounds are exceeded by one event at most.
-    if (this.isFailureKeptPastRefusal) return receipt.event
-    this.isFailureKeptPastRefusal = true
+    // One failure of each type past the refusal, so the journal's bounds are exceeded by one event of each type at most (row 706).
+    if (this.failureTypesKeptPastRefusal.has(type)) return receipt.event
+    this.failureTypesKeptPastRefusal.add(type)
     // That one event's reason is cut to the detail limit, so its line has a size bound too (row 698).
     const boundedReason = cutTextToFit(
       reason,

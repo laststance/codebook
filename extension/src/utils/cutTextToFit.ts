@@ -1,7 +1,7 @@
 import { CUT_TEXT_MARKER } from '../constants'
 
 /**
- * Cuts a text to its longest beginning that still fits a bound once {@link CUT_TEXT_MARKER} says it was cut, for a text whose size is bounded by how it is stored rather than by a count of characters; called by {@link Evidence.recordFailure} for the reason of the one failure it keeps past a refusal, whose journal line must fit {@link EVENT_DETAIL_LIMIT_BYTES} (Cycle 0046 row 698).
+ * Cuts a text to its longest beginning that still fits a bound once {@link CUT_TEXT_MARKER} says it was cut, for a text whose size is bounded by how it is stored rather than by a count of characters; called by {@link Evidence.recordFailure} for the reason of each failure it keeps past a refusal (one of each type, row 706), whose journal line must fit {@link EVENT_DETAIL_LIMIT_BYTES} (Cycle 0046 row 698).
  * The text is cut between characters (code points), never inside a surrogate pair. `fits` must grow no more permissive as the text grows, as a byte count of the text does.
  * @param text - The text to bound.
  * @param fits - Says whether a candidate text fits the bound.
