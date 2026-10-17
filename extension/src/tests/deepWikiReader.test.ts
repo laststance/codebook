@@ -689,11 +689,11 @@ test('the reader refuses a Wiki whose `.codebook` folder in the project is a lin
   // Assert
   assert.equal(
     refusal,
-    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
   )
 })
 
-// Value: protects=the folder outside the project that a cloned repository's `.codebook/wiki` link leads to, when the learner opens the Wiki; fails_when=the reader looks only at the folders above the Wiki folder, so a Wiki folder that is itself a link is read and served from outside the project, while the publisher and the update start refuse it; why_new=Cycle 0046 /ship repeat review SC2 (critical; the rest of F1); seam=none (a junction on Windows, which needs no right)
+// Value: protects=the folder outside the project that a cloned repository's `.codebook/wiki` link leads to, when the learner opens the Wiki; fails_when=the reader looks only at the folders above the Wiki folder, so a Wiki folder that is itself a link is read and served from outside the project, while the publisher and the update start refuse it; why_new=Cycle 0046 /ship repeat review SC2 (critical; the rest of F1); repeat design review PD7: the refusal is short sentences; seam=none (a junction on Windows, which needs no right)
 test('the reader refuses a Wiki whose folder `.codebook/wiki` in the project is itself a link to a folder outside it, names the folder and opens nothing behind it', async (context) => {
   // Arrange: a one-page Wiki whose Wiki folder is moved out of the project, with a link to it left in its place.
   const directory = await realpath(
@@ -722,7 +722,7 @@ test('the reader refuses a Wiki whose folder `.codebook/wiki` in the project is 
   // Assert
   assert.equal(
     refusal,
-    `The Wiki folder ${outputDirectory} is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+    `The Wiki folder ${outputDirectory} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
   )
 })
 
@@ -780,8 +780,8 @@ test('the reader’s look refuses a Wiki folder, and a folder above it, that lst
 
   // Assert
   assert.deepEqual(refusals, [
-    `The Wiki folder ${parentWiki.outputDirectory} lies behind a link or a file in the project (${join(withLinkedParent, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
-    `The Wiki folder ${folderWiki.outputDirectory} is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+    `The Wiki folder ${parentWiki.outputDirectory} lies behind a link or a file in the project (${join(withLinkedParent, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+    `The Wiki folder ${folderWiki.outputDirectory} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
   ])
 })
 
