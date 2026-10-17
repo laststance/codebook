@@ -1049,6 +1049,93 @@ test("an agent's citation open beside Cursor's chat part is refused for the lear
   }
 })
 
+// Value: protects=an agent's second citation open beside Cursor's chat part while the learner's terminal in the bottom panel has the keyboard: the chat part stays the active editor part without its input's keyboard, so the rebuild Cursor answers the reader's quiet copy show with keeps naming the first group, now with the copy in front, and no text editor is active; the reader's own show explains that group, so the open completes, the copy is the first group's front tab and the terminal keeps the keyboard; fails_when=isOwnQuietCopyShowPlace's first-group branch does not take the first group with the copy in front for its own show, so the focus receipt takes the group's new front tab for the learner's change and refuses the open with "Native focus changed during repository navigation; the newer learner focus was preserved."; why_new=Cycle 0046 T6 (/ship's pre-landing review: the first-group branch of row 696 had no test); seam=workspaceHarness's Cursor model (cursorBesideChatPart; a rebuild for a tab opened in the main editor keeps the name it found while the chat part has no keyboard of its input), Focus Agent, focusTerminalInBottomPanel, createRepositoryWikiReader's openFromAgent, the named group and keyboardInView; no_claim=a native round of this order (the rebuild's naming while a view of Cursor has the keyboard follows the model of rows 674 and 696)
+test("an agent's citation open beside Cursor's chat part completes while the editor names the first group with the copy its quiet show put in front", async () => {
+  // Arrange: as above; then the learner clicks into the terminal in the bottom panel, so the chat part stays the active part without its input's keyboard, and the editor names the first group.
+  const { harness, wiki, selection, books } =
+    await agentFirstCitationBesideCursorChat()
+  harness.focusTerminalInBottomPanel()
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({
+        ...selection,
+        anchorIndex: 1,
+        instanceId: harness.service.instanceId,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the open answered; the first group is named with order.ts in front, no text editor is active, and the terminal keeps the keyboard.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        refusal,
+        named: named.viewColumn,
+        namedFront: named.activeTab?.label,
+        activeTextEditor: harness.editor.window.activeTextEditor,
+        terminalHasKeyboard: harness.keyboardInView(),
+      },
+      {
+        refusal: undefined,
+        named: 1,
+        namedFront: 'order.ts',
+        activeTextEditor: undefined,
+        terminalHasKeyboard: true,
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the newer choice of a file in front of the first group during an agent's second citation open beside Cursor's chat part while the learner's terminal in the bottom panel has the keyboard: right after the reader's quiet copy show, notes.ts opens in front of the first group without the keyboard (as an agent's edit or the Explorer's one click opens a file), the editor names that group and no text editor is active; the reader's own show explains only the group with its copy in front, so the open is refused as the learner's newer focus; fails_when=isOwnQuietCopyShowPlace's first-group branch takes any text tab in front of the first group for its own copy, adoptOwnQuietCopyShow takes the group's new front tab into the receipt, and the open completes over that file; why_new=Cycle 0046 T6 (/ship's pre-landing review: the copy's uri check of row 696's first-group branch had no test); seam=workspaceHarness's Cursor model, Focus Agent, focusTerminalInBottomPanel, changeAfterNextSourceDisplay with openFileWithoutKeyboard (notes.ts in front of the first group right after the show), createRepositoryWikiReader's openFromAgent and the named group; no_claim=a native round of this order
+test("an agent's citation open beside Cursor's chat part is refused for the learner's other file the editor names in front of the first group while the copy was shown", async () => {
+  // Arrange: as in the test above; right after the reader shows the second copy, notes.ts opens in front of the first group without the keyboard.
+  const { harness, wiki, selection, books } =
+    await agentFirstCitationBesideCursorChat()
+  harness.focusTerminalInBottomPanel()
+  harness.changeAfterNextSourceDisplay(() => {
+    harness.openFileWithoutKeyboard('notes.ts', 1)
+  })
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({
+        ...selection,
+        anchorIndex: 1,
+        instanceId: harness.service.instanceId,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: refused as the learner's newer focus; the first group is named with notes.ts in front, and no text editor is active.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        refusal,
+        named: named.viewColumn,
+        namedFront: named.activeTab?.label,
+        activeTextEditor: harness.editor.window.activeTextEditor,
+      },
+      {
+        refusal: NAVIGATION_FOCUS_REFUSAL,
+        named: 1,
+        namedFront: 'notes.ts',
+        activeTextEditor: undefined,
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's first group when an agent's second citation open is refused for the learner's own newer focus (the learner clicked into notes.ts, another file of group 2, while the reader showed the copy): the refused open leaves no copy of its own behind, so the first citation's copy stays the group's one copy and notes.ts keeps the keyboard; fails_when=the refusal leaves the copy its show put in front of the first group, so two codebook-repository-source tabs stand there until Close Repository Wiki (row 683 keeps the reader's record; the copy must not stay either); why_new=Cycle 0046 row 696; seam=workspaceHarness's Cursor model, Focus Agent, changeAfterNextSourceDisplay (the learner's click into notes.ts right after the show), createRepositoryWikiReader's openFromAgent and the first group's tabs
 test("an agent's citation open refused for the learner's click right after its copy was shown closes that copy again and leaves the copy before it", async () => {
   // Arrange: as above; the learner will click into notes.ts in group 2 right after the reader shows the second copy.
