@@ -1234,6 +1234,187 @@ test("a run that failed itself on a removed study's evidence write and was stopp
   )
 })
 
+// Value: protects=what an agent and the learner read for a run whose saved study was removed during its preparation, found removed by the learner's Retry storage after the preparation failed: the runtime's snapshot save into the gone evidence directory failed, the runtime failed itself with that raw error (ConfiguredBrowserRun.track -> fail) and its preparation rejected, so StudyService.preparationError made the runtime's first failure the run's error; once the removal is known, the run resource's terminal reason and error name the failed write and the removal, and neither the run nor the status resource names the storage path; fails_when=the preparation's error keeps "Error: ENOENT: no such file or directory, open '<global storage>/…/snapshot.json.tmp'" as its message and cause because nothing noted what it was made of, so row 700's rewording at the removal does not reach it; why_new=Cycle 0046 row 724; seam=environment.createRuntime and runtime.prepare (the evidence directory removed, the snapshot save's failure taken as the runtime's own, a rejection that is no StudyError), the release's wait, StudyService.excludeHistory, readResource of the run and StudyService.status
+test('a run whose study was removed during its preparation and found removed after the preparation failed names the failed write and the removal, not the storage path', async (context) => {
+  // Arrange: the study's files go while the runtime prepares; its snapshot save fails and the runtime fails itself with the raw error, as ConfiguredBrowserRun does, then its preparation rejects.
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    runtime.prepare = async () => {
+      const controlled = runtimes[0]!
+      await controlled.evidence.initialize()
+      await rm(controlled.evidence.directory, { recursive: true, force: true })
+      await controlled.evidence
+        .save('snapshot.json', {})
+        .catch((error: unknown) => {
+          controlled.failures.push(String(error))
+          controlled.status = 'failed'
+          controlled.evidence.recordFailure(String(error))
+        })
+      throw new Error('Repository run is unavailable')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-during-preparation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  await waitUntil(
+    () => !record.stopping && (record.stopped || Boolean(record.cleanupError)),
+    'the release after the failed preparation',
+    1_000,
+  )
+  const path = runtimes[0]!.evidence.directory
+  const terminalNamedPathBefore = Boolean(
+    service.state(record).terminalReason?.includes(path),
+  )
+
+  // Act: the learner's Retry storage finds the archive gone.
+  service.excludeHistory(record, 'archive-removed')
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtimes[0]!.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in run)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(run.text))
+  assert.deepEqual(
+    {
+      terminalNamedPathBefore,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      terminalNamedPathBefore: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read, and what the runtime journals, for a run whose saved study was removed during its preparation and found removed before the preparation's rejection reached StudyService.prepare's catch (the learner's Retry storage or the library's refresh while the runtime still prepares): the run's error, its terminal reason and the reason handed to runtime.fail name the failed write and the removal, and neither the run nor the status resource names the storage path; fails_when=StudyService.preparationError makes the runtime's raw first failure, "Error: ENOENT: no such file or directory, open '<global storage>/…/snapshot.json.tmp'", the run's error although the removal is already known; why_new=Cycle 0046 row 724; seam=environment.createRuntime, runtime.prepare (the evidence directory removed, the snapshot save's failure taken as the runtime's own, StudyService.excludeHistory, a rejection that is no StudyError) and runtime.fail, readResource of the run and StudyService.status
+test('a run whose study was found removed while its preparation was failing names the failed write and the removal in its error and journaled reason, not the storage path', async (context) => {
+  // Arrange: the study's files go while the runtime prepares; its snapshot save fails, the runtime fails itself with the raw error, the learner's Retry storage finds the archive gone, and the preparation rejects.
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  const journaledReasons: string[] = []
+  let removalFound = (): void => undefined
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    const failRuntime = runtime.fail.bind(runtime)
+    runtime.fail = (reason): void => {
+      journaledReasons.push(reason)
+      failRuntime(reason)
+    }
+    runtime.prepare = async () => {
+      const controlled = runtimes[0]!
+      await controlled.evidence.initialize()
+      await rm(controlled.evidence.directory, { recursive: true, force: true })
+      await controlled.evidence
+        .save('snapshot.json', {})
+        .catch((error: unknown) => {
+          controlled.failures.push(String(error))
+          controlled.status = 'failed'
+          controlled.evidence.recordFailure(String(error))
+        })
+      removalFound()
+      throw new Error('Repository run is unavailable')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removal-found-during-preparation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  removalFound = (): void => service.excludeHistory(record, 'archive-removed')
+
+  // Act
+  await record.preparation
+  await waitUntil(
+    () => !record.stopping && (record.stopped || Boolean(record.cleanupError)),
+    'the release after the failed preparation',
+    1_000,
+  )
+  const path = runtimes[0]!.evidence.directory
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtimes[0]!.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in run)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(run.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      journaledReasons: [
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      ],
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange

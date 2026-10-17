@@ -209,7 +209,7 @@ interface StudyRecordState {
   stopPromise?: Promise<void>
   cleanupError?: StudyError
   error?: StudyError
-  /** What the run's error was made of, when a write's raw failure or the release's became its cause ({@link StudyService.writeFailureError}, {@link StudyService.stopRecord}): {@link StudyService.excludeHistory} words it again once the study turns out removed, so the raw failure's storage path goes from every reader (Cycle 0046 row 700). */
+  /** What the run's error was made of, when a write's raw failure or the release's became its cause ({@link StudyService.writeFailureError}, {@link StudyService.stopRecord}), the runtime's own failed write in a preparation among them ({@link StudyService.preparationError}, row 724): {@link StudyService.excludeHistory} words it again once the study turns out removed, so the raw failure's storage path goes from every reader (Cycle 0046 row 700). */
   errorSource?:
     { kind: 'write'; message: string; failure: string } | { kind: 'release' }
   /** What the run's last release threw as it threw it, before {@link StudyService.releaseFailure} worded it, for {@link StudyService.excludeHistory} (row 700). */
@@ -2871,22 +2871,33 @@ export class StudyService {
    * @param record - The run whose preparation rejected.
    * @param error - What the preparation rejected with.
    * Whatever the failure, its message names its cause ({@link studyErrorNamingCause}): the message becomes the run's terminal reason and the reason its runtime journals as `run.failed`, and an error that is no {@link StudyError} would otherwise say only "The study operation failed." there, its own words staying in the cause alone (Cycle 0046 row 645).
+   * A runtime that failed itself on an evidence write into the gone directory of a study removed during the preparation (a snapshot's save; `ConfiguredBrowserRun.track` fails the run with the write's raw error) gives a first failure that names the run's evidence directory. The run's error then notes that a write's raw failure made it (`errorSource`), so {@link StudyService.wordFailuresByRemoval} words it again once the removal is known, and a removal already known words it at once: the failed write and the removal's sentence ({@link StudyService.writeFailureError}), not the storage path, as rows 667, 700 and 707 word such an error (Cycle 0046 row 724).
    * @returns
    * - The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, when `error` is no {@link StudyError}.
+   * - For that failure naming the run's evidence directory of a study already found removed: the `EVIDENCE_UNAVAILABLE` error of a failed evidence write, with the removal's sentence as its cause.
    * - Otherwise {@link domainError} of `error`, whose message names its cause where it did not.
    * @example
    * this.preparationError(record, new Error('CDP disconnected')).message
    * // => 'Unexpected or additional server stop invalidated the declared operation'
    * this.preparationError(record, new Error('The dedicated Application layout could not be confirmed.')).message
    * // => 'The study operation failed. Cause: The dedicated Application layout could not be confirmed.' (a runtime that recorded no failure)
+   * this.preparationError(removedRecord, new Error('Repository run is unavailable')).message
+   * // => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …" (the runtime's first failure "Error: ENOENT: …/snapshot.json.tmp")
    */
   private preparationError(record: StudyRecord, error: unknown): StudyError {
-    const runtimeFailure = record.runtime
-      ?.view()
-      .failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
-    if (runtimeFailure && !(error instanceof StudyError))
-      return new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
-    return studyErrorNamingCause(domainError(error))
+    const runtime = record.runtime?.view(),
+      runtimeFailure = runtime?.failures[0]
+    if (!runtime || !runtimeFailure || error instanceof StudyError)
+      return studyErrorNamingCause(domainError(error))
+    // A failure naming the run's evidence directory is a failed evidence write's raw failure, which a removal of the study words by its own sentence (row 724).
+    if (runtimeFailure.includes(runtime.artifactDirectory)) {
+      const message = 'Evidence buffering or persistence failed.'
+      record.errorSource = { kind: 'write', message, failure: runtimeFailure }
+      if (isStudyRemovalExclusion(record.historyExcluded))
+        return this.writeFailureError(record, message, runtimeFailure)
+    }
+    const reason = runtimeFailure.slice(0, MAX_UI_TEXT_CHARS)
+    return new StudyError('RUNTIME_FAILED', reason, reason)
   }
 
   /**
