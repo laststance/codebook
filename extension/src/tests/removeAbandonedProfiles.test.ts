@@ -332,7 +332,7 @@ test('a marked profile folder of a killed editor whose process id is in use agai
 
 // Value: protects=a sweep over the folders of one running editor costs one read of its start (one spawned ps or PowerShell on macOS and Windows), not one per folder; fails_when=the sweep reads the start again for every marker (ER-12, decision D7); why_new=the marker carries its owner's start since Cycle 0046; seam=the process probe and the file read of the start reader, which counts
 test('three profile folders of one running editor are judged with one read of its start', async (context) => {
-  // Arrange: this editor is a Linux process of the pid namespace 4026531836, begun at tick 16362446; three marked folders of running process 4242, which began at clock tick 200.
+  // Arrange: this editor is a Linux process of the pid namespace 4026531836, begun at tick 16362446; three marked folders of running process 4194305, which began at clock tick 200. That id is none this test process can have ({@link ID_OF_NO_PROCESS}): with this process's own id, the folders would be judged as this editor's, whose start differs.
   const root = await profileRoot(context)
   for (const name of [
     'codebook-browser-a',
@@ -340,7 +340,7 @@ test('three profile folders of one running editor are judged with one read of it
     'codebook-browser-c',
   ])
     await profileFolder(join(root, name), {
-      pid: 4242,
+      pid: ID_OF_NO_PROCESS,
       hostname: 'workstation',
       processStart: 'linux@4026531836:200',
     })
@@ -358,7 +358,7 @@ test('three profile folders of one running editor are judged with one read of it
         readLink: () => 'pid:[4026531836]',
         readFile: async () => {
           startReads += 1
-          return '4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 200 16637952 1813'
+          return '4194305 (node) S 1 4194305 4194305 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 200 16637952 1813'
         },
       }),
   )

@@ -5,3 +5,10 @@
  * isProcessGone(ID_OF_NO_PROCESS) // => true
  */
 export const ID_OF_NO_PROCESS = 2 ** 22 + 1
+
+/**
+ * A second process id that names no process, for a test that needs two processes that have ended (a killed window's lock and the claim another killed window left): {@link ID_OF_NO_PROCESS} and this one. It lies above Linux's and macOS's highest ids as well, and it is odd, so no Windows id either.
+ * @example
+ * isProcessGone(ANOTHER_ID_OF_NO_PROCESS) // => true
+ */
+export const ANOTHER_ID_OF_NO_PROCESS = 2 ** 22 + 3
