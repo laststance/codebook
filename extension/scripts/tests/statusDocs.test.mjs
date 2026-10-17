@@ -217,7 +217,7 @@ test('the test execution guide names every partition of the workspace regression
     .filter((name) => /^studyWorkspace\w*\.test\.ts$/.test(name))
     .toSorted()
 
-  // Assert: fourteen files, and for each of them its name in the guide.
+  // Assert: fifteen files, and for each of them its name in the guide.
   assert.deepEqual(partitionFiles, [
     'studyWorkspace.test.ts',
     'studyWorkspaceDebugStops.test.ts',
@@ -232,6 +232,7 @@ test('the test execution guide names every partition of the workspace regression
     'studyWorkspacePresentation.test.ts',
     'studyWorkspaceRemoval.test.ts',
     'studyWorkspaceReplay.test.ts',
+    'studyWorkspaceRepositoryReader.test.ts',
     'studyWorkspaceStorage.test.ts',
   ])
   assert.deepEqual(namedPartitions, [
@@ -249,6 +250,7 @@ test('the test execution guide names every partition of the workspace regression
     'lifecycle',
     'saved-study removal',
     'Node history admission',
+    'the Repository Wiki reader on the workspace model',
   ])
 })
 
