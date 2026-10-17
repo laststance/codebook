@@ -221,6 +221,7 @@ import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
+import { isCurrentRunRememberedWhileClosed } from './utils/isCurrentRunRememberedWhileClosed'
 import { isLiveSourceViewUri } from './utils/isLiveSourceViewUri'
 import {
   editorLayoutSchema,
@@ -1143,8 +1144,9 @@ export class StudyWorkspace {
    * Returns an explicitly named historical reader to the current run after checking its visible content revision; MCP calls it before new input.
    * @param input - The named reader and the content revision the caller read.
    * @param requester - `'agent'` for the codebook_return_current tool's handler ({@link StudyService.returnToCurrent}), whose caller may have the learner typing in a chat view: the Live arrangement it prepares gives the keyboard to no place it cannot prove (row 612's rule for {@link returnCurrentSelection}).
-   * @returns The reader's state, following the current run in Live.
-   * @throws When the reader lifetime or its content revision changed, or the current source is not displayed afterwards.
+   * A closed Study workspace has no native source to display: its Return only remembers the current run in Live as its selection ({@link returnCurrentSelection}, row 616), which the Study shows once it opens, and the answer is that state, closed and following the current run ({@link closedReaderReturnAnswer}, Cycle 0046 row 697).
+   * @returns The reader's state, following the current run in Live; `state` is `'closed'` for a closed Study workspace.
+   * @throws When the reader lifetime or its content revision changed, also by a Close while the Return ran, or an open reader's current source is not displayed afterwards.
    * @example await workspace.returnToCurrent({presentationId,expectedRevision:4}, 'agent')
    */
   async returnToCurrent(
@@ -1179,6 +1181,9 @@ export class StudyWorkspace {
     )
       await this.returnCurrentSelection(requester)
     const state = this.presentationState()
+    // A closed Study only remembers the current run, and a Close while the Return ran ended the named reader: neither displays a source (row 697).
+    const closedReaderAnswer = this.closedReaderReturnAnswer(lifetime, state)
+    if (closedReaderAnswer) return closedReaderAnswer
     if (
       !this.sourceReady() ||
       !state.reader.followingCurrentRun ||
@@ -1190,6 +1195,29 @@ export class StudyWorkspace {
       )
     }
     return state
+  }
+
+  /**
+   * Answers a Return Current that ran while no Study workspace of the named reader is open, before {@link returnToCurrent} asks for a displayed source, which only an open Study has (Cycle 0046 row 697).
+   * A Study that was closed when the Return came only remembers the current run in Live as its selection ({@link returnCurrentSelection}, row 616), which the Study shows once it opens: that state is the answer. The learner's Close while the Return ran retired the reader the agent named (its lifetime and presentation identity, {@link close}), as an identity that ended before the Return is refused.
+   * @param lifetime - The reader lifetime that admitted the Return.
+   * @param state - The reader's presentation state right after the Return.
+   * @returns
+   * - The state, for a closed reader that remembers the current run ({@link isCurrentRunRememberedWhileClosed})
+   * - `undefined` for an open reader, whose displayed source the caller checks
+   * @throws A `PRESENTATION_INSTANCE_GONE` {@link StudyError} when the reader lifetime that admitted the Return has ended.
+   * @example this.closedReaderReturnAnswer(lifetime, this.presentationState()) // => { state: 'closed', reader: { contentTab: 'live', followingCurrentRun: true, … }, … } for a Study that was closed
+   */
+  private closedReaderReturnAnswer(
+    lifetime: number,
+    state: PresentationState,
+  ): PresentationState | undefined {
+    if (lifetime !== this.lifetime)
+      throw new StudyError(
+        'PRESENTATION_INSTANCE_GONE',
+        'The named reader lifetime has ended.',
+      )
+    return isCurrentRunRememberedWhileClosed(state) ? state : undefined
   }
 
   /**

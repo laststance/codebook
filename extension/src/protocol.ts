@@ -197,7 +197,7 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_return_current',
     {
       description:
-        'Explicitly leave this reader’s selected saved history or recording and follow the current run. Copy instanceId, presentationId and reader.contentRevision (as expectedRevision) from codebook_status.presentation or its resource. Stale reader/selection identities fail; rediscover before retrying. This preserves saved evidence, sends no app input, does not resume execution and never changes understanding.',
+        'Explicitly leave this reader’s selected saved history or recording and follow the current run. Copy instanceId, presentationId and reader.contentRevision (as expectedRevision) from codebook_status.presentation or its resource. Stale reader/selection identities fail; rediscover before retrying. With the Study workspace closed the reader only remembers the current run: the answer reads state closed and reader.followingCurrentRun true, and codebook_presentation select opens the Study on that run. This preserves saved evidence, sends no app input, does not resume execution and never changes understanding.',
       inputSchema: returnCurrentCommandSchema,
       annotations: mutation,
     },

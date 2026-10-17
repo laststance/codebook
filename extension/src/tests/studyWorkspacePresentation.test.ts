@@ -10,6 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import { StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
@@ -5906,6 +5907,94 @@ test('an agent’s Study selection made from VS Code’s chat editor tab in a fl
         messages: [
           'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
         ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=what an agent reads from its Return Current while the Study workspace is closed: a closed reader only remembers the current run in Live (row 616's reviewed path) and displays no source, so the answer is that state, closed and following the current run, nothing native changes, and the agent's codebook_presentation select then opens the Study following the run; fails_when=returnToCurrent refuses after the Return with EVIDENCE_UNAVAILABLE "Current source is not displayed in the native reader. Inspect its error and retry explicitly." and the recovery "Inspect the evidence failure and storage availability. …" for a source a closed Study never displays, after the Return already changed the reader's content revision, so the agent looks for an error that does not exist and every retry fails the same way; why_new=Cycle 0046 row 697 (C60 c60-vs-684-reset in VS Code 1.140.0); seam=workspaceHarness's VS Code model, useNativeLayout, focusMutableDraft, the service's returnToCurrent and selectPresentation (the codebook_return_current and codebook_presentation handlers), harness.groups and textDocumentShows
+test('an agent’s Return Current while the Study workspace is closed answers the closed reader following the current run, and the agent’s select then opens the Study following it', async () => {
+  // Arrange: the Study workspace is closed and the learner's actions.ts is in front of the first group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    const before = harness.reader.presentationState(),
+      groupsBefore = harness.groups.map((group) =>
+        group.tabs.map((tab) => tab.label),
+      ),
+      showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const answer = await harness.service
+      .returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: before.presentationId,
+        expectedRevision: before.reader.contentRevision,
+      })
+      .then(
+        (state) => ({
+          state: state.state,
+          layoutConfirmed: state.layoutConfirmed,
+          reader: { ...state.reader },
+        }),
+        (error: unknown) =>
+          error instanceof StudyError ? error.describe() : String(error),
+      )
+    const groupsAfterReturn = harness.groups.map((group) =>
+        group.tabs.map((tab) => tab.label),
+      ),
+      showsOfReturn = harness.textDocumentShows().slice(showsBefore)
+    const afterReturn = harness.reader.presentationState()
+    const opened = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: afterReturn.presentationId,
+      expectedRevision: afterReturn.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the Return answered the closed reader following the current run and changed nothing native; the select opened the Study following it.
+    assert.deepEqual(
+      {
+        before: { state: before.state, reader: { ...before.reader } },
+        answer,
+        groupsUnchanged:
+          JSON.stringify(groupsAfterReturn) === JSON.stringify(groupsBefore),
+        showsOfReturn,
+        opened: { state: opened.state, reader: { ...opened.reader } },
+      },
+      {
+        before: {
+          state: 'closed',
+          reader: {
+            contentRevision: 1,
+            contentTab: 'live',
+            followingCurrentRun: true,
+          },
+        },
+        answer: {
+          state: 'closed',
+          layoutConfirmed: false,
+          reader: {
+            contentRevision: 2,
+            contentTab: 'live',
+            followingCurrentRun: true,
+          },
+        },
+        groupsUnchanged: true,
+        showsOfReturn: [],
+        opened: {
+          state: 'open',
+          reader: {
+            contentRevision: 3,
+            contentTab: 'live',
+            followingCurrentRun: true,
+          },
+        },
       },
     )
   } finally {

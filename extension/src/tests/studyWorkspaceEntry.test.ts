@@ -716,6 +716,66 @@ for (const newerAction of [
     }
   })
 
+// Value: protects=what the agent reads when the learner closes the Study workspace while the agent's Return Current runs: the Close retired the reader the agent named (its lifetime and presentation identity), so the Return refuses as an identity that ended before it is refused, and the agent rediscovers the reader; fails_when=returnToCurrent goes on to ask for a displayed source after the Close and refuses with EVIDENCE_UNAVAILABLE "Current source is not displayed in the native reader. Inspect its error and retry explicitly.", an error the Close did not make; why_new=Cycle 0046 row 697 (a closed Study, reached by a Close during the Return); seam=workspaceHarness with Cursor's chat part, the reader's returnToCurrent held at the native command catalog (getCommands), and Close
+test('a Return Current during which the learner closes the Study workspace refuses because the named reader lifetime ended, not for a source error', async (context) => {
+  // Arrange: the Study is open beside Cursor's chat; the Return waits for the editor's command catalog.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  let releaseCatalog = (): void => {},
+    enteredCatalog = (): void => {}
+  const catalogEntered = new Promise<void>((resolve) => {
+      enteredCatalog = resolve
+    }),
+    catalog = new Promise<void>((resolve) => {
+      releaseCatalog = resolve
+    })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    const originalCommands = harness.editor.commands.getCommands
+    context.mock.method(harness.editor.commands, 'getCommands', async () => {
+      enteredCatalog()
+      await catalog
+      return originalCommands()
+    })
+    const state = harness.reader.presentationState(),
+      returning = harness.reader
+        .returnToCurrent({
+          presentationId: state.presentationId,
+          expectedRevision: state.reader.contentRevision,
+        })
+        .then(
+          () => 'completed',
+          (error: unknown) => ({
+            code: Reflect.get(Object(error), 'code'),
+            message: Reflect.get(Object(error), 'message'),
+          }),
+        )
+    await catalogEntered
+
+    // Act
+    await harness.reader.close()
+    releaseCatalog()
+    const outcome = await returning
+
+    // Assert
+    assert.deepEqual(outcome, {
+      code: 'PRESENTATION_INSTANCE_GONE',
+      message: 'The named reader lifetime has ended.',
+    })
+  } finally {
+    releaseCatalog()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 test('first Study entry from one editor group keeps empty Context separate from the application', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
