@@ -38,7 +38,7 @@ test('an explicitly configured external Wiki output is resolved', () => {
 })
 
 // Value: protects=the learner who opens a cloned repository in an untrusted workspace, whose `.vscode/settings.json` can name any folder as the Wiki output; fails_when=the extension's manifest no longer lists the setting among the configurations an untrusted workspace may not set, so the reader and an update read and write the folder the repository names, outside the project, which the link guard accepts as the learner's choice; why_new=Cycle 0046 /ship repeat review SC5; seam=none (the editor applies the manifest; no harness of this repository models workspace trust)
-test('an untrusted workspace cannot set the Wiki output folder: the manifest restricts codebook.wikiOutputDirectory there, so the default inside the project is used', async () => {
+test('an untrusted workspace cannot set the Wiki output folder: the manifest restricts codebook.wikiOutputDirectory there, so the workspace’s own value is not used and the learner’s user setting or the default applies', async () => {
   // Arrange
   const manifest: unknown = JSON.parse(
     await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
