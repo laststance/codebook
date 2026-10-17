@@ -133,6 +133,20 @@ async function readerHarness(context: TestContext) {
       front: group.activeTab && name(group.activeTab),
     }
   }
+  /**
+   * Removes the tab of a webview panel the extension disposed from its group, with the tab-close event, as both editors do; called by each fake Wiki panel's `dispose`, a microtask after the panel's own onDidDispose (Cycle 0046 row 676).
+   * The extension host fires the panel's onDidDispose and then asks the editor to dispose the pane (VS Code 1.140.0 `extensionHostProcess.js` 295:115246; Cursor 3.23.12 203:121183). The editor disposes the pane's editor input (VS Code `workbench.desktop.main.js` 777:41448; Cursor 17281:31514), its group's model reports that input's disposal (VS Code 705:23270) and the group closes the disposed editor (VS Code 1106:69601, 1106:71100; Cursor 17501:32411, 17501:33153). A group whose front tab closed brings its most recently active other tab to the front, as the fake's tabGroups.close does. Not modeled: the keyboard a closed pane with the keyboard hands to that tab, and the removal of a group the close empties (closeEmptyGroups).
+   * @param tab - The disposed panel's tab; a tab already gone is left as it is.
+   * @example closeDisposedPaneTab(wikiTab) // the Wiki's group no longer lists 'mainThreadWebview-codebook.repositoryWiki'
+   */
+  const closeDisposedPaneTab = (tab: NativeTab): void => {
+    for (const group of [sourceGroup, otherGroup]) {
+      if (!group.tabs.includes(tab)) continue
+      group.tabs = group.tabs.filter((value) => value !== tab)
+      if (group.activeTab === tab) group.activeTab = group.tabs.at(-1)
+      for (const listener of tabListeners) listener()
+    }
+  }
   let activeGroup = sourceGroup
   /** The group of Cursor's Agent chat part at column 3, once `focusCursorChatPart` added it; Cursor gives its composer tab no input, which the reader does not read on these paths, so a webview input stands in for it. */
   let chatPartGroup: typeof sourceGroup | undefined
@@ -515,6 +529,8 @@ async function readerHarness(context: TestContext) {
               dispose(): void {
                 panels.delete(panel)
                 disposed()
+                // The panel's own onDidDispose fires first, in the extension host, which only then asks the editor to dispose the pane; its tab leaves the tab model later, with the editor's tab-close event (row 676).
+                queueMicrotask(() => closeDisposedPaneTab(wikiTab))
               },
               onDidDispose(callback: () => void): void {
                 disposed = callback
@@ -1007,6 +1023,12 @@ async function readerHarness(context: TestContext) {
       assert.ok(panel)
       Reflect.apply(Reflect.get(panel, 'dispose'), panel, [])
     },
+    /**
+     * Waits until the tab-close events the editor sends after a Wiki panel's disposal have reached the extension ({@link closeDisposedPaneTab}), as they have before the learner's or an agent's next action; called by the tests that read the Wiki's group after a close, or act again right after one.
+     * @example harness.reader.close(); await harness.deliverTabEvents() // the Wiki's tab is gone from its group
+     */
+    deliverTabEvents: (): Promise<void> =>
+      new Promise((resolve) => setImmediate(resolve)),
     closedTabs,
     connections: () => connections,
     changeWorkspace: (): void => {
@@ -1170,9 +1192,10 @@ test("an agent's cold Wiki open that cannot give back the keyboard its layout bo
     nodeId: 'order',
   }
 
-  // Act
+  // Act: the editor's close of the first Wiki's tab reaches the extension before the learner goes back to the chat.
   await harness.reader.openFromAgent(article)
   harness.reader.close()
+  await harness.deliverTabEvents()
   harness.focusChat()
   await harness.reader.openFromAgent(article)
 
@@ -1257,6 +1280,35 @@ test('the learner’s own Wiki whose tab the learner closes by hand leaves no ci
         front: 'file:login-form.tsx',
       },
       caret: [[2, 4]],
+    },
+  )
+})
+
+// Value: protects=the fidelity of the reader harness's tab model, on which every Wiki-group verdict of this file rests: a Wiki panel the reader disposes leaves its group with the editor's tab-close event, as both editors close a disposed pane's editor; fails_when=the fake keeps the disposed Wiki's tab in its group, so a later verdict counts a tab no editor still shows (a group the reader takes for one with another tab, a second Wiki tab beside a new Wiki); why_new=Cycle 0046 row 676 (the 652 and 662 forks' finding 2); seam=readerHarness, open, close (Close Repository Wiki), deliverTabEvents and wikiGroupTabs
+test('a Repository Wiki closed with Close Repository Wiki leaves its group, as the editors close a disposed pane', async (context) => {
+  // Arrange: the learner's Repository Wiki is open in the second group.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  const whileWikiOpen = harness.wikiGroupTabs()
+
+  // Act
+  harness.reader.close()
+  await harness.deliverTabEvents()
+
+  // Assert: the Wiki's tab is gone from its group, and no panel is left.
+  assert.deepEqual(
+    {
+      whileWikiOpen,
+      afterClose: harness.wikiGroupTabs(),
+      wikiPanels: harness.panels.size,
+    },
+    {
+      whileWikiOpen: {
+        tabs: ['mainThreadWebview-codebook.repositoryWiki'],
+        front: 'mainThreadWebview-codebook.repositoryWiki',
+      },
+      afterClose: { tabs: [], front: undefined },
+      wikiPanels: 0,
     },
   )
 })
@@ -1517,6 +1569,7 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
   await replaced.open(harness.selection)
   harness.moveFrontSourceTabToWikiGroup()
   await replaced.dispose()
+  await harness.deliverTabEvents()
   const fresh = harness.createReader()
   context.after(() => fresh.dispose())
   const afterNewReader = {
@@ -1527,8 +1580,9 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
   // Act: the learner opens the new reader's Wiki on the article's second citation, order.ts, and closes it again.
   await fresh.open({ ...harness.selection, anchorIndex: 1 })
   fresh.close()
+  await harness.deliverTabEvents()
 
-  // Assert: the earlier reader's module.ts copy stayed through the new Wiki's citation and its close; only the order.ts copy the new reader showed was closed. (The fake lists each Wiki's tab in the Wiki's group, also after its panel was disposed.)
+  // Assert: the earlier reader's module.ts copy stayed through the new Wiki's citation and its close; only the order.ts copy the new reader showed was closed. Each disposed Wiki's tab left the Wiki's group.
   assert.deepEqual(
     {
       afterNewReader,
@@ -1545,10 +1599,7 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
           front: 'file:login-form.tsx',
         },
         wikiGroup: {
-          tabs: [
-            'mainThreadWebview-codebook.repositoryWiki',
-            'codebook-repository-source:module.ts',
-          ],
+          tabs: ['codebook-repository-source:module.ts'],
           front: 'codebook-repository-source:module.ts',
         },
       },
@@ -1558,12 +1609,8 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
           front: 'file:login-form.tsx',
         },
         wikiGroup: {
-          tabs: [
-            'mainThreadWebview-codebook.repositoryWiki',
-            'codebook-repository-source:module.ts',
-            'mainThreadWebview-codebook.repositoryWiki',
-          ],
-          front: 'mainThreadWebview-codebook.repositoryWiki',
+          tabs: ['codebook-repository-source:module.ts'],
+          front: 'codebook-repository-source:module.ts',
         },
       },
       closedTabs: ['order.ts'],
