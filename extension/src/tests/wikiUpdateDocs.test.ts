@@ -119,6 +119,15 @@ test('the packaged README names every state word the update wording can lead wit
       site: 'kept',
       ...output,
     },
+    {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt,
+      paths: ['wiki'],
+      cause: 'not-a-folder',
+      site: 'kept',
+      ...output,
+    },
   ]
   const readme = await readPackagedReadme()
 
@@ -134,6 +143,9 @@ test('the packaged README names every state word the update wording can lead wit
             msPerMinute: 60_000,
             recoveryRequest:
               '/codebook Recover the unfinished LLM Wiki publish for this project',
+            outsideOutputApprovalsNote:
+              'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+            refusedStepAdvice: 'If you refuse a step of the chat, press Cancel',
             freshnessLabelPlace: 'above',
           })?.lead,
       ),

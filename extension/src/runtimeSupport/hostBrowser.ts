@@ -20,6 +20,7 @@ import {
   MANAGED_PROFILE_ROOT,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
 import type { Cdp } from './cdp'
@@ -59,7 +60,7 @@ type RecordEvent = (type: string, detail?: unknown) => unknown
 /** A managed run's own profile folder that its close could not remove, with the removal's error as text; the run shows it in its cleanup record. */
 export type ProfileLeft = { profile: string; reason: string }
 
-/** Owns host-specific browser acquisition/reveal/cleanup for {@link ExperimentRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
+/** Owns host-specific browser acquisition/reveal/cleanup for {@link ConfiguredBrowserRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
 export class HostBrowser {
   private tab?: vscode.Tab
   private readonly cursorIds = new Set<string>()
@@ -72,6 +73,8 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
+  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close}; it never rejects, and none is started once the browser is closing. */
+  private abandonedProfileSweep?: Promise<void>
 
   /**
    * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own.
@@ -102,7 +105,7 @@ export class HostBrowser {
     return this.leftProfile
   }
 
-  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch first removes the profile folders a killed editor left ({@link removeAbandonedProfiles}) and marks its own as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
+  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch that was not cancelled while its owner was read starts the removal of the profile folders a killed editor left ({@link startAbandonedProfileSweep}) without waiting for it, and marks its own folder as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
   async launch(
     configuration: vscode.DebugConfiguration,
     signal: AbortSignal,
@@ -129,13 +132,10 @@ export class HostBrowser {
       )
       signal.throwIfAborted()
       const owner = await currentStorageOwner()
-      // What a killed editor left behind goes before this run adds a folder of its own; the sweep never fails the launch.
-      const abandoned = await removeAbandonedProfiles(this.profileRoot, owner)
-      if (abandoned.length)
-        this.record('browser.abandoned-profiles-removed', {
-          profiles: abandoned,
-        })
+      // A launch cancelled while its owner was read removes nothing and creates nothing.
       signal.throwIfAborted()
+      if (this.closing) throw new Error('Owned browser is closing')
+      this.startAbandonedProfileSweep(owner)
       this.managedProfile = await realpath(
         await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
       )
@@ -155,9 +155,40 @@ export class HostBrowser {
       signal.throwIfAborted()
       const { BrowserViewport } = await import('./browserViewport.js')
       signal.throwIfAborted()
-      this.viewport = this.createViewport
-        ? this.createViewport(this.runId, this.record, this.fail, this.scenario)
-        : new BrowserViewport(this.runId, this.record, this.fail, this.scenario)
+      // Keep the raw preparation tracked after request cancellation so a late native viewport cannot escape cleanup.
+      const preparingViewport = this.trackAcquisition(
+        Promise.resolve()
+          .then(() => {
+            signal.throwIfAborted()
+            if (this.closing) throw new Error('Owned browser is closing')
+            return this.createViewport
+              ? this.createViewport(
+                  this.runId,
+                  this.record,
+                  this.fail,
+                  this.scenario,
+                  signal,
+                )
+              : new BrowserViewport(
+                  this.runId,
+                  this.record,
+                  this.fail,
+                  this.scenario,
+                )
+          })
+          .then((viewport) => {
+            this.viewport = viewport
+            // The accepting request can be gone while the native resource still finishes creating.
+            if (this.closing || signal.aborted) this.closeViewport()
+          }),
+      )
+      await awaitResponse(
+        preparingViewport,
+        'owned App viewport preparation',
+        signal,
+      )
+      signal.throwIfAborted()
+      if (this.closing) throw new Error('Owned browser is closing')
       debugConfiguration = {
         ...debugConfiguration,
         type: 'pwa-chrome',
@@ -332,7 +363,30 @@ export class HostBrowser {
     }
   }
 
-  /** Binds the owned viewport only after {@link ExperimentRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
+  /**
+   * Starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) beside a managed run's start, which does not wait for it; called by {@link launch} once its owner is read and its signal is still not aborted.
+   * This run's own folder is never removed by the sweep, because its marker names this running process. The sweep never fails the launch, and {@link close} awaits it.
+   * A browser that is closing starts none: its close may already have passed the step that waits for a sweep, and a sweep started after it would outlive the run. A browser starts at most one sweep.
+   * @param owner - The machine, the boot and the start of this process, by which a folder's marker is judged.
+   * @example
+   * this.startAbandonedProfileSweep(await currentStorageOwner()) // journal, once the sweep ended: browser.abandoned-profiles-removed { profiles: ['/tmp/codebook-browser-a1b2c3'] }
+   */
+  private startAbandonedProfileSweep(owner: StorageOwnerIdentity): void {
+    if (this.closing || this.abandonedProfileSweep) return
+    this.abandonedProfileSweep = removeAbandonedProfiles(
+      this.profileRoot,
+      owner,
+    )
+      .then((abandoned) => {
+        if (abandoned.length)
+          this.record('browser.abandoned-profiles-removed', {
+            profiles: abandoned,
+          })
+      })
+      .catch(() => undefined)
+  }
+
+  /** Binds the owned viewport only after {@link ConfiguredBrowserRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
   async attachViewport(cdp: Cdp, signal: AbortSignal): Promise<void> {
     if (!this.viewport || !this.managedProfile) return
     const profile = this.managedProfile
@@ -390,7 +444,7 @@ export class HostBrowser {
     this.viewport?.recordCapture(data, phase)
   }
 
-  /** Retires only viewport pause presentation; debugger control remains in {@link ExperimentRun}. @example browser.resumeViewport() */
+  /** Retires only viewport pause presentation; debugger control remains in {@link ConfiguredBrowserRun}. @example browser.resumeViewport() */
   resumeViewport(): void {
     this.viewport?.resume()
   }
@@ -516,13 +570,13 @@ export class HostBrowser {
     this.record('browser.revealed', { title: browser.tab.label, index })
   }
 
-  /** Releases known handles even if acquisition is unresolved, then removes a managed run's own profile folder; {@link ExperimentRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
+  /** Releases known handles even if acquisition is unresolved, waits for the sweep of abandoned profile folders its launch started, then removes a managed run's own profile folder; {@link ConfiguredBrowserRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
   async close(): Promise<void> {
     this.closing = true
     const failures = await settleCleanup([
       {
         description: 'owned viewport close',
-        release: () => this.viewport?.close(),
+        release: (): void => this.closeViewport(),
       },
       {
         description: 'owned CDP bridge close',
@@ -539,6 +593,10 @@ export class HostBrowser {
       {
         description: 'pending browser acquisitions',
         release: (): Promise<void> => this.drainAcquisitions(),
+      },
+      {
+        description: 'late owned viewport close',
+        release: (): void => this.closeViewport(),
       },
       // A launch may reveal its editor after the first sweep; check again after acquisition settles.
       {
@@ -561,6 +619,11 @@ export class HostBrowser {
           })
         },
       },
+      // The sweep a managed launch started outlives no close; it never rejects, so it adds no failure.
+      {
+        description: 'abandoned profile sweep',
+        release: (): Promise<void> | undefined => this.abandonedProfileSweep,
+      },
     ])
     if (failures.length)
       throw new Error(`Browser cleanup incomplete: ${failures.join('; ')}`)
@@ -570,6 +633,17 @@ export class HostBrowser {
       host: this.host.id,
       remainingOwnedTabs: 0,
     })
+  }
+
+  /**
+   * Retires the current viewport during {@link close} and after cancelled preparation in {@link launch}, retaining a failed close for retry.
+   * @example this.closeViewport() // the same retired viewport is not closed again by the late cleanup sweep
+   */
+  private closeViewport(): void {
+    const viewport = this.viewport
+    viewport?.close()
+    // A release callback must not clear a successor installed during the retired viewport's close.
+    if (this.viewport === viewport) this.viewport = undefined
   }
 
   /**

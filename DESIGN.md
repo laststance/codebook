@@ -3,7 +3,7 @@
 Status: **owner approved on 2026-09-26**; corrected iteration 8 adopted unchanged.\
 Cycle: [0029](docs/cycles/0029-feature-specification.md) / [Issue #46](https://github.com/laststance/codebook/issues/46)\
 Review: [GStack plan-design-review](docs/plans/cycle-0029-product-design.md)\
-Authority: [PRODUCT_GOAL version 9](PRODUCT_GOAL.md), D030–D036, [behavioral design](docs/designs/codebook.md)\
+Authority: [PRODUCT_GOAL version 10](PRODUCT_GOAL.md), D030–D036, [behavioral design](docs/designs/codebook.md)\
 Identity and history: see the table below; this file owns current visual metadata.
 
 ## Open this image before implementing

@@ -646,6 +646,7 @@ test('a repeat of a refused start that is rejected while a presentation change i
     assertPresentationIdle: pending,
     nodeHistoryLearningMaterialSaved: pending,
     replayControlAccepted: pending,
+    markAgentRecordingOpen: pending,
   }
   // Act
   let rejection: unknown
@@ -931,7 +932,7 @@ test('in a WSL remote window the first full-library refusal names no removal', a
   )
   assert.equal(
     atMaximum.record.error?.message,
-    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: Saved studies lists the files of a chosen study for removal by hand; an editor agent never deletes files. Existing learning was kept.',
+    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: choose a study in Saved studies and open Remove by hand to list its files, then remove them by hand; an editor agent never deletes files. Existing learning was kept.',
   )
 })
 

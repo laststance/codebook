@@ -391,7 +391,7 @@ test('the configured environment routes only owned DAP responses and reveals imm
     accesses: string[] = [],
     messages: string[] = [],
     instances: SelectedRun[] = []
-  let ownedLock: { dev: number; ino: number } | undefined,
+  let ownedLock: { dev: bigint; ino: bigint } | undefined,
     runStatus: 'preparing' | 'ready' = 'ready',
     cleaning = false
   let factory: DebugAdapterTrackerFactory | undefined,
@@ -507,7 +507,10 @@ test('the configured environment routes only owned DAP responses and reveals imm
   await writeFile(nextExecutable, 'Next fixture')
   await mkdir(join(directory, '.next/dev'), { recursive: true })
   await writeFile(join(directory, '.next/dev/lock'), 'owned run fixture')
-  const lockStatus = await lstat(join(directory, '.next/dev/lock'))
+  // The run reads its lock with exact numbers, so the stand-in does too.
+  const lockStatus = await lstat(join(directory, '.next/dev/lock'), {
+    bigint: true,
+  })
   ownedLock = { dev: lockStatus.dev, ino: lockStatus.ino }
   assert.equal(
     (await environment.prerequisites()).profiles?.['repository-browser']?.ready,

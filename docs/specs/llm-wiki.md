@@ -1,6 +1,6 @@
 # Independent DeepWiki reproduction
 
-Authority: PRODUCT_GOAL version 9, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. [DESIGN.md](../../DESIGN.md) owns visual approval; [PROJECT_STATE.md](../../PROJECT_STATE.md) owns implementation/proof status.
+Authority: PRODUCT_GOAL version 10, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. [DESIGN.md](../../DESIGN.md) owns visual approval; [PROJECT_STATE.md](../../PROJECT_STATE.md) owns implementation/proof status.
 
 ## DeepWiki is the acceptance target
 
@@ -54,7 +54,7 @@ Generated output and excluded/sensitive paths must not recursively feed ingestio
 
 ## Deep links to source
 
-Source citations in the browser site open the corresponding file and location in the editor being used: VS Code for a VS Code project and Cursor for a Cursor project. Bind the correct project root; similarly named files or another checkout must not receive the link accidentally. Handle moved projects, unavailable files and source drift with understandable guidance. Keep referenced source versions visible and distinguish current navigation from historical cited text.
+Source citations in the browser site open the corresponding file and location in the editor being used: VS Code for a VS Code project and Cursor for a Cursor project. Bind the correct project root; similarly named files or another checkout must not receive the link accidentally. Handle moved projects, unavailable files and source drift with understandable guidance. Keep referenced source versions visible and distinguish current navigation from historical cited text. Delivered reference, no further requirement: besides the inline citations, every page's right rail has the entry **Open in VS Code** (**Open in Cursor** when Cursor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label.
 
 One generated site may be opened from either editor. Its durable static pages keep a VS Code protocol fallback; the Codebook reader serves source and update links with the active host's registered scheme without changing the published files. A Cursor update must preserve the VS Code fallback and both-host reader behavior. Direct offline file browsing remains readable, but its source/update links can open only the editor named by that static fallback.
 

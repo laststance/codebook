@@ -13,7 +13,7 @@ Use [PROJECT_STATE.md](PROJECT_STATE.md)'s gap table as the current ledger. At a
 For each row, inspect its actual source entry/symbol and available evidence. Record:
 
 - **Implementation:** matching behavior, a concrete mismatch/missing behavior, or UNKNOWN with the next source inspection. A file/symbol's existence alone cannot establish behavior.
-- **Proof:** result, host, source/candidate identity, validation level and evidence link. Absent/stale proof remains unverified. A source mismatch and missing runtime evidence are different gaps.
+- **Proof:** result, host, operating system, source/candidate identity, validation level and evidence link. Absent/stale proof remains unverified. A source mismatch and missing runtime evidence are different gaps.
 - **Next action:** the source change or bounded experiment needed, with the observation that will verify it. UNKNOWN becomes an investigation; it cannot be treated as implemented or absent.
 
 **Gate:** every row is accounted for, no active goal is omitted, and the cycle records the baseline and affected IDs. A read receipt, goal-link inventory or old PASS cannot satisfy this audit. PROJECT_STATE holds the latest assessment; closed cycles retain supporting history.
@@ -34,7 +34,7 @@ Before editing, record in the cycle:
 
 Complete the normal user entry through its result, including specified recovery and preservation. Reuse existing modules and actual package scripts. Use focused mechanism tests for changed logic and the declared native checks for product claims.
 
-Before final acceptance, actual-editor development trials use **`/Users/ryotamurakami/repository/nextjs-dashboard`**. Recheck its revision/dirty state, preserve its work and notify the owner before occupying the desktop. Keep VS Code, Cursor and independent browser evidence separate. Dashboard development cannot fill final acceptance rows.
+Before final acceptance, actual-editor development trials use **`/Users/ryotamurakami/repository/nextjs-dashboard`**. Recheck its revision/dirty state, preserve its work and notify the owner before occupying the desktop. Keep VS Code, Cursor and independent browser evidence separate, and keep the evidence of each operating system (macOS, Windows, Ubuntu) separate: a result on one system does not verify another. Dashboard development cannot fill final acceptance rows.
 
 For UI changes, view the approved PNG again and compare real screenshots with its relevant region at the normal desktop baseline. Record differences and interaction. Verify motion with video and inspected frames; generated pixels or renderer assertions cannot establish native behavior.
 
@@ -46,7 +46,7 @@ Acquire native macOS editor video through [the OBS Window Capture procedure](doc
 
 Reconcile every changed/dependent AC row against new source and evidence, including regressions. Preserve unaffected evidence only with a source/behavior impact rationale. Compare before/after gaps; retain missing implementation, missing proof and UNKNOWN. No status advances because a checkbox, skill, image or PR is complete.
 
-Update the cycle and PROJECT_STATE with results and **one executable next action**. Check that the route still reaches every active goal and the next candidate addresses the largest remaining blocker. Follow DEVELOPMENT.md for reviews, authorized delivery and issue mirrors; unavailable tracking leaves a pending sync, not missing local instructions.
+Update the cycle and PROJECT_STATE with results and **one executable next action**. PROJECT_STATE is overwritten, not appended to: it keeps the active cycle and the two before it ([rule](DEVELOPMENT.md#standing-owner-direction)). Check that the route still reaches every active goal and the next candidate addresses the largest remaining blocker. Follow DEVELOPMENT.md for reviews, authorized delivery and issue mirrors; unavailable tracking leaves a pending sync, not missing local instructions.
 
 **Closure gate:** a fresh agent can recover the accepted product, concrete code gaps, actual proof, authorized phase and next step locally. All affected rows, required checks and UI comparisons are recorded. Markdown supplies an auditable procedure; it cannot mechanically prove comprehension.
 
@@ -54,7 +54,7 @@ Final completion requires the full [protocol](docs/acceptance/FINAL_REVIEW.md), 
 
 ## Product acceptance map
 
-This inventory covers G01–G07 and G10–G12 under [goal version 9](PRODUCT_GOAL.md); G08/G09 are retired. Linked contracts control details. The map defines outcomes; [PROJECT_STATE.md](PROJECT_STATE.md#current-product-gaps) records implementation/proof/next actions. Keep all 13 rows when updating either document.
+This inventory covers G01–G07 and G10–G12 under [goal version 10](PRODUCT_GOAL.md); G08/G09 are retired. Linked contracts control details. The map defines outcomes; [PROJECT_STATE.md](PROJECT_STATE.md#current-product-gaps) records implementation/proof/next actions. Keep all 13 rows when updating either document.
 
 ### Observable completion checks
 
@@ -82,6 +82,6 @@ Use [the cycle template](docs/cycles/TEMPLATE.md); fill these fields in the cycl
 
 **Selected increment:** primary/dependency AC IDs; current symbols/behavior and separate proof gap; next change/experiment; frozen starting action, expected result, failure behavior and procedure.
 
-**One observation per host/candidate/level:** AC behavior; mechanism/development-native/Stage 1/Stage 2/visual level; host/version/chat/model; source/dirty/VSIX/skill/setup identity; target revision/runtime/use case; display/window/zoom/theme; exact action, expected/actual result and NOT RUN/PARTIAL/FAIL/PASS; artifact path/hash/availability; source/execution/capture/recording correspondence; image comparison and motion frames; preserved work/cleanup; limits.
+**One observation per host/candidate/level:** AC behavior; mechanism/development-native/Stage 1/Stage 2/visual level; host/version/chat/model; operating system; source/dirty/VSIX/skill/setup identity; target revision/runtime/use case; display/window/zoom/theme; exact action, expected/actual result and NOT RUN/PARTIAL/FAIL/PASS; artifact path/hash/availability; source/execution/capture/recording correspondence; image comparison and motion frames; preserved work/cleanup; limits.
 
 **Handoff:** before/after affected gaps and regressions; changed hypothesis on failure; separate review/CI/merge/package/publication/installed status; exact next action/prerequisite; cycle/state updated; issue synchronization status.

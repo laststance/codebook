@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { Dirent } from 'node:fs'
 import { lstat, mkdir, open, opendir } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
@@ -58,6 +59,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { describeNoStorageFolder } from './utils/describeNoStorageFolder'
 import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
@@ -934,7 +936,9 @@ export class RecordingStore {
         })
       if (!rootStat) continue
       if (!rootStat.isDirectory())
-        throw new Error('Recording root is not a regular directory.')
+        throw new Error(
+          describeNoStorageFolder('Recording root', root, rootStat),
+        )
       const directory = this.path(studyId, storage.version),
         stat = await lstat(directory).catch((error) => {
           if (error.code === 'ENOENT') return undefined
@@ -952,7 +956,7 @@ export class RecordingStore {
     )
   }
 
-  /** Coalesces bounded version directories so interrupted reservations share one total capacity. @example await this.identities() */
+  /** Coalesces bounded version directories so interrupted reservations share one total capacity; an entry that is no folder and a folder whose name is no study id are not counted. @example await this.identities() */
   private async identities(): Promise<string[]> {
     const identities = new Set<string>()
     for (const storage of RECORDING_STORAGE_FORMATS) {
@@ -963,15 +967,30 @@ export class RecordingStore {
         })
       if (!stat) continue
       if (!stat.isDirectory())
-        throw new Error('Recording root is not a regular directory.')
+        throw new Error(
+          describeNoStorageFolder('Recording root', directory, stat),
+        )
       // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
-      for await (const entry of await opendir(directory)) {
-        if (!entry.isDirectory())
-          throw new Error('Recording library contains a non-directory entry.')
-        identities.add(studyIdSchema.parse(entry.name))
-      }
+      for await (const entry of await opendir(directory))
+        this.addIdentityOf(entry, identities)
     }
     return [...identities]
+  }
+
+  /**
+   * Counts one entry of a recording root as its study's recording; called by {@link identities} for every entry of every root.
+   * Only a folder named like a study id is a recording. Any other entry is nobody's recording: it is skipped, never followed, and stays where it is, so that it breaks neither the start of a recording nor the list.
+   * @param entry - An entry of a recording root.
+   * @param identities - The study ids found so far, which gain this entry's.
+   * @example
+   * this.addIdentityOf(entry, identities) // identities gains '<study id>' for a folder of that name, and nothing for a `.DS_Store`
+   */
+  private addIdentityOf(entry: Dirent, identities: Set<string>): void {
+    // An entry that is no folder (the `.DS_Store` Finder writes when the learner opens the root, a link) is skipped like a name that is no study id.
+    if (!entry.isDirectory()) return
+    const parsedId = studyIdSchema.safeParse(entry.name)
+    // A folder whose name is no study id (a stray `x`) is nobody's recording and is skipped.
+    if (parsedId.success) identities.add(parsedId.data)
   }
 
   /** Creates private storage without following a symlink in the recording root. @example await this.initialize() */
@@ -983,8 +1002,11 @@ export class RecordingStore {
       )!,
       directory = join(this.learningDirectory, storage.directory)
     await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-    if (!(await lstat(directory)).isDirectory())
-      throw new Error('Recording root is not a regular directory.')
+    const standing = await lstat(directory)
+    if (!standing.isDirectory())
+      throw new Error(
+        describeNoStorageFolder('Recording root', directory, standing),
+      )
   }
 }
 

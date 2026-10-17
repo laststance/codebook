@@ -8,25 +8,34 @@ import {
 } from '../../constants'
 import { isRecordedOwnerGone } from '../../utils/isRecordedOwnerGone'
 import {
+  readProcessStart,
+  type ProcessStartReader,
+} from '../../utils/readProcessStart'
+import {
   readRecordedOwner,
   type StorageOwnerIdentity,
 } from '../../utils/readRecordedOwner'
 import { withoutBootTime } from '../../utils/withoutBootTime'
 
+import { listProcesses, type ListedProcess } from './listProcesses'
 import { profileProcesses } from './profileProcesses'
 
 /**
  * Removes one profile folder when no process uses it as its profile; called by {@link sweepProfile} for a folder whose owner is gone.
  * @param profile - The profile folder.
+ * @param processes - The one process listing of the sweep ({@link ProfileSweep}), made at its first folder whose owner is gone.
  * @returns
  * - `true` when the folder was removed
  * - `false` when a process still runs with it, when the processes cannot be listed, and when the removal fails: the folder stays
  * @example
- * await removeUnusedProfile('/tmp/codebook-browser-a1b2c3') // => true
+ * await removeUnusedProfile('/tmp/codebook-browser-a1b2c3', sweep.processes()) // => true
  */
-async function removeUnusedProfile(profile: string): Promise<boolean> {
+async function removeUnusedProfile(
+  profile: string,
+  processes: Promise<ListedProcess[]>,
+): Promise<boolean> {
   try {
-    if ((await profileProcesses(profile)).length) return false
+    if ((await profileProcesses(profile, await processes)).length) return false
     await rm(profile, { recursive: true, force: true })
     return true
   } catch {
@@ -34,8 +43,13 @@ async function removeUnusedProfile(profile: string): Promise<boolean> {
   }
 }
 
-/** What one sweep has done so far: how many folders with a readable owner marker it judged, which is what its bound counts, and the folders it removed. */
-type ProfileSweep = { judgedCount: number; removed: string[] }
+/** What one sweep has done so far: how many folders with a readable owner marker it judged, which is what its bound counts, and the folders it removed; `processes` gives the sweep's one process listing, made when it is first asked for, and `readStart` reads a process's start and keeps what the sweep has read. */
+type ProfileSweep = {
+  judgedCount: number
+  removed: string[]
+  processes: () => Promise<ListedProcess[]>
+  readStart: ProcessStartReader
+}
 
 /**
  * Judges one profile folder by its owner marker, removes it when its owner is gone and nothing uses it, and records both in the sweep; called by {@link removeAbandonedProfiles} for each real directory with the profile prefix.
@@ -57,21 +71,27 @@ async function sweepProfile(
   if (!owner) return
   sweep.judgedCount += 1
   // An owner that may still run: the folder is not known to be abandoned.
-  if (!isRecordedOwnerGone(owner, judgedBy)) return
-  if (await removeUnusedProfile(profile)) sweep.removed.push(profile)
+  if (!(await isRecordedOwnerGone(owner, judgedBy, sweep.readStart))) return
+  if (await removeUnusedProfile(profile, sweep.processes()))
+    sweep.removed.push(profile)
 }
 
 /**
- * Removes the browser profile folders that a killed editor left behind, so that they do not pile up in the profile root; called by {@link HostBrowser.launch} before a managed run creates its own folder.
+ * Removes the browser profile folders that a killed editor left behind, so that they do not pile up in the profile root; started by {@link HostBrowser.launch} beside a managed run's start, which does not wait for it, and awaited by {@link HostBrowser.close}.
  *
  * A folder is removed only on proof that Codebook made it and nothing uses it: it is a real directory, it carries the owner marker
- * ({@link MANAGED_PROFILE_OWNER_FILE}), the marker's process is gone from this machine ({@link isRecordedOwnerGone}, judged without a boot time,
+ * ({@link MANAGED_PROFILE_OWNER_FILE}), the marker's process is gone from this machine, also when another process has its id now ({@link isRecordedOwnerGone}, judged without a boot time,
  * see {@link withoutBootTime}), and no process runs with the folder as its profile. A folder without a readable marker is never touched, whoever made it.
  * One sweep judges at most {@link MANAGED_PROFILE_SWEEP_LIMIT} marked folders; the folders without a marker that builds before the marker left behind
- * take none of that bound, so they cannot keep the marked folders listed after them from being looked at.
+ * take none of that bound, so they cannot keep the marked folders listed after them from being looked at. The processes are listed once per sweep, at its first folder
+ * whose owner is gone, and every such folder is matched against that one listing. A listing that fails, runs longer than its time bound or prints more than its limit
+ * ({@link listProcesses}) removes nothing: every folder stays for a later run, like a folder whose removal fails. The starts of the marker's processes are kept for the sweep, so the folders of one running editor cost one read;
+ * a kept start never calls an owner gone.
  *
  * @param root - The directory that holds the profile folders: {@link MANAGED_PROFILE_ROOT} in the product, a directory of their own in tests.
  * @param identity - The machine and the boot of this process, by which a marker's owner is judged.
+ * @param listRunningProcesses - Lists the processes of this machine; {@link listProcesses} unless a test counts the listings.
+ * @param readStart - Reads the start of the process that has a marker's process id now; {@link readProcessStart} unless a test names its own.
  * @returns The folders that were removed, in the order the directory listed them; empty when the root cannot be read. Nothing here throws: what cannot be
  * read, judged or removed stays in place.
  * @example
@@ -80,6 +100,8 @@ async function sweepProfile(
 export async function removeAbandonedProfiles(
   root: string,
   identity: StorageOwnerIdentity,
+  listRunningProcesses: () => Promise<ListedProcess[]> = listProcesses,
+  readStart: ProcessStartReader = readProcessStart,
 ): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
   // A link with the prefix is no profile folder of Codebook's making; only real directories are looked at.
@@ -88,7 +110,15 @@ export async function removeAbandonedProfiles(
       entry.isDirectory() && entry.name.startsWith(MANAGED_PROFILE_PREFIX),
   )
   const judgedBy = withoutBootTime(identity)
-  const sweep: ProfileSweep = { judgedCount: 0, removed: [] }
+  let listing: Promise<ListedProcess[]> | undefined
+  const cache = new Map<number, Promise<string | undefined>>()
+  const sweep: ProfileSweep = {
+    judgedCount: 0,
+    removed: [],
+    // One listing serves every folder of the sweep; it is made only when a folder's owner is gone.
+    processes: () => (listing ??= listRunningProcesses()),
+    readStart: (pid, inputs) => readStart(pid, { ...inputs, cache }),
+  }
   for (const candidate of candidates) {
     // The bound counts the folders whose marker was judged, not the listing: a folder without a readable marker costs one failed read. The rest wait for a later run.
     if (sweep.judgedCount >= MANAGED_PROFILE_SWEEP_LIMIT) break

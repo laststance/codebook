@@ -103,7 +103,7 @@ test('a cancelled Cursor update is an information notice, not an error', () => {
   })
 })
 
-test('a watch that reached its bound is an error notice with Open LLM Wiki that sends the learner to the chat', () => {
+test('a watch that reached its bound is an error notice with Open LLM Wiki whose sentence stays true when the chat publishes later and names a step for a chat that waits, still works or stopped', () => {
   // Act
   const notice = wikiUpdateNotice(
     {
@@ -122,11 +122,11 @@ test('a watch that reached its bound is an error notice with Open LLM Wiki that 
     severity: 'error',
     actions: ['Open LLM Wiki'],
     message:
-      'No new site appeared within 15 minutes, so Codebook stopped watching at 21:10. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.',
+      'No new site appeared within 15 minutes, so Codebook stopped watching at 21:10. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
   })
 })
 
-test('a learner file in the way is an error notice with Open LLM Wiki that names the file and the next step', () => {
+test('a learner file in the way of a VS Code update is an error notice with Open LLM Wiki that names the file, the chat that was not stopped and the next step', () => {
   // Act
   const notice = wikiUpdateNotice(
     {
@@ -146,7 +146,7 @@ test('a learner file in the way is an error notice with Open LLM Wiki that names
     severity: 'error',
     actions: ['Open LLM Wiki'],
     message:
-      'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+      'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   })
 })
 
@@ -170,7 +170,7 @@ test('a learner file whose name is written as a command link is named as plain t
     severity: 'error',
     actions: ['Open LLM Wiki'],
     message:
-      'Update stopped at 21:10: it would overwrite your own file in the Wiki folder ([Fix it] (command:workbench.action.terminal.new)). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+      'Update stopped at 21:10: it would overwrite your own file in the Wiki folder ([Fix it] (command:workbench.action.terminal.new)). Nothing was replaced. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   })
 })
 
@@ -249,6 +249,8 @@ test('a failure reason longer than the page shows is not cut off in the notifica
       finishedAt: '2026-10-03T12:10:00.000Z',
       reason:
         'Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-192c3b82-a251-4581-ad25-3231da4a5fc5, written 21:09). Wait for it to finish, or delete that folder, then press Update LLM Wiki again.',
+      // Somebody is still updating, so the start check marks the refusal: the notice stays on screen and must not call the site kept for good.
+      mayBeReplacedLater: true,
       site: 'kept',
       ...OUTPUT,
     },
@@ -260,7 +262,7 @@ test('a failure reason longer than the page shows is not cut off in the notifica
     severity: 'error',
     actions: ['Open LLM Wiki'],
     message:
-      'Update failed at 21:10: Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-192c3b82-a251-4581-ad25-3231da4a5fc5, written 21:09). Wait for it to finish, or delete that folder, then press Update LLM Wiki again. The last usable site is kept.',
+      'Update failed at 21:10: Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-192c3b82-a251-4581-ad25-3231da4a5fc5, written 21:09). Wait for it to finish, or delete that folder, then press Update LLM Wiki again. Nothing had been replaced by then.',
   })
 })
 
@@ -308,6 +310,6 @@ test('the notification of an update that replaced the site points to the freshne
     'Stopped watching at 21:10. A new site was published just before; check the freshness label in the browser reader.',
     'Update timed out: Cursor Agent did not finish within 15 minutes and was stopped at 21:10 after it replaced the site on disk; check the freshness label in the browser reader.',
     'No new site appeared within 15 minutes, so Codebook stopped watching at 21:10. The site on disk changed during the watch; check the freshness label in the browser reader.',
-    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). The site on disk changed during the run; check the freshness label in the browser reader. Move or rename the file, then press Update LLM Wiki again.',
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). The site on disk changed during the run; check the freshness label in the browser reader. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   ])
 })

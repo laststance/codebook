@@ -8,11 +8,13 @@ import { systemTrashName, type SystemTrashName } from './systemTrashName'
  * @param trashName - The host's word for the system Trash.
  * @returns
  * - Refused at the admission: the refusal sentence
- * - Removed by the learner: the removal sentence with the host's Trash word
+ * - Removed by the learner with this window's delete: the removal sentence with the host's Trash word
+ * - The archive left the library without such a removal (files removed by hand, or by another window): the sentence that names the archive and both ways; it names no Trash, which a window that lists files for removal by hand does not have
  * - Awaiting its admission, or not excluded: `undefined`
  * @example
  * historyExclusionReason('refused-at-admission') // => 'The run was refused before it started; nothing was saved.'
  * historyExclusionReason('removed-by-learner', 'Trash') // => 'The learner moved this saved study to the Trash.'
+ * historyExclusionReason('archive-removed') // => "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window."
  */
 export function historyExclusionReason(
   exclusion: Exclude<HistoryExclusion, 'awaiting-admission'>,
@@ -30,5 +32,7 @@ export function historyExclusionReason(
     return 'The run was refused before it started; nothing was saved.'
   if (exclusion === 'removed-by-learner')
     return `The learner moved this saved study to the ${trashName}.`
+  if (exclusion === 'archive-removed')
+    return "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window."
   return undefined
 }

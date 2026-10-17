@@ -11,7 +11,9 @@ import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
-import { runFlowKeepingCases } from './utils/runFlowKeepingCases.mjs'
+import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
+import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
+import { readerDomSessionName } from './utils/readerDomSessionName.mjs'
 
 const [
   mode = 'verify',
@@ -19,7 +21,7 @@ const [
 ] = process.argv.slice(2)
 assert.ok(['red', 'verify'].includes(mode))
 const output = resolve(outputPath),
-  session = `cb-bootstrap-${mode}`
+  session = readerDomSessionName('bootstrap', mode, output)
 await mkdir(output, { recursive: true })
 const study = createConfiguredStudy(),
   baseline = {
@@ -56,21 +58,13 @@ const message = {
   studies: [],
 }
 
-/** How long one call of the browser CLI may take. */
-const COMMAND_TIMEOUT_MS = 30_000
-/** How long the call that runs the whole flow may take: every case of the check, with its viewport changes and screenshots, runs inside this one call, and the job that runs it ends after ten minutes. */
-const FLOW_TIMEOUT_MS = 300_000
-
-/** Records each owned CLI operation for delayed-snapshot renderer verification; the call labelled `flow` gets the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
+/** Records each owned CLI operation for delayed-snapshot renderer verification; {@link readerDomCommandOptions} gives the call labelled `flow` the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise((resolve) =>
     execFile(
       'playwright-cli',
       [`-s=${session}`, ...arguments_],
-      {
-        timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
-        maxBuffer: 4 * 1024 * 1024,
-      },
+      readerDomCommandOptions(label),
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
@@ -99,6 +93,17 @@ async function check(page, options, collected) {
         ),
       revision,
     )
+  /** Builds the presentation an open Study workspace reports, so the cases that publish one state its control revision once, here. @example openPresentation({ layoutConfirmed: false }) // an open workspace whose layout is not confirmed */
+  const openPresentation = (overrides) => ({
+    presentationId: '11111111-1111-4111-8111-111111111111',
+    presentationControlRevision: 1,
+    mode: 'study-workspace',
+    state: 'open',
+    layoutConfirmed: true,
+    preference: { status: 'default' },
+    panes: {},
+    ...overrides,
+  })
   const { errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
@@ -118,6 +123,207 @@ async function check(page, options, collected) {
         )
         .join(','),
     )
+  /**
+   * Presses the summary of a disclosure by keyboard and waits until the disclosure has changed its open state and told so with a toggle event, at which the pane acts on the opened or closed disclosure.
+   * A toggle event alone is no sign of the press: the browser tells a change of the open state later, so a render before the press (the pane closes the disclosure for another study) can still owe one. The helper therefore reads the state before the press and waits for the other state together with an event that reports it; its own handler runs after the pane's.
+   * The wait is bounded: a disclosure that does not toggle rejects after five seconds with a sentence that names it, which ends the flow as one failed case, instead of holding the flow until the limit of its one browser call.
+   */
+  const toggleByKeyboard = async (disclosureId, key = 'Enter') => {
+    const toggleWaitMs = 5_000
+    const wasOpen = await page.evaluate((id) => {
+      const disclosure = document.getElementById(id)
+      window.disclosureToggledTo = undefined
+      disclosure.ontoggle = () => {
+        window.disclosureToggledTo = disclosure.open
+      }
+      return disclosure.open
+    }, disclosureId)
+    await page.locator(`#${disclosureId} > summary`).focus()
+    await page.keyboard.press(key)
+    await page
+      .waitForFunction(
+        ({ id, wasOpen }) =>
+          document.getElementById(id).open !== wasOpen &&
+          window.disclosureToggledTo === !wasOpen,
+        { id: disclosureId, wasOpen },
+        { timeout: toggleWaitMs },
+      )
+      .catch((error) => {
+        throw new Error(
+          `The disclosure #${disclosureId} did not toggle within ${toggleWaitMs} ms of ${key} on its summary (${error.message})`,
+        )
+      })
+  }
+  /** Names the element that holds the keyboard focus: `body`, else its id, its action, or its tag with its text. */
+  const focusName = () =>
+    page.evaluate(() => {
+      const focused = document.activeElement
+      if (focused === document.body) return 'body'
+      return (
+        focused.id ||
+        focused.dataset.action ||
+        `${focused.tagName.toLowerCase()}: ${focused.textContent.trim()}`
+      )
+    })
+  /**
+   * Takes the focus from the pane the way the editor does when the learner goes to another part of it, as seen in VS Code 1.140.0 (row 326): the webview first takes the focus from the control (a focusout without a related target, after which the active element is the page body), then the window gets its blur event, and the document reports that it has no focus.
+   * Until row 326 this helper left the active element in place, which no editor does: every case that holds the pane out of focus was untrue to the editor in that point.
+   */
+  const leavePane = () =>
+    page.evaluate(() => {
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement && focused !== document.body)
+        focused.blur()
+      document.hasFocus = () => false
+      window.dispatchEvent(new Event('blur'))
+    })
+  /** Gives the pane the focus back the way the editor's Focus into Panel command does: the window's focus event, at which the active element is still the page body. */
+  const returnToPane = () =>
+    page.evaluate(() => {
+      delete document.hasFocus
+      window.dispatchEvent(new Event('focus'))
+    })
+  /** Finds a point of the pane's background: a place whose element, and everything around it, takes no focus when it is pressed. */
+  const backgroundPoint = () =>
+    page.evaluate(() => {
+      for (let y = 4; y < innerHeight; y += 8)
+        for (let x = innerWidth - 4; x > 0; x -= 8)
+          if (
+            !document
+              .elementFromPoint(x, y)
+              ?.closest(
+                'button,a[href],input,select,textarea,summary,label,[tabindex],[contenteditable]',
+              )
+          )
+            return { x, y }
+      throw new Error('The pane shows no background to press.')
+    })
+  /**
+   * Returns to the pane with a real pointer press at a point, in one of the two orders in which the window's focus event and the press can reach the page; the pane must handle both, because the editor's order is not fixed by anything the pane can rely on.
+   * `focus-first`: the focus event fires before the pane sees the press (a capturing listener on the window runs ahead of the pane's on the document). `press-first`: it fires after the pane saw the pointerdown and before the browser's own handling of the press, which takes the focus off a control when the press is on the background (a bubbling listener on the document).
+   */
+  const returnToPaneByPressAt = async (point, order) => {
+    await page.evaluate((order) => {
+      const giveFocusBack = () => {
+        delete document.hasFocus
+        window.dispatchEvent(new Event('focus'))
+      }
+      if (order === 'focus-first')
+        window.addEventListener('pointerdown', giveFocusBack, {
+          capture: true,
+          once: true,
+        })
+      else
+        document.addEventListener('pointerdown', giveFocusBack, { once: true })
+    }, order)
+    await page.mouse.click(point.x, point.y)
+  }
+  /** The middle of one control of the pane, for a press on it. */
+  const middleOf = async (selector) => {
+    const box = await page.locator(selector).first().boundingBox()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }
+  /** Reads one status region of the pane: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor has the `hidden` attribute or `display:none`, and when a closed disclosure holds it; a region that is rendered exists for assistive technology before its first text. */
+  const statusRegion = (id) =>
+    page.evaluate((id) => {
+      const region = document.getElementById(id)
+      return {
+        id,
+        role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+        text: region.textContent,
+        isRendered: region.checkVisibility(),
+      }
+    }, id)
+  /** What {@link statusRegion} reads for a region that is in the page, rendered and empty. */
+  const emptyRegion = (id) => ({
+    id,
+    role: 'status/polite',
+    text: '',
+    isRendered: true,
+  })
+  /**
+   * Says whether the pane is laid out and painted the same with one of its parts in place as with that part taken out by the `hidden` attribute: `moved` names the page (its scroll size) and every rendered element outside the part whose box differs, and `samePixels` compares a screenshot of the whole page. Nothing moves and the pixels are equal only for a part that shows nothing and takes no room. Two frames pass before each reading, so the pane's resize observers have answered, and each screenshot is repeated until the picture stands still.
+   * Both readings are taken in one settled state (row 730). A full-page screenshot of a page taller than the viewport lays the page out again at the page's height while it is taken (CI's video of the failed run shows those frames), and the pane answers a resize (vh units, its resize handlers and observers) at a time the runner decides, so one reading could catch another layout than the other. The viewport is therefore made as tall as the page once, before the readings, and given back with the scroll position afterwards. The pointer rests where the flow's last press left it, and the browser updates the hover state of what moved under it only with its next pointer event (`button:hover` brightens a button), so a real move to the page's top-left corner sets that state before the readings.
+   */
+  const looksAsWithout = async (selector) => {
+    /** Waits two frames, so the pane's resize observers and handlers have answered. */
+    const twoFrames = () =>
+      page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+    await page.mouse.move(0, 0)
+    const viewport = page.viewportSize(),
+      scroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }))
+    // A page whose height grows with the viewport (vh units) is measured again; five rounds are more than the pane's growth needs.
+    for (let round = 0; round < 5; round++) {
+      const height = await page.evaluate(
+        () => document.documentElement.scrollHeight,
+      )
+      if (height <= page.viewportSize().height) break
+      await page.setViewportSize({ width: viewport.width, height })
+      await twoFrames()
+    }
+    const reading = async () => {
+      await twoFrames()
+      const boxes = await page.evaluate((selector) => {
+        const part = document.querySelector(selector),
+          root = document.documentElement
+        return [
+          ['page', `${root.scrollWidth} x ${root.scrollHeight}`],
+          ...[...document.body.querySelectorAll('*')]
+            // What a closed disclosure holds is not laid out and keeps the box of an earlier layout: only rendered elements are compared.
+            .filter(
+              (element) => !part.contains(element) && element.checkVisibility(),
+            )
+            .map((element) => {
+              const box = element.getBoundingClientRect()
+              return [
+                element.id || `${element.tagName}.${element.className}`,
+                [box.x, box.y, box.width, box.height].join(' '),
+              ]
+            }),
+        ]
+      }, selector)
+      // What the browser still settles after a change (a hover that sets in, a scrollbar that fades) is not the part's doing: the picture is taken until two in a row are equal.
+      let pixels = await page.screenshot({ fullPage: true })
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const again = await page.screenshot({ fullPage: true })
+        if (again.equals(pixels)) break
+        pixels = again
+      }
+      return { boxes, pixels }
+    }
+    const setHidden = (isHidden) =>
+      page.locator(selector).evaluate((part, isHidden) => {
+        part.hidden = isHidden
+      }, isHidden)
+    // A text field that has the focus blinks its caret, which two screenshots catch differently; the page's content security policy keeps the browser tool from hiding it, so the check hides it on the focused element for the two readings.
+    const setCaretColor = (color) =>
+      page.evaluate((color) => {
+        document.activeElement.style.caretColor = color
+      }, color)
+    await setCaretColor('transparent')
+    const inPlace = await reading()
+    await setHidden(true)
+    const takenOut = await reading()
+    await setHidden(false)
+    await setCaretColor('')
+    // The flow goes on in the viewport and at the scroll position it had.
+    await page.setViewportSize(viewport)
+    await page.evaluate(({ x, y }) => scrollTo(x, y), scroll)
+    await twoFrames()
+    return {
+      moved: inPlace.boxes.flatMap(([name, box], index) =>
+        box === takenOut.boxes[index]?.[1]
+          ? []
+          : [`${name}: ${box} / ${takenOut.boxes[index]?.[1]}`],
+      ),
+      samePixels: inPlace.pixels.equals(takenOut.pixels),
+    }
+  }
   const inspect = () =>
     page.evaluate(() => ({
       text: document.body.innerText,
@@ -332,6 +538,159 @@ async function check(page, options, collected) {
         }
       }
     }
+    // Arrange: a loaded study with no run and no recording, so the pane shows neither its live strip nor its replay transport (row 74).
+    const paneName = kind === 'context' ? 'Study pane' : 'bottom panel'
+    await page.setViewportSize({ width: 420, height: 720 })
+    await publish(options.message)
+    /** Reads what the live strip shows: its status, its height and whether its Stop button is rendered. */
+    const liveStrip = () =>
+      page.evaluate(() => ({
+        status: document.getElementById('runtime').textContent,
+        height: Math.round(
+          document.querySelector('.live-strip').getBoundingClientRect().height,
+        ),
+        stopShown: document
+          .querySelector('[data-action="stop"]')
+          .checkVisibility(),
+      }))
+    // Act: the strip's status is read before a run, when a run reports its first state, and after that run stopped.
+    const stripBeforeRun = {
+      region: await statusRegion('runtime'),
+      strip: await liveStrip(),
+      looks: await looksAsWithout('.live-strip'),
+    }
+    await publish({
+      ...options.message,
+      liveState: 'running',
+      liveTitle: 'Repository operation',
+    })
+    const stripDuringRun = {
+      region: await statusRegion('runtime'),
+      strip: await liveStrip(),
+    }
+    await publish({
+      ...options.message,
+      liveState: 'stopped',
+      liveTitle: 'Repository operation',
+    })
+    const stripAfterRun = {
+      region: await statusRegion('runtime'),
+      strip: await liveStrip(),
+      looks: await looksAsWithout('.live-strip'),
+    }
+    // Assert
+    cases.push({
+      name: `in the ${paneName} the live strip’s status is in the page, rendered and empty, before a run starts, and the pane looks as it does without the strip; the run’s first state is the status’s first text, and a stopped run empties it again`,
+      actual: { stripBeforeRun, stripDuringRun, stripAfterRun },
+      passed:
+        JSON.stringify(stripBeforeRun) ===
+          JSON.stringify({
+            region: emptyRegion('runtime'),
+            strip: { status: '', height: 0, stopShown: false },
+            looks: { moved: [], samePixels: true },
+          }) &&
+        JSON.stringify(stripDuringRun.region) ===
+          JSON.stringify({
+            ...emptyRegion('runtime'),
+            text: 'Repository operation — running',
+          }) &&
+        stripDuringRun.strip.height > 0 &&
+        stripDuringRun.strip.stopShown &&
+        JSON.stringify(stripAfterRun) === JSON.stringify(stripBeforeRun),
+    })
+
+    // Arrange: the same study without a recording; the transport's three status regions have had no text yet (row 74).
+    const transportRegionIds = [
+      'recording-status',
+      'application-covered-remedy',
+      'playback-hint',
+    ]
+    /** Reads the transport as this pane holds it: its three status regions, the name that makes its section a landmark, its height, and whether the pane looks as it does without it. */
+    const transportHeld = async () => ({
+      regions: [
+        await statusRegion(transportRegionIds[0]),
+        await statusRegion(transportRegionIds[1]),
+        await statusRegion(transportRegionIds[2]),
+      ],
+      landmarkName: await page
+        .locator('#recording-transport')
+        .getAttribute('aria-label'),
+      height: await page
+        .locator('#recording-transport')
+        .evaluate((transport) =>
+          Math.round(transport.getBoundingClientRect().height),
+        ),
+      looks: await looksAsWithout('#recording-transport'),
+    })
+    const transportBeforeRecording = await transportHeld()
+    // Act: a recording opens whose moment another tab covers and whose native values are not loaded, which gives each region its first text; then the recording is left.
+    await publish({
+      ...options.message,
+      contentTab: 'recording',
+      recording: {
+        revision: revisionAt(1),
+        mode: 'paused',
+        readiness: 'ready',
+        cleared: false,
+        presentedMs: 2000,
+        range: { startMs: 0, endMs: 5000, endKnown: true },
+        recordingStatus: 'finalized',
+        nativeValuesUninspected: true,
+        applicationCovered: true,
+      },
+    })
+    const transportWithRecording = {
+      regions: [
+        await statusRegion(transportRegionIds[0]),
+        await statusRegion(transportRegionIds[1]),
+        await statusRegion(transportRegionIds[2]),
+      ],
+      landmarkName: await page
+        .locator('#recording-transport')
+        .getAttribute('aria-label'),
+      playShown: await page.locator('#playback-toggle').isVisible(),
+    }
+    await publish(options.message)
+    const transportAfterRecording = await transportHeld()
+    // Assert: one case a region, each with the transport it stands in.
+    const firstTexts = [
+      'Paused · finalized · Recorded application is covered by another tab',
+      'Bring the Recorded application tab to the front to show this moment again.',
+      'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.',
+    ]
+    /** Says whether a reading of {@link transportHeld} shows one region empty in a transport that is left out: no name, no height, nothing moved and no pixel changed by taking the transport out. */
+    const transportLeftOut = (held, index) =>
+      JSON.stringify([
+        held.regions[index],
+        held.landmarkName,
+        held.height,
+        held.looks,
+      ]) ===
+      JSON.stringify([
+        emptyRegion(transportRegionIds[index]),
+        null,
+        0,
+        { moved: [], samePixels: true },
+      ])
+    for (const [index, regionId] of transportRegionIds.entries())
+      cases.push({
+        name: `in the ${paneName} the transport’s status region #${regionId} is in the page, rendered and empty, before a recording opens, in a transport that shows nothing, takes no room and is no landmark; the recording gives the region its first text, and leaving the recording empties it again`,
+        actual: {
+          beforeRecording: transportBeforeRecording,
+          withRecording: transportWithRecording,
+          afterRecording: transportAfterRecording,
+        },
+        passed:
+          transportLeftOut(transportBeforeRecording, index) &&
+          JSON.stringify(transportWithRecording.regions[index]) ===
+            JSON.stringify({
+              ...emptyRegion(regionId),
+              text: firstTexts[index],
+            }) &&
+          transportWithRecording.landmarkName === 'Recorded playback' &&
+          transportWithRecording.playShown &&
+          transportLeftOut(transportAfterRecording, index),
+      })
     if (kind === 'context') {
       await publish({
         ...options.message,
@@ -413,10 +772,43 @@ async function check(page, options, collected) {
         name: 'visible bottom panel removes duplicate summary transport',
         passed: !(await page.locator('#recording-transport').isVisible()),
       })
+      // While the bottom panel shows the transport, the Learning summary keeps its own in the page with nothing in it, also at a moment that has a text for each of its three status regions: another tab covers the application and the native values are not loaded (row 74).
+      await publish({
+        ...replay,
+        playbackPanelVisible: true,
+        recording: {
+          ...replay.recording,
+          nativeValuesUninspected: true,
+          applicationCovered: true,
+        },
+      })
+      const transportWhilePanelOwnsIt = await transportHeld()
       await publish({ ...replay, playbackPanelVisible: false })
       cases.push({
         name: 'closing bottom panel restores summary playback controls',
         passed: await page.locator('#recording-transport').isVisible(),
+      })
+      const transportAfterPanelClosed = {
+        status: await statusRegion('recording-status'),
+        landmarkName: await page
+          .locator('#recording-transport')
+          .getAttribute('aria-label'),
+      }
+      cases.push({
+        name: 'while the bottom panel shows the transport, the status regions of the Learning summary’s own transport stay in the page, rendered and empty, and say nothing a second time; the summary looks as it does without that transport, which is no landmark; closing the panel writes the status into the region that was there',
+        actual: { transportWhilePanelOwnsIt, transportAfterPanelClosed },
+        passed:
+          transportRegionIds.every((regionId, index) =>
+            transportLeftOut(transportWhilePanelOwnsIt, index),
+          ) &&
+          JSON.stringify(transportAfterPanelClosed) ===
+            JSON.stringify({
+              status: {
+                ...emptyRegion('recording-status'),
+                text: 'Paused · finalized · Not recorded at this moment',
+              },
+              landmarkName: 'Recorded playback',
+            }),
       })
 
       const help = page
@@ -554,6 +946,105 @@ async function check(page, options, collected) {
           (element) => document.activeElement === element,
         ),
       })
+
+      // Arrange: the Keyboard shortcuts dialog is open and nothing was searched; its no-match line is a status region (row 81).
+      const noMatchSelector = '.shortcut-dialog [role=status]'
+      /** Reads the no-match line of the open dialog: its text, whether it is rendered, whether it or an ancestor up to the dialog has the `hidden` attribute or `display:none`, its height, how many shortcuts are listed and whether Clear search is shown. */
+      const noMatchLine = () =>
+        page.evaluate((selector) => {
+          const line = document.querySelector(selector),
+            dialog = line.closest('dialog'),
+            upToDialog = []
+          for (let node = line; node !== dialog; node = node.parentElement)
+            upToDialog.push(node)
+          return {
+            role: line.getAttribute('role'),
+            text: line.textContent,
+            isRendered: line.checkVisibility(),
+            isTakenOut: [...upToDialog, dialog].some(
+              (node) =>
+                node.hidden || getComputedStyle(node).display === 'none',
+            ),
+            height: Math.round(line.getBoundingClientRect().height),
+            hasRows: dialog.querySelectorAll('.shortcut-row').length > 0,
+            clearShown: [...dialog.querySelectorAll('button')]
+              .find((button) => button.textContent === 'Clear search')
+              .checkVisibility(),
+          }
+        }, noMatchSelector)
+      await help.click()
+      const lineBeforeSearch = {
+        line: await noMatchLine(),
+        looks: await looksAsWithout(noMatchSelector),
+      }
+      // Act: a search with matches, read also in a page whose stylesheet gives the line a paragraph's margins (as the Wiki reader's page does); a search without a match; a matching search again; and Clear search after one without.
+      await shortcutSearch.fill('seek')
+      await page.evaluate((selector) => {
+        const paragraphMargins = new CSSStyleSheet()
+        paragraphMargins.replaceSync(
+          `${selector.replace('[role=status]', 'p[role=status]')}{margin:16px 0}`,
+        )
+        document.adoptedStyleSheets = [paragraphMargins]
+      }, noMatchSelector)
+      const lineWithMatch = {
+        line: await noMatchLine(),
+        looks: await looksAsWithout(noMatchSelector),
+      }
+      await page.evaluate(() => {
+        document.adoptedStyleSheets = []
+      })
+      await shortcutSearch.fill('no-such-shortcut')
+      const lineWithoutMatch = await noMatchLine()
+      await shortcutSearch.fill('seek')
+      const lineWithMatchAgain = await noMatchLine()
+      await shortcutSearch.fill('no-such-shortcut')
+      await page
+        .getByRole('button', { name: 'Clear search', exact: true })
+        .click()
+      const lineAfterClear = await noMatchLine()
+      await shortcutSearch.press('Escape')
+      // Assert
+      const emptyLine = {
+        role: 'status',
+        text: '',
+        isRendered: true,
+        isTakenOut: false,
+        height: 0,
+        hasRows: true,
+      }
+      cases.push({
+        name: 'the no-match line of the Keyboard shortcuts list is in the open dialog, rendered and empty, while a search has matches, and the dialog looks as it does without the line, also where a stylesheet gives the line a paragraph’s margins; a search without a match gives it No shortcuts match., and a matching search or Clear search empties it again',
+        actual: {
+          lineBeforeSearch,
+          lineWithMatch,
+          lineWithoutMatch,
+          lineWithMatchAgain,
+          lineAfterClear,
+        },
+        passed:
+          JSON.stringify(lineBeforeSearch) ===
+            JSON.stringify({
+              line: { ...emptyLine, clearShown: false },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(lineWithMatch) ===
+            JSON.stringify({
+              line: { ...emptyLine, clearShown: true },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(lineWithoutMatch) ===
+            JSON.stringify({
+              ...emptyLine,
+              text: 'No shortcuts match.',
+              height: 24,
+              hasRows: false,
+              clearShown: true,
+            }) &&
+          JSON.stringify(lineWithMatchAgain) ===
+            JSON.stringify({ ...emptyLine, clearShown: true }) &&
+          JSON.stringify(lineAfterClear) ===
+            JSON.stringify({ ...emptyLine, clearShown: false }),
+      })
       await page.waitForFunction(
         () =>
           document.getElementById('recording-transport').getBoundingClientRect()
@@ -584,15 +1075,7 @@ async function check(page, options, collected) {
       // The summary lives in a sidebar; retired central-pane commands must not be offered even after a saved preference fails.
       await publish({
         ...replay,
-        presentation: {
-          presentationId: '11111111-1111-4111-8111-111111111111',
-          presentationControlRevision: 1,
-          mode: 'study-workspace',
-          state: 'open',
-          layoutConfirmed: true,
-          preference: { status: 'failed' },
-          panes: {},
-        },
+        presentation: openPresentation({ preference: { status: 'failed' } }),
       })
       await page.locator('#reader-options > summary').click()
       await page.locator('#presentation-options > summary').click()
@@ -1001,6 +1484,26 @@ async function check(page, options, collected) {
           afterInspect.focusedIsInspect === true &&
           afterInspect.label === 'Debugger stop selected' &&
           stopRequestsAfter === stopRequestsBefore + 1,
+      })
+      // Arrange: the same stop's Inspect holds the focus, and the learner has left the pane for another part of the editor (row 172).
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      await nodeInspect.focus()
+      await leavePane()
+      // Act: the native session shows the stop, so the list is rendered again; later the learner returns to the pane.
+      await publish({ ...nodeReader, nodeHistoryPosition: nodeStop })
+      const nodeFocusWhileAway = await focusName()
+      await returnToPane()
+      const nodeFocusOnReturn = await focusName()
+      // Assert
+      cases.push({
+        name: 'when the Node event list is rendered again while the pane does not have the focus, the pane takes none, and the same stop’s control has it when the learner returns',
+        actual: { nodeFocusWhileAway, nodeFocusOnReturn },
+        passed:
+          nodeFocusWhileAway === 'body' &&
+          nodeFocusOnReturn === 'button: Debugger stop selected',
       })
       // Arrange: a Node playhead scrub that ends without a change event (Cycle 0044, 0031-U6).
       const nodeTimeline = {
@@ -1538,6 +2041,18 @@ async function check(page, options, collected) {
           applicationCovered: true,
         },
       }
+      /** Reads the transport's second status region, which announces the remedy for a covered application: its role, its text and whether it is rendered (`checkVisibility` is false when it or an ancestor is `display:none`), so its first text changes a region that already exists. */
+      const coveredRemedy = () =>
+        page.evaluate(() => {
+          const region = document.getElementById('application-covered-remedy')
+          return {
+            role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+            text: region.textContent,
+            isRendered: region.checkVisibility(),
+          }
+        })
+      await publish(learning)
+      const remedyBeforeCovered = await coveredRemedy()
       // Act
       await publish(coveredLearning)
       const whileCovered = await page.evaluate(() => {
@@ -1547,11 +2062,13 @@ async function check(page, options, collected) {
             : null
         return {
           line: shownText('loading'),
+          lineRole: document.getElementById('loading').getAttribute('role'),
           selectedShown:
             document.getElementById('selected').getClientRects().length > 0,
           transportStatus: shownText('recording-status'),
         }
       })
+      const remedyWhileCovered = await coveredRemedy()
       await publish(learning)
       const afterReturnToFront = await page.evaluate(() => ({
         lineShown:
@@ -1559,19 +2076,62 @@ async function check(page, options, collected) {
         transportStatus:
           document.getElementById('recording-status').textContent,
       }))
+      const remedyAfterReturnToFront = await coveredRemedy()
       // Assert
       cases.push({
         name: 'while another tab covers the recorded application the Learning summary says so and names the remedy, not that the observation is loading',
-        actual: { whileCovered, afterReturnToFront },
+        actual: {
+          remedyBeforeCovered,
+          whileCovered,
+          remedyWhileCovered,
+          afterReturnToFront,
+          remedyAfterReturnToFront,
+        },
         passed:
           whileCovered.line ===
             'Recorded application is covered by another tab. Bring the Recorded application tab to the front to show this moment again.' &&
+          // The visible line is no live region: "Loading the selected observation…" must not be announced at every seek.
+          whileCovered.lineRole === null &&
           whileCovered.selectedShown &&
           whileCovered.transportStatus ===
             'Paused · finalized · Not recorded at this moment · Recorded application is covered by another tab' &&
           !afterReturnToFront.lineShown &&
           afterReturnToFront.transportStatus ===
-            'Paused · finalized · Not recorded at this moment',
+            'Paused · finalized · Not recorded at this moment' &&
+          // The remedy is announced from a status region that is rendered and empty before the cover begins.
+          remedyBeforeCovered.role === 'status/polite' &&
+          remedyBeforeCovered.text === '' &&
+          remedyBeforeCovered.isRendered &&
+          remedyWhileCovered.text ===
+            'Bring the Recorded application tab to the front to show this moment again.' &&
+          remedyWhileCovered.isRendered &&
+          remedyAfterReturnToFront.text === '',
+      })
+
+      // Act: the covered recording fails (row 26, DR-3).
+      await publish({
+        ...coveredLearning,
+        recording: {
+          ...coveredLearning.recording,
+          readiness: 'failed',
+          reason: 'Recorded source unavailable',
+        },
+      })
+      const coveredAndFailed = {
+        line: await page.locator('#loading').textContent(),
+        lineShown: await page.locator('#loading').isVisible(),
+        remedy: (await coveredRemedy()).text,
+      }
+      await publish(learning)
+      // Assert
+      cases.push({
+        name: 'a covered recorded application whose replay failed shows that the recorded context is unavailable and announces no remedy',
+        actual: coveredAndFailed,
+        passed:
+          coveredAndFailed.lineShown &&
+          coveredAndFailed.line ===
+            'Recorded context unavailable. Reload after resolving the reported problem.' &&
+          coveredAndFailed.remedy === '',
       })
 
       // Arrange: a recorded stop declared on line 73 that the debugger bound on line 75 (SD-16, DR-28).
@@ -1720,6 +2280,23 @@ async function check(page, options, collected) {
           !(await page.locator('#learning-material').isVisible()) &&
           (await page.locator('#learning-unavailable').isVisible()),
       })
+      // Arrange: the saved sequence again, with the keyboard focus on a step's inspection control (row 85).
+      await publish(learning)
+      await page.locator('[data-summary-step="derive"]').focus()
+      const focusOnSequenceStep = await page.evaluate(
+        () => document.activeElement.dataset.summaryStep,
+      )
+      // Act: the reader shows a history without learning material, so the sequence leaves under the focus.
+      await publish({ ...replay, revision: revisionAt(10) })
+      const focusAfterSequenceLeft = await focusName()
+      // Assert
+      cases.push({
+        name: 'in the Study pane, when the learning material leaves while a step’s inspection control holds the keyboard focus, the focus goes to the selected content tab, not to the document body',
+        actual: { focusOnSequenceStep, focusAfterSequenceLeft },
+        passed:
+          focusOnSequenceStep === 'derive' &&
+          focusAfterSequenceLeft === 'recording-tab',
+      })
 
       // Arrange: one replay moment without its native values and the same moment with them (SD-8, T-3, SD-15).
       const withoutValues = {
@@ -1751,17 +2328,29 @@ async function check(page, options, collected) {
           hintFontSize: style('playback-hint').fontSize,
         }
       })
+      // The Node test history offers the same button under its own hint.
+      await publish({
+        ...withoutValues,
+        nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: true },
+      })
+      const nodeShowVariablesHeight = await page
+        .locator('#node-history-show-variables')
+        .evaluate((control) =>
+          Math.round(control.getBoundingClientRect().height),
+        )
+      await publish(withoutValues)
       // Assert
       cases.push({
-        name: "Show Variables in the replay footer is as tall as the transport buttons and set in the hint's text size",
-        actual: footerButton,
+        name: 'Show Variables in the replay footer keeps the pane’s 44 px height and 16 px text, and Play keeps the transport’s 32 px rule',
+        actual: { ...footerButton, nodeShowVariablesHeight },
         passed:
-          footerButton.showVariablesHeight === 32 &&
-          footerButton.showVariablesMinHeight === '32px' &&
+          footerButton.showVariablesHeight === 44 &&
+          footerButton.showVariablesMinHeight === '44px' &&
+          footerButton.showVariablesFontSize === '16px' &&
           footerButton.playMinHeight === '32px' &&
           footerButton.playHeight === 34 &&
-          footerButton.showVariablesFontSize === '12px' &&
-          footerButton.hintFontSize === '12px',
+          footerButton.hintFontSize === '12px' &&
+          nodeShowVariablesHeight === 44,
       })
 
       // Act: the same moment with and without the hint, in a side bar at two widths (T-3, ER-18).
@@ -1803,6 +2392,355 @@ async function check(page, options, collected) {
           sideBarTops[300].hintShown &&
           !sideBarTops[300].footerScrolls,
       })
+
+      /** Says for each named part of the replay transport whether its whole box lies inside the transport's visible box. */
+      const insideTransport = (selectors) =>
+        page.evaluate((parts) => {
+          const box = document
+            .getElementById('recording-transport')
+            .getBoundingClientRect()
+          return Object.fromEntries(
+            parts.map((selector) => {
+              const part = document
+                .querySelector(selector)
+                .getBoundingClientRect()
+              return [
+                selector,
+                part.height > 0 &&
+                  part.top >= box.top &&
+                  part.bottom <= box.bottom,
+              ]
+            }),
+          )
+        }, selectors)
+
+      // Arrange: the moment whose values are not loaded, in a side bar at two widths (row 26, DR-1).
+      const footerWithDetails = {},
+        allPartsInside = {
+          '#playback-toggle': true,
+          '#playhead': true,
+          '#playback-options > summary': true,
+          '[data-action="reload-recording"]': true,
+        }
+      for (const width of [300, 600]) {
+        await page.setViewportSize({ width, height: 720 })
+        await publish(withoutValues)
+        // Act: the learner opens Playback details by keyboard, and closes them again.
+        await toggleByKeyboard('playback-options')
+        const opened = await page
+          .locator('#recording-transport')
+          .evaluate((footer) => ({
+            height: Math.round(footer.getBoundingClientRect().height),
+            maxHeight: getComputedStyle(footer).maxHeight,
+            focusedSummaryOf: document.activeElement.parentElement.id,
+          }))
+        const partsInside = await insideTransport([
+          '#playback-toggle',
+          '#playhead',
+          '#playback-options > summary',
+          '[data-action="reload-recording"]',
+        ])
+        await toggleByKeyboard('playback-options')
+        footerWithDetails[width] = {
+          ...opened,
+          partsInside,
+          scrollsAfterClosing: await page
+            .locator('#recording-transport')
+            .evaluate((footer) => footer.scrollHeight > footer.clientHeight),
+          maxHeightAfterClosing: await page
+            .locator('#recording-transport')
+            .evaluate((footer) => getComputedStyle(footer).maxHeight),
+        }
+      }
+      // Assert: 40vh of 720 px is 288 px; the closed footer keeps its 60vh (432 px).
+      cases.push({
+        name: 'with the values hint shown, opening Playback details in the Learning summary keeps the transport within 40% of a 720 px pane with Play, the playhead, the summary and Reload saved recording in view, and closing them leaves a footer that does not scroll',
+        actual: footerWithDetails,
+        passed:
+          footerWithDetails[300].height <= 288 &&
+          footerWithDetails[300].maxHeight === '288px' &&
+          footerWithDetails[300].focusedSummaryOf === 'playback-options' &&
+          JSON.stringify(footerWithDetails[300].partsInside) ===
+            JSON.stringify(allPartsInside) &&
+          !footerWithDetails[300].scrollsAfterClosing &&
+          footerWithDetails[300].maxHeightAfterClosing === '432px' &&
+          footerWithDetails[600].height <= 288 &&
+          footerWithDetails[600].maxHeight === '288px' &&
+          footerWithDetails[600].focusedSummaryOf === 'playback-options' &&
+          JSON.stringify(footerWithDetails[600].partsInside) ===
+            JSON.stringify(allPartsInside) &&
+          !footerWithDetails[600].scrollsAfterClosing &&
+          footerWithDetails[600].maxHeightAfterClosing === '432px',
+      })
+
+      // Arrange: a short side bar whose replay failed with a diagnostic of 12 lines (row 26, DR-1).
+      await page.setViewportSize({ width: 960, height: 600 })
+      const failedWithDiagnostic = {
+        ...withValues,
+        recording: {
+          ...replay.recording,
+          readiness: 'failed',
+          reason: Array.from(
+            { length: 12 },
+            (_, line) => `Recorded source unavailable (line ${line + 1})`,
+          ).join('\n'),
+        },
+      }
+      await publish(failedWithDiagnostic)
+      // Act: the learner opens Playback details and then Recording error details by keyboard.
+      await toggleByKeyboard('playback-options')
+      await toggleByKeyboard('playback-diagnostics', 'Space')
+      const shortSideBar = await page.evaluate(() => {
+        const transport = document.getElementById('recording-transport'),
+          box = transport.getBoundingClientRect(),
+          diagnosticText = document.getElementById(
+            'playback-diagnostic',
+          ).firstChild,
+          firstLine = document.createRange()
+        firstLine.setStart(diagnosticText, 0)
+        firstLine.setEnd(diagnosticText, diagnosticText.data.indexOf('\n'))
+        const firstLineBox = firstLine.getBoundingClientRect()
+        return {
+          transportHeight: Math.round(box.height),
+          paneAboveTransport: Math.round(box.top),
+          scrollsInside: transport.scrollHeight > transport.clientHeight,
+          firstDiagnosticLine: firstLine.toString(),
+          firstDiagnosticLineInside:
+            firstLineBox.height > 0 &&
+            firstLineBox.top >= box.top &&
+            firstLineBox.bottom <= box.bottom,
+          focusedSummaryOf: document.activeElement.parentElement.id,
+        }
+      })
+      const errorDetailsInside = await insideTransport([
+        '#playback-diagnostics > summary',
+      ])
+      await page.screenshot({
+        path: `${options.output}/replay-recovery-short-side-bar.png`,
+      })
+      // Assert: 40% of 600 px is 240 px, so 360 px of the pane stay above the transport.
+      cases.push({
+        name: 'in a 960 x 600 Learning summary a failed replay with Playback details and Recording error details open leaves 60% of the pane above the transport, which scrolls inside itself and shows the opened error details',
+        actual: { ...shortSideBar, errorDetailsInside },
+        passed:
+          shortSideBar.transportHeight <= 240 &&
+          shortSideBar.paneAboveTransport >= 360 &&
+          shortSideBar.scrollsInside &&
+          errorDetailsInside['#playback-diagnostics > summary'] &&
+          shortSideBar.firstDiagnosticLine ===
+            'Recorded source unavailable (line 1)' &&
+          shortSideBar.firstDiagnosticLineInside &&
+          shortSideBar.focusedSummaryOf === 'playback-diagnostics',
+      })
+
+      // Act: both disclosures of the transport are measured as targets, and their label against the status beside it (row 62).
+      const disclosureTargets = await page.evaluate(() => {
+        const summaryHeight = (id) =>
+            Math.round(
+              document.querySelector(`#${id} > summary`).getBoundingClientRect()
+                .height,
+            ),
+          // The top of an element's first line of text.
+          textTop = (element) => {
+            const text = document.createRange()
+            text.selectNodeContents(element)
+            return Math.round(text.getClientRects()[0].top)
+          }
+        return {
+          playbackDetails: summaryHeight('playback-options'),
+          recordingErrorDetails: summaryHeight('playback-diagnostics'),
+          summaryMinHeight: getComputedStyle(
+            document.querySelector('#playback-options > summary'),
+          ).minHeight,
+          labelTop: textTop(
+            document.querySelector('#playback-options > summary'),
+          ),
+          statusTop: textTop(document.getElementById('recording-status')),
+          marker: getComputedStyle(
+            document.querySelector('#playback-options > summary'),
+          ).display,
+        }
+      })
+      // Assert
+      cases.push({
+        name: 'Playback details and Recording error details are targets 44 px high like the other controls of the pane, with their label on the line of the transport’s status',
+        actual: disclosureTargets,
+        passed:
+          disclosureTargets.playbackDetails === 44 &&
+          disclosureTargets.recordingErrorDetails === 44 &&
+          disclosureTargets.summaryMinHeight === '44px' &&
+          disclosureTargets.labelTop === disclosureTargets.statusTop &&
+          // The summary keeps its disclosure triangle.
+          disclosureTargets.marker === 'list-item',
+      })
+      // The details are closed again: a learner's footer starts without them.
+      await page.locator('#playback-options').evaluate((details) => {
+        details.open = false
+        document.getElementById('playback-diagnostics').open = false
+      })
+      await page.setViewportSize({ width: 600, height: 800 })
+
+      // Arrange: a replay with nothing to report: no error, no hint, no removal, no saved study, no layout notice (row 63, ND-5).
+      await publish(withValues)
+      // Act: every status region that can be empty is read before it has text.
+      const emptyStatusRegions = await page.evaluate(() =>
+        [
+          'errors',
+          'presentation-status',
+          'recording-save-state',
+          'playback-hint',
+          'application-covered-remedy',
+          'node-history-hint',
+          'delete-study-status',
+        ].map((id) => {
+          const region = document.getElementById(id),
+            // False when the region or an ancestor is `display:none`, or a closed disclosure holds it.
+            isRendered = region.checkVisibility()
+          // What the region adds to the height of its parent: none when the parent is as tall without it.
+          const parentHeight = () =>
+              region.parentElement.getBoundingClientRect().height,
+            withRegion = parentHeight()
+          region.style.display = 'none'
+          const withoutRegion = parentHeight()
+          region.style.display = ''
+          return {
+            id,
+            role: region.getAttribute('role'),
+            text: region.textContent,
+            isRendered,
+            height: region.getBoundingClientRect().height,
+            roomTaken: withRegion - withoutRegion,
+          }
+        }),
+      )
+      // Assert
+      cases.push({
+        name: 'each status region of the Study pane is in the page before it has text, rendered and taking no room, so its first text is a change of a region that exists',
+        actual: emptyStatusRegions,
+        passed:
+          JSON.stringify(emptyStatusRegions) ===
+          JSON.stringify(
+            [
+              ['errors', 0],
+              ['presentation-status', 0],
+              ['recording-save-state', 0],
+              ['playback-hint', 0],
+              // Hidden from sight in the summary by a 1 px clip; the bottom panel shows it as a line.
+              ['application-covered-remedy', 1],
+              ['node-history-hint', 0],
+              ['delete-study-status', 0],
+            ].map(([id, height]) => ({
+              id,
+              role: 'status',
+              text: '',
+              isRendered: true,
+              height,
+              roomTaken: 0,
+            })),
+          ),
+      })
+
+      // Arrange: Live, then Overview, then Recording: the Recording tab closes "Study view and pane controls", and the presentation has nothing to report (row 74).
+      const presentationOf = (layoutConfirmed) =>
+        openPresentation({ layoutConfirmed })
+      await publish({ ...options.message, contentTab: 'live' })
+      await publish({ ...options.message, contentTab: 'overview' })
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      /** Reads the presentation status and the disclosure it stands under: the region, whether the disclosure is open, the line's height and how far it starts below the disclosure. */
+      const presentationLine = () =>
+        page.evaluate(() => {
+          const line = document
+              .getElementById('presentation-status')
+              .getBoundingClientRect(),
+            disclosure = document.getElementById('reader-options')
+          return {
+            disclosureOpen: disclosure.open,
+            height: Math.round(line.height),
+            belowDisclosure: Math.round(
+              line.top - disclosure.getBoundingClientRect().bottom,
+            ),
+          }
+        })
+      const statusBeforeNotice = {
+        region: await statusRegion('presentation-status'),
+        line: await presentationLine(),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Act: the host reports that the layout is not confirmed, and then that it is.
+      await publish({ ...withValues, presentation: presentationOf(false) })
+      const statusWithNotice = {
+        region: await statusRegion('presentation-status'),
+        line: await presentationLine(),
+      }
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      const statusAfterNotice = {
+        region: await statusRegion('presentation-status'),
+        line: await presentationLine(),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Assert
+      cases.push({
+        name: 'on the Recording tab, which closes Study view and pane controls, the presentation status is in the page, rendered and empty, and the pane looks as it does without it; a layout that is not confirmed is its first text, shown under the closed disclosure, and a confirmed layout empties it again',
+        actual: { statusBeforeNotice, statusWithNotice, statusAfterNotice },
+        passed:
+          JSON.stringify(statusBeforeNotice) ===
+            JSON.stringify({
+              region: emptyRegion('presentation-status'),
+              line: { disclosureOpen: false, height: 0, belowDisclosure: 8 },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(statusWithNotice) ===
+            JSON.stringify({
+              region: {
+                ...emptyRegion('presentation-status'),
+                text: 'Layout not confirmed. Restore it or focus a pane below.',
+              },
+              line: { disclosureOpen: false, height: 24, belowDisclosure: 8 },
+            }) &&
+          JSON.stringify(statusAfterNotice) ===
+            JSON.stringify(statusBeforeNotice),
+      })
+
+      // Arrange: native Summary can be 299 px wide within an ordinary expanded editor.
+      await page.setViewportSize({ width: 299, height: 928 })
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      const compactEmptyBefore = await statusRegion('presentation-status')
+      const compactLooksBefore = await looksAsWithout('#presentation-status')
+      // Act: disclose an unconfirmed layout, then expand its controls and confirm it.
+      await publish({ ...withValues, presentation: presentationOf(false) })
+      const compactClosedNotice = await presentationLine()
+      await page.locator('#reader-options > summary').click()
+      const compactOpenNotice = await presentationLine()
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      const compactEmptyAfter = await statusRegion('presentation-status')
+      const compactLooksAfter = await looksAsWithout('#presentation-status')
+      // Assert: compact replay retains the status gap required in both native hosts.
+      cases.push({
+        name: 'a 299 px learning summary places its layout notice eight pixels below closed and expanded pane controls and clears it without an empty band',
+        actual: {
+          compactClosedNotice,
+          compactOpenNotice,
+          compactEmptyBefore,
+          compactEmptyAfter,
+          compactLooksBefore,
+          compactLooksAfter,
+        },
+        passed:
+          compactClosedNotice.disclosureOpen === false &&
+          compactClosedNotice.belowDisclosure === 8 &&
+          compactOpenNotice.disclosureOpen === true &&
+          compactOpenNotice.belowDisclosure === 8 &&
+          JSON.stringify(compactEmptyBefore) ===
+            JSON.stringify(emptyRegion('presentation-status')) &&
+          JSON.stringify(compactEmptyAfter) ===
+            JSON.stringify(emptyRegion('presentation-status')) &&
+          JSON.stringify(compactLooksBefore) ===
+            JSON.stringify({ moved: [], samePixels: true }) &&
+          JSON.stringify(compactLooksAfter) ===
+            JSON.stringify({ moved: [], samePixels: true }),
+      })
+      await page.locator('#reader-options > summary').click()
+      await page.setViewportSize({ width: 600, height: 800 })
 
       // Arrange: a press on the replay thumb that moves nothing fires neither input nor change (SD-17).
       await publish(withValues)
@@ -1862,16 +2800,11 @@ async function check(page, options, collected) {
       await publish(withoutValues)
       await page.locator('#playback-show-variables').focus()
       await page.keyboard.press('Enter')
-      await page.evaluate(() => {
-        document.hasFocus = () => false
-      })
+      await leavePane()
       // Act: the values load while the learner is in Run and Debug; later the learner returns to the pane.
       await publish(withValues)
       const focusWhileAway = await focusedControl()
-      await page.evaluate(() => {
-        delete document.hasFocus
-        window.dispatchEvent(new Event('focus'))
-      })
+      await returnToPane()
       const focusOnReturn = await focusedControl()
       // Assert
       cases.push({
@@ -2155,8 +3088,1296 @@ async function check(page, options, collected) {
         actual: { panelTopsBefore, panelTopsWithHint, panelHintBelowControls },
         passed: panelTopsBefore === panelTopsWithHint && panelHintBelowControls,
       })
+      // Act: the hint and its button are measured against the panel, which is 180 px high here.
+      const panelHint = await page.evaluate(() => {
+        const hint = document
+            .getElementById('playback-hint')
+            .getBoundingClientRect(),
+          control = document
+            .getElementById('playback-show-variables')
+            .getBoundingClientRect()
+        return {
+          panelHeight: window.innerHeight,
+          buttonHeight: Math.round(control.height),
+          buttonBottom: Math.round(control.bottom),
+          hintBottom: Math.round(hint.bottom),
+          buttonRightOfHint: control.left >= hint.right,
+          buttonBesideHint:
+            control.top < hint.bottom && control.bottom > hint.top,
+        }
+      })
+      await page.screenshot({
+        path: `${options.output}/bottom-panel-values-hint.png`,
+      })
+      // Assert
+      cases.push({
+        name: 'in a bottom panel 180 px high the values hint and its 44 px Show Variables button stand side by side under the controls, both inside the panel',
+        actual: panelHint,
+        passed:
+          panelHint.panelHeight === 180 &&
+          panelHint.buttonHeight === 44 &&
+          panelHint.buttonBottom <= 180 &&
+          panelHint.hintBottom <= 180 &&
+          panelHint.buttonRightOfHint &&
+          panelHint.buttonBesideHint,
+      })
+
+      // Arrange: the bottom panel alone shows the replay (the summary is collapsed), and its transport has no line above the moment (rows 26 and 60, DR-3, ND-2).
+      await publish(panelReplay)
+      /** Reads the bottom panel's remedy line: its text, whether it is rendered and takes room, where it stands and how tall the transport is with it. */
+      const panelRemedy = () =>
+        page.evaluate(() => {
+          const region = document.getElementById('application-covered-remedy'),
+            box = region.getBoundingClientRect(),
+            style = getComputedStyle(region)
+          return {
+            role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+            text: region.textContent,
+            display: style.display,
+            fontSize: style.fontSize,
+            isMuted: region.classList.contains('muted'),
+            height: Math.round(box.height),
+            width: Math.round(box.width),
+            belowStatus:
+              box.top >=
+              document
+                .getElementById('recording-status')
+                .getBoundingClientRect().bottom,
+            insideViewport: box.top >= 0 && box.bottom <= window.innerHeight,
+            status: document.getElementById('recording-status').textContent,
+            transportHeight: Math.round(
+              document
+                .getElementById('recording-transport')
+                .getBoundingClientRect().height,
+            ),
+          }
+        })
+      const panelBeforeCovered = await panelRemedy()
+      // Act: another tab comes in front of the recorded application, and leaves again.
+      await publish({
+        ...panelReplay,
+        recording: { ...panelReplay.recording, applicationCovered: true },
+      })
+      const panelWhileCovered = await panelRemedy()
+      await page.screenshot({
+        path: `${options.output}/bottom-panel-covered-remedy.png`,
+      })
+      await publish(panelReplay)
+      const panelAfterReturnToFront = await panelRemedy()
+      // Assert
+      cases.push({
+        name: 'in the bottom panel a covered recorded application is named in the transport’s status and the remedy is a visible 12 px line under it, in a status region that is rendered and takes no room before',
+        actual: {
+          panelBeforeCovered,
+          panelWhileCovered,
+          panelAfterReturnToFront,
+        },
+        passed:
+          panelBeforeCovered.role === 'status/polite' &&
+          panelBeforeCovered.text === '' &&
+          panelBeforeCovered.display !== 'none' &&
+          panelBeforeCovered.height === 0 &&
+          panelWhileCovered.status ===
+            'Paused · finalized · Recorded application is covered by another tab' &&
+          panelWhileCovered.text ===
+            'Bring the Recorded application tab to the front to show this moment again.' &&
+          panelWhileCovered.height === 18 &&
+          panelWhileCovered.width > 400 &&
+          panelWhileCovered.fontSize === '12px' &&
+          panelWhileCovered.isMuted &&
+          panelWhileCovered.belowStatus &&
+          panelWhileCovered.insideViewport &&
+          panelWhileCovered.transportHeight ===
+            panelBeforeCovered.transportHeight + 18 &&
+          panelAfterReturnToFront.text === '' &&
+          panelAfterReturnToFront.transportHeight ===
+            panelBeforeCovered.transportHeight,
+      })
+
+      // Act: the learner opens Playback details in the bottom panel, whose transport starts at the panel's top and is not a scroller (row 26, DR-1).
+      await page.locator('#playback-options > summary').click()
+      const panelTransportBound = await page
+        .locator('#recording-transport')
+        .evaluate((transport) => getComputedStyle(transport).maxHeight)
+      await page.locator('#playback-options > summary').click()
+      // Assert
+      cases.push({
+        name: 'in the bottom panel the transport is not bounded while Playback details are open',
+        actual: panelTransportBound,
+        passed: panelTransportBound === 'none',
+      })
+
+      // Arrange: the bottom panel during a replay; it has no pane controls, so a presentation's status is the Study pane's to report (row 74).
+      await publish(panelReplay)
+      const panelStatusBeforeNotice = {
+        region: await statusRegion('presentation-status'),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Act: the host reports a layout that is not confirmed.
+      await publish({
+        ...panelReplay,
+        presentation: openPresentation({ layoutConfirmed: false }),
+      })
+      const panelStatusWithNotice = {
+        region: await statusRegion('presentation-status'),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Assert
+      cases.push({
+        name: 'in the bottom panel, which has no pane controls, the presentation status is in the page, rendered and empty, and stays empty when the layout is not confirmed, so only the Study pane reports it; the panel looks as it does without the line',
+        actual: { panelStatusBeforeNotice, panelStatusWithNotice },
+        passed:
+          JSON.stringify(panelStatusBeforeNotice) ===
+            JSON.stringify({
+              region: emptyRegion('presentation-status'),
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(panelStatusWithNotice) ===
+            JSON.stringify(panelStatusBeforeNotice),
+      })
+
+      // Arrange: the bottom panel during a replay, which shows the transport alone; no run is live and no study is shown (row 176).
+      await publish(panelReplay)
+      /** Reads the two status regions the bottom panel leaves out during a replay, the strip's height and whether the panel looks as it does without each of them. */
+      const leftOutDuringReplay = async () => ({
+        runtime: await statusRegion('runtime'),
+        saveState: await statusRegion('recording-save-state'),
+        stripHeight: await page
+          .locator('.live-strip')
+          .evaluate((strip) =>
+            Math.round(strip.getBoundingClientRect().height),
+          ),
+        looksWithoutStrip: await looksAsWithout('.live-strip'),
+        looksWithoutSaveState: await looksAsWithout('#recording-save-state'),
+      })
+      const replayAlone = await leftOutDuringReplay()
+      // Act: a run starts during the replay and the shown study's recording is saved; then the replay is left while the run goes on.
+      const runAndSavedStudy = {
+        liveState: 'running',
+        liveTitle: 'Repository operation',
+        study: {
+          terminal: true,
+          studyOutcome: 'demonstrated',
+          historyOutcome: 'saved',
+          finalOutcome: 'demonstrated',
+          recordingSave: { status: 'finalized', contextStatus: 'saved' },
+        },
+      }
+      await publish({ ...panelReplay, ...runAndSavedStudy })
+      const runStartedDuringReplay = await leftOutDuringReplay()
+      await publish({
+        ...options.message,
+        revision: revisionAt(8),
+        ...runAndSavedStudy,
+      })
+      const replayLeft = {
+        runtime: await statusRegion('runtime'),
+        saveState: await statusRegion('recording-save-state'),
+        stopShown: await page.locator('[data-action="stop"]').isVisible(),
+      }
+      // Assert
+      const emptyAndUnseen = {
+        runtime: emptyRegion('runtime'),
+        saveState: emptyRegion('recording-save-state'),
+        stripHeight: 0,
+        looksWithoutStrip: { moved: [], samePixels: true },
+        looksWithoutSaveState: { moved: [], samePixels: true },
+      }
+      cases.push({
+        name: 'in the bottom panel during a replay the live strip’s status and the recording’s save state are in the page, rendered and empty, and the panel looks as it does without them, also when a run starts and the recording is saved meanwhile; when the replay is left, the run’s state and the save state are their first texts',
+        actual: { replayAlone, runStartedDuringReplay, replayLeft },
+        passed:
+          JSON.stringify(replayAlone) === JSON.stringify(emptyAndUnseen) &&
+          JSON.stringify(runStartedDuringReplay) ===
+            JSON.stringify(emptyAndUnseen) &&
+          JSON.stringify(replayLeft) ===
+            JSON.stringify({
+              runtime: {
+                ...emptyRegion('runtime'),
+                text: 'Repository operation — running',
+              },
+              saveState: {
+                ...emptyRegion('recording-save-state'),
+                text: 'Recording saved.',
+              },
+              stopShown: true,
+            }),
+      })
+
+      // Arrange: a retained Node journal must not add another transport to application replay (row 509).
+      const nodeJournalWithoutReplay = {
+        ...options.message,
+        nodeHistory: {
+          header: { studyId: 'node-study' },
+          status: 'complete',
+          entries: [
+            {
+              type: 'output',
+              sequence: 1,
+              elapsedMs: 0,
+              channel: 'stdout',
+              text: 'First recorded output',
+            },
+            {
+              type: 'output',
+              sequence: 2,
+              elapsedMs: 1000,
+              channel: 'stdout',
+              text: 'Second recorded output',
+            },
+          ],
+        },
+        nodeHistoryEventCount: 2,
+        nodeHistoryPosition: {
+          type: 'output',
+          sequence: 1,
+          eventIndex: 0,
+          elapsedMs: 0,
+        },
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence: 1,
+          loading: false,
+          startMs: 0,
+          endMs: 1000,
+          positionMs: 0,
+        },
+      }
+      await publish({
+        ...panelReplay,
+        ...nodeJournalWithoutReplay,
+        recording: panelReplay.recording,
+      })
+      // Act: inspect the unrelated controls and status regions, then return to the independent Node reader.
+      const nodeDuringApplicationReplay = {
+        regions: [
+          await statusRegion('node-history-status'),
+          await statusRegion('node-history-position'),
+          await statusRegion('node-history-hint'),
+        ],
+        height: await page
+          .locator('#node-history')
+          .evaluate((section) =>
+            Math.round(section.getBoundingClientRect().height),
+          ),
+        nodePlayVisible: await page
+          .locator('#node-history-playback-toggle')
+          .isVisible(),
+        nodePlayDisabled: await page
+          .locator('#node-history-playback-toggle')
+          .isDisabled(),
+        nodeTimelineVisible: await page
+          .locator('#node-history-playhead')
+          .isVisible(),
+        applicationPlayVisible: await page
+          .locator('#playback-toggle')
+          .isVisible(),
+        looks: await looksAsWithout('#node-history'),
+      }
+      await publish(nodeJournalWithoutReplay)
+      const nodeAfterApplicationReplay = {
+        status: await page.locator('#node-history-status').textContent(),
+        nodePlayVisible: await page
+          .locator('#node-history-playback-toggle')
+          .isVisible(),
+        nodePlayEnabled: await page
+          .locator('#node-history-playback-toggle')
+          .isEnabled(),
+        nodeTimelineVisible: await page
+          .locator('#node-history-playhead')
+          .isVisible(),
+        understood: await page.locator('#node-history-understood').isChecked(),
+      }
+      // Assert: empty rendered status nodes take no space; the normal Node reader keeps its own controls.
+      cases.push({
+        name: 'application replay in the bottom panel shows one transport and empty rendered Node status regions; leaving it restores the independent Node journal without marking understanding',
+        actual: { nodeDuringApplicationReplay, nodeAfterApplicationReplay },
+        passed:
+          JSON.stringify(nodeDuringApplicationReplay) ===
+            JSON.stringify({
+              regions: [
+                { ...emptyRegion('node-history-status'), role: 'status/null' },
+                emptyRegion('node-history-position'),
+                emptyRegion('node-history-hint'),
+              ],
+              height: 0,
+              nodePlayVisible: false,
+              nodePlayDisabled: true,
+              nodeTimelineVisible: false,
+              applicationPlayVisible: true,
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(nodeAfterApplicationReplay) ===
+            JSON.stringify({
+              status:
+                'complete · 2 verified events. Test output is the recorded surface; application video and synchronized application replay are unavailable.',
+              nodePlayVisible: true,
+              nodePlayEnabled: true,
+              nodeTimelineVisible: true,
+              understood: false,
+            }),
+      })
     }
   }
+  // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.
+  /** Loads a fresh document of one pane at a size and waits until it is ready for its first Study message; `html` is the pane's document unless a case gives its own. */
+  const openPane = async (kind, size, html = options.html[kind]) => {
+    await page.setViewportSize(size)
+    await page.goto(options.url)
+    await page.evaluate(() => {
+      window.sent = []
+      window.acquireVsCodeApi = () => ({
+        getState: () => undefined,
+        setState() {},
+        postMessage: (message) => window.sent.push(message),
+      })
+    })
+    await page.setContent(html)
+    await page.waitForFunction(() =>
+      window.sent.some((message) => message.type === 'ready'),
+    )
+  }
+  /** Opens the disclosures a case needs by script, as an arrangement: the pane then closes or hides them itself. */
+  const openDisclosures = (ids) =>
+    page.evaluate((ids) => {
+      for (const id of ids) document.getElementById(id).open = true
+    }, ids)
+  /**
+   * Runs one situation twice from the same start: with the focus on a control of the part that leaves, and with it on a control that stays. `between` are Study messages the host publishes before the part leaves, as while it works on a pressed control.
+   * @returns The focus before and after the part left, and the focus of the second run after it, which must be the staying control.
+   */
+  const focusWhenPartLeaves = async ({
+    before,
+    opened = [],
+    leaving,
+    staying,
+    between = [],
+    after,
+  }) => {
+    const run = async (selector) => {
+      await publish(before)
+      await openDisclosures(opened)
+      await page.locator(selector).first().focus()
+      const held = await focusName()
+      for (const message of between) await publish(message)
+      await publish(after)
+      return { held, then: await focusName() }
+    }
+    return { leaving: await run(leaving), staying: await run(staying) }
+  }
+  const storageError = 'Error: History not saved: disk is read-only',
+    liveRun = {
+      ...options.message,
+      liveState: 'running',
+      liveTitle: 'Repository operation',
+    },
+    stoppedRun = { ...liveRun, liveState: 'stopped' },
+    openRecording = {
+      ...options.message,
+      contentTab: 'recording',
+      recording: {
+        revision: revisionAt(1),
+        mode: 'paused',
+        readiness: 'ready',
+        cleared: false,
+        presentedMs: 2000,
+        range: { startMs: 0, endMs: 5000, endKnown: true },
+        recordingStatus: 'finalized',
+      },
+    },
+    overview = { ...options.message, contentTab: 'overview' },
+    savedOne = {
+      id: 'window_run-focus01',
+      savedAt: '2026-09-20T00:00:10.000Z',
+      profile: 'repository-browser',
+      format: 'v3',
+      outcome: 'demonstrated',
+      metadata: 'validated',
+    }
+  const helpButtonName = 'button: Keyboard shortcuts ?'
+  /**
+   * Runs one situation in which the host disables a control while it works and then offers it again, twice from the same start: with the focus left where the press put it, and with the learner moving the focus to another control while the first is disabled.
+   * @returns The focus on the control, while it is disabled and when it is offered again; and for the second run the focus after the control is offered again, which must still be the other control.
+   */
+  const focusWhenControlReturns = async ({
+    before,
+    opened = [],
+    control,
+    working,
+    after,
+    other,
+  }) => {
+    const press = async () => {
+      await publish(before)
+      await openDisclosures(opened)
+      await page.locator(control).first().focus()
+      const held = await focusName()
+      await publish(working)
+      return { held, whileDisabled: await focusName() }
+    }
+    const kept = await press()
+    await publish(after)
+    kept.offeredAgain = await focusName()
+    await press()
+    await page.locator(other).first().focus()
+    await publish(after)
+    return { kept, movedOn: await focusName() }
+  }
+  const recordedStops = [1000, 3000, 4000].map((elapsedMs, index) => ({
+      id: `recorded-stop-${index}`,
+      itemId: options.message.model.selection.itemId,
+      title: 'Recorded stop',
+      elapsedMs,
+      at: '2026-09-27T00:00:00.000Z',
+    })),
+    /** A recording with three recorded stops, shown at one position: Next recorded stop can be used at 2 s and at 3 s. */
+    recordingAt = (presentedMs, extra = {}) => ({
+      ...openRecording,
+      moments: recordedStops,
+      ...extra,
+      recording: { ...openRecording.recording, presentedMs },
+    }),
+    /** The same recording while a requested moment is not shown yet, which disables the recorded steps. */
+    recordingPendingAt = (presentedMs, extra = {}) => {
+      const shown = recordingAt(presentedMs, extra)
+      return {
+        ...shown,
+        recording: { ...shown.recording, readiness: 'loading', cleared: true },
+      }
+    }
+  const returningSituations = (paneName, otherBesideStop, extra = {}) => [
+    {
+      name: `in the ${paneName}, after Next recorded stop is pressed by keyboard and the requested moment is shown, the keyboard focus is on Next recorded stop again, so a second press steps on; a learner who moved the focus meanwhile keeps it`,
+      before: recordingAt(2000, extra),
+      control: '#next-moment',
+      working: recordingPendingAt(2000, extra),
+      after: recordingAt(3000, extra),
+      other: '#playback-toggle',
+      expected: ['next-moment', 'playback-toggle'],
+    },
+    {
+      name: `in the ${paneName}, when Stop is disabled while the host works and offered again because the run goes on, the keyboard focus is on Stop again; a learner who moved the focus meanwhile keeps it`,
+      before: { ...liveRun, ...extra },
+      control: '[data-action="stop"]',
+      working: { ...liveRun, ...extra, busy: true },
+      after: { ...liveRun, ...extra },
+      other: otherBesideStop.selector,
+      expected: ['stop', otherBesideStop.name],
+    },
+  ]
+  /** Adds one case a situation of {@link focusWhenControlReturns}. */
+  const addReturningCases = async (situations) => {
+    for (const situation of situations) {
+      const actual = await focusWhenControlReturns(situation)
+      cases.push({
+        name: situation.name,
+        actual,
+        passed:
+          JSON.stringify(actual) ===
+          JSON.stringify({
+            kept: {
+              held: situation.expected[0],
+              whileDisabled: 'body',
+              offeredAgain: situation.expected[0],
+            },
+            movedOn: situation.expected[1],
+          }),
+      })
+    }
+  }
+
+  // Arrange: the Study pane.
+  await openPane('context', { width: 600, height: 800 })
+  await publish(options.message)
+  const studyPaneSituations = [
+    {
+      name: 'in the Study pane, when the run stops while Stop holds the keyboard focus, the live strip leaves and the focus goes to the selected content tab, not to the document body; a focus outside the strip stays where it was',
+      before: liveRun,
+      leaving: '[data-action="stop"]',
+      staying: '[data-action="outline"]',
+      after: stoppedRun,
+      expected: ['stop', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Stop is pressed, the host first reports that it is working, which disables Stop under the focus, and then that the run stopped: the focus goes to the selected content tab, not to the document body; a focus outside the strip stays where it was',
+      before: liveRun,
+      leaving: '[data-action="stop"]',
+      staying: '[data-action="outline"]',
+      between: [{ ...liveRun, busy: true }],
+      after: stoppedRun,
+      expected: ['stop', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the bottom panel takes the transport over while Play holds the keyboard focus, the focus goes to the selected content tab, not to the document body; a focus outside the transport stays where it was',
+      before: openRecording,
+      leaving: '#playback-toggle',
+      staying: '[data-action="outline"]',
+      after: { ...openRecording, playbackPanelVisible: true },
+      expected: ['playback-toggle', 'recording-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the recording is left while Play holds the keyboard focus, the transport leaves and the focus goes to the selected content tab, not to the document body; a focus outside the transport stays where it was',
+      before: openRecording,
+      leaving: '#playback-toggle',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['playback-toggle', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Retry storage / refresh leaves after its press because the error is gone, the focus goes to the selected content tab, not to the document body; a focus on another control stays where it was',
+      before: { ...options.message, errors: [storageError] },
+      leaving: '#study-content > [data-action="retry"]',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['retry', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Save preference leaves after its press because the preference is saved, the focus goes to the summary of View options, which holds the button, not to the document body; a focus on another control stays where it was',
+      before: {
+        ...overview,
+        presentation: openPresentation({ preference: { status: 'failed' } }),
+      },
+      opened: ['reader-options', 'presentation-options'],
+      leaving: '[data-presentation="save-preference"]',
+      staying: '[data-action="outline"]',
+      after: {
+        ...overview,
+        presentation: openPresentation({ preference: { status: 'saved' } }),
+      },
+      expected: ['button: Save preference', 'summary: View options', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the Recording tab closes Study view and pane controls while a control inside holds the keyboard focus, the focus goes to that disclosure’s summary, not to the document body; a focus outside the disclosure stays where it was',
+      before: overview,
+      opened: ['reader-options'],
+      leaving: '[data-action="read-app"]',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: [
+        'read-app',
+        'summary: Study view and pane controls',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when Recording error details leave because the replay no longer fails while their summary holds the keyboard focus, the focus goes to the summary of Playback details, which holds them, not to the document body; a focus outside stays where it was',
+      before: {
+        ...openRecording,
+        recording: {
+          ...openRecording.recording,
+          readiness: 'failed',
+          reason: 'A recorded frame is missing.',
+        },
+      },
+      opened: ['playback-options', 'playback-diagnostics'],
+      leaving: '#playback-diagnostics > summary',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: [
+        'summary: Recording error details',
+        'summary: Playback details',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when Open article leaves after its press because the article is open, the focus goes to the selected content tab, not to the document body; a focus on another control stays where it was',
+      before: { ...options.message, repositoryArticleAvailable: true },
+      leaving: '[data-action="open-article"]',
+      staying: '[data-action="outline"]',
+      after: {
+        ...options.message,
+        repositoryArticleAvailable: true,
+        repositoryReturnAvailable: true,
+      },
+      expected: ['open-article', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the selected observation starts to load while Open current file holds the keyboard focus, the observation’s part leaves and the focus goes to the selected content tab, not to the document body; a focus outside that part stays where it was',
+      before: options.message,
+      leaving: '[data-action="current-file"]',
+      staying: '[data-action="outline"]',
+      after: { ...options.message, loading: true },
+      expected: ['current-file', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the host changes the content tab while Read the linked source of the Overview holds the keyboard focus, the Overview leaves and the focus goes to the selected content tab, not to the document body; a focus outside the Overview stays where it was',
+      before: overview,
+      leaving: '#overview [data-action="source"]',
+      staying: '[data-action="outline"]',
+      after: { ...options.message, contentTab: 'live' },
+      expected: ['source', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when a recording opens while the summary of Study controls holds the keyboard focus, Study controls leave and the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: options.message,
+      leaving: '#study-controls > summary',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: ['summary: Study controls', 'recording-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when a study is no longer shown while the summary of Evidence status holds the keyboard focus, Evidence status leaves and the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: {
+        ...options.message,
+        study: {
+          terminal: true,
+          studyOutcome: 'demonstrated',
+          historyOutcome: 'saved',
+          finalOutcome: 'demonstrated',
+          recordingSave: { status: 'finalized', contextStatus: 'saved' },
+        },
+      },
+      leaving: '#evidence-details > summary',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['evidence-summary', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Return to Wiki leaves after its press because the reader is back in the Wiki, the focus goes to the selected content tab, not to the document body; a focus on another control stays where it was',
+      before: { ...options.message, repositoryReturnAvailable: true },
+      leaving: '[data-action="return-wiki"]',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['return-wiki', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Later annotations leave because the recorded time has none while their summary holds the keyboard focus, the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: {
+        ...openRecording,
+        recording: {
+          ...openRecording.recording,
+          laterInterpretations: [
+            { text: 'A revision saved later.', availableMs: 7000 },
+          ],
+        },
+      },
+      leaving: '#later-annotations > summary',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: [
+        'summary: Later annotations — not available at this recorded time',
+        'recording-tab',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when the observed moment whose control holds the keyboard focus is no longer listed, the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: {
+        ...options.message,
+        moments: [
+          {
+            id: 'observed-1',
+            itemId: 'no-item-of-the-next-list',
+            title: 'Observed stop',
+            at: '2026-09-27T00:00:00.000Z',
+          },
+        ],
+      },
+      leaving: '#moments button',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: [
+        `button: Observed stop · ${new Date('2026-09-27T00:00:00.000Z').toLocaleTimeString()}`,
+        'live-tab',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when the last saved study leaves the library by another pane’s removal while Delete saved study… holds the keyboard focus, the button leaves and the focus goes to the selected content tab, not to the document body; a focus on the Saved studies list stays where it was',
+      before: {
+        ...options.message,
+        studies: [savedOne],
+        model: {
+          ...options.message.model,
+          selection: {
+            ...options.message.model.selection,
+            studyId: savedOne.id,
+          },
+        },
+      },
+      leaving: '#delete-study',
+      staying: '#studies',
+      after: options.message,
+      expected: ['delete-study', 'live-tab', 'studies'],
+    },
+  ]
+  // Act
+  for (const situation of studyPaneSituations)
+    situation.actual = await focusWhenPartLeaves(situation)
+  // Assert
+  for (const { name, actual, expected } of studyPaneSituations)
+    cases.push({
+      name,
+      actual,
+      passed:
+        JSON.stringify(actual) ===
+        JSON.stringify({
+          leaving: { held: expected[0], then: expected[1] },
+          staying: { held: expected[2], then: expected[2] },
+        }),
+    })
+
+  // Arrange: controls of the Study pane the host disables while it works on their press (found with row 85): the browser hands the focus of a disabled control to the document body.
+  await addReturningCases([
+    ...returningSituations('Study pane', {
+      selector: '[data-action="outline"]',
+      name: 'outline',
+    }),
+    {
+      name: 'in the Study pane, when Restore is disabled while the presentation changes and offered again, the keyboard focus is on Restore again; a learner who moved the focus meanwhile keeps it',
+      before: { ...overview, presentation: openPresentation({}) },
+      opened: ['reader-options'],
+      control: '[data-presentation="restore"]',
+      working: {
+        ...overview,
+        presentation: openPresentation({ state: 'applying' }),
+      },
+      after: { ...overview, presentation: openPresentation({}) },
+      other: '[data-action="read-app"]',
+      expected: ['button: Restore', 'read-app'],
+    },
+  ])
+  // Arrange: Play holds the focus in the pane, which has the focus (found with row 85, rewritten with row 326: until then the case let the learner take the focus off Play by the click that returned to the pane, and such a click must give the focus back).
+  await publish(recordingAt(2000))
+  await page.locator('#playback-toggle').focus()
+  const paneBackground = await backgroundPoint()
+  // Act: the learner presses the pane's background, which takes the focus off Play; then leaves the pane, a message arrives, and the learner returns.
+  await page.mouse.click(paneBackground.x, paneBackground.y)
+  const focusAfterPressOnBackground = await focusName()
+  await leavePane()
+  await publish(recordingAt(2000))
+  await returnToPane()
+  const focusAfterLearnerLeftControl = await focusName()
+  // Assert
+  cases.push({
+    name: 'a focus the learner took off a control that is shown and can be used, by a press on the pane’s background, is not put back when the learner leaves the pane and returns',
+    actual: { focusAfterPressOnBackground, focusAfterLearnerLeftControl },
+    passed:
+      focusAfterPressOnBackground === 'body' &&
+      focusAfterLearnerLeftControl === 'body',
+  })
+
+  // Arrange: Play holds the focus, and nothing changes while the learner is away (row 326: the editor takes the focus from the control when the pane is left, and the pane gives it back).
+  await page.locator('#playback-toggle').focus()
+  // Act: the learner leaves and returns four times: by the editor's command, by a press on the pane's background in either order of the focus event and the press, and by a press on another control.
+  await leavePane()
+  const focusWhileAway = await focusName()
+  await publish(recordingAt(2000))
+  const focusAfterMessageWhileAway = await focusName()
+  await returnToPane()
+  const focusOnReturnByCommand = await focusName()
+  await leavePane()
+  await returnToPaneByPressAt(paneBackground, 'focus-first')
+  const focusOnReturnByPressAfterFocusEvent = await focusName()
+  await leavePane()
+  await returnToPaneByPressAt(paneBackground, 'press-first')
+  const focusOnReturnByPressBeforeFocusEvent = await focusName()
+  await leavePane()
+  await returnToPaneByPressAt(await middleOf('#next-moment'), 'focus-first')
+  const focusOnReturnByPressOnAnotherControl = await focusName()
+  await page.locator('#playback-toggle').focus()
+  await leavePane()
+  await returnToPaneByPressAt(await middleOf('#next-moment'), 'press-first')
+  const focusOnReturnByEarlierPressOnAnotherControl = await focusName()
+  // Assert
+  cases.push({
+    name: 'a learner who leaves the pane while a control has the keyboard and returns finds the keyboard on that control again when nothing changed: after the editor’s focus command, and after a press on the pane’s background whichever of the focus event and the press comes first; a return by a press on another control leaves the keyboard on that control; and the pane takes no focus while it is away',
+    actual: {
+      focusWhileAway,
+      focusAfterMessageWhileAway,
+      focusOnReturnByCommand,
+      focusOnReturnByPressAfterFocusEvent,
+      focusOnReturnByPressBeforeFocusEvent,
+      focusOnReturnByPressOnAnotherControl,
+      focusOnReturnByEarlierPressOnAnotherControl,
+    },
+    passed:
+      focusWhileAway === 'body' &&
+      focusAfterMessageWhileAway === 'body' &&
+      focusOnReturnByCommand === 'playback-toggle' &&
+      focusOnReturnByPressAfterFocusEvent === 'playback-toggle' &&
+      focusOnReturnByPressBeforeFocusEvent === 'playback-toggle' &&
+      focusOnReturnByPressOnAnotherControl === 'next-moment' &&
+      focusOnReturnByEarlierPressOnAnotherControl === 'next-moment',
+  })
+
+  // Arrange: Stop holds the focus of a running study, and the learner has left the pane (rows 85 and 326: the control the learner left is the one the editor took the focus from).
+  await publish(liveRun)
+  await page.locator('[data-action="stop"]').focus()
+  await leavePane()
+  // Act: the run stops while the learner is away, so the live strip leaves; later the learner returns.
+  await publish(stoppedRun)
+  const stopFocusWhileAway = await focusName()
+  await returnToPane()
+  const stopFocusOnReturn = await focusName()
+  // Assert
+  cases.push({
+    name: 'when the run stops while the learner, who left the pane with the keyboard on Stop, is away, the pane takes no focus, and on return the keyboard is on the selected content tab, not on the document body',
+    actual: { stopFocusWhileAway, stopFocusOnReturn },
+    passed: stopFocusWhileAway === 'body' && stopFocusOnReturn === 'live-tab',
+  })
+
+  // Arrange: the presentation is changing, the keyboard stands on the Overview tab, and the learner has left the pane for the editor (row 329: the host captures the pane's reading pose, replaces the pane's document and restores the pose in the new one).
+  const changingPresentation = {
+      ...overview,
+      presentation: openPresentation({ state: 'applying' }),
+    },
+    poseIdentity = {
+      captureId: '22222222-2222-4222-8222-222222222222',
+      presentationId: changingPresentation.presentation.presentationId,
+      expectedRevision:
+        changingPresentation.presentation.presentationControlRevision,
+      revision: changingPresentation.revision,
+      itemId: changingPresentation.model.selection.itemId,
+      sourceHash: changingPresentation.model.source.hash,
+      studyId: changingPresentation.model.selection.studyId,
+      observationId: changingPresentation.model.observation?.id,
+      contentTab: 'overview',
+    }
+  /** Waits until the pane has answered a pose restore: the restore runs in an animation frame. */
+  const poseAnswer = () =>
+    page
+      .waitForFunction(() =>
+        window.sent.some(
+          (message) =>
+            message.type === 'presentation-pose-restored' ||
+            message.type === 'presentation-pose-invalidated',
+        ),
+      )
+      .then(() =>
+        page.evaluate(
+          () =>
+            window.sent.findLast((message) =>
+              message.type.startsWith('presentation-pose-'),
+            ).type,
+        ),
+      )
+  /** Replaces the pane's document as a change of the presentation does and publishes the Study message of that change; the new document does not have the focus when `isAway`, as while the learner works in the editor. */
+  const replacePaneDocument = async (isAway) => {
+    await openPane('context', { width: 600, height: 800 })
+    if (isAway)
+      await page.evaluate(() => {
+        document.hasFocus = () => false
+      })
+    await publish(changingPresentation)
+  }
+  await publish(changingPresentation)
+  await page.locator('#overview-tab').focus()
+  await leavePane()
+  // Act: the host captures the pose and replaces the document, restores the pose in the new document, which has no focus, and the learner returns.
+  await publish({ type: 'capture-presentation-pose', ...poseIdentity })
+  const capturedPose = await page.evaluate(
+    () =>
+      window.sent.findLast((message) => message.type === 'presentation-pose')
+        ?.pose,
+  )
+  await replacePaneDocument(true)
+  await publish({
+    type: 'restore-presentation-pose',
+    ...poseIdentity,
+    pose: capturedPose,
+  })
+  const answerInReplacedPane = await poseAnswer()
+  const focusInReplacedPaneWhileAway = await focusName()
+  await returnToPane()
+  const focusInReplacedPaneOnReturn = await focusName()
+  // The same pose restored in a new document that has the focus: the learner returned while the presentation was changing.
+  await replacePaneDocument(false)
+  await publish({
+    type: 'restore-presentation-pose',
+    ...poseIdentity,
+    pose: capturedPose,
+  })
+  await poseAnswer()
+  const focusInReplacedPaneWithFocus = await focusName()
+  // Assert
+  cases.push({
+    name: 'when a change of the presentation replaces the pane’s document while the learner, who left the pane with the keyboard on a control, is away, the pose names that control, the new document takes no focus, and on return the keyboard is on the same control; a new document that has the focus gives it to the control at once',
+    actual: {
+      capturedFocus: capturedPose?.focus,
+      answerInReplacedPane,
+      focusInReplacedPaneWhileAway,
+      focusInReplacedPaneOnReturn,
+      focusInReplacedPaneWithFocus,
+    },
+    passed:
+      JSON.stringify(capturedPose?.focus) ===
+        JSON.stringify({ kind: 'id', id: 'overview-tab' }) &&
+      answerInReplacedPane === 'presentation-pose-restored' &&
+      focusInReplacedPaneWhileAway === 'body' &&
+      focusInReplacedPaneOnReturn === 'overview-tab' &&
+      focusInReplacedPaneWithFocus === 'overview-tab',
+  })
+
+  // Arrange: the bottom panel's pane, which has no content tabs: a focus that loses its control goes to Play while the transport is shown, else to the first control the pane shows.
+  await openPane('moments', { width: 1200, height: 400 })
+  await publish(options.message)
+  const panelRecording = {
+      ...openRecording,
+      playbackPanelVisible: true,
+      errors: [storageError],
+    },
+    panelWithoutRecording = {
+      ...options.message,
+      errors: [storageError],
+      studies: [savedOne],
+      moments: [
+        {
+          id: 'observed-1',
+          itemId: options.message.model.selection.itemId,
+          title: 'Observed stop',
+          at: '2026-09-27T00:00:00.000Z',
+        },
+      ],
+    },
+    mainRetry = '#study-content > [data-action="retry"]'
+  const bottomPanelSituations = [
+    {
+      name: 'in the bottom panel, when the run stops while Stop holds the keyboard focus, the live strip leaves and the focus goes to the first control the pane shows, not to the document body; a focus outside the strip stays where it was',
+      before: { ...liveRun, studies: [savedOne] },
+      leaving: '[data-action="stop"]',
+      staying: '#studies',
+      after: { ...stoppedRun, studies: [savedOne] },
+      expected: ['stop', helpButtonName, 'studies'],
+    },
+    {
+      name: 'in the bottom panel, when Stop is pressed, the host first reports that it is working, which disables Stop under the focus, and then that the run stopped: the focus goes to the first control the pane shows, not to the document body; a focus outside the strip stays where it was',
+      before: { ...liveRun, studies: [savedOne] },
+      leaving: '[data-action="stop"]',
+      staying: '#studies',
+      between: [{ ...liveRun, studies: [savedOne], busy: true }],
+      after: { ...stoppedRun, studies: [savedOne] },
+      expected: ['stop', helpButtonName, 'studies'],
+    },
+    {
+      name: 'in the bottom panel, when the recording is left while Play holds the keyboard focus, the transport leaves and the focus goes to the first control the pane shows, not to the document body; a focus outside the transport stays where it was',
+      before: panelRecording,
+      leaving: '#playback-toggle',
+      staying: mainRetry,
+      after: panelWithoutRecording,
+      expected: ['playback-toggle', helpButtonName, 'retry'],
+    },
+    {
+      name: 'in the bottom panel, when a recording opens while the Saved studies list holds the keyboard focus, Saved studies leave and the focus goes to Play, not to the document body; a focus on a control that stays is left alone',
+      before: panelWithoutRecording,
+      leaving: '#studies',
+      staying: mainRetry,
+      after: { ...panelRecording, studies: [savedOne] },
+      expected: ['studies', 'playback-toggle', 'retry'],
+    },
+    {
+      name: 'in the bottom panel, when a recording opens while an observed moment holds the keyboard focus, Observed moments leave and the focus goes to Play, not to the document body; a focus on a control that stays is left alone',
+      before: panelWithoutRecording,
+      leaving: '#moments button',
+      staying: mainRetry,
+      after: { ...panelRecording, moments: panelWithoutRecording.moments },
+      expected: [
+        `button: Observed stop · ${new Date('2026-09-27T00:00:00.000Z').toLocaleTimeString()}`,
+        'playback-toggle',
+        'retry',
+      ],
+    },
+    {
+      name: 'in the bottom panel, when a recording opens while Keyboard shortcuts of the heading holds the keyboard focus, the heading leaves and the focus goes to Play, not to the document body; a focus on a control that stays is left alone',
+      before: panelWithoutRecording,
+      leaving: '.learning-header [data-shortcut-help]',
+      staying: mainRetry,
+      after: panelRecording,
+      expected: [helpButtonName, 'playback-toggle', 'retry'],
+    },
+    {
+      name: 'in the bottom panel, when Retry storage / refresh leaves after its press because the error is gone, the focus goes to the first control the pane shows, not to the document body; a focus on another control stays where it was',
+      before: panelWithoutRecording,
+      leaving: mainRetry,
+      staying: '#studies',
+      after: { ...panelWithoutRecording, errors: [] },
+      expected: ['retry', helpButtonName, 'studies'],
+    },
+  ]
+  // Act
+  for (const situation of bottomPanelSituations)
+    situation.actual = await focusWhenPartLeaves(situation)
+  // Assert
+  for (const { name, actual, expected } of bottomPanelSituations)
+    cases.push({
+      name,
+      actual,
+      passed:
+        JSON.stringify(actual) ===
+        JSON.stringify({
+          leaving: { held: expected[0], then: expected[1] },
+          staying: { held: expected[2], then: expected[2] },
+        }),
+    })
+
+  await addReturningCases(
+    returningSituations(
+      'bottom panel',
+      { selector: '#studies', name: 'studies' },
+      { playbackPanelVisible: true },
+    ),
+  )
+
+  // Arrange: the bottom panel's pane lists one observed moment, which holds the focus, and the learner has left the panel for the editor (row 326, the run of the native round).
+  const panelMoment = (number) => ({
+    id: `observed-${number}`,
+    itemId: options.message.model.selection.itemId,
+    title: 'Observed stop',
+    at: '2026-09-27T00:00:00.000Z',
+  })
+  const panelMoments = (count) => ({
+    ...options.message,
+    studies: [savedOne],
+    moments: Array.from({ length: count }, (_, index) =>
+      panelMoment(index + 1),
+    ),
+  })
+  await publish(panelMoments(1))
+  await page.locator('#moments button').first().focus()
+  await leavePane()
+  // Act: a run observes five more moments, so the list is rendered again five times under the moment the learner left; later the learner returns with the editor's command.
+  const panelFocusWhileAway = []
+  for (let count = 2; count <= 6; count++) {
+    await publish(panelMoments(count))
+    panelFocusWhileAway.push(await focusName())
+  }
+  await returnToPane()
+  const panelMomentOnReturn = await page.evaluate(
+    () => document.activeElement.dataset.observation,
+  )
+  // Assert
+  cases.push({
+    name: 'in the bottom panel, when five more moments are observed while the learner, who left the panel with the keyboard on an observed moment, is in the editor, the panel takes no focus, and on return the keyboard is on the same moment of the list that was rendered again',
+    actual: { panelFocusWhileAway, panelMomentOnReturn },
+    passed:
+      panelFocusWhileAway.join() === 'body,body,body,body,body' &&
+      panelMomentOnReturn === 'observed-1',
+  })
+
+  // Arrange: the bottom panel's pane with one saved study chosen, in a window with a Trash; no removal has an outcome (row 200).
+  const withStudyChosen = {
+      ...options.message,
+      studies: [savedOne],
+      model: {
+        ...options.message.model,
+        selection: {
+          ...options.message.model.selection,
+          studyId: savedOne.id,
+        },
+      },
+    },
+    replayWithStudyChosen = {
+      ...withStudyChosen,
+      contentTab: 'recording',
+      playbackPanelVisible: true,
+      recording: openRecording.recording,
+    },
+    refusedDuringRecording = {
+      status: 'refused',
+      studyId: savedOne.id,
+      text: 'Choose Overview or Live to leave Recording before deleting this study.',
+    },
+    movedDuringRecording = {
+      status: 'moved',
+      studyId: 'window_run-gone0002',
+      text: 'Saved study moved to the Trash. The library now holds 1 of 64 saved studies.',
+    }
+  /** Reads the three status regions of the Saved studies part and whether Remove by hand is open. */
+  const savedStudiesStatus = async () => ({
+    removal: await statusRegion('delete-study-status'),
+    filesNote: await statusRegion('study-files-note'),
+    copyLine: await statusRegion('copy-study-files-status'),
+    removeByHandOpen: await page
+      .locator('#study-files')
+      .evaluate((disclosure) => disclosure.open),
+  })
+  await publish(withStudyChosen)
+  // Act: a replay opens; the learner's delete request in the Study pane is refused during it, and then another window's removal ends; each time the replay is left with that outcome still in the host's message. After the replay a new refusal arrives.
+  await publish(replayWithStudyChosen)
+  await publish({
+    ...replayWithStudyChosen,
+    studyRemoval: refusedDuringRecording,
+  })
+  const refusalDuringReplay = (await savedStudiesStatus()).removal
+  await publish({ ...withStudyChosen, studyRemoval: refusedDuringRecording })
+  const leftWithRefusal = (await savedStudiesStatus()).removal
+  await publish({
+    ...replayWithStudyChosen,
+    studyRemoval: movedDuringRecording,
+  })
+  await publish({ ...withStudyChosen, studyRemoval: movedDuringRecording })
+  const leftWithRemoval = (await savedStudiesStatus()).removal
+  await publish({
+    ...withStudyChosen,
+    studyRemoval: {
+      status: 'refused',
+      studyId: savedOne.id,
+      text: 'Stop the run before deleting its study.',
+    },
+  })
+  const refusalAfterReplay = (await savedStudiesStatus()).removal
+  // A window without a Trash: Remove by hand is open with the study's file listed and a copy confirmed, when a replay opens and is left again.
+  const listedWithoutTrash = {
+    ...withStudyChosen,
+    removalWithoutTrash: true,
+    studyFiles: {
+      [savedOne.id]: ['/home/learner/studies/focus01.study.v3.json'],
+    },
+  }
+  await publish(listedWithoutTrash)
+  await toggleByKeyboard('study-files')
+  await page.locator('#copy-study-files').focus()
+  await page.keyboard.press('Enter')
+  await publish({
+    type: 'study-files-copied',
+    studyId: savedOne.id,
+    status: 'copied',
+    count: 1,
+  })
+  const openBeforeReplay = await savedStudiesStatus()
+  // The note is read in the turn that handles the replay's message, before the browser has told the pane that the disclosure closed.
+  const noteAsTheReplayOpens = await page.evaluate(
+    (message) => {
+      window.dispatchEvent(new MessageEvent('message', { data: message }))
+      return document.getElementById('study-files-note').textContent
+    },
+    {
+      ...replayWithStudyChosen,
+      removalWithoutTrash: true,
+      studyFiles: listedWithoutTrash.studyFiles,
+    },
+  )
+  const openDuringReplay = await savedStudiesStatus()
+  await publish(listedWithoutTrash)
+  const leftWithFilesListed = await savedStudiesStatus()
+  // Arrange and Act: the Study pane, where the learner asked, gets the same refusal during the replay.
+  await openPane('context', { width: 600, height: 800 })
+  await publish({
+    ...replayWithStudyChosen,
+    playbackPanelVisible: false,
+    studyRemoval: refusedDuringRecording,
+  })
+  const refusalInTheStudyPane = (await savedStudiesStatus()).removal
+  // Assert
+  const emptyStatus = (id, isRendered = true) => ({
+    ...emptyRegion(id),
+    isRendered,
+  })
+  cases.push({
+    name: 'the bottom panel takes no status of a removal while a replay keeps Saved studies out of it: a refusal and a removal that arrive during the replay leave its status region empty when the replay is left, the Study pane shows the refusal, and a refusal after the replay is shown again; Remove by hand that was open comes back closed, with its note and its copy line empty',
+    actual: {
+      refusalDuringReplay,
+      leftWithRefusal,
+      leftWithRemoval,
+      refusalAfterReplay,
+      openBeforeReplay,
+      noteAsTheReplayOpens,
+      openDuringReplay,
+      leftWithFilesListed,
+      refusalInTheStudyPane,
+    },
+    passed:
+      JSON.stringify(refusalDuringReplay) ===
+        JSON.stringify(emptyStatus('delete-study-status', false)) &&
+      JSON.stringify(leftWithRefusal) ===
+        JSON.stringify(emptyStatus('delete-study-status')) &&
+      JSON.stringify(leftWithRemoval) ===
+        JSON.stringify(emptyStatus('delete-study-status')) &&
+      refusalAfterReplay.text === 'Stop the run before deleting its study.' &&
+      openBeforeReplay.removeByHandOpen &&
+      openBeforeReplay.filesNote.text ===
+        'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.' &&
+      openBeforeReplay.copyLine.text === 'Copied 1 path.' &&
+      noteAsTheReplayOpens === '' &&
+      JSON.stringify(openDuringReplay) ===
+        JSON.stringify({
+          removal: emptyStatus('delete-study-status', false),
+          filesNote: emptyStatus('study-files-note', false),
+          copyLine: emptyStatus('copy-study-files-status', false),
+          removeByHandOpen: false,
+        }) &&
+      JSON.stringify(leftWithFilesListed) ===
+        JSON.stringify({
+          removal: emptyStatus('delete-study-status'),
+          filesNote: emptyStatus('study-files-note', false),
+          copyLine: emptyStatus('copy-study-files-status', false),
+          removeByHandOpen: false,
+        }) &&
+      refusalInTheStudyPane.text ===
+        'Choose Overview or Live to leave Recording before deleting this study.',
+  })
+
+  // Arrange: a page whose own content carries the two ids the Keyboard shortcuts list names its dialog and its tooltip by, as a Wiki page published before the publisher kept such ids apart can (row 101); the Study pane's document stands in for it, with two such elements ahead of the pane.
+  /** Reads what Chrome's accessibility tree holds for one element: its role, its name and its description. */
+  const accessibleNode = async (selector) => {
+    const accessibility = await page.context().newCDPSession(page)
+    const { root } = await accessibility.send('DOM.getDocument')
+    const { nodeId } = await accessibility.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector,
+    })
+    const { nodes } = await accessibility.send(
+      'Accessibility.getPartialAXTree',
+      { nodeId, fetchRelatives: false },
+    )
+    await accessibility.detach()
+    return {
+      role: nodes[0]?.role?.value,
+      name: nodes[0]?.name?.value,
+      description: nodes[0]?.description?.value,
+    }
+  }
+  /** Puts the focus on the heading's Keyboard shortcuts button, which shows the tooltip, opens the dialog with it, and reads how both are named: the ids they refer to and what Chrome's accessibility tree gives. */
+  const keyboardHelpNaming = async () => {
+    const helpSelector = '.learning-header [data-shortcut-help]'
+    await page.locator(helpSelector).focus()
+    const button = await accessibleNode(helpSelector)
+    const describedBy = await page
+      .locator(helpSelector)
+      .getAttribute('aria-describedby')
+    await page.locator(helpSelector).press('Enter')
+    const dialog = await accessibleNode('.shortcut-dialog')
+    const labelledBy = await page
+      .locator('.shortcut-dialog')
+      .getAttribute('aria-labelledby')
+    await page.keyboard.press('Escape')
+    return { button, describedBy, dialog, labelledBy }
+  }
+  await openPane(
+    'context',
+    { width: 600, height: 800 },
+    options.html.context.replace(
+      '<p id="bootstrap-status"',
+      '<h2 id="shortcut-title">A heading of the page</h2><p id="shortcut-tooltip">A paragraph of the page</p><p id="bootstrap-status"',
+    ),
+  )
+  await publish(options.message)
+  // Act: the same reading on that page and on the Study pane as it is.
+  const namingBesideThePagesIds = await keyboardHelpNaming()
+  await openPane('context', { width: 600, height: 800 })
+  await publish(options.message)
+  const namingInTheStudyPane = await keyboardHelpNaming()
+  // Assert
+  const helpNaming = (describedBy, labelledBy) => ({
+    button: {
+      role: 'button',
+      name: 'Keyboard shortcuts',
+      description: 'Keyboard shortcuts — ? (Codebook, outside text inputs)',
+    },
+    describedBy,
+    dialog: { role: 'dialog', name: 'Keyboard shortcuts' },
+    labelledBy,
+  })
+  cases.push({
+    name: 'on a page whose content carries the ids shortcut-title and shortcut-tooltip, Chrome names the Keyboard shortcuts dialog Keyboard shortcuts and describes the focused Keyboard shortcuts button by the tooltip, not by the page’s elements; the Study pane keeps both ids as they were',
+    actual: { namingBesideThePagesIds, namingInTheStudyPane },
+    passed:
+      JSON.stringify(namingBesideThePagesIds) ===
+        JSON.stringify(helpNaming('shortcut-tooltip-2', 'shortcut-title-2')) &&
+      JSON.stringify(namingInTheStudyPane) ===
+        JSON.stringify(helpNaming('shortcut-tooltip', 'shortcut-title')),
+  })
+
   // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
   await page.setViewportSize({ width: 420, height: 720 })
   await page.goto(options.url)
@@ -2228,18 +4449,25 @@ async function check(page, options, collected) {
       metadata: 'unavailable',
     })
   let savedRevision = 100
-  /** Publishes one Study message for the Saved studies cases; `chosen` is the study the reader shows. */
-  const library = (studies, chosen, extra = {}) =>
-    publish({
-      ...options.message,
-      revision: ++savedRevision,
-      studies,
-      model: {
-        ...options.message.model,
-        selection: { ...options.message.model.selection, studyId: chosen },
-      },
-      ...extra,
-    })
+  /** Builds one Study message for the Saved studies cases under the counter's revision; `chosen` is the study the reader shows. */
+  const libraryMessage = (studies, chosen, extra) => ({
+    ...options.message,
+    revision: savedRevision,
+    studies,
+    model: {
+      ...options.message.model,
+      selection: { ...options.message.model.selection, studyId: chosen },
+    },
+    ...extra,
+  })
+  /** Publishes one Study message for the Saved studies cases under a new revision, as the host does when it renders: it shows another study, or the Study workspace is open while Retry storage / refresh ends. */
+  const library = (studies, chosen, extra = {}) => {
+    savedRevision += 1
+    return publish(libraryMessage(studies, chosen, extra))
+  }
+  /** Publishes one Study message under the revision of the message before it, as the host does when it answers a pane's request (a removal's state, a study's files, a refusal) or reports its own progress: its revision changes only with a render, a navigation or a close, so an answer carries the revision the request was sent with. */
+  const libraryAnswer = (studies, chosen, extra = {}) =>
+    publish(libraryMessage(studies, chosen, extra))
   const removalControl = () =>
     page.evaluate(() => {
       const visible = (id) =>
@@ -2269,11 +4497,36 @@ async function check(page, options, collected) {
         repairNote: shownText('study-repairable'),
         newerNote: shownText('study-newer'),
         repairVisible: visible('repair-study'),
-        // The files a window without a Trash lists for removal by hand; null while the list is hidden.
-        files: visible('study-files')
-          ? [...document.querySelectorAll('#study-files-list li')].map(
-              (item) => item.textContent,
-            )
+        // The "Remove by hand" disclosure of a window without a Trash; null while it is hidden. What a closed disclosure holds is not rendered, which `checkVisibility` tells and a client rectangle does not.
+        removeByHand: visible('study-files')
+          ? {
+              open: document.getElementById('study-files').open,
+              summary: document.querySelector('#study-files > summary')
+                .textContent,
+              note: document
+                .getElementById('study-files-note')
+                .checkVisibility()
+                ? document.getElementById('study-files-note').textContent
+                : null,
+              noteIsError: document
+                .getElementById('study-files-note')
+                .classList.contains('error'),
+              // The paths the learner can see, in order.
+              files: [...document.querySelectorAll('#study-files-list li')]
+                .filter((item) => item.checkVisibility())
+                .map((item) => item.textContent),
+              copyVisible: document
+                .getElementById('copy-study-files')
+                .checkVisibility(),
+              retryVisible: document
+                .querySelector('#study-files [data-action="retry"]')
+                .checkVisibility(),
+              copyStatus: document.getElementById('copy-study-files-status')
+                .textContent,
+              copyStatusIsError: document
+                .getElementById('copy-study-files-status')
+                .classList.contains('error'),
+            }
           : null,
         status: status.textContent,
         statusIsError: status.classList.contains('error'),
@@ -2304,6 +4557,22 @@ async function check(page, options, collected) {
     ...removal,
     request: await lastRemovalRequest(),
   })
+  /** Opens "Remove by hand" by keyboard where the pane then asks the host for the chosen study's files, and waits until that request is sent, five seconds at most. A request that does not come is left to the case, which counts the requests and fails on its own comparison. */
+  const openRemoveByHandAndAwaitRequest = async () => {
+    const requestCount = () =>
+      window.sent.filter((message) => message.type === 'delete-study').length
+    const requestsBefore = await page.evaluate(requestCount)
+    await toggleByKeyboard('study-files')
+    await page
+      .waitForFunction(
+        (requestsBefore) =>
+          window.sent.filter((message) => message.type === 'delete-study')
+            .length > requestsBefore,
+        requestsBefore,
+        { timeout: 5_000 },
+      )
+      .catch(() => undefined)
+  }
   const deleteButton = page.getByRole('button', {
     name: 'Delete saved study…',
     exact: true,
@@ -2589,6 +4858,42 @@ async function check(page, options, collected) {
     studyRemoval: await answering(movedShown),
   })
   const afterMovingOn = await removalControl()
+  // Arrange (row 329): the editor's confirming dialog takes the focus from the pane when Delete saved study… is pressed, so the pane is away while the host answers.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await leavePane()
+  // Act: the learner confirms, the study moves and the host answers before the pane has the focus back; then the focus returns to the pane.
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: await answering(confirming),
+  })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
+  const removalFocusWhileDialogOpen = await focusName()
+  await returnToPane()
+  const removalFocusAfterDialog = await focusName()
+  // The same with Cancel: the request ends without an outcome while the pane is away.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await leavePane()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: await answering(confirming),
+  })
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await returnToPane()
+  const cancelFocusAfterDialog = await focusName()
+  cases.push({
+    name: 'when the host answers a pane’s own delete request while the confirming dialog still has the focus, the pane takes none, and when the focus returns it is on the Saved studies list after a removal, not on the delete button of the next study, and on the delete button after Cancel',
+    actual: {
+      removalFocusWhileDialogOpen,
+      removalFocusAfterDialog,
+      cancelFocusAfterDialog,
+    },
+    passed:
+      removalFocusWhileDialogOpen === 'body' &&
+      removalFocusAfterDialog === 'studies' &&
+      cancelFocusAfterDialog === 'delete-study',
+  })
   cases.push({
     name: 'after its own delete request a pane moves focus once: to the list after a removal, to the button after Cancel or a refusal, and nowhere when the learner moved on or another pane asked',
     actual: {
@@ -2882,6 +5187,19 @@ async function check(page, options, collected) {
       repairDescribedBy: document
         .getElementById('repair-study')
         .getAttribute('aria-describedby'),
+      // Repair is the primary action of the row: filled like Play, while Delete saved study… keeps the standard button.
+      repairIsPrimary: document
+        .getElementById('repair-study')
+        .classList.contains('primary'),
+      repairBackground: getComputedStyle(
+        document.getElementById('repair-study'),
+      ).backgroundColor,
+      playBackground: getComputedStyle(
+        document.getElementById('playback-toggle'),
+      ).backgroundColor,
+      deleteBackground: getComputedStyle(
+        document.getElementById('delete-study'),
+      ).backgroundColor,
     }
   })
   await page
@@ -2923,6 +5241,9 @@ async function check(page, options, collected) {
       repairLayout.repairBeforeDelete &&
       repairLayout.sameRow &&
       repairLayout.repairDescribedBy === 'study-repairable' &&
+      repairLayout.repairIsPrimary &&
+      repairLayout.repairBackground === repairLayout.playBackground &&
+      repairLayout.repairBackground !== repairLayout.deleteBackground &&
       afterRepairPress.retries === repairableChosen.retries + 1 &&
       afterRepairPress.focus === 'repair-study' &&
       // The button left with its note: the keyboard focus is on the list, not on the document body (PC-3.10).
@@ -3111,34 +5432,37 @@ async function check(page, options, collected) {
       afterLaterRefusal.status === 'Stop the run before deleting its study.',
   })
 
-  // Arrange: a window without a Trash (a WSL remote window); the host names a study's files only in its answer to a delete request (RT-7, DR-14).
+  // Arrange: a window without a Trash (a WSL remote window); the host names a study's files only in its answer to a delete request (RT-7, DR-14), which the pane sends when the learner opens Remove by hand (row 27, DR-5).
   const withoutTrash = { removalWithoutTrash: true },
-    withoutTrashSentence =
-      "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh.",
+    listedSentence =
+      'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
     studyFiles = [
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/recordings/window_run-shown01',
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.json',
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.meta.json',
+      '/home/learner/.config/Code/User/globalStorage/laststance.codebook/agent/window/run-shown01',
     ],
     otherStudyFile =
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-other02.study.v4.json'
   await library([otherStudy], undefined, withoutTrash)
   const withoutTrashNothingChosen = await removalControl()
-  // Act: the host shows a study; the pane asks once for its files, and the host answers.
+  // Act: the host shows a study, which asks for nothing; the learner opens Remove by hand by keyboard, and the host answers.
   await library([shownStudy, otherStudy], shownStudy.id, withoutTrash)
+  const studyChosen = await removalControl()
+  await openRemoveByHandAndAwaitRequest()
   const askedForFiles = await removalControl()
   const filesAnswer = await answering({
     status: 'refused',
     studyId: shownStudy.id,
-    text: withoutTrashSentence,
+    text: listedSentence,
     files: studyFiles,
   })
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
     studyFiles: { [shownStudy.id]: studyFiles },
   })
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
     studyFiles: { [shownStudy.id]: studyFiles },
@@ -3146,12 +5470,12 @@ async function check(page, options, collected) {
   })
   const filesListed = await removalControl()
   // Another pane asked for the other study's files: the removal state answers that request, and the host keeps both lists by study.
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  const bothListed = {
     ...withoutTrash,
     studyRemoval: {
       status: 'refused',
       studyId: otherStudy.id,
-      text: withoutTrashSentence,
+      text: listedSentence,
       files: [otherStudyFile],
       request: 1,
     },
@@ -3159,59 +5483,1004 @@ async function check(page, options, collected) {
       [shownStudy.id]: studyFiles,
       [otherStudy.id]: [otherStudyFile],
     },
-  })
+  }
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, bothListed)
   const besideAnotherPanesAnswer = await removalControl()
+  const removeByHandSummary = await page
+    .locator('#study-files > summary')
+    .evaluate((summary) => ({
+      height: Math.round(summary.getBoundingClientRect().height),
+      focused: document.activeElement === summary,
+    }))
   await page
     .locator('#saved-studies')
     .screenshot({ path: `${options.output}/saved-studies-without-trash.png` })
-  await page.getByRole('button', { name: 'Copy path', exact: true }).click()
-  await page.locator('#study-files [data-action="retry"]').click()
-  const afterCopyAndRetry = await removalControl()
-  const retryBesideFiles = await page
-    .locator('#study-files [data-action="retry"]')
-    .evaluate((control) => ({
-      label: control.textContent,
-      visible: control.getClientRects().length > 0,
-    }))
+  // The learner chooses the other study: the disclosure leaves while that study opens, and is offered closed once the host shows it.
+  await page.selectOption('#studies', otherStudy.id)
+  const whileOtherOpens = await removalControl()
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  const otherChosen = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-remove-by-hand.png` })
   // Assert
   cases.push({
-    name: "in a window without a Trash, Saved studies names the chosen study's files, offers Copy path and shows no delete button",
+    name: 'in a window without a Trash, Saved studies lists the chosen study’s files after Remove by hand is opened, offers Copy paths and shows no delete button',
     actual: {
       withoutTrashNothingChosen,
+      studyChosen,
       askedForFiles,
       filesListed,
       besideAnotherPanesAnswer,
-      afterCopyAndRetry,
-      retryBesideFiles,
+      removeByHandSummary,
+      whileOtherOpens,
+      otherChosen,
     },
     passed:
+      // (1) With no study chosen the reason says what choosing one and opening the disclosure gives.
       !withoutTrashNothingChosen.buttonVisible &&
       withoutTrashNothingChosen.reason ===
-        'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study to list its files for removal by hand.' &&
-      withoutTrashNothingChosen.files === null &&
+        'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.' &&
+      withoutTrashNothingChosen.removeByHand === null &&
       withoutTrashNothingChosen.deletes.length ===
         afterLaterRefusal.deletes.length &&
-      // One numbered request for the shown study's files, sent by the pane itself.
+      // (2) A chosen study asks the host for nothing and shows the closed disclosure, with no sentence under the hidden delete button.
+      studyChosen.deletes.length === afterLaterRefusal.deletes.length &&
+      !studyChosen.buttonVisible &&
+      studyChosen.reason === null &&
+      studyChosen.status === '' &&
+      studyChosen.removeByHand.open === false &&
+      studyChosen.removeByHand.summary === 'Remove by hand' &&
+      studyChosen.removeByHand.files.length === 0 &&
+      // (3) Opening it sends one numbered request for the shown study's files and says that they are being listed.
       askedForFiles.deletes.length === afterLaterRefusal.deletes.length + 1 &&
       askedForFiles.deletes.at(-1)[0] === shownStudy.id &&
       Number.isInteger(askedForFiles.removalRequests?.at(-1)) &&
+      askedForFiles.removeByHand.open &&
+      askedForFiles.removeByHand.note === "Listing this study's files…" &&
+      askedForFiles.removeByHand.files.length === 0 &&
+      !askedForFiles.removeByHand.copyVisible &&
+      !askedForFiles.removeByHand.retryVisible &&
+      // (4) The host's answer is shown inside the disclosure only, in order, with both buttons.
       !filesListed.buttonVisible &&
       filesListed.reason === null &&
-      filesListed.status === withoutTrashSentence &&
+      filesListed.status === '' &&
       !filesListed.statusIsError &&
-      JSON.stringify(filesListed.files) === JSON.stringify(studyFiles) &&
+      filesListed.removeByHand.note === listedSentence &&
+      !filesListed.removeByHand.noteIsError &&
+      JSON.stringify(filesListed.removeByHand.files) ===
+        JSON.stringify(studyFiles) &&
+      filesListed.removeByHand.copyVisible &&
+      filesListed.removeByHand.retryVisible &&
       // A later Study message with the answer asks nothing again.
       filesListed.deletes.length === askedForFiles.deletes.length &&
       // The answer to another pane's request leaves this pane's list as it is, and this pane asks nothing again.
-      JSON.stringify(besideAnotherPanesAnswer.files) ===
+      JSON.stringify(besideAnotherPanesAnswer.removeByHand.files) ===
         JSON.stringify(studyFiles) &&
       besideAnotherPanesAnswer.deletes.length ===
         askedForFiles.deletes.length &&
-      JSON.stringify(afterCopyAndRetry.copies) ===
+      // The summary is a 44 px target and keeps the focus while the files arrive.
+      removeByHandSummary.height === 44 &&
+      removeByHandSummary.focused &&
+      // (5) Another study closes the disclosure and asks for nothing, although the host already lists that study's files.
+      whileOtherOpens.removeByHand === null &&
+      otherChosen.chosen === otherStudy.id &&
+      otherChosen.removeByHand.open === false &&
+      otherChosen.removeByHand.files.length === 0 &&
+      otherChosen.deletes.length === askedForFiles.deletes.length,
+  })
+
+  // Arrange: Remove by hand is offered closed for the other study, whose file the host already lists; its note is a status region (row 175).
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  /** Reads the note of Remove by hand as the page holds it: its text, whether it is rendered, and how many paths the list holds. */
+  const filesNote = () =>
+    page.evaluate(() => {
+      const note = document.getElementById('study-files-note')
+      return {
+        text: note.textContent,
+        isRendered: note.checkVisibility(),
+        paths: document.querySelectorAll('#study-files-list li').length,
+      }
+    })
+  const noteWhileClosed = await filesNote()
+  // The note is read once more at the toggle event that reports the opened disclosure, ahead of the pane's own handler: a capturing listener of the document runs before the listeners of the disclosure.
+  await page.evaluate(() => {
+    window.noteAtOpening = undefined
+    document.addEventListener(
+      'toggle',
+      (event) => {
+        if (
+          event.target.id !== 'study-files' ||
+          !event.target.open ||
+          window.noteAtOpening
+        )
+          return
+        const note = document.getElementById('study-files-note')
+        window.noteAtOpening = {
+          text: note.textContent,
+          isRendered: note.checkVisibility(),
+        }
+      },
+      { capture: true },
+    )
+  })
+  // Act: the learner opens the disclosure by keyboard and closes it again.
+  await toggleByKeyboard('study-files')
+  const noteAtOpening = await page.evaluate(() => window.noteAtOpening)
+  const noteWhileOpen = await filesNote()
+  await toggleByKeyboard('study-files')
+  const noteAfterClosing = await filesNote()
+  // Assert
+  cases.push({
+    name: 'the note of Remove by hand is empty while the disclosure is closed, also when the host already lists the study’s files, is rendered and still empty when the disclosure has opened, and gets its sentence then, as a change of a status region that exists; closing empties it again',
+    actual: { noteWhileClosed, noteAtOpening, noteWhileOpen, noteAfterClosing },
+    passed:
+      JSON.stringify(noteWhileClosed) ===
+        JSON.stringify({ text: '', isRendered: false, paths: 0 }) &&
+      JSON.stringify(noteAtOpening) ===
+        JSON.stringify({ text: '', isRendered: true }) &&
+      JSON.stringify(noteWhileOpen) ===
+        JSON.stringify({ text: listedSentence, isRendered: true, paths: 1 }) &&
+      JSON.stringify(noteAfterClosing) === JSON.stringify(noteWhileClosed),
+  })
+
+  // Arrange: the same window with the shown study's four files listed and Remove by hand open (row 27, DR-6).
+  const copyButton = page.getByRole('button', {
+    name: 'Copy paths',
+    exact: true,
+  })
+  /** Posts the host's answer to Copy paths into the pane, as the host does to the pane that asked. */
+  const answerCopy = (answer) =>
+    publish({ type: 'study-files-copied', ...answer })
+  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
+  await toggleByKeyboard('study-files')
+  const copyStatusWhileEmpty = await page
+    .locator('#copy-study-files-status')
+    .evaluate((line) => ({
+      role: `${line.getAttribute('role')}/${line.getAttribute('aria-live')}`,
+      display: getComputedStyle(line).display,
+      height: line.getBoundingClientRect().height,
+    }))
+  // Act: the learner presses Copy paths by keyboard, and the host answers once the clipboard took the four paths.
+  await copyButton.focus()
+  await page.keyboard.press('Enter')
+  const afterFirstPress = await removalControl()
+  // An answer for another study than the one whose files are listed changes nothing.
+  await answerCopy({ studyId: otherStudy.id, status: 'copied', count: 1 })
+  const afterForeignAnswer = await removalControl()
+  await answerCopy({ studyId: shownStudy.id, status: 'copied', count: 4 })
+  const afterFirstAnswer = await removalControl()
+  // A second press empties the line before the host answers again.
+  await page.keyboard.press('Enter')
+  const afterSecondPress = await removalControl()
+  await answerCopy({ studyId: shownStudy.id, status: 'copied', count: 4 })
+  const afterSecondAnswer = await removalControl()
+  // The clipboard refuses a third copy.
+  await page.keyboard.press('Enter')
+  await answerCopy({ studyId: shownStudy.id, status: 'failed' })
+  const afterRefusedCopy = await removalControl()
+  // The learner closes the disclosure and opens it again.
+  await toggleByKeyboard('study-files')
+  await toggleByKeyboard('study-files')
+  const afterReopening = await removalControl()
+  // The other study has one listed file.
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  await toggleByKeyboard('study-files')
+  await copyButton.focus()
+  await page.keyboard.press('Enter')
+  await answerCopy({ studyId: otherStudy.id, status: 'copied', count: 1 })
+  const afterCopyOfOne = await removalControl()
+  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
+  await toggleByKeyboard('study-files')
+  const afterAnotherStudy = await removalControl()
+  // Assert
+  cases.push({
+    name: 'Copy paths confirms with the number of paths the host copied, again after a second press, says when the clipboard took nothing, and the line is cleared when the disclosure closes or another study is chosen',
+    actual: {
+      copyStatusWhileEmpty,
+      afterFirstPress,
+      afterForeignAnswer,
+      afterFirstAnswer,
+      afterSecondPress,
+      afterSecondAnswer,
+      afterRefusedCopy,
+      afterReopening,
+      afterCopyOfOne,
+      afterAnotherStudy,
+    },
+    passed:
+      (await copyButton.count()) === 1 &&
+      // The confirmation line is a status region that is rendered while empty and takes no room.
+      copyStatusWhileEmpty.role === 'status/polite' &&
+      copyStatusWhileEmpty.display !== 'none' &&
+      copyStatusWhileEmpty.height === 0 &&
+      JSON.stringify(afterFirstPress.copies) ===
         JSON.stringify([shownStudy.id]) &&
-      afterCopyAndRetry.retries === filesListed.retries + 1 &&
-      retryBesideFiles.label === 'Retry storage / refresh' &&
-      retryBesideFiles.visible,
+      afterFirstPress.removeByHand.copyStatus === '' &&
+      afterForeignAnswer.removeByHand.copyStatus === '' &&
+      afterFirstAnswer.removeByHand.copyStatus === 'Copied 4 paths.' &&
+      !afterFirstAnswer.removeByHand.copyStatusIsError &&
+      afterFirstAnswer.focus === 'copy-study-files' &&
+      afterSecondPress.removeByHand.copyStatus === '' &&
+      afterSecondAnswer.removeByHand.copyStatus === 'Copied 4 paths.' &&
+      afterRefusedCopy.removeByHand.copyStatus ===
+        'Could not copy the paths. Select them in the list above and copy them by hand.' &&
+      afterRefusedCopy.removeByHand.copyStatusIsError &&
+      afterRefusedCopy.focus === 'copy-study-files' &&
+      afterReopening.removeByHand.open &&
+      afterReopening.removeByHand.copyStatus === '' &&
+      !afterReopening.removeByHand.copyStatusIsError &&
+      // The files were listed before: opening again asks the host for nothing.
+      afterReopening.deletes.length === otherChosen.deletes.length &&
+      afterCopyOfOne.removeByHand.copyStatus === 'Copied 1 path.' &&
+      afterAnotherStudy.removeByHand.copyStatus === '' &&
+      JSON.stringify(afterAnotherStudy.copies) ===
+        JSON.stringify([
+          shownStudy.id,
+          shownStudy.id,
+          shownStudy.id,
+          otherStudy.id,
+        ]),
+  })
+
+  // Arrange: a study none of whose files is left, and one whose files the host refuses to list (row 27, DR-5).
+  const thirdStudy = savedStudy('window_run-third09'),
+    emptiedStudy = savedStudy('window_run-empty10'),
+    threeStudies = [shownStudy, thirdStudy, emptiedStudy]
+  await library(threeStudies, emptiedStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  // Act: the host answers with a list that holds no file.
+  await libraryAnswer(threeStudies, emptiedStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: emptiedStudy.id,
+      text: listedSentence,
+      files: [],
+    }),
+    studyFiles: { [emptiedStudy.id]: [] },
+  })
+  const noFileLeft = await removalControl()
+  // Act: the host refuses the request for the third study's files, because a recording began to open meanwhile.
+  const refusalSentence =
+    "Choose Overview or Live to leave Recording before removing this study's files by hand."
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const beforeRefusal = await removalControl()
+  const refusedFiles = {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: refusalSentence,
+    }),
+  }
+  await libraryAnswer(threeStudies, thirdStudy.id, refusedFiles)
+  const filesRefused = await removalControl()
+  // A later Study message that still carries the refusal asks nothing again.
+  await libraryAnswer(threeStudies, thirdStudy.id, {
+    ...refusedFiles,
+    busy: true,
+  })
+  const afterRefusalStayed = await removalControl()
+  // The learner closes the disclosure and opens it again: that asks the host once more, and this time it lists the files.
+  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
+  const askedAgain = await removalControl()
+  await libraryAnswer(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { [thirdStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterAskingAgain = await removalControl()
+  // Assert
+  cases.push({
+    name: 'Remove by hand says when no file of the study is left and shows a refusal of the host as an error, each with Retry storage / refresh only; opening it again asks the host again',
+    actual: {
+      noFileLeft,
+      beforeRefusal,
+      filesRefused,
+      afterRefusalStayed,
+      askedAgain,
+      listedAfterAskingAgain,
+    },
+    passed:
+      noFileLeft.removeByHand.note ===
+        'No file of this study is left. Press Retry storage / refresh to update the list.' &&
+      !noFileLeft.removeByHand.noteIsError &&
+      noFileLeft.removeByHand.files.length === 0 &&
+      !noFileLeft.removeByHand.copyVisible &&
+      noFileLeft.removeByHand.retryVisible &&
+      noFileLeft.status === '' &&
+      beforeRefusal.removeByHand.note === "Listing this study's files…" &&
+      filesRefused.removeByHand.note === refusalSentence &&
+      filesRefused.removeByHand.noteIsError &&
+      filesRefused.removeByHand.files.length === 0 &&
+      !filesRefused.removeByHand.copyVisible &&
+      filesRefused.removeByHand.retryVisible &&
+      // The refusal stands inside the disclosure only: nothing is written above the summary the learner pressed.
+      filesRefused.status === '' &&
+      afterRefusalStayed.deletes.length === filesRefused.deletes.length &&
+      askedAgain.deletes.length === filesRefused.deletes.length + 1 &&
+      askedAgain.deletes.at(-1)[0] === thirdStudy.id &&
+      askedAgain.removeByHand.note === "Listing this study's files…" &&
+      !askedAgain.removeByHand.noteIsError &&
+      !askedAgain.removeByHand.retryVisible &&
+      listedAfterAskingAgain.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterAskingAgain.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      listedAfterAskingAgain.removeByHand.copyVisible,
+  })
+
+  // Arrange: the listed files of the third study, with the keyboard focus on a control inside Remove by hand (PC-3.10 for the disclosure).
+  const thirdListed = {
+    ...withoutTrash,
+    studyFiles: {
+      [thirdStudy.id]: [otherStudyFile],
+      [shownStudy.id]: studyFiles,
+    },
+  }
+  await library(threeStudies, thirdStudy.id, thirdListed)
+  await copyButton.focus()
+  // Act: another pane makes the host show another study, so the disclosure closes under the focused button.
+  await library(threeStudies, shownStudy.id, thirdListed)
+  const focusAfterClosing = await page.evaluate(() => ({
+    summaryOf: document.activeElement.parentElement?.id,
+    tag: document.activeElement.tagName,
+  }))
+  // Act: the learner removed the files by hand and presses Retry storage / refresh inside the disclosure; the study leaves the list.
+  await toggleByKeyboard('study-files')
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  const retriesAfterPress = (await removalControl()).retries
+  await library([thirdStudy, emptiedStudy], undefined, withoutTrash)
+  const afterStudyLeft = await removalControl()
+  // Assert
+  cases.push({
+    name: 'when Remove by hand closes or leaves under the focused control, the keyboard focus stays in Saved studies: on its summary while it is offered, on the list after Retry storage / refresh took the study away',
+    actual: { focusAfterClosing, retriesAfterPress, afterStudyLeft },
+    passed:
+      focusAfterClosing.tag === 'SUMMARY' &&
+      focusAfterClosing.summaryOf === 'study-files' &&
+      retriesAfterPress === listedAfterAskingAgain.retries + 1 &&
+      afterStudyLeft.removeByHand === null &&
+      afterStudyLeft.chosen === '' &&
+      afterStudyLeft.focus === 'studies',
+  })
+
+  // Arrange: three listed files of the third study, Remove by hand open, and the keyboard focus on Retry storage / refresh inside it (row 73).
+  const threeListedFiles = [
+    '/home/learner/.config/Code/User/globalStorage/laststance.codebook/agent/window/run-third09',
+    '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-third09.study.meta.v2.json',
+    '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-third09.study.v2.json',
+  ]
+  /** Reads which control of Remove by hand holds the keyboard focus: its tag, and the element it stands in. */
+  const focusInRemoveByHand = () =>
+    page.evaluate(() => ({
+      tag: document.activeElement.tagName,
+      within: document.activeElement.parentElement?.id,
+    }))
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  await libraryAnswer(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: threeListedFiles,
+    }),
+    studyFiles: { [thirdStudy.id]: threeListedFiles },
+  })
+  const threeListed = await removalControl()
+  await page.locator('#study-files [data-action="retry"]').focus()
+  // Act: the learner, who removed two of the files by hand, presses Retry storage / refresh; the host forgets its lists and names no files for the study, and then answers the pane's new request.
+  await page.keyboard.press('Enter')
+  // The Study workspace is closed (Saved studies stand in the bottom panel), so Retry ends without a render and its message carries the revision before it.
+  await libraryAnswer(threeStudies, thirdStudy.id, withoutTrash)
+  const askedAfterRetry = await removalControl(),
+    focusWhileListing = await focusInRemoveByHand()
+  await libraryAnswer(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [threeListedFiles[2]],
+    }),
+    studyFiles: { [thirdStudy.id]: [threeListedFiles[2]] },
+  })
+  const oneLeft = await removalControl(),
+    focusAfterAnswer = await focusInRemoveByHand()
+  // Assert
+  cases.push({
+    name: 'after Retry storage / refresh, for which the host forgets its file lists, an open Remove by hand asks the host again by itself and shows the one file that is left of three, and the keyboard focus that stood on Retry storage / refresh rests on the disclosure’s summary',
+    actual: {
+      threeListed,
+      askedAfterRetry,
+      focusWhileListing,
+      oneLeft,
+      focusAfterAnswer,
+    },
+    passed:
+      // The pane asked for the list under the revision every later message of this case carries.
+      threeListed.removeByHand.open &&
+      JSON.stringify(threeListed.removeByHand.files) ===
+        JSON.stringify(threeListedFiles) &&
+      askedAfterRetry.retries === threeListed.retries + 1 &&
+      // One new request for the same study, under the Study message that names no files.
+      askedAfterRetry.deletes.length === threeListed.deletes.length + 1 &&
+      askedAfterRetry.deletes.at(-1)[0] === thirdStudy.id &&
+      askedAfterRetry.removeByHand.open &&
+      askedAfterRetry.removeByHand.note === "Listing this study's files…" &&
+      askedAfterRetry.removeByHand.files.length === 0 &&
+      !askedAfterRetry.removeByHand.copyVisible &&
+      !askedAfterRetry.removeByHand.retryVisible &&
+      // The pressed button is not rendered while the host is asked; the focus stays with the disclosure.
+      JSON.stringify(focusWhileListing) ===
+        JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }) &&
+      oneLeft.removeByHand.note === listedSentence &&
+      JSON.stringify(oneLeft.removeByHand.files) ===
+        JSON.stringify([threeListedFiles[2]]) &&
+      oneLeft.removeByHand.copyVisible &&
+      oneLeft.removeByHand.retryVisible &&
+      oneLeft.deletes.length === askedAfterRetry.deletes.length &&
+      JSON.stringify(focusAfterAnswer) ===
+        JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }),
+  })
+
+  // Arrange: the parts of Saved studies that name the place of a lost focus themselves, each with the pane out of focus: the learner works in another part of the editor while the host's message arrives (row 172).
+  await library(threeStudies, thirdStudy.id, thirdListed)
+  await copyButton.focus()
+  await leavePane()
+  // Act: another pane makes the host show another study, so Remove by hand closes under the focused button; later the learner returns.
+  await library(threeStudies, shownStudy.id, thirdListed)
+  const disclosureFocusWhileAway = await focusName()
+  await returnToPane()
+  const disclosureFocusOnReturn = await focusName()
+  // The repair button leaves under the focus because the host repaired the entry.
+  const libraryToRepair = [shownStudy, repairableStudy, legacyStudy]
+  await library(libraryToRepair, shownStudy.id)
+  await page.selectOption('#studies', repairableStudy.id)
+  await page.locator('#repair-study').focus()
+  await leavePane()
+  await library(
+    [
+      shownStudy,
+      { ...repairableStudy, metadata: 'validated', reason: undefined },
+      legacyStudy,
+    ],
+    shownStudy.id,
+  )
+  const repairFocusWhileAway = await focusName()
+  await returnToPane()
+  const repairFocusOnReturn = await focusName()
+  // An observed moment's control is rendered again because another moment was observed.
+  const observedMoment = (id) => ({
+    id,
+    itemId: options.message.model.selection.itemId,
+    title: 'Observed stop',
+    at: '2026-09-27T00:00:00.000Z',
+  })
+  await library([shownStudy], shownStudy.id, {
+    moments: [observedMoment('observed-1')],
+  })
+  await page.locator('#moments button').first().focus()
+  await leavePane()
+  await library([shownStudy], shownStudy.id, {
+    moments: [observedMoment('observed-1'), observedMoment('observed-2')],
+  })
+  const momentFocusWhileAway = await focusName()
+  await returnToPane()
+  const momentFocusOnReturn = await page.evaluate(
+    () => document.activeElement.dataset.observation,
+  )
+  // Assert
+  cases.push({
+    name: 'while the pane does not have the focus, a part of it that leaves or is rendered again under the control the learner left takes no focus, and when the learner returns the focus is where that part puts it: on the summary of Remove by hand, on the Saved studies list after a repair, on the same item of the observed moments',
+    actual: {
+      disclosureFocusWhileAway,
+      disclosureFocusOnReturn,
+      repairFocusWhileAway,
+      repairFocusOnReturn,
+      momentFocusWhileAway,
+      momentFocusOnReturn,
+    },
+    passed:
+      disclosureFocusWhileAway === 'body' &&
+      disclosureFocusOnReturn === 'summary: Remove by hand' &&
+      repairFocusWhileAway === 'body' &&
+      repairFocusOnReturn === 'studies' &&
+      momentFocusWhileAway === 'body' &&
+      momentFocusOnReturn === 'observed-1',
+  })
+
+  // Arrange: Remove by hand opened for the other study, whose files the host has not listed; every message until the host renders again carries the revision the pane asked under (row 168).
+  const othersFiles = { [shownStudy.id]: studyFiles },
+    studiesWithOther = [shownStudy, otherStudy, thirdStudy]
+  /** The state of the host's removal that answers another pane's request for the shown study's files. */
+  const anotherPanesAnswer = (request) => ({
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: listedSentence,
+    files: studyFiles,
+    request,
+  })
+  await library(studiesWithOther, otherStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const askedFirst = await removalControl()
+  // Act: a run of this study turns out not to have stopped, so the disclosure leaves beside that reason, and the host's refusal of the request arrives while the disclosure is not offered; then the run has stopped and another pane's answer stands in the message.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    unstoppedStudyId: otherStudy.id,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: "Stop the run before removing its study's files by hand.",
+    }),
+  })
+  const besideReason = await removalControl()
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(1),
+    studyFiles: othersFiles,
+  })
+  // The learner opens the disclosure that is offered again: the request before is nobody's any more, so the pane asks anew.
+  await openRemoveByHandAndAwaitRequest()
+  const answerOwed = await removalControl()
+  // The host answers another pane's request first.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(1),
+    studyFiles: othersFiles,
+  })
+  const besideForeignAnswer = await removalControl()
+  // The host refuses this pane's request.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: refusalSentence,
+    }),
+    studyFiles: othersFiles,
+  })
+  const ownRefusal = await removalControl()
+  // The answer to another pane's next request takes the refusal's place in the host's message.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const refusalAfterForeignAnswer = await removalControl()
+  // The learner presses Retry storage / refresh beside the refusal, and the host reports that it is working.
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    saving: true,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const askedAtRetry = await removalControl()
+  // The host renders again before the pane has an answer: under the new revision the pane asks again. (The host answers a request the pane sent by itself, like this one, also after it rendered again; a request the learner made on the old view it refuses with a line and never answers. The pane cannot tell the two apart from here and asks again in both.)
+  await library(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const askedUnderNewRevision = await removalControl()
+  // The host lists the study's file for that request.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { ...othersFiles, [otherStudy.id]: [otherStudyFile] },
+  })
+  const listedAtLast = await removalControl()
+  // Assert
+  /** Reads which of the pane's last requests for files were marked as sent by the pane itself, newest last. */
+  const lastRequestMarks = (count) =>
+    page.evaluate(
+      (count) =>
+        window.sent
+          .filter((message) => message.type === 'delete-study')
+          .slice(-count)
+          .map((message) => message.unprompted === true),
+      count,
+    )
+  // The four requests of this case, in order: the learner opened the disclosure twice, then the pane asked by itself after Retry storage / refresh and again under the host's new revision.
+  const requestMarks = await lastRequestMarks(4)
+  cases.push({
+    name: 'a request for a study’s files that the learner makes by opening Remove by hand carries no mark, and one the pane sends by itself (after Retry storage / refresh, and again when the host has rendered since) is marked unprompted, so the host answers it without a line when it arrives late',
+    actual: requestMarks,
+    passed:
+      JSON.stringify(requestMarks) ===
+      JSON.stringify([false, false, true, true]),
+  })
+  const requests = (control) => control.deletes.length
+  cases.push({
+    name: 'Remove by hand knows the host’s answer to its request by the request’s number, under a revision the host does not change: another pane’s answer is not taken for it and nothing is asked twice while it is owed; a refusal stays when another pane’s answer takes its place in the message; Retry storage / refresh beside a refusal asks again; a disclosure that left beside a reason asks anew when it is opened again; and a request the host left behind with a new revision is sent again',
+    actual: {
+      askedFirst,
+      besideReason,
+      answerOwed,
+      besideForeignAnswer,
+      ownRefusal,
+      refusalAfterForeignAnswer,
+      askedAtRetry,
+      askedUnderNewRevision,
+      listedAtLast,
+    },
+    passed:
+      // A disclosure that left beside a reason and is offered again asks anew when it is opened, under the same revision.
+      besideReason.removeByHand === null &&
+      requests(besideReason) === requests(askedFirst) &&
+      requests(answerOwed) === requests(askedFirst) + 1 &&
+      answerOwed.removeByHand.note === "Listing this study's files…" &&
+      // Another pane's answer under the same revision: still listing, nothing asked again.
+      besideForeignAnswer.removeByHand.note === "Listing this study's files…" &&
+      !besideForeignAnswer.removeByHand.retryVisible &&
+      requests(besideForeignAnswer) === requests(answerOwed) &&
+      // The answer with this pane's number under the same revision is shown.
+      ownRefusal.removeByHand.note === refusalSentence &&
+      ownRefusal.removeByHand.noteIsError &&
+      ownRefusal.removeByHand.retryVisible &&
+      requests(ownRefusal) === requests(answerOwed) &&
+      // It stays, and the pane does not ask again, when the host's message no longer carries it.
+      refusalAfterForeignAnswer.removeByHand.note === refusalSentence &&
+      refusalAfterForeignAnswer.removeByHand.retryVisible &&
+      requests(refusalAfterForeignAnswer) === requests(answerOwed) &&
+      // Retry storage / refresh beside it: one new request with the next message, and the disclosure lists again.
+      requests(askedAtRetry) === requests(answerOwed) + 1 &&
+      askedAtRetry.deletes.at(-1)[0] === otherStudy.id &&
+      askedAtRetry.removeByHand.note === "Listing this study's files…" &&
+      !askedAtRetry.removeByHand.noteIsError &&
+      // A new revision without an answer: the request is sent again, once.
+      requests(askedUnderNewRevision) === requests(answerOwed) + 2 &&
+      askedUnderNewRevision.removeByHand.note ===
+        "Listing this study's files…" &&
+      listedAtLast.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAtLast.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      requests(listedAtLast) === requests(askedUnderNewRevision),
+  })
+
+  // Arrange: Remove by hand opened for a study whose files the host cannot list (row 251).
+  const listingFailed =
+    "Codebook could not list this study's files. Press Retry storage / refresh to try again. EACCES: permission denied, lstat '/library/recordings.v2'"
+  // Another study is shown first, so the disclosure is offered closed for the study the learner then looks at.
+  await library(studiesWithOther, shownStudy.id, withoutTrash)
+  await library(studiesWithOther, otherStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  // Act: the host answers the request with the listing's failure; the learner presses Retry storage / refresh, and the host lists the file for the request that follows.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listingFailed,
+    }),
+  })
+  const listingFailure = await removalControl()
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    saving: true,
+  })
+  const askedAfterFailure = await removalControl()
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { [otherStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterFailure = await removalControl()
+  // Assert
+  cases.push({
+    name: 'when the host could not list a study’s files, Remove by hand shows the host’s reason as an error with Retry storage / refresh and no Copy paths, and a press on Retry asks again and lists the files',
+    actual: { listingFailure, askedAfterFailure, listedAfterFailure },
+    passed:
+      listingFailure.removeByHand.note === listingFailed &&
+      listingFailure.removeByHand.noteIsError &&
+      listingFailure.removeByHand.retryVisible &&
+      !listingFailure.removeByHand.copyVisible &&
+      listingFailure.removeByHand.files.length === 0 &&
+      askedAfterFailure.deletes.length === listingFailure.deletes.length + 1 &&
+      askedAfterFailure.removeByHand.note === "Listing this study's files…" &&
+      listedAfterFailure.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterFailure.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]),
+  })
+
+  // Arrange: Remove by hand opened for the third study and closed again before the host has answered (row 252).
+  await library(studiesWithOther, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const askedThenClosed = await removalControl()
+  await toggleByKeyboard('study-files')
+  // Act: the host's refusal arrives while the disclosure is closed, and another pane's answer then takes its place in the message; the learner opens the disclosure again, and the host lists the file.
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listingFailed,
+    }),
+  })
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(3),
+    studyFiles: othersFiles,
+  })
+  const closedWithAnswer = await removalControl()
+  await toggleByKeyboard('study-files')
+  await page
+    .waitForFunction(
+      (requestsBefore) =>
+        window.sent.filter((message) => message.type === 'delete-study')
+          .length > requestsBefore,
+      closedWithAnswer.deletes.length,
+      { timeout: 2_000 },
+    )
+    .catch(() => undefined)
+  const reopened = await removalControl()
+  await libraryAnswer(studiesWithOther, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { ...othersFiles, [thirdStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterReopening = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a refusal that arrives while Remove by hand is closed does not leave the disclosure waiting: opened again, it asks the host again and shows the files, not Listing this study’s files… with no button',
+    actual: {
+      askedThenClosed,
+      closedWithAnswer,
+      reopened,
+      listedAfterReopening,
+    },
+    passed:
+      closedWithAnswer.removeByHand.open === false &&
+      closedWithAnswer.deletes.length === askedThenClosed.deletes.length &&
+      // Opening again sends one new request, marked as the learner's own.
+      reopened.deletes.length === askedThenClosed.deletes.length + 1 &&
+      reopened.deletes.at(-1)[0] === thirdStudy.id &&
+      reopened.removeByHand.note === "Listing this study's files…" &&
+      listedAfterReopening.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterReopening.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      listedAfterReopening.removeByHand.retryVisible,
+  })
+
+  // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).
+  const deletesBeforeReasons = (await removalControl()).deletes.length
+  /** Reads the reason shown under the list and whether Remove by hand is offered beside it. */
+  const reasonWithoutTrash = async () => {
+    const shown = await removalControl()
+    return {
+      reason: shown.reason,
+      removeByHandOffered: shown.removeByHand !== null,
+      buttonVisible: shown.buttonVisible,
+    }
+  }
+  // Act
+  await library([shownStudy, nodeHistory], nodeHistory.id, {
+    ...withoutTrash,
+    unstoppedStudyId: nodeHistory.id,
+    ...replaying,
+  })
+  const nodeWithoutTrash = await reasonWithoutTrash()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    unstoppedStudyId: shownStudy.id,
+    ...replaying,
+  })
+  const liveWithoutTrash = await reasonWithoutTrash()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    ...replaying,
+  })
+  const recordingWithoutTrash = await reasonWithoutTrash()
+  await library([shownStudy, newerStudy], shownStudy.id, withoutTrash)
+  await page.selectOption('#studies', newerStudy.id)
+  const newerWithoutTrash = await reasonWithoutTrash()
+  const newerNoteWithoutTrash = (await removalControl()).newerNote
+  const shownReasons = [
+    nodeWithoutTrash,
+    liveWithoutTrash,
+    recordingWithoutTrash,
+    newerWithoutTrash,
+  ]
+  // Assert
+  cases.push({
+    name: 'in a window without a Trash each reason under Saved studies speaks of removing the study’s files by hand, none of deleting, and Remove by hand is not offered beside a reason',
+    actual: {
+      nodeWithoutTrash,
+      liveWithoutTrash,
+      recordingWithoutTrash,
+      newerWithoutTrash,
+      newerNoteWithoutTrash,
+    },
+    passed:
+      nodeWithoutTrash.reason ===
+        'Codebook cannot list the files of a Node test history for removal by hand yet.' &&
+      liveWithoutTrash.reason ===
+        "Stop the run before removing its study's files by hand." &&
+      recordingWithoutTrash.reason ===
+        "Choose Overview or Live to leave Recording before removing this study's files by hand." &&
+      newerWithoutTrash.reason ===
+        'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.' &&
+      newerNoteWithoutTrash === newerSentence &&
+      shownReasons.every(
+        (shown) =>
+          !shown.reason.includes('delet') &&
+          !shown.removeByHandOffered &&
+          !shown.buttonVisible,
+      ) &&
+      (await removalControl()).deletes.length === deletesBeforeReasons,
+  })
+
+  // Arrange: an entry that cannot be opened and one whose checkpoint can be repaired, in a window with a Trash and in one without (row 27, DR-4 and DR-7).
+  /** Reads the shown note, what it describes and how the row under it is filled, for the entry chosen in the list. */
+  const noteAndRow = async () => {
+    const shown = await removalControl()
+    const row = await page.evaluate(() => {
+      const background = (id) =>
+        getComputedStyle(document.getElementById(id)).backgroundColor
+      return {
+        repairDescribedBy: document
+          .getElementById('repair-study')
+          .getAttribute('aria-describedby'),
+        repairIsPrimary: document
+          .getElementById('repair-study')
+          .classList.contains('primary'),
+        repairBackground: background('repair-study'),
+        playBackground: background('playback-toggle'),
+        deleteBackground: background('delete-study'),
+      }
+    })
+    return {
+      note: shown.note,
+      repairNote: shown.repairNote,
+      listDescribedBy: shown.listDescribedBy,
+      repairVisible: shown.repairVisible,
+      deleteVisible: shown.buttonVisible,
+      removeByHandOffered: shown.removeByHand !== null,
+      ...row,
+    }
+  }
+  const unopenableAndRepairable = [shownStudy, repairableStudy, legacyStudy]
+  // Act
+  await library(unopenableAndRepairable, shownStudy.id)
+  await page.selectOption('#studies', legacyStudy.id)
+  const unopenableWithTrash = await noteAndRow()
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairableWithTrash = await noteAndRow()
+  await library(unopenableAndRepairable, shownStudy.id, withoutTrash)
+  await page.selectOption('#studies', legacyStudy.id)
+  const unopenableWithoutTrash = await noteAndRow()
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairableWithoutTrash = await noteAndRow()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-repair-no-trash.png` })
+  // Assert
+  cases.push({
+    name: 'the note of a saved study that cannot be opened or can be repaired names what a window with a Trash and one without can still do, and describes the list and Repair saved study, which is the filled button',
+    actual: {
+      unopenableWithTrash,
+      repairableWithTrash,
+      unopenableWithoutTrash,
+      repairableWithoutTrash,
+    },
+    passed:
+      unopenableWithTrash.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      unopenableWithTrash.listDescribedBy === 'study-unopenable' &&
+      repairableWithTrash.repairNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study." &&
+      repairableWithTrash.listDescribedBy === 'study-repairable' &&
+      repairableWithTrash.repairDescribedBy === 'study-repairable' &&
+      repairableWithTrash.repairVisible &&
+      repairableWithTrash.deleteVisible &&
+      unopenableWithoutTrash.note ===
+        'This saved study cannot be opened. This window has no Trash, so it can only be removed by hand.' &&
+      unopenableWithoutTrash.listDescribedBy === 'study-unopenable' &&
+      unopenableWithoutTrash.removeByHandOffered &&
+      !unopenableWithoutTrash.deleteVisible &&
+      repairableWithoutTrash.repairNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Repair it, or remove its files by hand." &&
+      repairableWithoutTrash.listDescribedBy === 'study-repairable' &&
+      repairableWithoutTrash.repairDescribedBy === 'study-repairable' &&
+      // Without a Trash the row holds Repair alone, and the manual removal stays offered under it.
+      repairableWithoutTrash.repairVisible &&
+      !repairableWithoutTrash.deleteVisible &&
+      repairableWithoutTrash.removeByHandOffered &&
+      // Repair is the filled button like Play; Delete saved study… stays the standard one.
+      [repairableWithTrash, repairableWithoutTrash].every(
+        (shown) =>
+          shown.repairIsPrimary &&
+          shown.repairBackground === shown.playBackground &&
+          shown.repairBackground !== shown.deleteBackground,
+      ),
+  })
+
+  // Arrange: what is left of a study without its archive, as the library lists it since it lists such rests: an entry that cannot be opened and has no reason, because nothing Retry storage does brings the archive back (row 181).
+  const restOfStudy = savedStudy('window_run-rest0011', {
+    profile: undefined,
+    format: 'archive-missing',
+    outcome: 'Archive missing; remaining files kept',
+    metadata: 'unavailable',
+  })
+  await library([shownStudy, restOfStudy], shownStudy.id)
+  const opensBeforeRest = (await removalControl()).histories
+  // Act: the learner chooses the rest in a window with a Trash and presses the delete button by keyboard; then the same entry in a window without a Trash, where the learner opens Remove by hand.
+  await page.selectOption('#studies', restOfStudy.id)
+  const restWithTrash = await removalControl()
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  const askedToDeleteRest = await removalControl()
+  await library([shownStudy, restOfStudy], shownStudy.id, withoutTrash)
+  const restWithoutTrash = await removalControl()
+  await openRemoveByHandAndAwaitRequest()
+  const askedForRestFiles = await removalControl()
+  // Assert
+  cases.push({
+    name: 'what is left of a saved study without its archive is listed as an entry that cannot be opened: it is chosen without asking the host to open it, its note says that it can still be deleted where the window has a Trash and that it can only be removed by hand where it has none, no repair is offered, and the delete button or Remove by hand asks the host for that entry',
+    actual: {
+      restWithTrash,
+      askedToDeleteRest,
+      restWithoutTrash,
+      askedForRestFiles,
+    },
+    passed:
+      restWithTrash.chosen === restOfStudy.id &&
+      restWithTrash.shownText.includes(
+        ' · Archive missing; remaining files kept · rest0011',
+      ) &&
+      restWithTrash.histories === opensBeforeRest &&
+      restWithTrash.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      restWithTrash.repairNote === null &&
+      !restWithTrash.repairVisible &&
+      restWithTrash.buttonVisible &&
+      restWithTrash.ariaDisabled === null &&
+      restWithTrash.reason === null &&
+      askedToDeleteRest.deletes.length === restWithTrash.deletes.length + 1 &&
+      askedToDeleteRest.deletes.at(-1)[0] === restOfStudy.id &&
+      // Without a Trash the same entry stays chosen and offers the removal by hand in place of the delete button.
+      restWithoutTrash.chosen === restOfStudy.id &&
+      restWithoutTrash.note ===
+        'This saved study cannot be opened. This window has no Trash, so it can only be removed by hand.' &&
+      !restWithoutTrash.repairVisible &&
+      !restWithoutTrash.buttonVisible &&
+      restWithoutTrash.reason === null &&
+      restWithoutTrash.removeByHand.open === false &&
+      restWithoutTrash.removeByHand.summary === 'Remove by hand' &&
+      askedForRestFiles.deletes.length ===
+        askedToDeleteRest.deletes.length + 1 &&
+      askedForRestFiles.deletes.at(-1)[0] === restOfStudy.id &&
+      askedForRestFiles.removeByHand.note === "Listing this study's files…" &&
+      askedForRestFiles.histories === opensBeforeRest,
   })
 
   // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
@@ -3315,7 +6584,7 @@ async function check(page, options, collected) {
   // Act: the rail's content is measured against the rail's own box.
   const railStrip = await page.evaluate(() => {
     document.querySelector('[data-codebook-update-status]').innerHTML =
-      '<strong>Update failed</strong> at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.'
+      '<strong>Update failed</strong> at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. Nothing had been replaced by then.'
     const rail = document.querySelector('.right-rail')
     const railBox = rail.getBoundingClientRect()
     const groupBox = document
@@ -3345,7 +6614,7 @@ async function check(page, options, collected) {
 /**
  * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
  * @param shell - The text of `skills/codebook/reader-shell.html`.
- * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control the publisher prints.
+ * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control as the publisher prints it: the link with its label alone and, beside it, the file and line it opens, shown and, as written, as the link's description.
  * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
  * @example
  * wikiShellPage('<title>{{TITLE}}</title>') // => '<title>Overview</title>'
@@ -3371,7 +6640,7 @@ function wikiShellPage(shell) {
     OUTLINE:
       '<li><a href="#rendering">Rendering</a></li><li><a href="#preparation">createConfiguredBrowserRunPreparationForReplay</a></li>',
     OPEN_SOURCE:
-      '<p class="open-in-editor"><a href="#source">Open in VS Code</a></p>',
+      '<p class="open-in-editor"><a href="#source" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a.ts:12</span></p>',
     SETTINGS: '#settings',
   }
   return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
@@ -3395,26 +6664,24 @@ const server = createServer((request, response) => {
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. The check runs inside {@link runFlowKeepingCases}, whose text is written into the same file: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. {@link readerDomFlowText} writes the file's text, in which the check runs inside {@link runFlowKeepingCases}: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
 const flowPath = `${output}/flow.js`
 let recording = false
 try {
   await writeFile(
     flowPath,
-    `async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(
-      {
-        html: { context: studyHtml('context'), moments: studyHtml('moments') },
-        wikiShell: wikiShellPage(
-          await readFile(
-            new URL('../skills/codebook/reader-shell.html', import.meta.url),
-            'utf8',
-          ),
+    readerDomFlowText(check, {
+      html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      wikiShell: wikiShellPage(
+        await readFile(
+          new URL('../skills/codebook/reader-shell.html', import.meta.url),
+          'utf8',
         ),
-        message,
-        output,
-        url: `http://127.0.0.1:${server.address().port}/`,
-      },
-    )})\n`,
+      ),
+      message,
+      output,
+      url: `http://127.0.0.1:${server.address().port}/`,
+    }),
   )
   await command(['open', 'about:blank'], 'open')
   await command(

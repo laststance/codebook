@@ -8,6 +8,7 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import { ConfiguredBrowserRun } from './configuredBrowserRun'
+import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   CHROME_LINUX_EXECUTABLE_NAMES,
   PREREQUISITE_TIMEOUT_MS,
@@ -363,6 +364,7 @@ export async function createEnvironment(
     async createNodeTestRun(
       configuration: NodeTestConfiguration,
       record: (type: string, detail?: unknown) => unknown,
+      citedSources: ConfiguredDescriptor['sources'],
     ) {
       const prerequisites = await resolvePrerequisites()
       if (prerequisites.nodeMissing.length || !prerequisites.nodeExecutable)
@@ -382,6 +384,7 @@ export async function createEnvironment(
         configuration,
         prerequisites.nodeExecutable,
         record,
+        citedSources,
       )
     },
     dispose(): void {

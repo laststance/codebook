@@ -18,7 +18,7 @@ function libraryRoomSentence(usage: { count: number; limit?: number }): string {
 /**
  * Words every learner-facing text of a saved study's removal with the host's word for the system Trash, so the dialog, the status line and the failures agree; called by {@link StudyWorkspace} when it confirms a removal and reports its outcome.
  * @param trashName - The host's word for the system Trash.
- * @returns The dialog's title, button and detail, the in-progress line, builders for the three outcomes, and the storage line for a lock that could not be released.
+ * @returns The dialog's title, button and detail, the in-progress line, builders for the three outcomes, the answer to a request for a study's files that could not be listed, and the storage line for a lock that could not be released.
  * @example
  * studyRemovalMessages('Trash').confirmTitle // => 'Move this saved study to the Trash?'
  * studyRemovalMessages('Recycle Bin').confirmButton // => 'Move to Recycle Bin'
@@ -50,6 +50,9 @@ export function studyRemovalMessages(
       `The saved study could not be moved to the ${trashName}. Nothing was deleted. ${cause}`,
     partlyMoved: (cause: string): string =>
       `The saved study was only partly moved to the ${trashName}; delete it again to finish. ${cause}`,
+    /** What "Remove by hand" shows, in a window without a Trash, when the study's files could not be listed: what failed, the next step, and the cause as the system gave it. */
+    filesNotListed: (cause: string): string =>
+      `Codebook could not list this study's files. Press Retry storage / refresh to try again. ${cause}`,
     /** The storage line after a removal that moved everything and could not release the storage lock; the study is gone, later writes may be refused until the lock is resolved. */
     lockNotReleased: (cause: string): string =>
       `Learning storage lock could not be released after the removal: ${cause}`,

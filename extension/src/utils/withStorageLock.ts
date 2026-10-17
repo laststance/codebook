@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { PRIVATE_DIRECTORY_MODE } from '../constants'
 
 import { currentStorageOwner } from './currentStorageOwner'
+import { describeNoStorageFolder } from './describeNoStorageFolder'
 import { isSameStorageMachine } from './isSameStorageMachine'
 import { placeStorageLock } from './placeStorageLock'
 import {
@@ -16,6 +17,8 @@ import { removeStaleStorageLock } from './removeStaleStorageLock'
 import { systemErrorCode } from './systemErrorCode'
 
 const pendingWriters = new Map<string, Promise<void>>()
+/** The canonical storage directories whose leftovers this process has swept at a hold of its own ({@link withStorageLock}); a later hold of one of them does not list the directory again. */
+const sweptDirectories = new Set<string>()
 
 /**
  * Removes the storage lock when it still names the process that took it; called by {@link withStorageLock} when its write has ended.
@@ -38,13 +41,39 @@ async function releaseStorageLock(
 }
 
 /**
+ * Makes the private storage folder when it is absent and refuses a path that holds no real folder, for {@link withStorageLock} before it places the lock: Codebook writes through no link, and it replaces nothing that stands at the path.
+ * The folder's creation fails by itself where a file stands at the path (`EEXIST`) or a link that leads nowhere (`ENOENT`); the path is looked at all the same, so that both states get the sentence and not the system's text.
+ * @param directory - The private storage directory.
+ * @throws
+ * - For a link, and for anything else that is no folder: "Learning storage is not a regular directory: <path>." with what stands there and what to do ({@link describeNoStorageFolder})
+ * - What the creation threw, when the path holds a real folder or nothing after it (no right to create it, for example)
+ * @example await makeStorageFolder('/storage/learning')
+ */
+async function makeStorageFolder(directory: string): Promise<void> {
+  const refusedCreation: unknown = await mkdir(directory, {
+    recursive: true,
+    mode: PRIVATE_DIRECTORY_MODE,
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const standing = await lstat(directory).catch(() => undefined)
+  if (standing && !standing.isDirectory())
+    throw new Error(
+      describeNoStorageFolder('Learning storage', directory, standing),
+    )
+  if (refusedCreation !== undefined) throw refusedCreation
+}
+
+/**
  * Queues this process's library/recorder writes and excludes other windows with the file `writer.lock` in the storage directory; called by every writer of private storage ({@link LearningLibrary}, {@link RecordingStore}, {@link RepositoryBookStore}, the Cursor skill and catalog).
- * The lock names its owner from the moment it exists ({@link placeStorageLock}). A lock that is present stays explicit, except one whose writer is gone from this machine, which is taken over by one window at a time ({@link removeStaleStorageLock}). The holder removes what killed windows left beside the lock ({@link removeStaleStorageClaims}). The release removes the lock only while it still names this process; whatever else is in its place by then belongs to another window and stays.
+ * The lock names its owner from the moment it exists ({@link placeStorageLock}). A lock that is present stays explicit, except one whose writer is gone from this machine, which is taken over by one window at a time ({@link removeStaleStorageLock}). What killed windows left beside the lock is removed by {@link removeStaleStorageClaims} on two paths: the holder sweeps at this process's first hold of the directory, and every takeover sweeps through its claim before it removes the stale lock ({@link claimStorageLockTakeover}). A later hold of this process sweeps nothing itself, so that an ordinary write does not list the whole storage directory, and a hold that took a stale lock over lists it once, for its claim. The release removes the lock only while it still names this process; whatever else is in its place by then belongs to another window and stays.
  * @param directory - The private storage directory; it is created when absent.
  * @param operation - The write to run while the lock is held.
  * @param identity - The machine and the boot this process records in the lock and judges a present lock by; {@link currentStorageOwner} unless a test names its own.
  * @returns What `operation` returned, after the lock is released.
  * @throws
+ * - "Learning storage is not a regular directory: <path>. …" when the directory's path holds a link or something that is no folder ({@link makeStorageFolder}); nothing was written
  * - "Learning storage is locked …", naming the lock file, with the `EEXIST` system error as `cause`, while another writer holds the lock or a lock stays that cannot be judged; nothing was written
  * - What `operation` throws, and what removing this process's own lock throws for another reason than a lock that is already gone
  * @example
@@ -55,9 +84,7 @@ export async function withStorageLock<Value>(
   operation: () => Promise<Value>,
   identity?: StorageOwnerIdentity,
 ): Promise<Value> {
-  await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-  if (!(await lstat(directory)).isDirectory())
-    throw new Error('Learning storage is not a regular directory.')
+  await makeStorageFolder(directory)
   const canonical = await realpath(directory),
     path = join(canonical, 'writer.lock')
   // Reserve shared process ownership before awaiting the prior writer; path aliases join the same queue.
@@ -87,8 +114,11 @@ export async function withStorageLock<Value>(
           throw error
         })
       try {
-        // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes.
-        await removeStaleStorageClaims(path, holder).catch(() => undefined)
+        // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept at this process's first hold of the directory. A takeover has swept through its claim already.
+        if (!sweptDirectories.has(canonical)) {
+          sweptDirectories.add(canonical)
+          await removeStaleStorageClaims(path, holder).catch(() => undefined)
+        }
         return await operation()
       } finally {
         await releaseStorageLock(path, holder)

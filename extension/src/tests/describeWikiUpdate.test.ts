@@ -16,6 +16,9 @@ const wording = {
   msPerMinute: 60_000,
   recoveryRequest:
     '/codebook Recover the unfinished LLM Wiki publish for this project',
+  outsideOutputApprovalsNote:
+    'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+  refusedStepAdvice: 'If you refuse a step of the chat, press Cancel',
   freshnessLabelPlace: 'above',
 }
 
@@ -33,6 +36,50 @@ test('an idle Wiki shows no update sentence', () => {
 
   // Assert
   assert.equal(described, undefined)
+})
+
+// Value: protects=the learner who started an update from the browser, stays on the page and refuses a step of the chat in the editor; fails_when=the running line says only to approve the steps, so nothing on the page tells them that Codebook goes on watching until Cancel is pressed in the editor's notification; why_new=Cycle 0046 row 223; seam=none
+test('the running line of a VS Code update ends with what to do after a refused step, in the advice it is handed and with the watch’s own bound, also once a candidate is staged; Cursor’s line has no such sentence', () => {
+  // Arrange: a watch of 10 minutes, so the bound in the sentence is seen to be the run's.
+  const running = {
+    state: 'running',
+    startedAt: '2026-10-03T12:03:00.000Z',
+    timeoutMs: 600_000,
+    ...place,
+  } as const
+  const editorWording = {
+    ...wording,
+    formatTime: (): string => '21:03',
+    refusedStepAdvice: 'After a refused step press Cancel',
+  }
+
+  // Act
+  const requested = describeWikiUpdate(
+    { ...running, host: 'vscode', candidateStaged: false },
+    editorWording,
+  )
+  const staged = describeWikiUpdate(
+    { ...running, host: 'vscode', candidateStaged: true },
+    editorWording,
+  )
+  const inCursor = describeWikiUpdate(
+    { ...running, host: 'cursor', candidateStaged: false },
+    editorWording,
+  )
+
+  // Assert
+  assert.equal(
+    sentenceOf(requested),
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 10 minutes.',
+  )
+  assert.equal(
+    sentenceOf(staged),
+    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 10 minutes.',
+  )
+  assert.equal(
+    sentenceOf(inCursor),
+    'Updating LLM Wiki… Cursor Agent started at 21:03 and may take up to 10 minutes. Cancel it from the notification in Cursor. This site stays readable.',
+  )
 })
 
 test('a running VS Code update sends the learner to the chat and names the 15 minute watch', () => {
@@ -55,7 +102,7 @@ test('a running VS Code update sends the learner to the chat and names the 15 mi
   // Assert
   assert.deepEqual(described, {
     lead: 'Updating LLM Wiki…',
-    rest: ' The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
+    rest: ' The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
     detail: [],
     output: 'Output: .codebook/wiki',
     offerReload: false,
@@ -80,7 +127,7 @@ test('a running update whose agent has staged a candidate says a new site is bei
   // Assert
   assert.equal(
     sentenceOf(inVsCode),
-    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 15 minutes. This site stays readable.',
+    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(
     sentenceOf(inCursor),
@@ -358,7 +405,8 @@ test('a cancel that came after the site was replaced does not claim the old site
   )
 })
 
-test('a VS Code watch that ran out names its bound and sends the learner to the chat', () => {
+// Value: protects=a learner who reads the end of a VS Code watch in a notice the editor keeps on screen while the chat goes on; fails_when=the sentence says in the present that nothing has been replaced, which a later publish of the chat makes untrue, or leaves out the chat that still works and can still publish, or tells the learner to press Update LLM Wiki to start again although Codebook refuses that press while it waits for the chat; why_new=Cycle 0046 row 330 (native run in VS Code 1.140.0: the chat published two minutes after the watch's bound); seam=none
+test('a VS Code watch that ran out says what held when it stopped in words a later publish leaves true, and names a step for a chat that waits, one that still works and one that stopped', () => {
   // Arrange
   const status = {
     state: 'timed-out',
@@ -378,7 +426,7 @@ test('a VS Code watch that ran out names its bound and sends the learner to the 
   // Assert
   assert.equal(
     sentenceOf(described),
-    'No new site appeared within 15 minutes, so Codebook stopped watching at 21:18. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.',
+    'No new site appeared within 15 minutes, so Codebook stopped watching at 21:18. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
   )
 })
 
@@ -406,7 +454,8 @@ test('a Cursor update that ran past its bound says the agent was stopped and the
   )
 })
 
-test('a conflict tells the learner to move the file and update again', () => {
+// Value: protects=a learner whose VS Code chat staged a site that would overwrite a file of theirs: Codebook stopped watching, the chat was not stopped; fails_when=the sentence tells them only to move the file and press again, so they start a second chat beside the first, or says in the past of the whole update that nothing was replaced although that chat can still publish; why_new=Cycle 0046 row 343; seam=none
+test('a conflict over a learner’s file in VS Code tells the learner to move the file, names the chat that was not stopped and what to do with it, and what the press answers while Codebook waits for that chat', () => {
   // Arrange
   const status: WikiUpdateStatus = {
     state: 'conflict',
@@ -424,7 +473,7 @@ test('a conflict tells the learner to move the file and update again', () => {
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   )
   assert.deepEqual(described?.detail, [])
 })
@@ -724,6 +773,29 @@ test('a link or special file in the Wiki folder is named with the step that lets
   )
 })
 
+// Value: protects=the learner whose Wiki folder is itself a link or a file (a repository that carries `.codebook/wiki` as a link); fails_when=the refusal has no sentence, so the page shows "Update stopped: it would overwrite your own file in the Wiki folder (wiki)", or it reuses the sentence of a link inside the folder and tells the learner to move the Wiki folder out of the Wiki folder (row 185); why_new=Cycle 0046 row 185: a cause of its own; seam=none
+test('a Wiki folder that is itself a link or a file is named as the reason no update started, with the step that gives the publisher a real folder', () => {
+  // Arrange
+  const refused: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['wiki'],
+    cause: 'not-a-folder',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(refused, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): the Wiki folder itself (wiki) is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.',
+  )
+})
+
 test('a manifest Codebook cannot read is named as the reason no update started, with the chat request that recovers it', () => {
   // Arrange
   const refused: WikiUpdateStatus = {
@@ -756,6 +828,8 @@ test('a refusal Codebook wrote itself is shown whole with its next step, however
     finishedAt,
     reason,
     isCodebookSentence: true,
+    // The start check marks a refusal that names somebody who is still updating.
+    mayBeReplacedLater: true,
     site: 'kept',
     ...place,
   }
@@ -769,7 +843,7 @@ test('a refusal Codebook wrote itself is shown whole with its next step, however
   // Assert
   assert.equal(
     sentenceOf(described),
-    `Update failed at 21:10: ${reason} The last usable site is kept.`,
+    `Update failed at 21:10: ${reason} Nothing had been replaced by then.`,
   )
   assert.deepEqual(described?.detail, [])
 })
@@ -816,6 +890,106 @@ test('the running line of a VS Code update whose output lies outside the project
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
+})
+
+// Value: protects=a learner who reads a failed end or a refused start in a notice the editor keeps on screen while a chat or another window can still publish; fails_when=such an end says "The last usable site is kept.", which the later publish makes untrue, or an end after which nobody can publish loses that sentence, or the mark changes what is said of a replaced or a missing site; why_new=Cycle 0046 row 341 (met natively with row 335: the refusal said the site is kept two minutes before the chat replaced it); seam=none
+test('a failed end after which somebody can still publish says that nothing had been replaced by then, every other failed end with a kept site says that the last usable site is kept, and a replaced or a missing site is worded as before', () => {
+  // Arrange
+  const failed = {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt,
+    isCodebookSentence: true,
+    ...place,
+  } as const
+  const stillInTheChat =
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.'
+  const takenBack =
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.'
+
+  // Act
+  const sentences = [
+    describeWikiUpdate(
+      {
+        ...failed,
+        reason: stillInTheChat,
+        mayBeReplacedLater: true,
+        site: 'kept',
+      },
+      wording,
+    ),
+    describeWikiUpdate({ ...failed, reason: takenBack, site: 'kept' }, wording),
+    describeWikiUpdate(
+      {
+        ...failed,
+        reason: stillInTheChat,
+        mayBeReplacedLater: true,
+        site: 'replaced',
+      },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        ...failed,
+        reason: stillInTheChat,
+        mayBeReplacedLater: true,
+        site: 'missing',
+      },
+      wording,
+    ),
+  ].map(sentenceOf)
+
+  // Assert
+  assert.deepEqual(sentences, [
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat. Nothing had been replaced by then.',
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry. The last usable site is kept.',
+    'Update needs another run (21:10): Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat. This run replaced the site on disk.',
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+  ])
+})
+
+// Value: protects=the two hosts' sentences for a learner's file in the way: Cursor's agent is a process that has ended, VS Code's chat goes on; fails_when=Cursor's sentence names a chat that is not there, or VS Code's sentence for several files or for a site that changed during the run loses the chat and the press that Codebook answers with the wait; why_new=Cycle 0046 row 343; seam=none
+test('a conflict over learner files in Cursor keeps its sentence, and in VS Code names the chat for one file, for several and for a site that changed during the run', () => {
+  // Arrange
+  const conflict = {
+    state: 'conflict',
+    finishedAt,
+    cause: 'learner-file',
+    ...place,
+  } as const
+
+  // Act
+  const sentences = [
+    describeWikiUpdate(
+      { ...conflict, host: 'cursor', paths: ['notes/mine.md'], site: 'kept' },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        ...conflict,
+        host: 'vscode',
+        paths: ['a.html', 'b.html'],
+        site: 'kept',
+      },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        ...conflict,
+        host: 'vscode',
+        paths: ['notes/mine.md'],
+        site: 'replaced',
+      },
+      wording,
+    ),
+  ].map(sentenceOf)
+
+  // Assert
+  assert.deepEqual(sentences, [
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+    'Update stopped at 21:10: it would overwrite your own files in the Wiki folder (a.html, b.html). Nothing was replaced. Move or rename them. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). The site on disk changed during the run; check the freshness label above. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
+  ])
 })

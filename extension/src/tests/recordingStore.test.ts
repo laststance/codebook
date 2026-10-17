@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   appendFile,
+  mkdir,
   mkdtemp,
   open,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -688,4 +690,123 @@ test('a recording an earlier session left unfinished still has every frame read 
   // Assert
   assert.equal(readFrame.mock.callCount(), 1)
   assert.equal(index.entries.length, 1)
+})
+
+// Value: protects=a folder in a recording root whose name is no study id leaves recordings startable and listable (Cycle 0046 row 47); fails_when=the root's folder names are parsed as study ids, which throws and breaks the recording start's admission and the recording list together; why_new=every recording test named its folders after study ids; seam=the recording root, into which the test puts the stray folder
+test('a stray folder x in the recording root leaves a recording startable and the recordings listed', async (context) => {
+  // Arrange
+  const { directory, binding, store } = await recordingHarness(context)
+  await mkdir(join(directory, 'recordings.v2', 'x'), { recursive: true })
+  // Act
+  const start = await store.start(binding, 10).then(
+    async (writer) => {
+      await writer.finish(20)
+      return 'started'
+    },
+    (error: unknown) => String(error),
+  )
+  const listed = await store.list().then(
+    (recordings) => recordings.map((recording) => recording.studyId),
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.equal(start, 'started')
+  assert.deepEqual(listed, [binding.studyId])
+  assert.deepEqual(
+    (await readdir(join(directory, 'recordings.v2'))).sort(),
+    [binding.studyId, 'x'].sort(),
+  )
+})
+
+// Value: protects=a file in a recording root leaves recordings startable and listable, as a stray folder does (Cycle 0046 row 93); fails_when=an entry of the root that is no folder is refused for the whole root, so every run records "Recording unavailable before input" and no recording is listed, for example after the learner opened the folder in Finder, which writes a .DS_Store; why_new=row 47 put a stray folder into the root, no test a file or a link; seam=the recording root, into which the test puts the file and the link
+test('a stray .DS_Store file and a link in the recording root leave a recording startable and the recordings listed, and both stay where they are', async (context) => {
+  // Arrange: the file Finder writes, and a link named like a study id that points outside the root.
+  const { directory, binding, store } = await recordingHarness(context)
+  const root = join(directory, 'recordings.v2'),
+    outside = join(directory, 'outside'),
+    linkedStudyId = `${randomUUID()}_${randomUUID()}`
+  await mkdir(root, { recursive: true })
+  await mkdir(outside)
+  await writeFile(join(root, '.DS_Store'), 'Bud1')
+  await symlink(outside, join(root, linkedStudyId))
+  // Act
+  const start = await store.start(binding, 10).then(
+    async (writer) => {
+      await writer.finish(20)
+      return 'started'
+    },
+    (error: unknown) => String(error),
+  )
+  const listed = await store.list().then(
+    (recordings) => recordings.map((recording) => recording.studyId),
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.equal(start, 'started')
+  assert.deepEqual(listed, [binding.studyId])
+  assert.deepEqual(
+    (await readdir(root)).sort(),
+    ['.DS_Store', binding.studyId, linkedStudyId].sort(),
+  )
+  assert.equal(await readFile(join(root, '.DS_Store'), 'utf8'), 'Bud1')
+  assert.deepEqual(await readdir(outside), [])
+})
+
+// Value: protects=a learner who keeps a folder of Codebook's recordings elsewhere behind a link (a larger disk), and the agent that reads the library; fails_when=every recording, every replay and the library's listing end with "Recording root is not a regular directory.", which names no path, while the folder lies in the editor's storage where nobody finds it, and the pane's own step (Retry storage) reads the same link again; or a step the sentence names does not end in a listing; why_new=Cycle 0046 row 311: the three places that refuse a recording root name its path and what to do; seam=none, the real links (junctions on Windows, which every user may create)
+test('a link where a folder of the recordings should be is refused by the listing and by a reading with the folder’s path, what stands there and what to do, at each of the three places that look at a root: after the learner puts the folder in the link’s place, or removes the link, the listing answers and a reading says that no recording is saved', async (context) => {
+  // Arrange: three stores. In the first the root a listing creates is a link, in the second another root a listing looks at, in the third the first root a reading looks at.
+  const created = await recordingHarness(context),
+    lookedAt = await recordingHarness(context),
+    read = await recordingHarness(context)
+  const linkAtTheCreatedRoot = join(created.directory, 'recordings.v2'),
+    linkAtAnotherRoot = join(lookedAt.directory, 'recordings.v1'),
+    linkAtTheReadRoot = join(read.directory, 'recordings.v3')
+  for (const [directory, link] of [
+    [created.directory, linkAtTheCreatedRoot],
+    [lookedAt.directory, linkAtAnotherRoot],
+    [read.directory, linkAtTheReadRoot],
+  ] as const) {
+    await mkdir(join(directory, 'kept-elsewhere'), { recursive: true })
+    await symlink(join(directory, 'kept-elsewhere'), link, 'junction')
+  }
+  const answerOf = (calling: Promise<unknown>): Promise<string> =>
+    calling.then(
+      (answer) => JSON.stringify(answer),
+      (error: Error) => error.message,
+    )
+
+  // Act
+  const refusals = {
+    createdRoot: await answerOf(created.store.list()),
+    anotherRoot: await answerOf(lookedAt.store.list()),
+    readRoot: await answerOf(read.store.read(read.binding.studyId)),
+  }
+  // The sentences are followed to the letter: the folder takes the link's place, or the link is removed.
+  await rm(linkAtTheCreatedRoot)
+  await rename(join(created.directory, 'kept-elsewhere'), linkAtTheCreatedRoot)
+  await rm(linkAtAnotherRoot)
+  await rm(linkAtTheReadRoot)
+  const afterwards = {
+    createdRoot: await answerOf(created.store.list()),
+    anotherRoot: await answerOf(lookedAt.store.list()),
+    readRoot: await answerOf(read.store.read(read.binding.studyId)),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, afterwards },
+    {
+      refusals: {
+        createdRoot: `Recording root is not a regular directory: ${linkAtTheCreatedRoot}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+        anotherRoot: `Recording root is not a regular directory: ${linkAtAnotherRoot}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+        readRoot: `Recording root is not a regular directory: ${linkAtTheReadRoot}. That path is a link, and Codebook writes through no link. Put the folder it points to in the link's place, or remove the link (Codebook then makes an empty folder there), then try again.`,
+      },
+      afterwards: {
+        createdRoot: '[]',
+        anotherRoot: '[]',
+        readRoot:
+          'No saved recording is available for this study. Open its available study history or select another recording.',
+      },
+    },
+  )
 })

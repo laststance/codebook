@@ -1,0 +1,286 @@
+import assert from 'node:assert/strict'
+import * as realFileSystem from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, relative, resolve, sep } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import type * as lookModule from '../utils/isFolderOfItsOwn'
+import type * as removalModule from '../utils/removeWithoutFollowing'
+import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
+
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { loadModule } from './utils/loadModule'
+
+/**
+ * Makes a temporary folder that is removed with the test, holding a folder `kept` with a file and a subfolder with a file: what a link of a test leads to.
+ * @example const folder = await folderWithKeptFiles(context) // => '/tmp/codebook-remove-x', with kept/notes.txt and kept/photos/holiday.txt
+ */
+async function folderWithKeptFiles(context: TestContext): Promise<string> {
+  const folder = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-remove-')),
+  )
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  await mkdir(join(folder, 'kept', 'photos'), { recursive: true })
+  await writeFile(join(folder, 'kept', 'notes.txt'), 'kept')
+  await writeFile(join(folder, 'kept', 'photos', 'holiday.txt'), 'kept')
+  return folder
+}
+
+/**
+ * Loads the walk on a file system of a test's own: the walk and the look it asks before it lists a directory ({@link lookModule.isFolderOfItsOwn}) both see that file system.
+ * @param fileSystem - The stand-in for `node:fs/promises`.
+ * @returns The walk to call.
+ * @example
+ * const removeWhereLinksResist = await loadWalkOn(fileSystemWhoseLinksResistRemoval().fileSystem)
+ */
+async function loadWalkOn(
+  fileSystem: Record<string, unknown>,
+): Promise<typeof removeWithoutFollowing> {
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
+    { 'node:fs/promises': fileSystem },
+  )
+  const walk = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    { 'node:fs/promises': fileSystem, './isFolderOfItsOwn': look },
+  )
+  return walk.removeWithoutFollowing
+}
+
+/** Lists every file, folder and link below a folder as `/`-separated paths, sorted; a link is named and not followed. @example await entriesBelow('/tmp/x') // => ['kept', 'kept/notes.txt'] */
+async function entriesBelow(folder: string): Promise<string[]> {
+  return (await readdir(folder, { recursive: true, withFileTypes: true }))
+    .map((entry) =>
+      relative(folder, join(entry.parentPath, entry.name)).split(sep).join('/'),
+    )
+    .toSorted()
+}
+
+// Value: protects=the learner's files behind a link that a repository puts at a path Codebook removes (the Wiki update marker's paths); fails_when=the removal looks at an entry through a link, or lists below one, so the folder a link leads to is emptied; why_new=Cycle 0046 row 187: the removal is a walk of Codebook's own instead of the recursive removal of Node.js; seam=none (a junction on Windows, which needs no right)
+test('a link is removed as a name, at the path itself and inside a folder that is removed with its content, and the folder it leads to keeps every file', async (context) => {
+  // Arrange: a link to the kept folder, and a folder that holds a file, a subfolder and another link to the kept folder.
+  const folder = await folderWithKeptFiles(context)
+  await symlink(join(folder, 'kept'), join(folder, 'a-link'), 'junction')
+  await mkdir(join(folder, 'removed', 'deeper'), { recursive: true })
+  await writeFile(join(folder, 'removed', 'deeper', 'a-file'), 'x')
+  await symlink(
+    join(folder, 'kept'),
+    join(folder, 'removed', 'a-link-inside'),
+    'junction',
+  )
+
+  // Act
+  await removeWithoutFollowing(join(folder, 'a-link'))
+  await removeWithoutFollowing(join(folder, 'removed'))
+
+  // Assert
+  assert.deepEqual(await entriesBelow(folder), [
+    'kept',
+    'kept/notes.txt',
+    'kept/photos',
+    'kept/photos/holiday.txt',
+  ])
+})
+
+// Value: protects=the callers that remove an entry which another window may remove in the same moment (a claim, a prepared file); fails_when=a path that holds nothing, or a single file, is an error or is left; why_new=Cycle 0046 row 187: the walk replaces `rm` with `force`; seam=none
+test('a file is removed, and a path that holds nothing is no error', async (context) => {
+  // Arrange
+  const folder = await folderWithKeptFiles(context)
+  await writeFile(join(folder, 'a-file'), 'x')
+
+  // Act
+  await removeWithoutFollowing(join(folder, 'a-file'))
+  await removeWithoutFollowing(join(folder, 'nothing-here'))
+
+  // Assert
+  assert.deepEqual(await readdir(folder), ['kept'])
+})
+
+// Value: protects=the folder a link leads to when the system refuses to remove the link (on Windows `EPERM` for a link this user may not delete): the recursive removal of Node.js then looks again with `stat`, which follows the link, and can empty the folder behind it; fails_when=the removal tries another way after a refused unlink, or lists below a link at all; why_new=Cycle 0046 row 187; seam=a file system whose unlink of a link answers EPERM
+test('a link the system refuses to unlink fails the removal with that error and the link’s own name: nothing is listed, and the folder it leads to keeps every file', async (context) => {
+  // Arrange
+  const folder = await folderWithKeptFiles(context)
+  const linkPath = join(folder, 'a-link')
+  await symlink(join(folder, 'kept'), linkPath, 'junction')
+  const resisting = fileSystemWhoseLinksResistRemoval()
+  const removeWhereLinksResist = await loadWalkOn(resisting.fileSystem)
+
+  // Act
+  const outcome = await removeWhereLinksResist(linkPath).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcome,
+      listed: resisting.listed,
+      isTheLinkStillThere: (await lstat(linkPath)).isSymbolicLink(),
+      kept: await entriesBelow(join(folder, 'kept')),
+    },
+    {
+      outcome: `EPERM: unlink '${linkPath}'`,
+      listed: [],
+      isTheLinkStillThere: true,
+      kept: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=the folder behind a link that lies inside a folder Codebook removes with its content (a prepared claim folder a repository supplies); fails_when=after the refused unlink of the link the walk goes on, lists below the link or removes the folder another way; why_new=Cycle 0046 row 187; seam=a file system whose unlink of a link answers EPERM
+test('a folder that holds a link the system refuses to unlink is listed itself and never below the link: the removal fails with the link’s error, and the folder the link leads to keeps every file', async (context) => {
+  // Arrange
+  const folder = await folderWithKeptFiles(context)
+  const removedPath = join(folder, 'removed')
+  await mkdir(removedPath)
+  await symlink(
+    join(folder, 'kept'),
+    join(removedPath, 'a-link-inside'),
+    'junction',
+  )
+  const resisting = fileSystemWhoseLinksResistRemoval()
+  const removeWhereLinksResist = await loadWalkOn(resisting.fileSystem)
+
+  // Act
+  const outcome = await removeWhereLinksResist(removedPath).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcome,
+      listed: resisting.listed,
+      kept: await entriesBelow(join(folder, 'kept')),
+    },
+    {
+      outcome: `EPERM: unlink '${join(removedPath, 'a-link-inside')}'`,
+      listed: [removedPath],
+      kept: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=the folder behind an entry that the look without following calls a directory although it leads elsewhere (on Windows a junction whose target is a volume: the file system layer of Node.js reports only junctions to a drive path as links); fails_when=the walk lists what the look calls a directory before it asks the system to remove it, so every file of the folder behind the entry is unlinked (row 227); why_new=Cycle 0046 row 227: the removal of Node.js that the walk replaced asked `rmdir` first; seam=a file system whose lstat calls a link a directory and whose rmdir removes it as a name, as Windows removes a junction
+test('an entry the look calls a directory although it leads elsewhere is removed as a name where the system removes it so: nothing is listed, and the folder it leads to keeps every file', async (context) => {
+  // Arrange
+  const folder = await folderWithKeptFiles(context)
+  const linkPath = join(folder, 'a-link')
+  await symlink(join(folder, 'kept'), linkPath, 'junction')
+  const resisting = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+    rmdirOfALink: 'removes it',
+  })
+  const removeWhereTheLookIsWrong = await loadWalkOn(resisting.fileSystem)
+
+  // Act
+  const outcome = await removeWhereTheLookIsWrong(linkPath).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, listed: resisting.listed, left: await entriesBelow(folder) },
+    {
+      outcome: 'removed',
+      listed: [],
+      left: [
+        'kept',
+        'kept/notes.txt',
+        'kept/photos',
+        'kept/photos/holiday.txt',
+      ],
+    },
+  )
+})
+
+// Value: protects=the folder behind such an entry on a system that answers "not empty" when asked to remove it: that answer alone must not open the folder behind it; fails_when=the walk lists every entry whose removal answers "not empty", without asking whether the entry is its parent's own, so the folder it leads to is emptied (row 227); why_new=Cycle 0046 row 227: a directory is listed only as its parent's own entry; seam=a file system whose lstat calls a link a directory and whose rmdir of it answers ENOTEMPTY
+test('an entry the look calls a directory although it leads elsewhere, and that the system calls not empty, fails the removal with that answer and its own name: nothing is listed, and the folder it leads to keeps every file', async (context) => {
+  // Arrange
+  const folder = await folderWithKeptFiles(context)
+  const linkPath = join(folder, 'a-link')
+  await symlink(join(folder, 'kept'), linkPath, 'junction')
+  const resisting = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const removeWhereTheLookIsWrong = await loadWalkOn(resisting.fileSystem)
+
+  // Act
+  const outcome = await removeWhereTheLookIsWrong(linkPath).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcome,
+      listed: resisting.listed,
+      isTheLinkStillThere: (await lstat(linkPath)).isSymbolicLink(),
+      kept: await entriesBelow(join(folder, 'kept')),
+    },
+    {
+      outcome: `ENOTEMPTY: rmdir '${linkPath}'`,
+      listed: [],
+      isTheLinkStillThere: true,
+      kept: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=the start of an update and the takeover of a lock when another window removes the same folder in the same moment (two windows that clear one killed window's prepared claim); fails_when=a directory that is gone when the walk comes to list it, or to remove it, fails the walk with ENOENT instead of counting as removed (row 229); why_new=Cycle 0046 row 229: the listing was the one step of the walk that did not pass over a missing entry; seam=a file system on which another window removes the folder right before the walk's listing, and one on which it does so right before the walk's first removal
+test('a folder that another window removes while the walk is at it counts as removed: the walk ends without an error when the folder is gone at its listing, and when it is gone at its removal', async (context) => {
+  // Arrange: two folders with a file each; the other window removes the first right before the walk lists it and the second right before the walk asks the system to remove it.
+  const folder = await folderWithKeptFiles(context)
+  const goneAtTheListing = join(folder, 'gone-at-the-listing')
+  const goneAtTheRemoval = join(folder, 'gone-at-the-removal')
+  for (const path of [goneAtTheListing, goneAtTheRemoval]) {
+    await mkdir(path)
+    await writeFile(join(path, 'a-file'), 'x')
+  }
+  const removeBesideAnotherWindow = await loadWalkOn({
+    ...realFileSystem,
+    readdir: async (path: string) => {
+      if (path === goneAtTheListing) await rm(path, { recursive: true })
+      return readdir(path)
+    },
+    rmdir: async (path: string) => {
+      if (path === goneAtTheRemoval) await rm(path, { recursive: true })
+      await realFileSystem.rmdir(path)
+    },
+  })
+
+  // Act
+  const outcomes = {
+    goneAtTheListing: await removeBesideAnotherWindow(goneAtTheListing).then(
+      () => 'removed',
+      (error: Error) => error.message,
+    ),
+    goneAtTheRemoval: await removeBesideAnotherWindow(goneAtTheRemoval).then(
+      () => 'removed',
+      (error: Error) => error.message,
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { outcomes, left: await readdir(folder) },
+    {
+      outcomes: { goneAtTheListing: 'removed', goneAtTheRemoval: 'removed' },
+      left: ['kept'],
+    },
+  )
+})

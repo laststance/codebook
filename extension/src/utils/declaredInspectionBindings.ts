@@ -1,3 +1,5 @@
+import { sourceLineCode } from './declarationStatementEndLine'
+
 /** How much one character changes the depth of a destructuring pattern: an opening bracket goes one deeper, a closing one back out. */
 const PATTERN_DEPTH_STEP: Readonly<Record<string, number>> = {
   '{': 1,
@@ -119,17 +121,19 @@ function declarationHead(lineText: string): string | undefined {
  * @param inspectionPaths - The inspections' paths; the first segment of each is the binding it reads.
  * @returns
  * - The bindings the first `const` or `let` declaration with an initializer on the line binds, each once, in the order of the paths
- * - `[]` when the line declares none of them, also for a `var` (hoisted and readable as undefined) and for a line that only reads a name
+ * - `[]` when the line declares none of them, also for a `var` (hoisted and readable as undefined), for a line that only reads a name and for a declaration that stands only in a comment or a string ({@link sourceLineCode})
  * @example
  * declaredInspectionBindings('const { user, id: userId } = await load()', ['userId', 'user.email']) // => ['userId', 'user']
  * declaredInspectionBindings('return user', ['user'])                                            // => []
+ * declaredInspectionBindings('count += 1; // Previously: const count = initial', ['count'])     // => []
  */
 export function declaredInspectionBindings(
   lineText: string,
   inspectionPaths: readonly string[],
 ): string[] {
   // The head of the declaration ends at its initializer; a `var` is hoisted and readable as undefined, so it is no case.
-  const head = declarationHead(lineText)
+  // Only the line's code is searched: a `const` or `let` in a comment or a string declares nothing.
+  const head = declarationHead(sourceLineCode(lineText))
   if (!head) return []
   const names = declaredNames(head)
   const bindings = inspectionPaths.map((path) => path.split('.')[0] ?? '')

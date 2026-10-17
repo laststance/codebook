@@ -53,6 +53,20 @@ test('the system Trash is called Recycle Bin on Windows and Trash elsewhere', ()
   )
 })
 
+// Value: protects=an agent that reads a run whose saved study was removed by hand (a window without a Trash offers nothing else) being told what Codebook found, not that the study went to a Trash; fails_when=a study that left the library without this window's delete has no sentence of its own and the agent reads "The learner moved this saved study to the Trash." in a window that has none; why_new=Cycle 0046 row 201; seam=none
+test('a run whose study left the library without this window’s delete is told that the archive is gone and how, and a run whose study was deleted here is told of the Trash', () => {
+  // Arrange / Act
+  const removedOutsideThisDelete = historyExclusionReason('archive-removed'),
+    deletedHere = historyExclusionReason('removed-by-learner', 'Trash')
+
+  // Assert
+  assert.equal(
+    removedOutsideThisDelete,
+    "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+  )
+  assert.equal(deletedHere, 'The learner moved this saved study to the Trash.')
+})
+
 test('a run that is still awaiting its admission, or is not excluded, has no exclusion reason', () => {
   // Arrange / Act / Assert
   assert.equal(historyExclusionReason('awaiting-admission'), undefined)
@@ -89,7 +103,7 @@ test('a save or a recording refused by a full library in a window without a Tras
   )
   assert.equal(
     fullLibraryMessage('save', 256, 'no-trash'),
-    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Saved studies lists the files of a chosen study for removal by hand; remove them, then retry storage. Existing learning was kept.',
+    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Choose a study in Saved studies and open Remove by hand to list its files; remove them, then retry storage. Existing learning was kept.',
   )
   assert.equal(
     fullLibraryMessage('recording', 64, 'no-trash'),
@@ -97,6 +111,6 @@ test('a save or a recording refused by a full library in a window without a Tras
   )
   assert.equal(
     fullLibraryMessage('recording', 256, 'no-trash'),
-    'Recording library is full at its maximum of 256 recordings, and this window has no Trash, so Codebook cannot delete a saved study here. Saved studies lists the files of a chosen study that has a recording for removal by hand; remove them before starting another session. Existing recordings were kept.',
+    'Recording library is full at its maximum of 256 recordings, and this window has no Trash, so Codebook cannot delete a saved study here. Choose a study that has a recording in Saved studies and open Remove by hand to list its files; remove them before starting another session. Existing recordings were kept.',
   )
 })

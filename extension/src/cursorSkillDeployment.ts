@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { BigIntStats } from 'node:fs'
 import {
   link,
   lstat,
   mkdir,
   open,
   readdir,
-  readFile,
   rename,
   rmdir,
   unlink,
+  type FileHandle,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -23,8 +24,29 @@ import {
   PRIVATE_FILE_MODE,
 } from './constants'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { REMOVE_MANAGED_CURSOR_SKILL_COMMAND } from './utils/cursorCatalogCleanupNotice'
+import { describeRefusedLinkBack } from './utils/describeRefusedLinkBack'
+import {
+  ALLOW_LINKS_THEN_SET_UP_AGAIN,
+  describeRefusedSkillLink,
+} from './utils/describeRefusedSkillLink'
+import { describeUnopenedFile } from './utils/describeUnopenedFile'
+import { describeUnopenedMovedFile } from './utils/describeUnopenedMovedFile'
+import { dropSecondNameOfMovedFile } from './utils/dropSecondNameOfMovedFile'
+import { dropSecondNameOfOneFile } from './utils/dropSecondNameOfOneFile'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
+import { isRecordedFileId } from './utils/isRecordedFileId'
+import { isSameFileId } from './utils/isSameFileId'
+import { openWithoutFollowing } from './utils/openWithoutFollowing'
+import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
+import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './utils/startOverBy'
+import {
+  PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
+  REMOVE_LINK_OR_RENAME_IT,
+  stepPastNoRealFolder,
+} from './utils/stepPastNoRealFolder'
 import { systemErrorCode } from './utils/systemErrorCode'
+import { unopenedFileCode } from './utils/unopenedFileCode'
 import { withStorageLock } from './utils/withStorageLock'
 
 const SKILL_RELATIVE_PATH = join('skills', 'codebook', 'SKILL.md')
@@ -35,8 +57,70 @@ const WIKI_PUBLISHER_RELATIVE_PATH = join(
 )
 const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
 /** What a reconnect answers for a skill it will not touch; {@link verifyManagedCursorSkill} decides it under the storage lock. */
-const CHANGED_SKILL_REFUSAL =
-  'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
+const CHANGED_SKILL_REFUSAL = (skillPath: string): string =>
+  `Cursor skill is missing or was changed: ${skillPath}. Run ${SET_UP_AI_CHAT_COMMAND}; Codebook will not overwrite another edit.`
+
+/** The step that lets a setup finish while a file that is not Codebook's stands at the skill's path: setup dropped its record when it refused, so the file is not adopted again, whatever is done to it. On a first install the skill folder must be empty, which is why the sentence says "out of its folder" and not "rename". */
+const FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN = `Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What setup answers when a file that is not the installed skill stands at the skill's path while setup runs: a file that took the path in the instant before a first setup's link, or one that replaced the installed skill during an update. The file is the learner's and stays in place. */
+const SKILL_CHANGED_DURING_SETUP = (skillPath: string): string =>
+  `The Cursor skill changed during setup: ${skillPath}. Codebook preserved it. ${FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN}`
+
+/** What setup answers when the installed skill was edited in place while an update ran: the receipt still names that file, so the next setup adopts it again once its content is back, and installs anew when the file is gone. */
+const SKILL_EDITED_DURING_SETUP = (skillPath: string): string =>
+  `The Cursor skill was edited during setup: ${skillPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What setup answers when the installed skill was taken away while an update ran: nothing is left to preserve, and the next setup installs the skill again. */
+const SKILL_REMOVED_DURING_SETUP = (skillPath: string): string =>
+  `The Cursor skill was removed while setup ran: ${skillPath}. Codebook changed no file. Run ${SET_UP_AI_CHAT_COMMAND} again to install it.`
+
+/** What setup answers when the skill it had just published changed before setup compared it: the receipt does not name that file (none on a first install, the previous skill on an update), so it is not adopted again. */
+const PUBLISHED_SKILL_CHANGED_DURING_SETUP = (skillPath: string): string =>
+  `The published Cursor skill changed during setup: ${skillPath}. Codebook preserved it. ${FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN}`
+
+/** How a removal that found a file of the learner at the skill's path ends: Codebook removes no file that is not its own, and once the learner took the file away the removal has nothing left to remove and finishes. */
+const FINISH_REMOVAL_WITHOUT_THAT_FILE = `To finish the removal, delete or rename that file, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`
+
+/** What removal answers when the skill file changed between its check and its move away: the file is back in place and is the learner's now. */
+const SKILL_CHANGED_DURING_REMOVAL = (skillPath: string): string =>
+  `The Cursor skill changed during removal: ${skillPath}. Codebook did not remove it and left it in place. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
+
+/** What setup answers for the installed skill file with other bytes than Codebook wrote (the same file, edited in place): setup leaves it alone, adopts it again once its content is back, and installs its skill anew when the file is gone from its path. */
+const SKILL_EDITED_AFTER_SETUP = (skillPath: string): string =>
+  `The managed Cursor skill was edited after setup: ${skillPath}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What setup answers for a file that took the place of the skill Codebook installed (another inode): setup leaves it alone, and installs its skill again once the path is free. */
+const SKILL_REPLACED_AFTER_SETUP = (skillPath: string): string =>
+  `The managed Cursor skill was replaced after setup: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What setup answers for the skill file a removal had taken away when it stands at the skill's path again (moved back by hand): the receipt says removed, so setup does not adopt it, and installs its skill once the path is free. */
+const SKILL_BACK_AFTER_REMOVAL = (skillPath: string): string =>
+  `A codebook skill appeared after managed removal: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What removal answers for a file that took the place of the skill Codebook installed. */
+const SKILL_REPLACED_BEFORE_REMOVAL = (skillPath: string): string =>
+  `The Cursor skill was replaced after setup: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
+
+/** What removal answers for the installed skill file with other bytes than Codebook wrote. */
+const SKILL_EDITED_BEFORE_REMOVAL = (skillPath: string): string =>
+  `The Cursor skill was edited after setup: ${skillPath}. Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
+
+/** What removal answers while a setup's record stands in Codebook's storage: only a setup settles what that setup had staged or moved, so the sentence names the setup first and the removal, which the learner asked for, after it. */
+const SETUP_INTERRUPTED_BEFORE_REMOVAL = `Cursor skill setup is interrupted. Run ${SET_UP_AI_CHAT_COMMAND} to recover, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`
+
+/**
+ * Says how a setup finishes while a skill folder that Codebook has no receipt for stands under the name `codebook`; the end of both refusals of {@link deploySkill} for such a folder. What is in it is the learner's: the sentence says how to keep it beside Codebook's skill, how to make room without it, and that Codebook leaves it alone where it stays, never to delete it.
+ * @param folder - The folder as the sentence names it: "that folder" where the refusal named its path before, or "its folder <path>".
+ * @returns The sentences, the first with its capital.
+ * @example makeRoomForCodebooksSkill('that folder') // => "To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill."
+ */
+function makeRoomForCodebooksSkill(folder: string): string {
+  return `To keep it beside Codebook's skill, rename ${folder}; to make room without it, move the folder elsewhere. Then run ${SET_UP_AI_CHAT_COMMAND} again. If you keep it where it is, Codebook leaves it alone and installs no skill.`
+}
+
+/** The name of a file a setup stages its new skill in, beside the skill folder ({@link writeStagedBytes}); a setup's record is valid only with such a name, and only such a name is looked at as a staged file no record names ({@link removeUnrecordedStages}). */
+const STAGED_NAME_PATTERN = /^\.codebook-stage-[a-f0-9-]+\.tmp$/
 
 /** The publisher a deployed skill names, as its receipt records it: the deploying installation's `publish-wiki.mjs`. Absent for a skill that names no publisher and in a record written before the path was recorded. */
 type RecordedPublisher = { publisherPath?: string }
@@ -48,8 +132,8 @@ type SkillReceipt = {
   skillVersion: string
   extensionVersion: string
   installed: boolean
-  device: number
-  inode: number
+  device: RecordedFileId
+  inode: RecordedFileId
 } & RecordedPublisher
 
 type PendingSkill = {
@@ -59,8 +143,8 @@ type PendingSkill = {
   skillSha256: string
   skillVersion: string
   extensionVersion: string
-  device: number
-  inode: number
+  device: RecordedFileId
+  inode: RecordedFileId
   previous?: SkillReceipt
   displacedPath?: string
   retiredPath?: string
@@ -80,10 +164,28 @@ type ManagedSkillState =
   | { kind: 'current' | 'newer' | 'outdated'; receipt: SkillReceipt }
 
 export type CursorSkillResult = {
-  status: 'installed' | 'updated' | 'restored' | 'current' | 'removed'
+  /** What the setup or the reconnect did. */
+  status: 'installed' | 'updated' | 'restored' | 'current'
   path: string
   sha256: string
   version: string
+}
+
+/**
+ * How a removal ended for the skill; the removal command's notices word each ({@link cursorRemovalNotice}, {@link cursorCatalogCleanupNotice}).
+ * - `removed`: this removal took Codebook's skill away, or found its file or folder already gone and recorded that
+ * - `already-removed`: the receipt says an earlier removal took the skill away; nothing was left to do for the skill
+ * - `not-installed`: no receipt is there, so Codebook knows no skill as its own (it was never set up here, or the learner deleted the receipt as an invalid record's sentence says); no file was changed
+ */
+export type CursorSkillRemovalStatus =
+  'removed' | 'already-removed' | 'not-installed'
+
+/** What {@link removeManagedCursorSkill} answers: how the removal ended, the managed skill path, and the digest and version of the skill the receipt named (absent without a receipt). */
+export type CursorSkillRemoval = {
+  status: CursorSkillRemovalStatus
+  path: string
+  sha256?: string
+  version?: string
 }
 
 /** Classifies absent-file reads during {@link deployCursorSkill} without masking other I/O failures. @param error - File operation failure. @returns True only for `ENOENT`. @example isMissing(Object.assign(new Error('missing'), { code: 'ENOENT' })) // => true */
@@ -96,57 +198,383 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty. @param path - Exact file or directory path. @returns Its status, or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
-async function inspectedPath(
-  path: string,
-): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty. @param path - Exact file or directory path. @returns Its status with exact numbers (an inode number can be more than a number holds), or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
+async function inspectedPath(path: string): Promise<BigIntStats | undefined> {
   try {
-    return await lstat(path)
+    return await lstat(path, { bigint: true })
   } catch (error) {
     if (isMissing(error)) return undefined
     throw error
   }
 }
 
-/** Reads a regular skill file for {@link deployCursorSkill} without accepting symlink targets. @param path - Exact file path. @returns Its bytes, or undefined when absent. @example await regularFile('/missing/SKILL.md') // => undefined */
-async function regularFile(path: string): Promise<Buffer | undefined> {
-  const status = await inspectedPath(path)
-  if (!status) return undefined
-  if (!status.isFile() || status.isSymbolicLink())
-    throw new Error(
-      `Codebook will not change a non-regular skill file: ${path}`,
-    )
-  return readFile(path)
+/** A file of the skill setup as one open file showed it: its bytes, and its status with exact numbers. Both are of one file, also when the path comes to name another file meanwhile. */
+type SkillFileRead = { kind: 'read'; bytes: Buffer; status: BigIntStats }
+
+/** Why a path of the skill setup was not read: it holds nothing, it holds a link, it holds a pipe, a device or a folder, or another file took it between the look at it and its open (only where the system's open cannot refuse a link, as on Windows). */
+type UnreadSkillFileKind = 'missing' | 'link' | 'not-regular' | 'replaced'
+
+/** What {@link lookAtSkillFile} found at a path. */
+type SkillFileLook = SkillFileRead | { kind: UnreadSkillFileKind }
+
+/** The kind of a path that {@link openWithoutFollowing} did not open, by the code of its error. */
+const UNREAD_KIND_BY_OPEN_CODE: ReadonlyMap<string, UnreadSkillFileKind> =
+  new Map([
+    ['ENOENT', 'missing'],
+    ['ELOOP', 'link'],
+    ['ENOTREG', 'not-regular'],
+    ['EREPLACED', 'replaced'],
+  ])
+
+/** The sentences for a path Codebook did not read, by what the path holds. */
+type UnreadSkillFileSentences = Record<
+  Exclude<UnreadSkillFileKind, 'missing'>,
+  (path: string) => string
+>
+
+/** What a setup or a reconnect answers for a path another file took while Codebook opened it (only where the system's open cannot refuse a link): nothing was read, and the same command reads the path as it stands then. */
+const ANOTHER_FILE_TOOK_THE_PLACE = (path: string): string =>
+  `Another file took the place of ${path} while Codebook opened it, so it was not read. Run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What a setup or a reconnect answers for the managed skill path when it did not read it: each sentence names the step after which a setup installs the skill again (the receipt is there, so a path that holds nothing is restored). */
+const UNREAD_SKILL_SENTENCES_OF_SETUP: UnreadSkillFileSentences = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. Remove the link, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
+  'not-regular': (path) =>
+    `Codebook will not change a non-regular skill file: ${path}. Delete or rename what stands at that path, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
+  replaced: ANOTHER_FILE_TOOK_THE_PLACE,
 }
 
-/** Creates or verifies a private parent when {@link deployCursorSkill} prepares its owned paths. @param path - Directory to inspect. @returns After a regular directory exists. @example await ensureDirectory('/private/cursor-skill') // => resolves */
-async function ensureDirectory(path: string): Promise<void> {
-  const existing = await inspectedPath(path)
-  if (!existing) await mkdir(path, { mode: PRIVATE_DIRECTORY_MODE })
-  const status = await lstat(path)
-  if (!status.isDirectory() || status.isSymbolicLink())
-    throw new Error(
-      `Codebook will not follow a non-directory skill path: ${path}`,
-    )
+/** How a refusal ends for a file of the installation itself (the bundled skill, the Wiki publisher), also one that is missing or invalid: the learner does not repair such a file, the extension is installed again, in the words of the README's section "Install the private VSIX" ("install the desired verified VSIX"), and the setup is run in the reopened window. */
+const INSTALL_AGAIN_THEN_SET_UP_AGAIN = `That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** What the learner reads for a file of the installation itself (the bundled skill, the Wiki publisher) that Codebook did not read: each sentence names the path, and a link and what is no regular file end with installing the extension again ({@link INSTALL_AGAIN_THEN_SET_UP_AGAIN}). */
+const UNREAD_INSTALLED_FILE_SENTENCES: UnreadSkillFileSentences = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
+  'not-regular': (path) =>
+    `Codebook will not change a non-regular skill file: ${path}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
+  replaced: ANOTHER_FILE_TOOK_THE_PLACE,
 }
 
-/** Rejects redirected skill parents before {@link deployCursorSkill} reads or replaces a body. @param homeRoot - Cursor user home. @returns After all parents are regular directories. @example await assertSkillParents('/home/user') // => resolves */
-async function assertSkillParents(homeRoot: string): Promise<void> {
-  for (const path of [
-    join(homeRoot, '.cursor'),
-    join(homeRoot, '.cursor', 'skills'),
-    join(homeRoot, '.cursor', 'skills', 'codebook'),
-  ]) {
-    const status = await inspectedPath(path)
-    if (!status?.isDirectory() || status.isSymbolicLink())
-      throw new Error(
-        `Codebook will not follow a missing or redirected skill directory: ${path}`,
-      )
+/** What the learner reads for the copy of the installed skill that Codebook keeps in its own storage when an update did not read it: each sentence names the path and the step after which a setup updates the skill (a path that holds nothing gets the copy anew). */
+const UNREAD_SKILL_COPY_SENTENCES: UnreadSkillFileSentences = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. Put the file itself at that path or remove the link, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
+  'not-regular': UNREAD_SKILL_SENTENCES_OF_SETUP['not-regular'],
+  replaced: ANOTHER_FILE_TOOK_THE_PLACE,
+}
+
+/** What a removal answers for the managed skill path when it did not read it: each sentence names the step after which the removal finishes, and the removal as the command to run again. */
+const UNREAD_SKILL_SENTENCES_OF_REMOVAL: UnreadSkillFileSentences = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. To finish the removal, remove the link, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`,
+  'not-regular': (path) =>
+    `Codebook will not change a non-regular skill file: ${path}. To finish the removal, delete or rename what stands at that path, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`,
+  replaced: (path) =>
+    `Another file took the place of ${path} while Codebook opened it, so it was not read. Run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`,
+}
+
+/**
+ * A file of the skill setup that exists and that this user could not open at that moment; thrown by {@link lookAtSkillFile}, which every read of the setup goes through, and worded at the command's entry with the command that was run ({@link wordingUnopenedFiles}).
+ * It is an end of the command and no answer: a check that asks "is this the file Codebook wrote?" must not hear "no" for a file nobody could look at.
+ * @example throw new UnopenedSkillFile('/home/user/.cursor/skills/codebook/SKILL.md', 'EBUSY', error)
+ */
+class UnopenedSkillFile extends Error {
+  /**
+   * @param path - The file that could not be opened.
+   * @param code - The system's code for the refused open ({@link unopenedFileCode}).
+   * @param cause - What the open threw.
+   */
+  constructor(
+    readonly path: string,
+    readonly code: string,
+    cause: unknown,
+  ) {
+    super(`${code}: the file could not be opened: ${path}`, { cause })
   }
 }
 
-/** Validates a private owner receipt before {@link deployCursorSkill} trusts prior installation. @param value - Parsed journal data. @param targetPath - Expected managed skill path. @returns A validated receipt. @example parseReceipt(record, '/home/user/.cursor/skills/codebook/SKILL.md') // => SkillReceipt */
-function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
+/**
+ * Runs a command of the skill setup and words a file it could not open with the command that was run; the three entries go through it: {@link deployCursorSkill} and {@link verifyManagedCursorSkill} with the setup, {@link removeManagedCursorSkill} with the removal.
+ * @param commandToRunAgain - The command the learner ran (a reconnect names the setup).
+ * @param run - The command's work.
+ * @returns What `run` returned.
+ * @throws For an {@link UnopenedSkillFile}: the sentence that names the file, the step and the command ({@link describeUnopenedFile}), with the system's error as its cause; everything else `run` throws, as it is.
+ * @example await wordingUnopenedFiles('Codebook: Set Up AI Chat', () => deploySkill(extensionPath, storageRoot, homeRoot, 'setup'))
+ */
+async function wordingUnopenedFiles<Result>(
+  commandToRunAgain: string,
+  run: () => Promise<Result>,
+): Promise<Result> {
+  try {
+    return await run()
+  } catch (error) {
+    if (!(error instanceof UnopenedSkillFile)) throw error
+    throw new Error(
+      describeUnopenedFile(
+        'A file of the Cursor skill setup',
+        error.path,
+        error.code,
+        commandToRunAgain,
+      ),
+      { cause: error.cause },
+    )
+  }
+}
+
+/**
+ * Takes the status and the bytes of an open file, for {@link lookAtSkillFile}: both come from the one file that was opened.
+ * @param file - The file {@link openWithoutFollowing} opened.
+ * @returns The bytes and the status of a regular file; `not-regular` for a pipe, a device or a folder, which the open lets through where the system has `O_NOFOLLOW`.
+ * @example await readOpenSkillFile(file) // => { kind: 'read', bytes, status }
+ */
+async function readOpenSkillFile(file: FileHandle): Promise<SkillFileLook> {
+  const status = await file.stat({ bigint: true })
+  if (!status.isFile()) return { kind: 'not-regular' }
+  return { kind: 'read', bytes: await file.readFile(), status }
+}
+
+/**
+ * Reads one file of the skill setup (the skill, the bundled skill, a record, a retained file) without following a link, and takes its bytes and its status from the one file it opened; every read of {@link deployCursorSkill}, {@link verifyManagedCursorSkill} and {@link removeManagedCursorSkill} goes through it.
+ * A look at the path followed by a read of the path could read another file: a link that took the path in between would be read through. {@link openWithoutFollowing} refuses that on every system.
+ * @param path - Exact file path.
+ * @returns
+ * - `read` with the bytes and the status of the regular file at the path
+ * - `missing`, `link`, `not-regular` or `replaced` when nothing was read ({@link UnreadSkillFileKind})
+ * @throws
+ * - {@link UnopenedSkillFile} for a file that exists and that this user could not open at that moment ({@link unopenedFileCode}): no caller may take such a file for one that is missing, changed or not Codebook's, so it is no answer but an end of the command, which the command's entry words ({@link wordingUnopenedFiles})
+ * - Every other failure of the open or the read as it is: the system's own text
+ * @example await lookAtSkillFile('/home/user/.cursor/skills/codebook/SKILL.md') // => { kind: 'read', bytes, status }
+ */
+async function lookAtSkillFile(path: string): Promise<SkillFileLook> {
+  let file
+  try {
+    file = await openWithoutFollowing(path)
+  } catch (error) {
+    const kind = UNREAD_KIND_BY_OPEN_CODE.get(systemErrorCode(error))
+    if (kind) return { kind }
+    const code = unopenedFileCode(error)
+    throw code ? new UnopenedSkillFile(path, code, error) : error
+  }
+  try {
+    return await readOpenSkillFile(file)
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * Reads a regular file of the skill setup with its status, for the callers that compare the file with a receipt ({@link deploySkill}, {@link removeManagedCursorSkill}) and through {@link regularFile} for those that need the bytes alone.
+ * @param path - Exact file path.
+ * @param sentences - What the learner reads when the path was not read: {@link UNREAD_SKILL_SENTENCES_OF_SETUP} or {@link UNREAD_SKILL_SENTENCES_OF_REMOVAL} for the managed skill path, by the command that reads it; {@link UNREAD_INSTALLED_FILE_SENTENCES} for a file of the installation and {@link UNREAD_SKILL_COPY_SENTENCES} for the copy of the installed skill in Codebook's storage.
+ * @param kindsReadAsAbsent - What counts as "no file there" besides a path that holds nothing; a reconnect's look adds `replaced` ({@link inspectManagedSkill}).
+ * @returns The bytes and the status of the one file that was opened, or undefined when the path holds nothing (or one of `kindsReadAsAbsent`).
+ * @throws With the sentence that fits what the path holds: a link, a pipe, a device or a folder, or a file that was replaced while it was opened.
+ * @example await readRegularFile('/missing/SKILL.md', UNREAD_INSTALLED_FILE_SENTENCES) // => undefined
+ */
+async function readRegularFile(
+  path: string,
+  sentences: UnreadSkillFileSentences,
+  kindsReadAsAbsent: readonly UnreadSkillFileKind[] = [],
+): Promise<SkillFileRead | undefined> {
+  const look = await lookAtSkillFile(path)
+  if (look.kind === 'read') return look
+  if (look.kind === 'missing' || kindsReadAsAbsent.includes(look.kind))
+    return undefined
+  throw new Error(sentences[look.kind](path))
+}
+
+/** Reads the bytes of a regular file of the skill setup that is not the managed skill itself, for {@link packageSkill} (the installation's files) and {@link deploySkill} (the copy of the installed skill), without reading through a link ({@link readRegularFile}). @param path - Exact file path. @param sentences - What the learner reads when the path was not read: {@link UNREAD_INSTALLED_FILE_SENTENCES} or {@link UNREAD_SKILL_COPY_SENTENCES}, by whose file the path is, because the step that works differs. @returns Its bytes, or undefined when absent. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened. @example await regularFile('/missing/SKILL.md', UNREAD_INSTALLED_FILE_SENTENCES) // => undefined */
+async function regularFile(
+  path: string,
+  sentences: UnreadSkillFileSentences,
+): Promise<Buffer | undefined> {
+  return (await readRegularFile(path, sentences))?.bytes
+}
+
+/** How the refusal begins for a folder of the skill's path that a setup or a removal found as a link or as no folder; the path and the step follow ({@link refuseUnlessRealFolder}). */
+const NOT_A_FOLDER_REFUSAL =
+  'Codebook will not follow a non-directory skill path'
+
+/** How the refusal begins for a folder of the skill's path that a reconnect or a removal needs and that is gone, a link or no folder; the path and the step follow ({@link refuseUnlessRealFolder}). */
+const MISSING_OR_REDIRECTED_REFUSAL =
+  'Codebook will not follow a missing or redirected skill directory'
+
+/** A folder on the way to the managed skill, with the way a link at it is taken out of the way ({@link stepPastNoRealFolder}). */
+type SkillPathFolder = { path: string; linkStep: string }
+
+/**
+ * Names the two folders above the skill folder, `~/.cursor` and `~/.cursor/skills`, for {@link deploySkill}, {@link assertSkillParents} and {@link assertSkillParentsOfRemoval}: what a link at one of them points to holds the learner's other settings and skills.
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @returns Both folders, the upper one first.
+ * @example foldersAboveSkillFolder('/home/user') // => [{ path: '/home/user/.cursor', … }, { path: '/home/user/.cursor/skills', … }]
+ */
+function foldersAboveSkillFolder(homeRoot: string): SkillPathFolder[] {
+  return [join(homeRoot, '.cursor'), join(homeRoot, '.cursor', 'skills')].map(
+    (path) => ({ path, linkStep: PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK }),
+  )
+}
+
+/**
+ * Names the skill folder itself, `~/.cursor/skills/codebook`, for {@link deploySkill}, {@link assertSkillParents} and {@link assertSkillFolderNotRedirected}: what a link there points to may be a skill of the learner's own, so only the link is taken out of the way.
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @returns The folder.
+ * @example skillFolderOf('/home/user') // => { path: '/home/user/.cursor/skills/codebook', … }
+ */
+function skillFolderOf(homeRoot: string): SkillPathFolder {
+  return {
+    path: join(homeRoot, '.cursor', 'skills', 'codebook'),
+    linkStep: REMOVE_LINK_OR_RENAME_IT,
+  }
+}
+
+/**
+ * Refuses a folder of the skill's path that is no real folder, with the step after which the command that was run finishes; every such refusal of {@link deploySkill}, {@link verifyManagedCursorSkill} and {@link removeManagedCursorSkill} goes through it.
+ * @param status - What stands at the folder's path, looked at without following a link; `undefined` for a path that holds nothing, which is refused too (a caller for which that is no refusal does not ask).
+ * @param folder - The folder and how a link at it is taken out of the way.
+ * @param refusal - How the sentence begins: {@link NOT_A_FOLDER_REFUSAL} or {@link MISSING_OR_REDIRECTED_REFUSAL}.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
+ * @throws For everything but a real folder: the beginning, the path and the step ({@link stepPastNoRealFolder}).
+ * @example refuseUnlessRealFolder(await inspectedPath(folder.path), folder, NOT_A_FOLDER_REFUSAL, 'Codebook: Set Up AI Chat')
+ */
+function refuseUnlessRealFolder(
+  status: Pick<BigIntStats, 'isDirectory' | 'isSymbolicLink'> | undefined,
+  folder: SkillPathFolder,
+  refusal: string,
+  commandToRunAgain: string,
+): void {
+  const step = stepPastNoRealFolder(status, folder.linkStep, commandToRunAgain)
+  if (step) throw new Error(`${refusal}: ${folder.path}. ${step}`)
+}
+
+/** Creates or verifies a folder of the skill's path when {@link deploySkill} prepares its owned paths. @param folder - The folder to make or to verify, and how a link at it is taken out of the way. @returns After a real folder exists. @throws For a link and for anything that is no folder, with the step after which a setup finishes ({@link refuseUnlessRealFolder}). @example await ensureDirectory(skillFolderOf('/home/user')) // => resolves */
+async function ensureDirectory(folder: SkillPathFolder): Promise<void> {
+  const existing = await inspectedPath(folder.path)
+  if (!existing) await mkdir(folder.path, { mode: PRIVATE_DIRECTORY_MODE })
+  refuseUnlessRealFolder(
+    await lstat(folder.path),
+    folder,
+    NOT_A_FOLDER_REFUSAL,
+    SET_UP_AI_CHAT_COMMAND,
+  )
+}
+
+/** Rejects a missing or redirected folder of the skill's path before a reconnect ({@link verifyManagedCursorSkill}) or a removal ({@link removeManagedCursorSkill}) reads the skill. @param homeRoot - Cursor user home. @param commandToRunAgain - The command the refusal names as the one to run again: the setup for a reconnect, the removal for a removal. @returns After `.cursor`, `.cursor/skills` and the skill folder are real folders. @throws For the first of them that is gone, a link or no folder ({@link refuseUnlessRealFolder}). @example await assertSkillParents('/home/user', 'Codebook: Set Up AI Chat') // => resolves */
+async function assertSkillParents(
+  homeRoot: string,
+  commandToRunAgain: string,
+): Promise<void> {
+  for (const folder of [
+    ...foldersAboveSkillFolder(homeRoot),
+    skillFolderOf(homeRoot),
+  ])
+    refuseUnlessRealFolder(
+      await inspectedPath(folder.path),
+      folder,
+      MISSING_OR_REDIRECTED_REFUSAL,
+      commandToRunAgain,
+    )
+}
+
+/**
+ * Refuses a skill folder that is a link or no folder, for {@link deploySkill} and {@link removeManagedCursorSkill} before either reads below it; a folder that is not there is no refusal (a setup makes it, a removal has nothing to remove).
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
+ * @throws For a link and for anything that is no folder, with the step that frees the path ({@link refuseUnlessRealFolder}).
+ * @example await assertSkillFolderNotRedirected('/home/user', 'Codebook: Remove Managed Cursor Skill') // resolves, also without /home/user/.cursor/skills/codebook
+ */
+async function assertSkillFolderNotRedirected(
+  homeRoot: string,
+  commandToRunAgain: string,
+): Promise<void> {
+  const folder = skillFolderOf(homeRoot)
+  const status = await inspectedPath(folder.path)
+  if (status)
+    refuseUnlessRealFolder(
+      status,
+      folder,
+      NOT_A_FOLDER_REFUSAL,
+      commandToRunAgain,
+    )
+}
+
+/**
+ * Builds the refusal for a record of the skill setup that cannot be trusted (edited by hand, damaged, or written in a form this version does not read); every check of a receipt, a setup record or a removal record refuses through it, so each names the record and the same way out.
+ * Codebook deletes nothing on such a record: it proves no ownership. The way out names everything that has to go for a setup to finish from any state: the record, and the skill folder (without its record Codebook no longer knows the skill as its own and would refuse the folder as another skill's). Under a removal the same two deletions take the skill away, and the removal that is run again finds nothing of the skill left and goes on to the Cursor MCP config.
+ * @param subject - What is invalid, as the sentence begins: "Cursor skill ownership receipt", for example.
+ * @param recordPath - The file that holds the invalid record.
+ * @param targetPath - The managed skill path, whose folder the sentence names.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
+ * @returns The error, not thrown yet.
+ * @example throw invalidSkillRecord('Cursor skill ownership receipt', '/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md', 'Codebook: Set Up AI Chat')
+ */
+function invalidSkillRecord(
+  subject: string,
+  recordPath: string,
+  targetPath: string,
+  commandToRunAgain: string,
+): Error {
+  return new Error(
+    `${subject} is invalid; no skill file was changed. To start over, delete ${recordPath} and the folder ${dirname(targetPath)} (first copy anything of yours out of that folder), then run ${commandToRunAgain} again.`,
+  )
+}
+
+/**
+ * Reads the bytes of a record of the skill setup (`receipt.json`, `pending.json`, `removal.json`), for {@link readReceipt}, {@link readPending} and {@link readPendingRemoval}.
+ * A record path that holds a link, a folder or another non-file, or a file that was replaced while it was opened, is an invalid record like one with a wrong field: the sentences of the skill file ("Codebook will not change a non-regular skill file: …") named the wrong thing there and gave no way out that ends in a finished setup.
+ * @param path - The record file.
+ * @param subject - What the record is, for the refusal ({@link invalidSkillRecord}).
+ * @param targetPath - The managed skill path.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
+ * @returns The bytes of the regular file at the path, or undefined when the path holds nothing.
+ * @throws With the sentence of an invalid record for everything else ({@link lookAtSkillFile} read nothing).
+ * @example await readRecordBytes('/private/cursor-skill/receipt.json', 'Cursor skill ownership receipt', targetPath, 'Codebook: Set Up AI Chat') // => undefined when absent
+ */
+async function readRecordBytes(
+  path: string,
+  subject: string,
+  targetPath: string,
+  commandToRunAgain: string,
+): Promise<Buffer | undefined> {
+  const look = await lookAtSkillFile(path)
+  if (look.kind === 'read') return look.bytes
+  if (look.kind === 'missing') return undefined
+  throw invalidSkillRecord(subject, path, targetPath, commandToRunAgain)
+}
+
+/**
+ * Parses the text of a record of the skill setup, for {@link readReceipt}, {@link readPending} and {@link readPendingRemoval}; text that is no JSON is an invalid record like one with a wrong field.
+ * @param bytes - The record file's bytes.
+ * @param subject - What the record is, for the refusal ({@link invalidSkillRecord}).
+ * @param recordPath - The record file.
+ * @param targetPath - The managed skill path.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
+ * @returns The parsed value, not validated yet.
+ * @throws With the sentence of an invalid record when the text is no JSON.
+ * @example parseRecordText(bytes, 'Cursor skill ownership receipt', receiptPath, targetPath, 'Codebook: Set Up AI Chat')
+ */
+function parseRecordText(
+  bytes: Buffer,
+  subject: string,
+  recordPath: string,
+  targetPath: string,
+  commandToRunAgain: string,
+): unknown {
+  try {
+    return JSON.parse(bytes.toString('utf8'))
+  } catch {
+    throw invalidSkillRecord(subject, recordPath, targetPath, commandToRunAgain)
+  }
+}
+
+/** Validates a private owner receipt before {@link deployCursorSkill} trusts prior installation. @param value - Parsed journal data. @param targetPath - Expected managed skill path. @param recordPath - The file the value was read from (the receipt, or the setup or removal record that holds it as its previous owner), which the refusal names. @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again. @returns A validated receipt. @throws With the sentence of an invalid record ({@link invalidSkillRecord}). @example parseReceipt(record, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/receipt.json', 'Codebook: Set Up AI Chat') // => SkillReceipt */
+function parseReceipt(
+  value: unknown,
+  targetPath: string,
+  recordPath: string,
+  commandToRunAgain: string,
+): SkillReceipt {
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -164,14 +592,15 @@ function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
     !('installed' in value) ||
     typeof value.installed !== 'boolean' ||
     !('device' in value) ||
-    typeof value.device !== 'number' ||
-    !Number.isSafeInteger(value.device) ||
+    !isRecordedFileId(value.device) ||
     !('inode' in value) ||
-    typeof value.inode !== 'number' ||
-    !Number.isSafeInteger(value.inode)
+    !isRecordedFileId(value.inode)
   ) {
-    throw new Error(
-      'Cursor skill ownership receipt is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill ownership receipt',
+      recordPath,
+      targetPath,
+      commandToRunAgain,
     )
   }
   return {
@@ -201,14 +630,31 @@ function recordedPublisher(record: object): RecordedPublisher {
     : {}
 }
 
-/** Loads an optional private receipt for {@link deployCursorSkill} without treating missing as corruption. @param path - Receipt path. @param targetPath - Expected skill path. @returns A validated receipt, or undefined. @example await readReceipt('/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
+/** Loads an optional private receipt for {@link deployCursorSkill} without treating missing as corruption. @param path - Receipt path. @param targetPath - Expected skill path. @param commandToRunAgain - The command the learner ran, which a refusal of the receipt names as the one to run again. @returns A validated receipt, or undefined. @example await readReceipt('/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md', 'Codebook: Set Up AI Chat') // => undefined when absent */
 async function readReceipt(
   path: string,
   targetPath: string,
+  commandToRunAgain: string,
 ): Promise<SkillReceipt | undefined> {
-  const bytes = await regularFile(path)
+  const bytes = await readRecordBytes(
+    path,
+    'Cursor skill ownership receipt',
+    targetPath,
+    commandToRunAgain,
+  )
   return bytes
-    ? parseReceipt(JSON.parse(bytes.toString('utf8')), targetPath)
+    ? parseReceipt(
+        parseRecordText(
+          bytes,
+          'Cursor skill ownership receipt',
+          path,
+          targetPath,
+          commandToRunAgain,
+        ),
+        targetPath,
+        path,
+        commandToRunAgain,
+      )
     : undefined
 }
 
@@ -232,9 +678,20 @@ async function readPending(
   path: string,
   targetPath: string,
 ): Promise<PendingSkill | undefined> {
-  const bytes = await regularFile(path)
+  const bytes = await readRecordBytes(
+    path,
+    'Cursor skill pending ownership record',
+    targetPath,
+    SET_UP_AI_CHAT_COMMAND,
+  )
   if (!bytes) return undefined
-  const value: unknown = JSON.parse(bytes.toString('utf8'))
+  const value: unknown = parseRecordText(
+    bytes,
+    'Cursor skill pending ownership record',
+    path,
+    targetPath,
+    SET_UP_AI_CHAT_COMMAND,
+  )
   const stagedDirectory = dirname(dirname(targetPath))
   if (
     typeof value !== 'object' ||
@@ -246,7 +703,7 @@ async function readPending(
     !('stagedPath' in value) ||
     typeof value.stagedPath !== 'string' ||
     dirname(value.stagedPath) !== stagedDirectory ||
-    !/^\.codebook-stage-[a-f0-9-]+\.tmp$/.test(basename(value.stagedPath)) ||
+    !STAGED_NAME_PATTERN.test(basename(value.stagedPath)) ||
     !('skillSha256' in value) ||
     typeof value.skillSha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(value.skillSha256) ||
@@ -255,14 +712,15 @@ async function readPending(
     !('extensionVersion' in value) ||
     typeof value.extensionVersion !== 'string' ||
     !('device' in value) ||
-    typeof value.device !== 'number' ||
-    !Number.isSafeInteger(value.device) ||
+    !isRecordedFileId(value.device) ||
     !('inode' in value) ||
-    typeof value.inode !== 'number' ||
-    !Number.isSafeInteger(value.inode)
+    !isRecordedFileId(value.inode)
   ) {
-    throw new Error(
-      'Cursor skill pending ownership record is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending ownership record',
+      path,
+      targetPath,
+      SET_UP_AI_CHAT_COMMAND,
     )
   }
   if (
@@ -273,31 +731,49 @@ async function readPending(
         basename(value.displacedPath),
       ))
   ) {
-    throw new Error(
-      'Cursor skill pending displacement path is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending displacement path',
+      path,
+      targetPath,
+      SET_UP_AI_CHAT_COMMAND,
     )
   }
   if (
     'retiredPath' in value &&
     !isRetiredPath(value.retiredPath, path, targetPath)
   ) {
-    throw new Error(
-      'Cursor skill pending private retention path is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending private retention path',
+      path,
+      targetPath,
+      SET_UP_AI_CHAT_COMMAND,
     )
   }
   if ('previous' in value && value.previous !== undefined)
-    parseReceipt(value.previous, targetPath)
+    parseReceipt(value.previous, targetPath, path, SET_UP_AI_CHAT_COMMAND)
   return value as PendingSkill
 }
 
-/** Validates interrupted removal coordinates before {@link deployCursorSkill} or cleanup recovers. @param path - Pending removal journal. @param targetPath - Expected skill path. @returns A validated pending removal, or undefined. @example await readPendingRemoval('/private/removal.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
+/** Validates interrupted removal coordinates before {@link deployCursorSkill} or cleanup recovers. @param path - Pending removal journal. @param targetPath - Expected skill path. @param commandToRunAgain - The command the learner ran (a setup recovers a removal too), which a refusal of the record names as the one to run again. @returns A validated pending removal, or undefined. @example await readPendingRemoval('/private/removal.json', '/home/user/.cursor/skills/codebook/SKILL.md', 'Codebook: Remove Managed Cursor Skill') // => undefined when absent */
 async function readPendingRemoval(
   path: string,
   targetPath: string,
+  commandToRunAgain: string,
 ): Promise<PendingRemoval | undefined> {
-  const bytes = await regularFile(path)
+  const bytes = await readRecordBytes(
+    path,
+    'Cursor skill pending removal record',
+    targetPath,
+    commandToRunAgain,
+  )
   if (!bytes) return undefined
-  const value: unknown = JSON.parse(bytes.toString('utf8'))
+  const value: unknown = parseRecordText(
+    bytes,
+    'Cursor skill pending removal record',
+    path,
+    targetPath,
+    commandToRunAgain,
+  )
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -315,29 +791,27 @@ async function readPendingRemoval(
     !isRetiredPath(value.retiredPath, path, targetPath) ||
     !('owner' in value)
   )
-    throw new Error(
-      'Cursor skill pending removal record is invalid; no skill file was changed.',
+    throw invalidSkillRecord(
+      'Cursor skill pending removal record',
+      path,
+      targetPath,
+      commandToRunAgain,
     )
-  parseReceipt(value.owner, targetPath)
+  parseReceipt(value.owner, targetPath, path, commandToRunAgain)
   return value as PendingRemoval
 }
 
-/** Rechecks a receipted skill during setup or recovery without trusting a volume device number that can change after restart. @param path - Exact managed skill path. @param owner - Recorded inode and bytes. @returns Whether the same regular file still has its recorded identity and content. @example await matchesOwnedFile('/home/.cursor/skills/codebook/SKILL.md', receipt) */
+/** Rechecks a receipted skill during setup or recovery without trusting a volume device number that can change after restart. The inode number and the bytes are of one open file ({@link lookAtSkillFile}), and the path must still name that file afterwards. @param path - Exact managed skill path. @param owner - Recorded inode number and bytes. @returns Whether the same regular file still has its recorded inode number ({@link isSameFileId}: compared exactly) and content; `false` also for a path that holds nothing, a link or no regular file, and for a file that was replaced while it was opened. @example await matchesOwnedFile('/home/.cursor/skills/codebook/SKILL.md', receipt) */
 async function matchesOwnedFile(
   path: string,
   owner: Pick<SkillReceipt, 'skillSha256' | 'inode'>,
 ): Promise<boolean> {
-  const status = await inspectedPath(path)
-  if (
-    !status?.isFile() ||
-    status.isSymbolicLink() ||
-    status.ino !== owner.inode
-  )
+  const look = await lookAtSkillFile(path)
+  if (look.kind !== 'read' || !isSameFileId(owner.inode, look.status.ino))
     return false
-  const bytes = await readFile(path)
   return (
-    sha256(bytes) === owner.skillSha256 &&
-    (await lstat(path)).ino === status.ino
+    sha256(look.bytes) === owner.skillSha256 &&
+    (await inspectedPath(path))?.ino === look.status.ino
   )
 }
 
@@ -360,23 +834,115 @@ async function writeStagedBytes(
   return path
 }
 
+/**
+ * Removes a file under a staged name that no record names when it is provably Codebook's alone, for {@link removeUnrecordedStages}: removing it must lose nothing of the learner's.
+ * A second name of the file at the skill's path goes as a name ({@link dropSecondNameOfOneFile}): that is a published skill's staged name, and the file keeps its own name, whoever wrote its bytes. A regular file that holds exactly the bundled skill as this installation packages it goes too. Everything else stays (other bytes under one name only, as an earlier version's staged skill or a file somebody wrote; a link; a folder; a file that could not be opened at that moment).
+ * @param stagedPath - A path whose name fits {@link STAGED_NAME_PATTERN}.
+ * @param targetPath - The managed skill path.
+ * @param packagedSha256 - Digest of the skill this installation packages.
+ * @example await removeProvablyCodebooksStage('/home/user/.cursor/skills/.codebook-stage-1.tmp', targetPath, packaged.sha256)
+ */
+async function removeProvablyCodebooksStage(
+  stagedPath: string,
+  targetPath: string,
+  packagedSha256: string,
+): Promise<void> {
+  // A name that was removed is settled; one whose file could not be opened stays, and a later setup looks at it again.
+  if (
+    (await dropSecondNameOfOneFile(targetPath, stagedPath)) !== 'not-one-file'
+  )
+    return
+  const look = await lookAtSkillFile(stagedPath)
+  if (look.kind === 'read' && sha256(look.bytes) === packagedSha256)
+    await unlink(stagedPath)
+}
+
+/**
+ * Removes the staged files of earlier setups that no record names, for {@link deploySkill} under the storage lock once the setup's own record is settled: a setup that was killed between staging and its record, or whose record the learner deleted as a refusal said, leaves such a file, and nothing else would ever remove it.
+ * Only a file that is provably Codebook's goes ({@link removeProvablyCodebooksStage}).
+ * @param skillParent - `~/.cursor/skills`, where a setup stages.
+ * @param targetPath - The managed skill path.
+ * @param packagedSha256 - Digest of the skill this installation packages.
+ * @example await removeUnrecordedStages('/home/user/.cursor/skills', targetPath, packaged.sha256)
+ */
+async function removeUnrecordedStages(
+  skillParent: string,
+  targetPath: string,
+  packagedSha256: string,
+): Promise<void> {
+  for (const name of await readdir(skillParent)) {
+    // Only Codebook's own staged names are looked at.
+    if (!STAGED_NAME_PATTERN.test(name)) continue
+    await removeProvablyCodebooksStage(
+      join(skillParent, name),
+      targetPath,
+      packagedSha256,
+    )
+  }
+}
+
+/** What setup answers when the record of an update would be larger than Codebook writes: it names the installed skill as the previous owner and four more paths, and reaches {@link CURSOR_SKILL_RECEIPT_LIMIT_BYTES} only where the path of the home folder is close to what a system allows at all (about 3,850 of Linux's 4,096 bytes; no path of macOS, and none of Windows without long paths, is that long). A first installation writes a record without a previous owner, which is far smaller, and a removal's is smaller too: so the way on is to remove the skill and to set it up anew. */
+const UPDATE_RECORD_TOO_LARGE = `Cursor skill could not be updated: the record Codebook keeps of an update would be larger than it writes (${CURSOR_SKILL_RECEIPT_LIMIT_BYTES} bytes), because the paths of this home folder, of the editor's storage and of the installed extension are very long. No skill file was changed. Run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND}, then ${SET_UP_AI_CHAT_COMMAND}: the skill is installed anew then, which needs no such record.`
+
+/**
+ * Writes the record of a setup before anything of the skill is moved, for {@link deploySkill} right after it staged the new skill; a setup that cannot write its record leaves no staged file behind.
+ * @param pendingPath - The record's path.
+ * @param pending - The setup's record, which names its staged file.
+ * @throws
+ * - {@link UPDATE_RECORD_TOO_LARGE} for the record of an update that would be larger than Codebook writes: the limit's own sentence ("Storage limit exceeded …") names neither the record nor a way on, and here one exists
+ * - Every failure of the write as it is
+ * @example await recordSetup('/private/cursor-skill/pending.json', next)
+ */
+async function recordSetup(
+  pendingPath: string,
+  pending: PendingSkill,
+): Promise<void> {
+  try {
+    // Only an update's record, which holds the previous owner, can be this large in a path a system allows.
+    if (
+      pending.previous &&
+      Buffer.byteLength(JSON.stringify(pending)) >
+        CURSOR_SKILL_RECEIPT_LIMIT_BYTES
+    )
+      throw new Error(UPDATE_RECORD_TOO_LARGE)
+    await atomicPrivateWrite(
+      pendingPath,
+      pending,
+      CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
+    )
+  } catch (error) {
+    await unlink(pending.stagedPath)
+    throw error
+  }
+}
+
 /** Removes only a matching abandoned stage while {@link deployCursorSkill} recovers setup. @param pending - Validated stage receipt. @returns After any owned stage is removed. @example await removeOwnedStage(pending) // => resolves */
 async function removeOwnedStage(pending: PendingSkill): Promise<void> {
   if (await matchesOwnedFile(pending.stagedPath, pending))
     await unlink(pending.stagedPath)
 }
 
-/** Retains the actual displaced skill during {@link deployCursorSkill} recovery, then checks its bytes. @param path - Displaced live path. @param retiredPath - Private retention path. @param owner - Prior owner receipt. @returns After the displacement is safely retained. @example await retireDisplaced('/home/user/.cursor/skills/codebook/.codebook-displaced-id.tmp', '/private/retired-id.SKILL.md', receipt) // => resolves */
+/**
+ * Retains the actual displaced skill during a recovery of {@link deployCursorSkill} or {@link removeManagedCursorSkill}, then checks its bytes.
+ * @param path - Displaced live path.
+ * @param retiredPath - Private retention path.
+ * @param owner - Prior owner receipt.
+ * @param wayOut - How the learner starts over when the record must stay, as the refusal ends: {@link startOverBy} with the record and the command that was run, and for a setup's record also what became of its staged file ({@link startOverFromSetupRecord}).
+ * @returns After the displacement is safely retained.
+ * @throws When both names hold a file, or the retained file is not the owner's: both stay, with the record, and the sentence names each kept file, because the way out deletes the record that names them.
+ * @example await retireDisplaced('/home/user/.cursor/skills/codebook/.codebook-displaced-id.tmp', '/private/retired-id.SKILL.md', receipt, startOverBy('/private/cursor-skill/removal.json', 'Codebook: Remove Managed Cursor Skill')) // => resolves
+ */
 async function retireDisplaced(
   path: string,
   retiredPath: string,
   owner: SkillReceipt,
+  wayOut: string,
 ): Promise<void> {
   const displaced = await inspectedPath(path),
     retired = await inspectedPath(retiredPath)
   if (displaced && retired)
     throw new Error(
-      'Cursor skill displacement and private retention both exist; Codebook preserved both for inspection.',
+      `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection: ${path} and ${retiredPath}.${wayOut}`,
     )
   // Moving the actual file preserves a concurrent edit or replacement instead of unlinking it after an earlier check.
   if (displaced) await rename(path, retiredPath)
@@ -385,44 +951,385 @@ async function retireDisplaced(
     !(await matchesOwnedFile(retiredPath, owner))
   )
     throw new Error(
-      'The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery.',
+      `The displaced Cursor skill changed; Codebook retained its actual bytes privately for recovery as ${retiredPath}.${wayOut}`,
     )
 }
 
-/** Completes a pending displacement before {@link deployCursorSkill} publishes another body. @param pending - Validated setup journal. @returns After prior bytes are retained. @example await removeOwnedDisplacement(pending) // => resolves */
-async function removeOwnedDisplacement(pending: PendingSkill): Promise<void> {
+/**
+ * Words the way out of a setup's record that must stay, for every refusal of the setup's recovery that keeps it: the record to delete and the command to run again ({@link startOverBy}), and what the deleted record would leave without a name.
+ * The staged file the record proves as Codebook's is gone by then ({@link removeOwnedStage} runs first). One that still stands under the staged name is not the file Codebook wrote (other bytes, or another file): Codebook does not delete it, and the sentence names it, so that the learner decides.
+ * @param pending - The setup's record.
+ * @param pendingPath - Its path.
+ * @returns The sentence's end, with a leading space.
+ * @example await startOverFromSetupRecord(pending, '/private/cursor-skill/pending.json') // => ' To start over, delete /private/cursor-skill/pending.json, then run Codebook: Set Up AI Chat again.'
+ */
+async function startOverFromSetupRecord(
+  pending: PendingSkill,
+  pendingPath: string,
+): Promise<string> {
+  const wayOut = startOverBy(pendingPath)
+  return (await inspectedPath(pending.stagedPath))
+    ? `${wayOut} What stands under the staged name ${pending.stagedPath} is not the file Codebook wrote there; Codebook left it, so look at it before you delete it.`
+    : wayOut
+}
+
+/** Completes a pending displacement before {@link deployCursorSkill} publishes another body. @param pending - Validated setup journal. @param pendingPath - That journal's path, which a refusal names ({@link startOverBy}). @returns After prior bytes are retained. @example await removeOwnedDisplacement(pending, '/private/cursor-skill/pending.json') // => resolves */
+async function removeOwnedDisplacement(
+  pending: PendingSkill,
+  pendingPath: string,
+): Promise<void> {
   if (!pending.displacedPath) return
   if (!pending.previous || !pending.retiredPath)
     throw new Error(
-      'Cursor skill displacement has no complete recovery record.',
+      `Cursor skill displacement has no complete recovery record; Codebook left what stands under the displaced name ${pending.displacedPath} as it is.${await startOverFromSetupRecord(pending, pendingPath)}`,
     )
   await retireDisplaced(
     pending.displacedPath,
     pending.retiredPath,
     pending.previous,
+    await startOverFromSetupRecord(pending, pendingPath),
   )
 }
 
-/** Finishes or rejects an interrupted skill removal before {@link deployCursorSkill} reuses its receipt. @param path - Removal journal. @param receiptPath - Owner receipt path. @param targetPath - Managed skill path. @returns The recovered owner and completion flag, or undefined. @example await recoverRemoval('/private/removal.json', '/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
+/**
+ * Undoes what is left of a move of a skill file that is not Codebook's, for the setup's and the removal's recoveries ({@link settleDisplacedName}, {@link isRemovalOfChangedSkillUndone}, {@link removeManagedCursorSkill}): the file goes back to the skill's path where nothing stands there, and its displaced name is removed once it stands at its path ({@link dropSecondNameOfMovedFile}).
+ * @param targetPath - The managed skill path.
+ * @param displacedPath - The name the move gave the file.
+ * @param commandToRunAgain - The command the learner ran, which both refusals name as the one to run again.
+ * @returns `dropped` when no displaced name is left; `kept` when the displaced name holds a file and the skill's path another one.
+ * @throws
+ * - When the file system refuses to put the file back: the sentence that says where the file is kept ({@link describeRefusedLinkBack})
+ * - When the file could not be opened, so nothing is known of the two names: the sentence that says to free the file ({@link describeUnopenedMovedFile}); both names and the caller's record stay, and the next run settles them
+ * @example await undoMoveOfChangedSkill(targetPath, displacedPath, 'Codebook: Set Up AI Chat') // => 'dropped'
+ */
+async function undoMoveOfChangedSkill(
+  targetPath: string,
+  displacedPath: string,
+  commandToRunAgain: string,
+): Promise<'dropped' | 'kept'> {
+  const undoing = await dropSecondNameOfMovedFile(
+    targetPath,
+    displacedPath,
+    (code) =>
+      describeRefusedLinkBack(
+        'The Cursor skill',
+        targetPath,
+        code,
+        displacedPath,
+        commandToRunAgain,
+      ),
+  )
+  if (undoing === 'unopened')
+    throw new Error(
+      describeUnopenedMovedFile(
+        'The Cursor skill',
+        targetPath,
+        displacedPath,
+        commandToRunAgain,
+      ),
+    )
+  return undoing
+}
+
+/**
+ * Puts Codebook's previous skill back at the skill's path, for {@link deploySkill} when it recovers an update that stopped after its move (a crash, or a link the file system refused): the previous skill stands under its displaced name and the skill's path holds nothing.
+ * The link never replaces a file. A file system that refuses it refuses it at every try, so the refusal is the sentence the first try ended with, which names where the previous skill is kept ({@link describeRefusedSkillLink}).
+ * @param pending - The setup's record; its displaced name holds the previous skill.
+ * @param displacedPath - That name.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @throws
+ * - Every code but `EEXIST`: the sentence of a refused link with the kept path, with the refusal as its cause; the previous skill and the record stay
+ * - A failure without a code: itself
+ * @example await restorePreviousSkill(pending, pending.displacedPath, targetPath, pendingPath)
+ */
+async function restorePreviousSkill(
+  pending: PendingSkill,
+  displacedPath: string,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  try {
+    await link(displacedPath, targetPath)
+  } catch (error) {
+    const code = systemErrorCode(error)
+    // A file that took the path in this instant is the learner's: the previous skill is retained as for a changed skill.
+    if (code === 'EEXIST')
+      return settleChangedSkill(pending, targetPath, pendingPath)
+    throw code
+      ? new Error(describeRefusedSkillLink(targetPath, code, displacedPath), {
+          cause: error,
+        })
+      : error
+  }
+  await removeOwnedDisplacement(pending, pendingPath)
+}
+
+/**
+ * Takes away what a setup's move left of a skill file that is not Codebook's any more, for {@link deploySkill}: at once when the file changed while setup ran, and at the next setup after a refusal or a crash left the setup's record.
+ * Codebook's own previous skill, which the setup had moved away, is retained privately as after a finished update. A file that is not that skill is the learner's: it is linked back where the skill's path holds nothing, and its second name is removed once it stands at the skill's path ({@link dropSecondNameOfMovedFile}). A skill that was edited in place right after its publication still has the staged name as a second name, which is removed too.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path, which a refusal names.
+ * @throws When the displaced name holds a file that is neither Codebook's previous skill nor the file at the skill's path: both files and the record stay, and the sentence names the kept file and how to start over. And when the skill file could not be opened, so that Codebook cannot tell whether the staged or the displaced name is a second name of it ({@link describeUnopenedMovedFile}): the names and the record stay, and the next setup settles them.
+ * @example await settleChangedSkill(pending, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/pending.json')
+ */
+async function settleChangedSkill(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  // A skill edited in place after its publication is one file with the stage; a stage with the recorded bytes is removed by the caller. The name goes first, so that a refusal below, which keeps the record, leaves no staged name behind.
+  if (
+    (await dropSecondNameOfOneFile(targetPath, pending.stagedPath)) ===
+    'unopened'
+  )
+    throw new Error(
+      describeUnopenedMovedFile(
+        'The Cursor skill',
+        targetPath,
+        pending.stagedPath,
+        SET_UP_AI_CHAT_COMMAND,
+      ),
+    )
+  await settleDisplacedName(pending, targetPath, pendingPath)
+}
+
+/**
+ * Says whether the displaced name of a setup holds Codebook's own previous skill, for {@link settleDisplacedName}.
+ * @param pending - The setup's record; one of a first install has no previous owner.
+ * @param displacedPath - The displaced name the record holds.
+ * @returns `true` for the previous skill with its recorded inode number and bytes; `false` for another file, for nothing, and without a previous owner.
+ * @example await holdsPreviousSkill(pending, displacedPath) // => false for a file the learner edited
+ */
+async function holdsPreviousSkill(
+  pending: PendingSkill,
+  displacedPath: string,
+): Promise<boolean> {
+  return (
+    pending.previous !== undefined &&
+    (await matchesOwnedFile(displacedPath, pending.previous))
+  )
+}
+
+/**
+ * Settles the displaced name of a setup whose skill file is not Codebook's any more, for {@link settleChangedSkill}.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path, which a refusal names.
+ * @throws When the displaced name holds a file that is neither Codebook's previous skill nor the file at the skill's path.
+ * @example await settleDisplacedName(pending, targetPath, pendingPath)
+ */
+async function settleDisplacedName(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  const displacedPath = pending.displacedPath
+  if (!displacedPath) return
+  // Codebook's own previous skill is retained privately, as after a finished update.
+  if (await holdsPreviousSkill(pending, displacedPath))
+    return removeOwnedDisplacement(pending, pendingPath)
+  // Any other file there is the learner's: it goes back to the skill's path, or stays where another file took that path.
+  if (
+    (await undoMoveOfChangedSkill(
+      targetPath,
+      displacedPath,
+      SET_UP_AI_CHAT_COMMAND,
+    )) === 'kept'
+  )
+    throw new Error(
+      `Cursor skill changed during an interrupted setup: ${targetPath}. Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedPath}.${await startOverFromSetupRecord(pending, pendingPath)}`,
+    )
+}
+
+/**
+ * Words the refusal of an update whose installed skill changed while the setup ran, for {@link deploySkill} after it abandoned that setup: the path is looked at once more, because the step that works depends on what stands there now.
+ * "Edited in place" and "another file" are told apart by the inode number alone, and a file system may give the number of a deleted file to the next file it creates (ext4 does so at once). A file that was created at the path after the skill was deleted can therefore have the receipt's number: it is answered as the skill edited in place. {@link SKILL_EDITED_DURING_SETUP} names steps that work for such a file too: once it is deleted or renamed the next setup installs the skill anew, and once it holds the receipt's bytes it is the installed skill by number and bytes, which a setup adopts. No file is overwritten, moved or deleted on the number alone: every such step also compares the recorded bytes ({@link matchesOwnedFile}).
+ * @param targetPath - The managed skill path.
+ * @param receipt - The receipt of the installed skill, which no step of the abandoned setup changed.
+ * @returns
+ * - {@link SKILL_EDITED_DURING_SETUP}: a file with the receipt's inode number stands there with other bytes (the receipted file itself, or a file that got its number after it was deleted); once it holds the receipt's bytes the next setup adopts it
+ * - {@link SKILL_REMOVED_DURING_SETUP}: the path holds nothing
+ * - {@link SKILL_CHANGED_DURING_SETUP}: another file (or a link, or no file) stands there, which no setup adopts
+ * @example await sentenceOfSkillChangedDuringUpdate('/home/user/.cursor/skills/codebook/SKILL.md', receipt)
+ */
+async function sentenceOfSkillChangedDuringUpdate(
+  targetPath: string,
+  receipt: SkillReceipt,
+): Promise<string> {
+  const look = await lookAtSkillFile(targetPath)
+  if (look.kind === 'missing') return SKILL_REMOVED_DURING_SETUP(targetPath)
+  return look.kind === 'read' && isSameFileId(receipt.inode, look.status.ino)
+    ? SKILL_EDITED_DURING_SETUP(targetPath)
+    : SKILL_CHANGED_DURING_SETUP(targetPath)
+}
+
+/**
+ * Ends a setup whose skill file changed while the setup ran, for {@link deploySkill} right before it refuses: what the move left is settled ({@link settleChangedSkill}), the staged file is removed and the record with it, so the next setup starts clean and answers for the file as it stands.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @throws What {@link settleChangedSkill} throws; the record then stays.
+ * @example await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
+ */
+async function abandonSetupOfChangedSkill(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  // The staged file goes first: a refusal of the next step keeps the record, and its way out would leave the staged file without a name.
+  await removeOwnedStage(pending)
+  await settleChangedSkill(pending, targetPath, pendingPath)
+  await unlink(pendingPath)
+}
+
+/**
+ * Turns a failure to keep a copy of the installed skill in Codebook's storage into a sentence, for {@link deploySkill} before it updates the skill: the copy is put under its name with a hard link, which the file system can refuse.
+ * @param error - What `link` threw.
+ * @param backupPath - The copy's name in Codebook's storage.
+ * @returns An error that names the path and the file system's code, with the failure as its cause; a failure without a code itself. Nothing of the skill was changed at that point.
+ * @example throw refusalOfBackupLink(Object.assign(new Error('EPERM'), { code: 'EPERM' }), '/private/cursor-skill/3f6c….SKILL.md')
+ */
+function refusalOfBackupLink(error: unknown, backupPath: string): unknown {
+  const code = systemErrorCode(error)
+  return code
+    ? new Error(
+        `Cursor skill could not be updated: the file system refused to keep a copy of the installed skill as ${backupPath} (${code}). No skill file was changed. ${ALLOW_LINKS_THEN_SET_UP_AGAIN}`,
+        { cause: error },
+      )
+    : error
+}
+
+/**
+ * Words the refusal of the link that puts Codebook's new skill in place, for {@link publishStagedSkill}, and leaves the setup in a state the sentence describes.
+ * A first install, or a restore of a skill that was gone, has moved nothing: its staged file and its record are removed, so nothing is left. An update has moved Codebook's previous skill to its displaced name before the link: that file and the record stay, and the sentence says where the previous skill is and how to go on using it (a link back would be refused as well, and a move back could replace a file that took the path).
+ * @param code - The file system's code for the refused link; never `EEXIST`.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @returns The sentence ({@link describeRefusedSkillLink}).
+ * @example await sentenceOfRefusedSkillLink('EPERM', next, targetPath, pendingPath)
+ */
+async function sentenceOfRefusedSkillLink(
+  code: string,
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<string> {
+  const displacedPath = pending.displacedPath
+  if (displacedPath && (await inspectedPath(displacedPath)))
+    return describeRefusedSkillLink(targetPath, code, displacedPath)
+  await removeOwnedStage(pending)
+  await unlink(pendingPath)
+  return describeRefusedSkillLink(targetPath, code)
+}
+
+/**
+ * Puts the staged skill in place with a hard link, the one call that never replaces a file that stands at the skill's path, and answers its refusal with a sentence; called by {@link deploySkill} after its last check of the path.
+ * @param pending - The setup's record, with the staged file.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @throws
+ * - `EEXIST` (a file took the skill's path in that instant): the setup is settled as for a skill that changed ({@link abandonSetupOfChangedSkill}) and ends with {@link SKILL_CHANGED_DURING_SETUP}
+ * - Every other code (`EPERM` on Linux and `ENOTSUP` on macOS for a file system without hard links, `ENOSYS` where the file system has no such call, `EACCES` or `EROFS` for a folder that allows no new files, and whatever else the system answers): the sentence of a refused link, which names the path and the code ({@link sentenceOfRefusedSkillLink}), with the failure as its cause
+ * - A failure without a code: itself
+ * @example await publishStagedSkill(next, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/pending.json')
+ */
+async function publishStagedSkill(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  try {
+    await link(pending.stagedPath, targetPath)
+  } catch (error) {
+    const code = systemErrorCode(error)
+    if (!code) throw error
+    if (code === 'EEXIST') {
+      await abandonSetupOfChangedSkill(pending, targetPath, pendingPath)
+      throw new Error(SKILL_CHANGED_DURING_SETUP(targetPath), { cause: error })
+    }
+    throw new Error(
+      await sentenceOfRefusedSkillLink(code, pending, targetPath, pendingPath),
+      { cause: error },
+    )
+  }
+}
+
+/**
+ * Says whether a removal's move was of a skill file that is not Codebook's, and undoes what is left of it, for {@link recoverRemoval} and for {@link removeManagedCursorSkill} when the file changed between its check and its move.
+ * @param pending - The removal's record.
+ * @param targetPath - The managed skill path.
+ * @param commandToRunAgain - The command the learner ran (the setup or the removal), which the refusal of a link back and the one of a file that could not be opened name ({@link undoMoveOfChangedSkill}).
+ * @returns
+ * - `true`: neither the skill's path nor the displaced name holds Codebook's skill, and no second name is left (the file was linked back where the path held nothing, and its displaced name is removed; or nothing had been moved): the caller drops the record and goes on as for a file that was edited or replaced
+ * - `false`: one of the two names holds Codebook's skill, both hold nothing, or they hold two different files: the removal's own recovery decides
+ * @example await isRemovalOfChangedSkillUndone(pending, '/home/user/.cursor/skills/codebook/SKILL.md') // => true after an edit during the removal
+ */
+async function isRemovalOfChangedSkillUndone(
+  pending: PendingRemoval,
+  targetPath: string,
+  commandToRunAgain: string,
+): Promise<boolean> {
+  if (await holdsSkillOfRemoval(pending, targetPath)) return false
+  return (
+    (await undoMoveOfChangedSkill(
+      targetPath,
+      pending.displacedPath,
+      commandToRunAgain,
+    )) === 'dropped'
+  )
+}
+
+/**
+ * Says whether a removal's own recovery must decide, for {@link isRemovalOfChangedSkillUndone}: Codebook's skill stands at one of the two names, or neither name holds anything.
+ * @param pending - The removal's record.
+ * @param targetPath - The managed skill path.
+ * @returns `true` then; `false` when a file that is not Codebook's skill stands at the skill's path or at the displaced name, and Codebook's skill at neither.
+ * @example await holdsSkillOfRemoval(pending, targetPath) // => true right after a crash that moved Codebook's own skill
+ */
+async function holdsSkillOfRemoval(
+  pending: PendingRemoval,
+  targetPath: string,
+): Promise<boolean> {
+  const target = await inspectedPath(targetPath),
+    displaced = await inspectedPath(pending.displacedPath)
+  if (!target && !displaced) return true
+  return (
+    (await matchesOwnedFile(targetPath, pending.owner)) ||
+    (await matchesOwnedFile(pending.displacedPath, pending.owner))
+  )
+}
+
+/** Finishes or rejects an interrupted skill removal before {@link deployCursorSkill} reuses its receipt, and drops the record of a removal whose skill file changed under it ({@link isRemovalOfChangedSkillUndone}). @param path - Removal journal. @param receiptPath - Owner receipt path. @param targetPath - Managed skill path. @param commandToRunAgain - The command the learner ran (the setup or the removal), which every refusal names as the one to run again. @returns The recovered owner and completion flag; undefined without a record, and after the record of a changed file was dropped (the caller goes on as for an edited or replaced skill). @throws When the record must stay; each sentence says how to start over ({@link startOverBy}). @example await recoverRemoval('/private/removal.json', '/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md', 'Codebook: Remove Managed Cursor Skill') // => undefined when absent */
 async function recoverRemoval(
   path: string,
   receiptPath: string,
   targetPath: string,
+  commandToRunAgain: string,
 ): Promise<{ owner: SkillReceipt; completed: boolean } | undefined> {
-  const pending = await readPendingRemoval(path, targetPath)
+  const pending = await readPendingRemoval(path, targetPath, commandToRunAgain)
   if (!pending) return undefined
+  // A skill file that changed under the removal is the learner's: it stays in place, and the record is dropped.
+  if (
+    await isRemovalOfChangedSkillUndone(pending, targetPath, commandToRunAgain)
+  ) {
+    await unlink(path)
+    return undefined
+  }
   const target = await inspectedPath(targetPath),
     displaced = await inspectedPath(pending.displacedPath)
   if (target && !(await matchesOwnedFile(targetPath, pending.owner)))
     throw new Error(
-      'Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file.',
+      `Cursor skill changed during interrupted removal: ${targetPath}. Codebook preserved it and the displaced file (${pending.displacedPath}).${startOverBy(path, commandToRunAgain)}`,
     )
   if (
     displaced &&
     !(await matchesOwnedFile(pending.displacedPath, pending.owner))
   )
     throw new Error(
-      'The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record.',
+      `The displaced Cursor skill changed during removal; Codebook preserved it as ${pending.displacedPath}, with its recovery record.${startOverBy(path, commandToRunAgain)}`,
     )
   if (!target && displaced) {
     // Removal moved the exact owned body; finish its receipt before deleting that body.
@@ -435,23 +1342,30 @@ async function recoverRemoval(
       pending.displacedPath,
       pending.retiredPath,
       pending.owner,
+      startOverBy(path, commandToRunAgain),
     )
   } else if (!target && !displaced) {
-    const receipt = await readReceipt(receiptPath, targetPath)
+    const receipt = await readReceipt(
+      receiptPath,
+      targetPath,
+      commandToRunAgain,
+    )
     if (receipt?.installed)
       throw new Error(
-        'Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record.',
+        `Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record.${startOverBy(path, commandToRunAgain)}`,
       )
     await retireDisplaced(
       pending.displacedPath,
       pending.retiredPath,
       pending.owner,
+      startOverBy(path, commandToRunAgain),
     )
   } else if (displaced)
     await retireDisplaced(
       pending.displacedPath,
       pending.retiredPath,
       pending.owner,
+      startOverBy(path, commandToRunAgain),
     )
   await unlink(path)
   return { owner: pending.owner, completed: !target }
@@ -465,10 +1379,10 @@ async function packageSkill(extensionPath: string): Promise<{
   recorded: RecordedPublisher
 }> {
   const path = join(extensionPath, SKILL_RELATIVE_PATH),
-    canonicalBytes = await regularFile(path)
+    canonicalBytes = await regularFile(path, UNREAD_INSTALLED_FILE_SENTENCES)
   if (!canonicalBytes)
     throw new Error(
-      'This Codebook installation is missing its bundled skill. Reinstall the VSIX.',
+      `This Codebook installation is missing its bundled skill: ${path}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
     )
   const canonicalText = canonicalBytes.toString('utf8')
   const version =
@@ -477,15 +1391,15 @@ async function packageSkill(extensionPath: string): Promise<{
     )?.[1]
   if (!version)
     throw new Error(
-      'This Codebook installation has an invalid bundled skill. Reinstall the VSIX.',
+      `This Codebook installation has an invalid bundled skill: ${path}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
     )
   const publisherPath = join(extensionPath, WIKI_PUBLISHER_RELATIVE_PATH)
   if (
     canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER) &&
-    !(await regularFile(publisherPath))
+    !(await regularFile(publisherPath, UNREAD_INSTALLED_FILE_SENTENCES))
   )
     throw new Error(
-      'This Codebook installation is missing its Wiki publisher. Reinstall the VSIX.',
+      `This Codebook installation is missing its Wiki publisher: ${publisherPath}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
     )
   const bytes = Buffer.from(
     canonicalText.replaceAll(WIKI_PUBLISHER_PATH_MARKER, publisherPath),
@@ -521,11 +1435,11 @@ function publisherNamedBy(
  * @param targetPath - The managed skill file in Cursor's user skills.
  * @param packagedSha256 - Digest of the skill this installation packages.
  * @returns
- * - `changed`: no installed receipt, or the file is missing, replaced (another inode) or edited (other bytes)
+ * - `changed`: no installed receipt, or the file is missing, replaced (another inode, also one that took the path while it was opened) or edited (other bytes)
  * - `current`: the receipted, unedited file holds this installation's bytes
  * - `newer`: the receipted, unedited file was deployed by a later extension version than the running one, and the publisher it names is not known to be gone
  * - `outdated`: the receipted, unedited file holds other bytes and was deployed by this or an earlier version, or by a later one whose publisher no longer exists ({@link isRecordedPublisherGone}: that installation was removed, as after a rollback)
- * @throws When the skill path is no regular file, or a read fails for another reason than a missing file.
+ * @throws When the skill path holds a link or no regular file (with the sentence that fits, {@link readRegularFile}), or a read fails for another reason than a missing file.
  * @example await inspectManagedSkill('/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md', packaged.sha256) // => { kind: 'current', receipt }
  */
 async function inspectManagedSkill(
@@ -533,15 +1447,18 @@ async function inspectManagedSkill(
   targetPath: string,
   packagedSha256: string,
 ): Promise<ManagedSkillState> {
-  const receipt = await readReceipt(receiptPath, targetPath)
-  // A file another window replaces right now can vanish between two reads; that is a missing file, not a failed read.
-  const current = await regularFile(targetPath).catch((error: unknown) => {
-    if (isMissing(error)) return undefined
-    throw error
-  })
-  const currentStatus = current ? await inspectedPath(targetPath) : undefined
-  if (!isReceiptedSkillUnedited(receipt, current, currentStatus))
-    return { kind: 'changed' }
+  const receipt = await readReceipt(
+    receiptPath,
+    targetPath,
+    SET_UP_AI_CHAT_COMMAND,
+  )
+  // A file another window replaces right now can be gone, or be another file between the look at its path and its open; neither is a failed read. Both count as changed here and are decided under the lock.
+  const current = await readRegularFile(
+    targetPath,
+    UNREAD_SKILL_SENTENCES_OF_SETUP,
+    ['replaced'],
+  )
+  if (!isReceiptedSkillUnedited(receipt, current)) return { kind: 'changed' }
   return receiptedSkillState(
     receipt,
     packagedSha256,
@@ -572,37 +1489,33 @@ async function isRecordedPublisherGone(
 /**
  * Says whether the deployed skill is the installed, unedited file of its receipt, for {@link inspectManagedSkill} right after it read both.
  * @param receipt - The owner receipt, or `undefined` when none is stored.
- * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
- * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @param current - The bytes and the status of the deployed skill file, both of one open file, or `undefined` when it is missing.
  * @returns `true` for an installed receipt whose file is still there with its inode and bytes ({@link holdsReceiptedBytes}); `false` without an installed receipt and for a missing, replaced or edited file.
- * @example isReceiptedSkillUnedited(undefined, bytes, status) // => false
+ * @example isReceiptedSkillUnedited(undefined, current) // => false
  */
 function isReceiptedSkillUnedited(
   receipt: SkillReceipt | undefined,
-  current: Buffer | undefined,
-  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+  current: SkillFileRead | undefined,
 ): receipt is SkillReceipt {
   if (!receipt?.installed) return false
-  return holdsReceiptedBytes(receipt, current, currentStatus)
+  return holdsReceiptedBytes(receipt, current)
 }
 
 /**
  * Compares the deployed skill file with what its receipt recorded, for {@link isReceiptedSkillUnedited}: the inode first, and the digest only for the same file.
  * @param receipt - The installed owner receipt.
- * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
- * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @param current - The bytes and the status of the deployed skill file, both of one open file, or `undefined` when it is missing.
  * @returns `true` when the file exists, is the receipted inode and holds the receipted bytes; `false` when it is missing, replaced (another inode) or edited (other bytes).
- * @example holdsReceiptedBytes(receipt, undefined, undefined) // => false
+ * @example holdsReceiptedBytes(receipt, undefined) // => false
  */
 function holdsReceiptedBytes(
   receipt: SkillReceipt,
-  current: Buffer | undefined,
-  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+  current: SkillFileRead | undefined,
 ): boolean {
-  if (!current || !currentStatus) return false
+  if (!current) return false
   return (
-    currentStatus.ino === receipt.inode &&
-    sha256(current) === receipt.skillSha256
+    isSameFileId(receipt.inode, current.status.ino) &&
+    sha256(current.bytes) === receipt.skillSha256
   )
 }
 
@@ -641,7 +1554,7 @@ function receiptedSkillState(
  * - `updated`: the receipted, unedited skill held other bytes
  * - `restored`: the receipted skill was missing
  * - `current`: the receipted skill already holds this installation's bytes
- * @throws When a skill Codebook does not own, or a later edit or replacement, is in the way (nothing is changed), and when the storage lock is held by another writer.
+ * @throws When a skill Codebook does not own, or a later edit or replacement, is in the way (nothing is changed), when the storage lock is held by another writer, and when a file of the setup could not be opened at that moment ({@link wordingUnopenedFiles}).
  * @example await deployCursorSkill('/ext', '/private', '/home') // => { status: 'installed', path, sha256, version }
  */
 export async function deployCursorSkill(
@@ -649,7 +1562,9 @@ export async function deployCursorSkill(
   storageRoot: string,
   homeRoot = homedir(),
 ): Promise<CursorSkillResult> {
-  return deploySkill(extensionPath, storageRoot, homeRoot, 'setup')
+  return wordingUnopenedFiles(SET_UP_AI_CHAT_COMMAND, () =>
+    deploySkill(extensionPath, storageRoot, homeRoot, 'setup'),
+  )
 }
 
 /**
@@ -684,7 +1599,8 @@ async function deploySkill(
         targetPath,
         packaged.sha256,
       )
-      if (held.kind === 'changed') throw new Error(CHANGED_SKILL_REFUSAL)
+      if (held.kind === 'changed')
+        throw new Error(CHANGED_SKILL_REFUSAL(targetPath))
       // This installation's bytes, or those of a newer window: nothing is written.
       if (held.kind !== 'outdated')
         return {
@@ -694,20 +1610,25 @@ async function deploySkill(
           version: held.receipt.skillVersion,
         }
     }
-    await ensureDirectory(join(homeRoot, '.cursor'))
-    await ensureDirectory(skillParent)
-    const initialDirectory = await inspectedPath(targetDirectory)
-    if (
-      initialDirectory &&
-      (!initialDirectory.isDirectory() || initialDirectory.isSymbolicLink())
+    // A setup makes the two folders above the skill folder where they are missing.
+    for (const folder of foldersAboveSkillFolder(homeRoot))
+      await ensureDirectory(folder)
+    await assertSkillFolderNotRedirected(homeRoot, SET_UP_AI_CHAT_COMMAND)
+    await recoverRemoval(
+      removalPath,
+      receiptPath,
+      targetPath,
+      SET_UP_AI_CHAT_COMMAND,
     )
-      throw new Error(
-        `Codebook will not follow a non-directory skill path: ${targetDirectory}`,
-      )
-    await recoverRemoval(removalPath, receiptPath, targetPath)
-    let receipt = await readReceipt(receiptPath, targetPath)
+    let receipt = await readReceipt(
+      receiptPath,
+      targetPath,
+      SET_UP_AI_CHAT_COMMAND,
+    )
     const pending = await readPending(pendingPath, targetPath)
     if (pending) {
+      // The staged file the record proves goes first (a published skill keeps its own name): no step below needs it, and a refusal below, whose way out deletes the record, then leaves no staged file without a name.
+      await removeOwnedStage(pending)
       if (await matchesOwnedFile(targetPath, pending)) {
         // A prior publication succeeded before its receipt; adopt only its recorded bytes and inode.
         receipt = {
@@ -726,14 +1647,14 @@ async function deploySkill(
           receipt,
           CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
         )
-        await removeOwnedDisplacement(pending)
+        await removeOwnedDisplacement(pending, pendingPath)
       } else if (
         (pending.previous &&
           (await matchesOwnedFile(targetPath, pending.previous))) ||
         (receipt?.installed && (await matchesOwnedFile(targetPath, receipt)))
       ) {
         // Publication never happened; retain the previous exact owner or the absent first-install target.
-        await removeOwnedDisplacement(pending)
+        await removeOwnedDisplacement(pending, pendingPath)
       } else if (
         !(await inspectedPath(targetPath)) &&
         pending.previous &&
@@ -741,21 +1662,20 @@ async function deploySkill(
         (await matchesOwnedFile(pending.displacedPath, pending.previous))
       ) {
         // A crash after displacement left the owned prior body intact; restore it without overwriting new content.
-        await link(pending.displacedPath, targetPath)
-        await removeOwnedDisplacement(pending)
-      } else if (
-        !receipt?.installed &&
-        !(await inspectedPath(targetPath)) &&
-        !pending.displacedPath
-      ) {
-        // The first-install target was never published.
-      } else
-        throw new Error(
-          'Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record.',
+        await restorePreviousSkill(
+          pending,
+          pending.displacedPath,
+          targetPath,
+          pendingPath,
         )
-      await removeOwnedStage(pending)
+      } else {
+        // The skill file is not Codebook's (it changed while a setup ran) or is gone: what the setup's move left is settled, and this setup answers for the file as it stands.
+        await settleChangedSkill(pending, targetPath, pendingPath)
+      }
       await unlink(pendingPath)
     }
+    // No record names a staged file now: one an earlier setup left (a crash before its record, a record the learner deleted) goes when it is provably Codebook's.
+    await removeUnrecordedStages(skillParent, targetPath, packaged.sha256)
     const existingDirectory = await inspectedPath(targetDirectory)
     if (!receipt && existingDirectory) {
       if (
@@ -764,29 +1684,24 @@ async function deploySkill(
         (await readdir(targetDirectory)).length !== 0
       )
         throw new Error(
-          'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
+          `A codebook skill directory already exists in Cursor: ${targetDirectory}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. ${makeRoomForCodebooksSkill('that folder')}`,
         )
     }
-    const current = await regularFile(targetPath)
+    // The bytes and the inode number that are compared with the receipt are of one open file.
+    const current = await readRegularFile(
+      targetPath,
+      UNREAD_SKILL_SENTENCES_OF_SETUP,
+    )
     if (!receipt && current)
       throw new Error(
-        'An existing codebook skill is not owned by this installation; no file was changed.',
+        `An existing codebook skill is not owned by this installation; no file was changed. Codebook has no record of having installed ${targetPath}, so it treats that file as yours. ${makeRoomForCodebooksSkill(`its folder ${targetDirectory}`)}`,
       )
-    if (receipt && current) {
-      const status = await lstat(targetPath)
-      if (status.ino !== receipt.inode)
-        throw new Error(
-          'The managed Cursor skill was replaced after setup; Codebook preserved it.',
-        )
-    }
-    if (receipt && current && sha256(current) !== receipt.skillSha256)
-      throw new Error(
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
-      )
+    if (receipt && current && !isSameFileId(receipt.inode, current.status.ino))
+      throw new Error(SKILL_REPLACED_AFTER_SETUP(targetPath))
+    if (receipt && current && sha256(current.bytes) !== receipt.skillSha256)
+      throw new Error(SKILL_EDITED_AFTER_SETUP(targetPath))
     if (receipt && current && !receipt.installed)
-      throw new Error(
-        'A codebook skill appeared after managed removal; Codebook preserved it.',
-      )
+      throw new Error(SKILL_BACK_AFTER_REMOVAL(targetPath))
     if (receipt && current && receipt.skillSha256 === packaged.sha256)
       return {
         status: 'current',
@@ -800,34 +1715,33 @@ async function deploySkill(
         receiptDirectory,
         `${receipt.skillSha256}.SKILL.md`,
       )
-      const backup = await regularFile(backupPath)
+      const backup = await regularFile(backupPath, UNREAD_SKILL_COPY_SENTENCES)
       if (backup && sha256(backup) !== receipt.skillSha256)
         throw new Error(
-          'The previous managed skill backup differs from its receipt; no replacement was made.',
+          `The copy of the installed Cursor skill that Codebook keeps as ${backupPath} differs from its receipt; no skill file was changed. Delete that copy, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
         )
       if (!backup) {
-        const stagedBackup = await writeStagedBytes(receiptDirectory, current)
+        const stagedBackup = await writeStagedBytes(
+          receiptDirectory,
+          current.bytes,
+        )
         try {
-          await link(stagedBackup, backupPath)
+          await link(stagedBackup, backupPath).catch((error: unknown) => {
+            throw refusalOfBackupLink(error, backupPath)
+          })
         } finally {
           await unlink(stagedBackup)
         }
       }
-      if (
-        sha256((await regularFile(targetPath)) ?? Buffer.alloc(0)) !==
-        receipt.skillSha256
-      )
-        throw new Error(
-          'The Cursor skill changed during setup; no replacement was made.',
-        )
     }
-    await ensureDirectory(targetDirectory)
+    await ensureDirectory(skillFolderOf(homeRoot))
     const retiredDirectory =
-      (await lstat(receiptDirectory)).dev === (await lstat(targetDirectory)).dev
+      (await lstat(receiptDirectory, { bigint: true })).dev ===
+      (await lstat(targetDirectory, { bigint: true })).dev
         ? receiptDirectory
         : targetDirectory
     const stagedPath = await writeStagedBytes(skillParent, packaged.bytes),
-      stagedStatus = await lstat(stagedPath)
+      stagedStatus = await lstat(stagedPath, { bigint: true })
     const next: PendingSkill = {
       schemaVersion: 1,
       targetPath,
@@ -835,8 +1749,8 @@ async function deploySkill(
       skillSha256: packaged.sha256,
       skillVersion: packaged.version,
       extensionVersion: EXTENSION_VERSION,
-      device: stagedStatus.dev,
-      inode: stagedStatus.ino,
+      device: recordedFileId(stagedStatus.dev),
+      inode: recordedFileId(stagedStatus.ino),
       ...packaged.recorded,
       ...(current && receipt
         ? {
@@ -855,34 +1769,29 @@ async function deploySkill(
           }
         : {}),
     }
-    try {
-      await atomicPrivateWrite(
-        pendingPath,
-        next,
-        CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
-      )
-    } catch (error) {
-      await unlink(stagedPath)
-      throw error
-    }
-    if (current && receipt && !(await matchesOwnedFile(targetPath, receipt)))
+    await recordSetup(pendingPath, next)
+    // Also a change made while the copy above was kept is met here, before anything is moved.
+    if (current && receipt && !(await matchesOwnedFile(targetPath, receipt))) {
+      await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
       throw new Error(
-        'The Cursor skill changed during setup; Codebook preserved it.',
+        await sentenceOfSkillChangedDuringUpdate(targetPath, receipt),
       )
+    }
     if (current && receipt && next.displacedPath) {
       await rename(targetPath, next.displacedPath)
       if (!(await matchesOwnedFile(next.displacedPath, receipt))) {
-        await link(next.displacedPath, targetPath).catch(() => undefined)
+        // The file changed between the check and the move: it goes back to its place and stays the learner's.
+        await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
         throw new Error(
-          'The Cursor skill changed during setup; Codebook preserved the displaced file and recovery record.',
+          await sentenceOfSkillChangedDuringUpdate(targetPath, receipt),
         )
       }
     }
-    await link(stagedPath, targetPath)
-    if (!(await matchesOwnedFile(targetPath, next)))
-      throw new Error(
-        'The published Cursor skill changed during setup; Codebook preserved its recovery record.',
-      )
+    await publishStagedSkill(next, targetPath, pendingPath)
+    if (!(await matchesOwnedFile(targetPath, next))) {
+      await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
+      throw new Error(PUBLISHED_SKILL_CHANGED_DURING_SETUP(targetPath))
+    }
     await atomicPrivateWrite(
       receiptPath,
       {
@@ -899,7 +1808,7 @@ async function deploySkill(
       CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
     )
     await removeOwnedStage(next)
-    await removeOwnedDisplacement(next)
+    await removeOwnedDisplacement(next, pendingPath)
     await unlink(pendingPath)
     return {
       status: current ? 'updated' : receipt ? 'restored' : 'installed',
@@ -916,7 +1825,7 @@ async function deploySkill(
  * Several windows reconnect at once after an extension update. The file that matches its receipt is accepted without the lock; everything else is decided under the storage lock, and a window that finds the lock held by another window's update waits and checks again, a bounded number of times.
  *
  * @returns `current` for this installation's or a newer window's skill, `updated` after the implicit update.
- * @throws When the skill is missing or was changed, and when the storage lock stays held through every attempt.
+ * @throws When the skill is missing or was changed, when the storage lock stays held through every attempt, and when a file of the setup could not be opened at that moment ({@link wordingUnopenedFiles}).
  * @example await verifyManagedCursorSkill('/ext', '/private', '/home')
  */
 export async function verifyManagedCursorSkill(
@@ -924,8 +1833,24 @@ export async function verifyManagedCursorSkill(
   storageRoot: string,
   homeRoot = homedir(),
 ): Promise<CursorSkillResult> {
+  return wordingUnopenedFiles(SET_UP_AI_CHAT_COMMAND, () =>
+    reconnectManagedSkill(extensionPath, storageRoot, homeRoot),
+  )
+}
+
+/**
+ * Does the reconnect's work for {@link verifyManagedCursorSkill}, which words a file this work could not open.
+ * @returns `current` for this installation's or a newer window's skill, `updated` after the implicit update.
+ * @throws When the skill is missing or was changed, when the storage lock stays held through every attempt, and {@link UnopenedSkillFile} for a file that could not be opened.
+ * @example await reconnectManagedSkill('/ext', '/private', '/home')
+ */
+async function reconnectManagedSkill(
+  extensionPath: string,
+  storageRoot: string,
+  homeRoot: string,
+): Promise<CursorSkillResult> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
-  await assertSkillParents(homeRoot)
+  await assertSkillParents(homeRoot, SET_UP_AI_CHAT_COMMAND)
   const receiptPath = join(storageRoot, 'cursor-skill', 'receipt.json')
   const packaged = await packageSkill(extensionPath)
   for (let attempt = 1; ; attempt += 1) {
@@ -1014,40 +1939,117 @@ function rethrowUnlessLockHeldElsewhere(error: unknown, attempt: number): void {
     throw error
 }
 
-/** Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. @example await removeManagedCursorSkill('/private', '/home') */
+/**
+ * Removes Codebook's skill folder when nothing is left in it, for {@link removeManagedCursorSkill}; a folder that still holds a file of the learner stays.
+ * @param directory - `~/.cursor/skills/codebook`.
+ * @throws Every failure of the removal but a folder that is not empty or not there.
+ * @example await removeEmptySkillFolder('/home/user/.cursor/skills/codebook')
+ */
+async function removeEmptySkillFolder(directory: string): Promise<void> {
+  // Remove only an empty Codebook directory; leave any user-added files in place.
+  await rmdir(directory).catch((error: unknown) => {
+    if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(systemErrorCode(error)))
+      throw error
+  })
+}
+
+/**
+ * Finishes a removal whose skill file, or whole skill folder, is already gone, for {@link removeManagedCursorSkill}: the learner deleted or renamed it (after a refusal told them to, or on their own), so no file is moved; the receipt records the removal and the empty skill folder goes.
+ * @param receipt - The installed receipt.
+ * @param receiptPath - Its path.
+ * @param directory - `~/.cursor/skills/codebook`.
+ * @returns `removed`, with the digest and version the receipt held.
+ * @example await finishRemovalOfMissingSkill(receipt, '/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook') // => { status: 'removed', … }
+ */
+async function finishRemovalOfMissingSkill(
+  receipt: SkillReceipt,
+  receiptPath: string,
+  directory: string,
+): Promise<CursorSkillRemoval> {
+  await atomicPrivateWrite(
+    receiptPath,
+    { ...receipt, installed: false },
+    CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
+  )
+  await removeEmptySkillFolder(directory)
+  return {
+    status: 'removed',
+    path: receipt.targetPath,
+    sha256: receipt.skillSha256,
+    version: receipt.skillVersion,
+  }
+}
+
+/**
+ * Refuses a removal whose way to the skill folder is redirected, for {@link removeManagedCursorSkill}; a folder that is not there is no refusal: nothing of the skill can stand under it, as for a learner who never set Cursor chat up.
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @throws When `.cursor` or `.cursor/skills` is a link or no folder, with the step after which the removal finishes ({@link refuseUnlessRealFolder}).
+ * @example await assertSkillParentsOfRemoval('/home/user') // resolves, also without /home/user/.cursor/skills
+ */
+async function assertSkillParentsOfRemoval(homeRoot: string): Promise<void> {
+  for (const folder of foldersAboveSkillFolder(homeRoot)) {
+    const status = await inspectedPath(folder.path)
+    // Nothing is below a folder that is not there.
+    if (!status) return
+    refuseUnlessRealFolder(
+      status,
+      folder,
+      MISSING_OR_REDIRECTED_REFUSAL,
+      REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+    )
+  }
+}
+
+/**
+ * Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. Called by the removal command of {@link activate}, which then goes on to Codebook's empty Cursor MCP config, whatever the answer.
+ * Every refusal that names a command to run again names the removal ({@link REMOVE_MANAGED_CURSOR_SKILL_COMMAND}); the one of an interrupted setup names the setup, which recovers it, and the removal after it ({@link SETUP_INTERRUPTED_BEFORE_REMOVAL}).
+ * @param storageRoot - Codebook's private storage, which holds the receipt and the storage lock.
+ * @param homeRoot - The home folder whose `.cursor/skills/codebook/SKILL.md` is managed; tests pass a temporary one.
+ * @returns
+ * - `removed`: Codebook's skill was moved away and retained privately, or its file or folder was already gone and the receipt now says so
+ * - `already-removed`: the receipt says an earlier removal took the skill away; nothing was changed, and the command goes on to what that removal could not finish
+ * - `not-installed`: no receipt exists (Cursor chat was never set up here, or the learner deleted the receipt as an invalid record's sentence says); no file was changed
+ * @throws When the file at the skill's path is not the one Codebook installed (it stays, and the sentence says what to do), when a record of an interrupted setup or removal is in the way, and when a file of the setup could not be opened at that moment ({@link wordingUnopenedFiles}).
+ * @example await removeManagedCursorSkill('/private', '/home') // => { status: 'removed', path, sha256, version }
+ */
 export async function removeManagedCursorSkill(
   storageRoot: string,
   homeRoot = homedir(),
-): Promise<CursorSkillResult> {
+): Promise<CursorSkillRemoval> {
+  return wordingUnopenedFiles(REMOVE_MANAGED_CURSOR_SKILL_COMMAND, () =>
+    removeManagedSkillUnderLock(storageRoot, homeRoot),
+  )
+}
+
+/**
+ * Does the removal's work under the storage lock for {@link removeManagedCursorSkill}, which words a file this work could not open.
+ * @returns How the removal ended ({@link CursorSkillRemoval}).
+ * @throws What {@link removeManagedCursorSkill} names, and {@link UnopenedSkillFile} for a file that could not be opened.
+ * @example await removeManagedSkillUnderLock('/private', '/home')
+ */
+async function removeManagedSkillUnderLock(
+  storageRoot: string,
+  homeRoot: string,
+): Promise<CursorSkillRemoval> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
   const receiptDirectory = join(storageRoot, 'cursor-skill'),
     receiptPath = join(receiptDirectory, 'receipt.json'),
     removalPath = join(receiptDirectory, 'removal.json')
   return withStorageLock(receiptDirectory, async () => {
     const directory = join(homeRoot, '.cursor', 'skills', 'codebook')
-    for (const path of [
-      join(homeRoot, '.cursor'),
-      join(homeRoot, '.cursor', 'skills'),
-    ]) {
-      const status = await inspectedPath(path)
-      if (!status?.isDirectory() || status.isSymbolicLink())
-        throw new Error(
-          `Codebook will not follow a missing or redirected skill directory: ${path}`,
-        )
-    }
-    const targetDirectory = await inspectedPath(directory)
-    if (
-      targetDirectory &&
-      (!targetDirectory.isDirectory() || targetDirectory.isSymbolicLink())
+    await assertSkillParentsOfRemoval(homeRoot)
+    await assertSkillFolderNotRedirected(
+      homeRoot,
+      REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
     )
-      throw new Error(
-        `Codebook will not follow a non-directory skill path: ${directory}`,
-      )
     if (await inspectedPath(join(receiptDirectory, 'pending.json')))
-      throw new Error(
-        'Cursor skill setup is interrupted. Run Codebook: Set Up AI Chat to recover before removal.',
-      )
-    const recovered = await recoverRemoval(removalPath, receiptPath, targetPath)
+      throw new Error(SETUP_INTERRUPTED_BEFORE_REMOVAL)
+    const recovered = await recoverRemoval(
+      removalPath,
+      receiptPath,
+      targetPath,
+      REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+    )
     if (recovered?.completed)
       return {
         status: 'removed',
@@ -1055,24 +2057,40 @@ export async function removeManagedCursorSkill(
         sha256: recovered.owner.skillSha256,
         version: recovered.owner.skillVersion,
       }
-    await assertSkillParents(homeRoot)
-    const receipt = await readReceipt(receiptPath, targetPath),
-      current = await regularFile(targetPath)
-    if (!receipt?.installed || !current)
-      throw new Error(
-        'No installed Codebook-owned Cursor skill was found; no file was changed.',
-      )
-    const status = await lstat(targetPath)
-    if (status.ino !== receipt.inode)
-      throw new Error(
-        'The Cursor skill was replaced after setup; Codebook preserved it.',
-      )
-    if (sha256(current) !== receipt.skillSha256)
-      throw new Error(
-        'The Cursor skill was edited after setup; Codebook preserved it.',
-      )
+    const receipt = await readReceipt(
+      receiptPath,
+      targetPath,
+      REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+    )
+    // Without a receipt Codebook knows no skill as its own: nothing is changed, and the command goes on to the Cursor MCP config.
+    if (!receipt) return { status: 'not-installed', path: targetPath }
+    // An earlier removal took the skill away: nothing is left to do for it, and the command goes on to what that removal could not finish.
+    if (!receipt.installed)
+      return {
+        status: 'already-removed',
+        path: targetPath,
+        sha256: receipt.skillSha256,
+        version: receipt.skillVersion,
+      }
+    // The skill's folder is gone (the learner took it away): nothing is left to remove, and the receipt says so.
+    if (!(await inspectedPath(directory)))
+      return finishRemovalOfMissingSkill(receipt, receiptPath, directory)
+    await assertSkillParents(homeRoot, REMOVE_MANAGED_CURSOR_SKILL_COMMAND)
+    // The bytes and the inode number that are compared with the receipt are of one open file.
+    const current = await readRegularFile(
+      targetPath,
+      UNREAD_SKILL_SENTENCES_OF_REMOVAL,
+    )
+    // The same for the skill file alone.
+    if (!current)
+      return finishRemovalOfMissingSkill(receipt, receiptPath, directory)
+    if (!isSameFileId(receipt.inode, current.status.ino))
+      throw new Error(SKILL_REPLACED_BEFORE_REMOVAL(targetPath))
+    if (sha256(current.bytes) !== receipt.skillSha256)
+      throw new Error(SKILL_EDITED_BEFORE_REMOVAL(targetPath))
     const retiredDirectory =
-      (await lstat(receiptDirectory)).dev === (await lstat(directory)).dev
+      (await lstat(receiptDirectory, { bigint: true })).dev ===
+      (await lstat(directory, { bigint: true })).dev
         ? receiptDirectory
         : directory
     const displacedPath = join(
@@ -1096,21 +2114,32 @@ export async function removeManagedCursorSkill(
     )
     await rename(targetPath, displacedPath)
     if (!(await matchesOwnedFile(displacedPath, receipt))) {
-      await link(displacedPath, targetPath).catch(() => undefined)
-      throw new Error(
-        'The Cursor skill changed during removal; Codebook preserved the displaced file and recovery record.',
+      // The file changed between the check and the move: it goes back to its place and stays the learner's.
+      if (
+        (await undoMoveOfChangedSkill(
+          targetPath,
+          displacedPath,
+          REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+        )) === 'kept'
       )
+        throw new Error(
+          `Cursor skill changed during interrupted removal: ${targetPath}. Codebook preserved it and the displaced file (${displacedPath}).${startOverBy(removalPath, REMOVE_MANAGED_CURSOR_SKILL_COMMAND)}`,
+        )
+      await unlink(removalPath)
+      throw new Error(SKILL_CHANGED_DURING_REMOVAL(targetPath))
     }
     await atomicPrivateWrite(
       receiptPath,
       { ...receipt, installed: false },
       CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
     )
-    await retireDisplaced(displacedPath, retiredPath, receipt)
-    // Remove only an empty Codebook directory; leave any user-added files in place.
-    await rmdir(directory).catch((error) => {
-      if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error
-    })
+    await retireDisplaced(
+      displacedPath,
+      retiredPath,
+      receipt,
+      startOverBy(removalPath, REMOVE_MANAGED_CURSOR_SKILL_COMMAND),
+    )
+    await removeEmptySkillFolder(directory)
     await unlink(removalPath)
     return {
       status: 'removed',

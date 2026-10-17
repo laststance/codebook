@@ -648,8 +648,8 @@ async function trackSource(
   await executeFile('git', ['add', '--', path], { cwd: directory })
 }
 
-// Value: protects=an agent taking the line of a citation or a stop from the source answer instead of counting by hand; fails_when=codebook_source answers no numbered copy, numbers a blank line or the last line without a line end wrongly, or changes the exact text; why_new=Cycle 0045 N14c-13 (DX-1 b): the VS Code agent counted lines by hand and declared every stop one line too high, one of them on a blank line, which refused its start; seam=none
-test('codebook_source answers each line after its one-based number beside the unchanged exact text, a blank line and a last line without a line end included', async () => {
+// Value: protects=an agent taking the line of a citation or a stop from the source answer instead of counting by hand, in a chat that gives its model only the content (Cursor) and in one that gives it only the structured result (VS Code, Claude Code); fails_when=either channel of codebook_source answers no numbered copy, numbers a blank line or the last line without a line end wrongly, or carries an unnumbered copy of the lines beside it; why_new=Cycle 0045 N14c-13 (DX-1 b): the VS Code agent counted lines by hand and declared every stop one line too high, one of them on a blank line, which refused its start; Cycle 0046 row 6: the unnumbered copy doubled the answer; seam=none
+test('codebook_source answers each line once, after its one-based number, in the content and in the structured result, a blank line and a last line without a line end included', async () => {
   // Arrange: line 2 is blank and line 3 has no line end.
   const harness = await repositoryProtocolHarness()
   try {
@@ -668,23 +668,88 @@ test('codebook_source answers each line after its one-based number beside the un
     // Assert
     const structured = z
       .object({
-        data: z.object({
-          text: z.string(),
+        data: z.strictObject({
+          instanceId: z.string(),
+          path: z.string(),
+          hash: z.string(),
           lineCount: z.number(),
           numberedText: z.string(),
         }),
       })
       .parse(answer.structuredContent).data
-    assert.deepEqual(structured, {
-      text: 'const email = read()\n\nexport const user = find(email)',
-      lineCount: 3,
-      numberedText:
-        '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
-    })
-    assert.equal(
-      JSON.parse(toolText(answer)).numberedText,
-      '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
+    assert.deepEqual(
+      {
+        lineCount: structured.lineCount,
+        numberedText: structured.numberedText,
+      },
+      {
+        lineCount: 3,
+        numberedText:
+          '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
+      },
     )
+    assert.deepEqual(JSON.parse(toolText(answer)), structured)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the room an agent's context has for a source answer: the numbered lines may cost their numbers, not a second copy of every line; fails_when=codebook_source answers the lines twice in a channel (the unnumbered text beside numberedText), which made a source answer about twice as long; why_new=Cycle 0045 delegated review of the last changes, finding 7 (row 6 of Cycle 0046); seam=none
+test('a codebook_source answer for a file of 300 lines of 80 columns is at most 1.3 times the size of the answer that gave the same lines unnumbered as text', async () => {
+  // Arrange: 300 lines, each exactly 80 characters long.
+  const harness = await repositoryProtocolHarness()
+  try {
+    const lines = Array.from({ length: 300 }, (_, index) => {
+      const head = `const line${String(index + 1).padStart(3, '0')} = '`
+      return `${head}${'x'.repeat(80 - head.length - 1)}'`
+    })
+    const sourceText = `${lines.join('\n')}\n`
+    await trackSource(harness.directory, 'wide.ts', sourceText)
+
+    // Act
+    const answer = await harness.client.callTool({
+      name: 'codebook_source',
+      arguments: { instanceId: harness.service.instanceId, path: 'wide.ts' },
+    })
+
+    // Assert: the comparison answer carries the exact text where the answer carries numberedText, in both channels, as codebook_source answered before numberedText.
+    const data = z
+      .object({
+        data: z.object({
+          instanceId: z.string(),
+          path: z.string(),
+          hash: z.string(),
+          lineCount: z.number(),
+        }),
+      })
+      .parse(answer.structuredContent).data
+    const unnumberedData = {
+      instanceId: data.instanceId,
+      path: data.path,
+      hash: data.hash,
+      text: sourceText,
+      lineCount: data.lineCount,
+    }
+    const answerBytes = Buffer.byteLength(
+      JSON.stringify({
+        content: answer.content,
+        structuredContent: answer.structuredContent,
+      }),
+    )
+    const unnumberedBytes = Buffer.byteLength(
+      JSON.stringify({
+        content: [{ type: 'text', text: JSON.stringify(unnumberedData) }],
+        structuredContent: { ok: true, data: unnumberedData },
+      }),
+    )
+    assert.equal(lines[0], `const line001 = '${'x'.repeat(62)}'`)
+    assert.equal(lines[0].length, 80)
+    assert.equal(data.lineCount, 301)
+    assert.deepEqual(
+      { answerBytes, unnumberedBytes },
+      { answerBytes: 53_048, unnumberedBytes: 49_937 },
+    )
+    assert.equal(answerBytes <= unnumberedBytes * 1.3, true)
   } finally {
     await harness.close()
   }
@@ -701,7 +766,7 @@ test('the description of codebook_source tells an agent to take every citation a
     // Assert
     assert.equal(
       tools.tools.find((tool) => tool.name === 'codebook_source')?.description,
-      'Read exact UTF-8 source with a full-byte hash and line count. numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Use that path/hash and inclusive line ranges as article citations. Does not execute or navigate.',
+      "Read a tracked UTF-8 source with its full-byte hash and line count. numberedText gives the source's lines once, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Use that path/hash and inclusive line ranges as article citations. Does not execute or navigate.",
     )
   } finally {
     await harness.close()
@@ -732,13 +797,13 @@ test('the source-only help and the repository-browser help tell an agent to take
       .parse(browserHelp.structuredContent).data.sourceBinding
     assert.equal(
       repositoryEntry.startsWith(
-        'Read codebook_status.repository, then codebook_sources and exact codebook_source paths. numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Author structured plain-text sections,',
+        "Read codebook_status.repository, then codebook_sources and exact codebook_source paths. numberedText gives the source's lines once, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Author structured plain-text sections,",
       ),
       true,
     )
     assert.equal(
       sourceBinding.startsWith(
-        'codebook_source answers the source text; numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Choose a one-based source line/column for an executable statement',
+        "codebook_source answers the source; numberedText gives the source's lines once, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Choose a one-based source line/column for an executable statement",
       ),
       true,
     )
@@ -747,8 +812,125 @@ test('the source-only help and the repository-browser help tell an agent to take
   }
 })
 
-// Value: protects=an agent that reads a book's retained source before it declares a stop on that revision getting the same numbered copy; fails_when=the cited source answers no numbered copy through codebook_read_resource, or a plain MCP resource read stops answering the exact bytes alone; why_new=Cycle 0045 N14c-13 (DX-1 b), the other place an agent reads source text before it declares; seam=none
-test('a book’s cited source read through codebook_read_resource answers its numbered lines beside the exact text, and a resource read keeps the exact bytes alone', async () => {
+// Value: protects=a client written for API 1.6, which read text from a source answer, learning from the server it connects to that the lines are in numberedText now; fails_when=the server reports another API version than 1.7 while its source answer has no text, or its instructions no longer say what 1.7 changed; why_new=Cycle 0046 row 54: row 6 took text out of both source answers while the server still reported API 1.6, the version that promised both members; seam=none
+test('the server reports API 1.7 and its instructions say that codebook_source and a book’s cited source answer numberedText and no longer text', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const instructions = harness.client.getInstructions() ?? ''
+    const status = await harness.client.callTool({
+      name: 'codebook_status',
+      arguments: {},
+    })
+    const source = await harness.client.callTool({
+      name: 'codebook_source',
+      arguments: { instanceId: harness.service.instanceId, path: 'module.ts' },
+    })
+
+    // Assert: the version, the sentence, and the answer the sentence describes.
+    assert.equal(
+      z
+        .object({ data: z.object({ apiVersion: z.string() }) })
+        .parse(status.structuredContent).data.apiVersion,
+      '1.7',
+    )
+    assert.equal(harness.endpoint.descriptor.apiVersion, '1.7')
+    assert.equal(
+      instructions.startsWith(
+        "API 1.7. Call codebook_status first. To learn repository source, discover sources, read exact files, publish structured cited articles and open the retained book; no runtime is required. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Authored relations are source interpretation.",
+      ),
+      true,
+    )
+    assert.deepEqual(
+      Object.keys(
+        z
+          .object({ data: z.record(z.string(), z.unknown()) })
+          .parse(source.structuredContent).data,
+      ).sort(),
+      ['hash', 'instanceId', 'lineCount', 'numberedText', 'path'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Takes the client example out of the packaged README, so the test below runs the code a reader copies and the README cannot drift from what is tested.
+ * A checkout whose Git settings give text files CRLF line ends (the default on Windows) holds the same README with other line ends, so the example is found under either and returned with line feeds.
+ * @param readme - The packaged README's text, with LF or CRLF line ends.
+ * @returns The JavaScript between the example's `node --input-type=module <<'NODE'` line and its closing `NODE` line, with LF line ends.
+ * @throws When the README holds no such example.
+ * @example
+ * readmeClientExample("```sh\nnode --input-type=module <<'NODE'\nconsole.log(1);\nNODE\n```") // => 'console.log(1);\n'
+ * readmeClientExample("```sh\r\nnode --input-type=module <<'NODE'\r\nconsole.log(1);\r\nNODE\r\n```") // => 'console.log(1);\n'
+ */
+function readmeClientExample(readme: string): string {
+  const example =
+    /^node --input-type=module <<'NODE'\r?\n([\s\S]*?\r?\n)NODE\r?$/m.exec(
+      readme,
+    )
+  if (!example?.[1]) throw new Error('The README holds no client example.')
+  return example[1].replaceAll('\r\n', '\n')
+}
+
+// Cycle 0046 (row 164): red while the example was found with a pattern of line feeds alone: in a checkout whose Git settings give the README CRLF line ends, the default on Windows, the test below threw "The README holds no client example."
+test('the README’s client example is found and read alike in a checkout with LF and with CRLF line ends', () => {
+  // Arrange: one README excerpt, once with the line ends of each kind of checkout.
+  const withLineFeeds =
+    "Run it:\n\n```sh\nnode --input-type=module <<'NODE'\nconst price = 24;\nconsole.log(price);\nNODE\n```\n"
+  const withCarriageReturns = withLineFeeds.replaceAll('\n', '\r\n')
+  // Act
+  const examples = [
+    readmeClientExample(withLineFeeds),
+    readmeClientExample(withCarriageReturns),
+  ]
+  // Assert
+  assert.deepEqual(examples, [
+    'const price = 24;\nconsole.log(price);\n',
+    'const price = 24;\nconsole.log(price);\n',
+  ])
+})
+
+// Value: protects=a developer who copies the README's source-reading example getting the source instead of a schema error; fails_when=the example's schema no longer matches the codebook_source answer (it threw "Unrecognized key: numberedText" for every source since API 1.6, and expected a text member the answer lost in API 1.7), or the example no longer runs; why_new=Cycle 0046 row 49 (package STA, found while working); seam=none
+test('the README’s client example, run as the README says against a tracked file, prints that file’s identity and numbered lines', async () => {
+  // Arrange: the example as the packaged README prints it, and the connection descriptor of a running server.
+  const harness = await repositoryProtocolHarness()
+  const extensionRoot = join(__dirname, '..', '..')
+  const connectionPath = join(harness.directory, 'connection.json')
+  try {
+    const example = readmeClientExample(
+      await readFile(join(extensionRoot, 'README.md'), 'utf8'),
+    )
+    await writeFile(connectionPath, JSON.stringify(harness.endpoint.descriptor))
+
+    // Act: `node --input-type=module` from `extension/`, the example on standard input.
+    const run = executeFile(process.execPath, ['--input-type=module'], {
+      cwd: extensionRoot,
+      env: {
+        ...process.env,
+        CODEBOOK_CONNECTION: connectionPath,
+        CODEBOOK_SOURCE: 'module.ts',
+      },
+    })
+    run.child.stdin?.end(example)
+    const { stdout } = await run
+
+    // Assert
+    assert.deepEqual(JSON.parse(stdout), {
+      instanceId: harness.service.instanceId,
+      path: 'module.ts',
+      hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b',
+      lineCount: 2,
+      numberedText: '1\texport const price = 24;\n2\t',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that reads a book's retained source before it declares a stop on that revision getting the same numbered copy; fails_when=the cited source answers no numbered copy through codebook_read_resource, answers the unnumbered text beside it (the lines twice in each channel), or a plain MCP resource read stops answering the exact bytes alone; why_new=Cycle 0045 N14c-13 (DX-1 b), the other place an agent reads source text before it declares; seam=none
+test('a book’s cited source read through codebook_read_resource answers its numbered lines once in place of the exact text, and a resource read keeps the exact bytes alone', async () => {
   // Arrange: a published revision cites a file whose line 2 is blank.
   const harness = await repositoryProtocolHarness()
   try {
@@ -815,15 +997,10 @@ test('a book’s cited source read through codebook_read_resource answers its nu
       ok: true,
       uri: `${bookUri}/sources/0`,
       mimeType: 'text/plain',
-      text: 'const email = read()\n\nexport const user = find(email)',
       numberedText:
         '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
     })
     assert.deepEqual(throughTool.content, [
-      {
-        type: 'text',
-        text: 'const email = read()\n\nexport const user = find(email)',
-      },
       {
         type: 'text',
         text: '1\tconst email = read()\n2\t\n3\texport const user = find(email)',

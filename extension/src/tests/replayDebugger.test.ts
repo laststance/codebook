@@ -76,8 +76,11 @@ function harness(
   focusedForeignPauseSessionId?: string,
   /** Holds an accepted launch before the editor asks the descriptor factory for its adapter, as a slow editor does. */
   descriptorGate?: Promise<void>,
+  /** Models entry while another native debugger is already active, before this owner's public lifecycle subscriptions. */
+  initialActiveSessionId?: string,
 ) {
-  const terminated = new TestEmitter<vscode.DebugSession>(),
+  const startedSessions = new TestEmitter<vscode.DebugSession>(),
+    terminated = new TestEmitter<vscode.DebugSession>(),
     stopped: string[] = [],
     messages: Array<DebugProtocol.Response | DebugProtocol.Event> = []
   let factory: vscode.DebugAdapterDescriptorFactory | undefined,
@@ -144,6 +147,22 @@ function harness(
     EventEmitter: TestEmitter,
     DebugAdapterInlineImplementation: Inline,
     debug: {
+      get activeDebugSession(): vscode.DebugSession | undefined {
+        if (session || initialActiveSessionId === undefined) return session
+        return {
+          id: initialActiveSessionId,
+          type: 'pwa-node',
+          name: 'Learner debugger',
+          configuration: {
+            type: 'pwa-node',
+            name: 'Learner debugger',
+            request: 'launch',
+          },
+          workspaceFolder: undefined,
+          customRequest: async () => undefined,
+          getDebugProtocolBreakpoint: async () => undefined,
+        }
+      },
       get activeStackItem(): vscode.DebugThread | undefined {
         // The editor reports the focused paused thread with its session; only the session's identity is read.
         return focusedForeignPauseSessionId === undefined
@@ -174,6 +193,7 @@ function harness(
         }
       },
       onDidTerminateDebugSession: terminated.event,
+      onDidStartDebugSession: startedSessions.event,
       async startDebugging(_folder, configuration) {
         if (typeof configuration === 'string')
           throw new Error('Expected an owned inline configuration')
@@ -202,6 +222,7 @@ function harness(
           await descriptorGate
         }
         await factory?.createDebugAdapterDescriptor(session, undefined)
+        startedSessions.fire(session)
         const configured = adapter
         const configure = (): void =>
           configured?.handleMessage({
@@ -241,6 +262,7 @@ function harness(
     listeners?.failed,
   )
   return {
+    editor,
     owner,
     stopped,
     messages,
@@ -248,6 +270,18 @@ function harness(
     stopRequested,
     request,
     inspect,
+    startForeignSession: (): void => {
+      assert.ok(session)
+      startedSessions.fire({
+        ...session,
+        id: 'learner-foreign-session',
+        configuration: {
+          type: 'pwa-node',
+          name: 'Learner debugger',
+          request: 'launch',
+        },
+      })
+    },
     changes: () => changes,
     startCalls: () => startCalls,
     /** Models the editor disposing the inline adapter before it reports the session's termination. */
@@ -267,9 +301,9 @@ function harness(
         command: 'disconnect',
       })
     },
-    terminateForeign: (): void => {
+    terminateForeign: (id = 'unrelated-live-session'): void => {
       assert.ok(session)
-      terminated.fire({ ...session, id: 'unrelated-live-session' })
+      terminated.fire({ ...session, id })
     },
     foreignStart: async () => {
       assert.ok(factory)
@@ -296,6 +330,489 @@ function harness(
     },
   }
 }
+
+test('a recorded native stack selects its current historical model without requiring a second learner frame choice', async () => {
+  // Arrange: a client honors the focus hint and fetches only the stack until the native session is selected.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    const selections: string[] = []
+    fixture.editor.commands = {
+      getCommands: async () => ['workbench.action.debug.focusProcess'],
+      executeCommand: async (command, ...arguments_) => {
+        assert.deepEqual(arguments_, [null])
+        selections.push(command)
+        fixture.inspect()
+        return undefined
+      },
+    }
+    const pending = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded with native values',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+
+    // Act: the current client obtains its real native stack before any model selection is allowed.
+    const currentThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: currentThread.id })
+    await flushNative()
+
+    // Assert: actual native requests establish inspection, rather than the selection command claiming it.
+    assert.equal(await pending, 'inspected')
+    assert.deepEqual(selections, ['workbench.action.debug.focusProcess'])
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+test('a background native debugger cannot be selected by historical default-session resolution', async () => {
+  // Arrange: the host resolver may choose any paused session when no explicit native model is supplied.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    const selections: string[] = []
+    fixture.editor.commands = {
+      getCommands: async () => ['workbench.action.debug.focusProcess'],
+      executeCommand: async (command) => {
+        selections.push(command)
+        return undefined
+      },
+    }
+    const pending = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded beside another native debugger',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+
+    // Act: the other debugger is known through the real public lifecycle surface, even with no focused foreign frame.
+    fixture.startForeignSession()
+    const currentThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: currentThread.id })
+
+    // Assert
+    assert.equal(await pending, 'uninspected')
+    assert.deepEqual(selections, [])
+    assert.deepEqual(fixture.stopped, [])
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+test('replay entered while another debugger is already active never guesses the native session cohort', async () => {
+  // Arrange
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'preexisting-learner-debugger',
+  )
+  try {
+    const selections: string[] = []
+    fixture.editor.commands = {
+      getCommands: async () => ['workbench.action.debug.focusProcess'],
+      executeCommand: async (command) => {
+        selections.push(command)
+        return undefined
+      },
+    }
+    const pending = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded beside an existing native debugger',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+
+    // Act: the historical session is now active, but the earlier native cohort is still unknown.
+    const currentThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: currentThread.id })
+
+    // Assert
+    assert.equal(await pending, 'uninspected')
+    assert.deepEqual(selections, [])
+    assert.deepEqual(fixture.stopped, [])
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+test('ending an observed competing debugger lets the next recorded native moment load its own values', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    const selections: string[] = []
+    fixture.editor.commands = {
+      getCommands: async () => ['workbench.action.debug.focusProcess'],
+      executeCommand: async (command) => {
+        selections.push(command)
+        fixture.inspect()
+        return undefined
+      },
+    }
+    const earlier = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded while another debugger remains',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+    fixture.startForeignSession()
+    const earlierThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: earlierThread.id })
+    assert.equal(await earlier, 'uninspected')
+
+    // Act
+    fixture.terminateForeign('learner-foreign-session')
+    const later = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded after the observed competitor ended',
+      new AbortController().signal,
+    )
+    await flushNative()
+    const laterThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: laterThread.id })
+
+    // Assert
+    assert.equal(await later, 'inspected')
+    assert.deepEqual(selections, ['workbench.action.debug.focusProcess'])
+    assert.deepEqual(fixture.stopped, [])
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+test('an unavailable native selection command leaves historical inspection truthful and never dispatches another command', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => [],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+
+  // Act
+  const result = await fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded without the native selection command',
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.equal(result, 'uninspected')
+  assert.deepEqual(selections, [])
+  await fixture.owner.dispose()
+})
+
+test('a foreign paused debugger keeps its selected model while a recorded stack becomes available', async () => {
+  // Arrange
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    'learner-foreign-session',
+  )
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+
+  // Act
+  const result = await fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded beside the learner debugger',
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.equal(result, 'uninspected')
+  assert.deepEqual(selections, [])
+  assert.deepEqual(fixture.stopped, [])
+  await fixture.owner.dispose()
+})
+
+test('historical model selection waits for the current stack and leaves an unavailable stack uninspected', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+
+  // Act: no stackTrace request is supplied by this native client.
+  const result = await fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded while the native stack is hidden',
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.equal(result, 'uninspected')
+  assert.deepEqual(selections, [])
+  await fixture.owner.dispose()
+})
+
+test('a newer active debugger is never selected by a historical presentation waiting for command discovery', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  let provideCommands = (_commands: string[]): void => {}
+  const available = new Promise<string[]>((resolve) => {
+    provideCommands = resolve
+  })
+  fixture.editor.commands = {
+    getCommands: () => available,
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  const pending = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded before a different session is selected',
+    new AbortController().signal,
+  )
+  await fixture.started
+  await flushNative()
+  const currentThread = fixture.request('threads').body.threads[0]
+  fixture.request('stackTrace', { threadId: currentThread.id })
+
+  // Act: the public active owner changes while command discovery is outstanding.
+  Object.defineProperty(fixture.editor.debug, 'activeDebugSession', {
+    get: () => undefined,
+  })
+  provideCommands(['workbench.action.debug.focusProcess'])
+
+  // Assert
+  assert.equal(await pending, 'uninspected')
+  assert.deepEqual(selections, [])
+  await fixture.owner.dispose()
+})
+
+test('cancelling a historical presentation awaiting its stack prevents a later native model selection', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const cancellation = new AbortController()
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  const pending = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded before cancellation',
+    cancellation.signal,
+  )
+  const rejected = assert.rejects(pending, /Learner left this recorded moment/)
+  await fixture.started
+  await flushNative()
+
+  // Act
+  cancellation.abort(new Error('Learner left this recorded moment'))
+  await rejected
+  const currentThread = fixture.request('threads').body.threads[0]
+  fixture.request('stackTrace', { threadId: currentThread.id })
+  await flushNative()
+
+  // Assert
+  assert.deepEqual(selections, [])
+  assert.equal(fixture.owner.available, true)
+  await fixture.owner.dispose()
+})
+
+test('superseded recorded history cannot select a native model after the newer gap commits', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  const pending = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded before a newer gap',
+    new AbortController().signal,
+  )
+  const rejected = assert.rejects(pending, /presentation was superseded/)
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Act
+    const gap = await fixture.owner.present(
+      undefined,
+      'Not recorded at this moment',
+      new AbortController().signal,
+    )
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await rejected
+
+    // Assert
+    assert.equal(gap, 'no-values')
+    assert.deepEqual(selections, [])
+    const currentThread = fixture.request('threads').body.threads[0]
+    assert.equal(currentThread.name, 'Not recorded at this moment')
+    assert.deepEqual(
+      fixture.request('stackTrace', { threadId: currentThread.id }).body
+        .stackFrames,
+      [],
+    )
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+test('unsupported command discovery cannot commit obsolete recorded history after a newer gap', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  let provideCommands = (_commands: string[]): void => {}
+  fixture.editor.commands = {
+    getCommands: () =>
+      new Promise<string[]>((resolve) => {
+        provideCommands = resolve
+      }),
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  const pending = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded before unsupported command discovery finishes',
+    new AbortController().signal,
+  )
+  const rejected = assert.rejects(pending, /presentation was superseded/)
+  await fixture.started
+  await flushNative()
+
+  // Act
+  const gap = await fixture.owner.present(
+    undefined,
+    'Not recorded at this moment',
+    new AbortController().signal,
+  )
+  const currentThread = fixture.request('threads').body.threads[0]
+  fixture.request('stackTrace', { threadId: currentThread.id })
+  provideCommands([])
+
+  // Assert
+  await rejected
+  assert.equal(gap, 'no-values')
+  assert.deepEqual(selections, [])
+  await fixture.owner.dispose()
+})
+
+test('unanswered native command discovery cannot stall a saved recorded moment indefinitely', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: () => new Promise<string[]>(() => {}),
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  const pending = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded while command discovery is unanswered',
+    new AbortController().signal,
+  )
+  const rejected = assert.rejects(
+    pending,
+    /Timed out waiting for native historical model command availability/,
+  )
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    await rejected
+
+    // Assert
+    assert.deepEqual(selections, [])
+    assert.equal(fixture.owner.available, true)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+test('unanswered native model selection ends within its bound without claiming inspected values', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: (command) => {
+      selections.push(command)
+      return new Promise<undefined>(() => {})
+    },
+  }
+  const pending = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded while model selection is unanswered',
+    new AbortController().signal,
+  )
+  const rejected = assert.rejects(
+    pending,
+    /Timed out waiting for native historical model selection/,
+  )
+  try {
+    await fixture.started
+    await flushNative()
+    const currentThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: currentThread.id })
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    await rejected
+
+    // Assert
+    assert.deepEqual(selections, ['workbench.action.debug.focusProcess'])
+    assert.equal(fixture.owner.available, true)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
 
 test('historical workspace closure stops only its owned native session', async () => {
   // Arrange
@@ -2967,32 +3484,51 @@ test('the reader is told that Run and Debug loaded the values 150 ms after they 
   }
 })
 
-/** Counts the timers the process still waits for, as `process.getActiveResourcesInfo()` names them. @example pendingTimeouts() // => 1 while one setTimeout has not run */
-function pendingTimeouts(): number {
-  return process
-    .getActiveResourcesInfo()
-    .filter((resource) => resource === 'Timeout').length
-}
-
-// Value: protects=the editor's event loop after the historical debugger was disposed: no notice to the reader waits on a timer of an owner that is gone; fails_when=the values-loaded notice, scheduled 150 ms after the adapter served the values, stays pending through the disposal and keeps the event loop alive for an owner that tells its reader nothing any more; why_new=Cycle 0045 local review coderabbit #4 (the notice's timer handle was not kept); seam=the process's active timers
-test('a disposed historical debugger leaves no values-loaded notice waiting on a timer', async () => {
-  // Arrange: the values of the presented stop were served, so the notice to the reader waits for its paint allowance.
+// Value: protects=the editor's event loop after the historical debugger was disposed: no notice to the reader waits on a timer of an owner that is gone; fails_when=the values-loaded notice, scheduled 150 ms after the adapter served the values, stays pending through the disposal and keeps the event loop alive for an owner that tells its reader nothing any more; why_new=Cycle 0045 local review coderabbit #4 (the notice's timer handle was not kept), and its pre-landing review PL-29 (row 37 of Cycle 0046): the test counted the pending timers of the whole process, which the timers of earlier tests change; seam=node:test's fake timers, with a record of the timers this test starts and cancels
+test('a disposed historical debugger leaves no values-loaded notice waiting on a timer', async (context) => {
+  // Arrange: no real time passes, and every timer started or cancelled from here on is recorded.
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const startedTimers = context.mock.method(globalThis, 'setTimeout'),
+    cancelledTimers = context.mock.method(globalThis, 'clearTimeout')
   const fixture = harness(undefined, undefined, 0, false, true)
-  await fixture.owner.present(
+  const showing = fixture.owner.present(
     inspectedSnapshot,
     'Recorded pause',
     new AbortController().signal,
   )
-  const timersBeforeTheNotice = pendingTimeouts()
-  fixture.inspect()
-  const timersWhileTheNoticeWaits = pendingTimeouts()
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await showing
+    // The values of the presented stop are served, so the notice to the reader waits for its paint allowance.
+    const timersStartedBeforeTheNotice = startedTimers.mock.callCount()
+    fixture.inspect()
+    const noticeTimers = startedTimers.mock.calls.slice(
+      timersStartedBeforeTheNotice,
+    )
 
-  // Act
-  await fixture.owner.dispose()
+    // Act
+    await fixture.owner.dispose()
+    const wasNoticeTimerCancelled = cancelledTimers.mock.calls.some(
+      (cancellation) => cancellation.arguments[0] === noticeTimers[0]?.result,
+    )
+    context.mock.timers.tick(150)
 
-  // Assert
-  assert.equal(timersWhileTheNoticeWaits, timersBeforeTheNotice + 1)
-  assert.equal(pendingTimeouts(), timersBeforeTheNotice)
+    // Assert: serving the values started one timer, of 150 ms, and the disposal cancelled that very timer; the reader was told of the session's end and of nothing after it.
+    assert.deepEqual(
+      noticeTimers.map((timer) => timer.arguments[1]),
+      [150],
+    )
+    assert.equal(wasNoticeTimerCancelled, true)
+    assert.equal(fixture.changes(), 1)
+  } finally {
+    // The records come off before the fake timers do, so the real timer functions are back for the next test.
+    startedTimers.mock.restore()
+    cancelledTimers.mock.restore()
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
 })
 
 // Value: protects=the hint of the stop the reader shows now; fails_when=values served for a stop the recording left within the paint allowance are still reported, so the reader drops the hint of the moment it moved to; why_new=Cycle 0044 (the values-loaded notification is delivered late); seam=none

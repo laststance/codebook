@@ -389,6 +389,24 @@ test('an agent that ends its turn without publishing and without an error is a f
   })
 })
 
+// Value: protects=the learner whose VS Code chat finished its reply without publishing; fails_when=the sentence tells them to run the update request in the chat "to see its own message", which sends a second request, although the reply is already in the Chat view; why_new=Cycle 0046 row 149 (a completed reply now ends a VS Code run this way); seam=none
+test('a VS Code chat that finishes its reply without publishing is a failure that kept the site and says where the reply is', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = { ...NOTHING_HAPPENED, host: 'vscode' }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    site: 'kept',
+    isCodebookSentence: true,
+    reason:
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+  })
+})
+
 test('a site missing at the run’s end is not called a newly published Wiki', () => {
   // Arrange
   const facts: WikiUpdateEndFacts = {
@@ -533,5 +551,48 @@ test('a manifest rewritten without a publish is not called a new site, however w
     isCodebookSentence: true,
     reason:
       'The Wiki’s manifest changed during the update, but not through a publish of the Codebook publisher, so Codebook cannot call it a new site. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  })
+})
+
+// Value: protects=the mark of a failed end after which a chat can still publish, on its way from the start in the chat to the page and the notice; fails_when=the classifier drops the mark, so the notice says the site is kept for good, or keeps it on an end that is the chat's own publish; why_new=Cycle 0046 row 341; seam=none
+test('a failure after which the chat can still publish ends the run as failed and marked as an end the site may be replaced after, and a publish that matches the source is still the run’s success, without the mark', () => {
+  // Arrange
+  const mayStillBeInTheChat: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    failure:
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    isFailureCodebookSentence: true,
+    mayBeReplacedLater: true,
+  }
+  const publishedMeanwhile: WikiUpdateEndFacts = {
+    ...mayStillBeInTheChat,
+    tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
+    published: {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+      freshness: { status: 'current', changedPaths: [], addedPaths: [] },
+    },
+  }
+
+  // Act
+  const failed = classifyWikiUpdateEnd(mayStillBeInTheChat)
+  const succeeded = classifyWikiUpdateEnd(publishedMeanwhile)
+
+  // Assert
+  assert.deepEqual(failed, {
+    state: 'failed',
+    reason:
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+  })
+  assert.deepEqual(succeeded, {
+    state: 'succeeded',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
   })
 })

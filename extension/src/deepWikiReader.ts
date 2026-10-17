@@ -15,8 +15,12 @@ import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_LOOPBACK_HOSTS,
   WIKI_MANIFEST_FILE,
+  WIKI_MISSING_PAGE_PATH_LIMIT_CHARS,
+  WIKI_MISSING_PAGE_TEXT_DELAY_MS,
+  WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
+  WIKI_REFUSED_STEP_ADVICE,
   WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
   WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
@@ -42,6 +46,8 @@ import {
   type WikiUpdateStatusAnswer,
 } from './utils/installWikiUpdateStatus'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
+import { labelQuestionField } from './utils/labelQuestionField'
+import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
@@ -81,9 +87,13 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)} });
-  var form = document.querySelector('#qa-form, [data-codebook-question]');
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)}, outsideOutputApprovalsNote: ${JSON.stringify(WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE)}, refusedStepAdvice: ${JSON.stringify(WIKI_REFUSED_STEP_ADVICE)}, missingPageTextDelayMs: ${WIKI_MISSING_PAGE_TEXT_DELAY_MS}, missingPagePathLimitChars: ${WIKI_MISSING_PAGE_PATH_LIMIT_CHARS} });
+  // The shell's form by its element and its id together: a page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article, which stands before the form.
+  var form = document.querySelector('form#qa-form, [data-codebook-question]');
   if (!form) return;
+  // On such a page the label of the question field may name that heading instead; a field nothing names gets the label's words itself.
+  var field = form.querySelector('textarea, input[name="question"]');
+  if (field) (${labelQuestionField.toString()})(field);
   var status = document.querySelector('[data-codebook-status]');
   if (status) { status.textContent = '● Connected to Codebook reader'; status.classList.remove('unavailable'); }
   var submit = form.querySelector('button[type="submit"]');
@@ -95,6 +105,9 @@ const qaClient = `(function () {
     if (!input || !output) return;
     var question = input.value.trim();
     if (!question) return;
+    // The answer's disclosure is opened here too: the page's own script opens the element with the disclosure's id, which on such a page may be a heading of the article.
+    var disclosure = output.closest('details');
+    if (disclosure) { disclosure.hidden = false; disclosure.open = true; }
     output.style.display = 'block'; output.textContent = 'Asking the editor model…';
     try {
       var response = await fetch(prefix + '${WIKI_QUESTION_ROUTE}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
@@ -110,7 +123,7 @@ const qaClient = `(function () {
   }, true);
 })();`
 
-/** Validates the generated output owner before the reader serves files or accepts repository questions. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
+/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}). @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
   projectRoot: string,
@@ -120,9 +133,12 @@ export async function readDeepWikiManifest(
   revision?: string
   excludedPaths: string[]
 }> {
-  const manifest: unknown = JSON.parse(
-    await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
+  // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
+  const manifestBytes = await readWikiFileToOpen(
+    join(outputDirectory, WIKI_MANIFEST_FILE),
+    'manifest',
   )
+  const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'))
   if (
     typeof manifest !== 'object' ||
     manifest === null ||

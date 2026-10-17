@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fsPromises, {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -330,9 +336,12 @@ test('a library that holds a study in a newer format beside its older file lists
       'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
     newerSentenceOfKnownFile =
       'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.'
-  await assert.rejects(readOfNewer, { message: newerSentence })
-  await assert.rejects(checkpointOfNewer, { message: newerSentence })
-  await assert.rejects(readOfKnownFile, { message: newerSentenceOfKnownFile })
+  // All three refusals get their handler at once: a read that rejects while an earlier one is still awaited would be unhandled.
+  await Promise.all([
+    assert.rejects(readOfNewer, { message: newerSentence }),
+    assert.rejects(checkpointOfNewer, { message: newerSentence }),
+    assert.rejects(readOfKnownFile, { message: newerSentenceOfKnownFile }),
+  ])
   assert.equal(count, 3)
   assert.deepEqual(
     Object.fromEntries(
@@ -429,4 +438,192 @@ test('the exact UTF-8 byte limit is writable and an oversized replacement preser
   // Assert
   assert.equal(await readFile(path, 'utf8'), '"あ"')
   assert.deepEqual(await readdir(directory), ['progress.repository.v4.json'])
+})
+
+// Value: protects=Retry storage over a full library reads every study's checkpoint without listing the library directory once a study (Cycle 0045 review PL-4); fails_when=each read of a study lists the directory for a newer format, so the listings grow with studies times files; why_new=no test counted the listings; seam=the directory listing of node:fs/promises
+test('Retry storage over sixty-four saved studies lists the library directory once', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const library = new LearningLibrary(directory, workspaceKey, () => 64)
+  for (let saved = 0; saved < 64; saved += 1)
+    await library.saveStudy(capturedStudy())
+  let listingsOfLibrary = 0
+  const readdirBefore = fsPromises.readdir
+  context.mock.method(
+    fsPromises,
+    'readdir',
+    (...input: Parameters<typeof readdirBefore>) => {
+      if (input[0] === directory) listingsOfLibrary += 1
+      return readdirBefore(...input)
+    },
+  )
+  // Act
+  await library.reconcile()
+  // Assert
+  assert.equal(listingsOfLibrary, 1)
+})
+
+// Value: protects=a file in the library directory that is named like an archive of a newer format but belongs to no study leaves the saved studies usable (Cycle 0045 review PL-5); fails_when=the listing parses the file's prefix as a study id and throws, which breaks the list, the save admission, the removal, forgetting absent studies and Retry storage together; why_new=every listing test named its files after study ids; seam=the library directory, into which the test writes the stray file
+test('a stray x.study.v5.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
+  // Arrange: two saved studies and the stray file beside them.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const library = new LearningLibrary(directory, workspaceKey, () => 3),
+    kept = capturedStudy(),
+    removed = capturedStudy(),
+    removedByHand = capturedStudy()
+  await library.saveStudy(kept)
+  await library.saveStudy(removed)
+  await writeFile(join(directory, 'x.study.v5.json'), '{"version":5}')
+  // Act
+  const listedIds = (await library.list()).map((entry) => entry.id).sort()
+  const admitsThird = await library.admitsStudy(removedByHand.id)
+  await library.saveStudy(removedByHand)
+  const removal = await library.removeStudy(removed.id, (path) =>
+    rm(path, { recursive: true }),
+  )
+  await library.select({
+    studyId: removedByHand.id,
+    profile: 'repository-browser',
+    itemId: 'repository/interface/theme',
+    follow: false,
+    tab: 'overview',
+  })
+  await rm(join(directory, `${removedByHand.id}.study.v3.json`))
+  await rm(join(directory, `${removedByHand.id}.study.meta.v3.json`))
+  const forgotten = await library.forgetAbsentStudies()
+  const retry = await library.reconcile().then(
+    () => 'reconciled',
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.deepEqual(listedIds, [kept.id, removed.id].sort())
+  assert.equal(admitsThird, true)
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(forgotten, [removedByHand.id])
+  assert.equal(retry, 'reconciled')
+  assert.deepEqual(
+    (await library.list()).map((entry) => entry.id),
+    [kept.id],
+  )
+  assert.equal(
+    await readFile(join(directory, 'x.study.v5.json'), 'utf8'),
+    '{"version":5}',
+  )
+})
+
+// Value: protects=Retry storage still repairs the library when one study's known file holds the format of a newer Codebook, and writes over neither that study's archive nor its catalog sidecar; fails_when=the repair reads that study's archive, which is refused as a newer format, and the whole Retry storage fails with that study's sentence, or a sidecar of a newer format beside a readable archive counts as a failed checkpoint and is written again in this Codebook's format, although the list shows the study as kept as it is (Cycle 0046 row 94); why_new=found in Cycle 0046 while the repair was changed to read each study from the one listing; the sidecar was added by the delegated review of that change; seam=the library directory, into which the test writes the files a newer Codebook would write under a known name
+test('Retry storage over a library with a study a newer Codebook saved under a known file name repairs the other studies and keeps that study as it is', async (context) => {
+  // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 6, and one saved study whose sidecar a newer Codebook wrote again in format 6 beside the readable archive.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const library = new LearningLibrary(directory, workspaceKey, () => 16),
+    repaired = capturedStudy(),
+    newerInKnownFile = capturedStudy(),
+    newerSidecarOnly = capturedStudy()
+  await library.saveStudy(repaired)
+  await rm(join(directory, `${repaired.id}.study.meta.v3.json`))
+  const newerBytes = JSON.stringify({ ...newerInKnownFile, version: 6 })
+  await writeFile(
+    join(directory, `${newerInKnownFile.id}.study.v4.json`),
+    newerBytes,
+  )
+  await library.saveStudy(newerSidecarOnly)
+  const newerSidecar = join(
+      directory,
+      `${newerSidecarOnly.id}.study.meta.v3.json`,
+    ),
+    newerSidecarBytes = JSON.stringify({ version: 6, id: newerSidecarOnly.id })
+  await writeFile(newerSidecar, newerSidecarBytes)
+  // Act
+  const retry = await library.reconcile().then(
+    () => 'reconciled',
+    (error: unknown) => String(error),
+  )
+  const checkpointOfNewerSidecar = await library
+    .readCheckpoint(newerSidecarOnly.id)
+    .then(
+      (checkpoint) => checkpoint.status,
+      (error: unknown) => String(error),
+    )
+  // Assert
+  assert.equal(retry, 'reconciled')
+  assert.equal((await library.readCheckpoint(repaired.id)).status, 'saved')
+  assert.equal(
+    await readFile(
+      join(directory, `${newerInKnownFile.id}.study.v4.json`),
+      'utf8',
+    ),
+    newerBytes,
+  )
+  assert.equal(await readFile(newerSidecar, 'utf8'), newerSidecarBytes)
+  assert.equal(
+    checkpointOfNewerSidecar,
+    'Error: This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  )
+  assert.deepEqual(
+    (await library.list())
+      .filter((entry) => entry.id === newerSidecarOnly.id)
+      .map((entry) => ({ format: entry.format, outcome: entry.outcome })),
+    [{ format: 'newer', outcome: 'Saved by a newer Codebook; kept as it is' }],
+  )
+})
+
+// Value: protects=a learner at whose progress file a link or a folder stands (a file kept elsewhere behind a link; a folder a tool left); fails_when=the Study pane and the Wiki pane show "Progress is not a regular file." for good: it names no path, the file lies in the editor's storage where nobody finds it, and the panes' Retry storage reads the same entry again; or a step the sentence names does not end in a read; why_new=Cycle 0046 row 311; seam=none, the real entries
+test('a link or a folder where the progress file should be is refused with the file’s path and what to do: after the learner puts the file itself at that path, the saved choices are read again, and after the learner moves the folder away, progress starts empty', async (context) => {
+  // Arrange: one library whose saved progress is kept elsewhere behind a link, and one with a folder at the progress file's path.
+  const withLink = await mkdtemp(join(tmpdir(), 'codebook-learning-')),
+    withFolder = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(withLink, { recursive: true, force: true }))
+  context.after(() => rm(withFolder, { recursive: true, force: true }))
+  await new LearningLibrary(withLink, workspaceKey).decide(decision(true))
+  const linkedPath = join(withLink, 'progress.repository.v4.json'),
+    folderPath = join(withFolder, 'progress.repository.v4.json')
+  await fsPromises.rename(linkedPath, join(withLink, 'kept-progress.json'))
+  const isLinkMade = await fsPromises
+    .symlink(join(withLink, 'kept-progress.json'), linkedPath)
+    .then(
+      () => true,
+      () => false,
+    )
+  if (!isLinkMade)
+    return context.skip(
+      'creating a symbolic link to a file was refused: this user lacks the right (on Windows: no administrator and no developer mode)',
+    )
+  await fsPromises.mkdir(folderPath, { recursive: true })
+  const read = (directory: string): Promise<string> =>
+    new LearningLibrary(directory, workspaceKey).readProgress().then(
+      (progress) => `read, ${progress.decisions.length} saved choice(s)`,
+      (error: Error) => error.message,
+    )
+
+  // Act
+  const refusals = {
+    link: await read(withLink),
+    folder: await read(withFolder),
+  }
+  // The sentence is followed to the letter, each way once.
+  await fsPromises.rm(linkedPath)
+  await fsPromises.rename(join(withLink, 'kept-progress.json'), linkedPath)
+  await fsPromises.rename(folderPath, join(withFolder, 'moved-away'))
+  const afterwards = {
+    link: await read(withLink),
+    folder: await read(withFolder),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, afterwards },
+    {
+      refusals: {
+        link: `Progress is not a regular file: ${linkedPath}. Put the file itself at that path, or move what stands there away, then try again.`,
+        folder: `Progress is not a regular file: ${folderPath}. Put the file itself at that path, or move what stands there away, then try again.`,
+      },
+      afterwards: {
+        link: 'read, 1 saved choice(s)',
+        folder: 'read, 0 saved choice(s)',
+      },
+    },
+  )
 })

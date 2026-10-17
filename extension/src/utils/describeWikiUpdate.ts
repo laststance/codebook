@@ -26,6 +26,10 @@ export type WikiUpdateWording = {
   msPerMinute: number
   /** The chat request that makes the editor agent run the publisher's recovery, as the learner pastes it ({@link WIKI_UPDATE_RECOVERY_REQUEST}); the function is embedded into the page and cannot import the constant. */
   recoveryRequest: string
+  /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, as the editor's confirmation says it ({@link WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}); the function is embedded into the page and cannot import the constant. */
+  outsideOutputApprovalsNote: string
+  /** What a learner does after they refused a step of VS Code's chat ({@link WIKI_REFUSED_STEP_ADVICE}), without its full stop; the running line of a VS Code update goes on from it with where Cancel is and what happens otherwise. The function is embedded into the page and cannot import the constant. */
+  refusedStepAdvice: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
   /** Whether the reading page was served from another publication than the one on disk now; omitted by the editor, which never offers a reload. */
@@ -45,7 +49,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, where the freshness label is and whether the reading page is older than the site.
+ * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, the note on approvals outside the project, where the freshness label is and whether the reading page is older than the site.
  * @returns
  * - Idle: undefined (nothing to show)
  * - A state this version does not know: "Update status unknown.", with the output line only when that state names an output; none of its other fields is read
@@ -55,7 +59,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', freshnessLabelPlace: 'above' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.', refusedStepAdvice: 'If you refuse a step of the chat, press Cancel', freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -129,7 +133,7 @@ export function describeWikiUpdate(
    * @param running - The running state.
    * @param since - When the request was sent, as the learner's local time.
    * @param bound - The watch's bound in whole minutes, for example "15 minutes".
-   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step.
+   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step; the line ends with what to do after a refused step, which the editor's short notification does not say.
    * @example describeRunningInVsCode(running, '21:00', '15 minutes').lead // => 'Updating LLM Wiki…'
    */
   const describeRunningInVsCode = (
@@ -150,8 +154,14 @@ export function describeWikiUpdate(
         '. This site stays readable.' +
         // The chat asks for each step outside the workspace; the learner should know why and how to avoid it.
         (running.isOutputOutsideProject
-          ? ' This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
-          : ''),
+          ? ' ' + wording.outsideOutputApprovalsNote
+          : '') +
+        // Once the chat asked for an approval Codebook does not see it stop: a learner who refused a step and stays on this page would wait out the bound. The watch's Cancel is its entry in the status bar.
+        ' ' +
+        wording.refusedStepAdvice +
+        ' in the editor’s status bar; otherwise Codebook keeps watching for the whole ' +
+        bound +
+        '.',
     )
   /**
    * Words a run that is still under way, by its host; called by {@link describeWikiUpdate} for the state `running`.
@@ -240,11 +250,21 @@ export function describeWikiUpdate(
     }
   }
   /**
+   * Words what a failed update with a kept site says of that site; called by {@link describeFailed} last.
+   * @param failed - The failed state.
+   * @returns " The last usable site is kept."; " Nothing had been replaced by then." where somebody can still publish after this end (`mayBeReplacedLater`), since the editor keeps the notice on screen and "is kept" would become untrue under it.
+   * @example keptSiteClause(failed) // => ' The last usable site is kept.'
+   */
+  const keptSiteClause = (failed: WikiUpdateStatusOf<'failed'>): string =>
+    failed.mayBeReplacedLater
+      ? ' Nothing had been replaced by then.'
+      : ' The last usable site is kept.'
+  /**
    * Words a failed update with its reason and what became of the site; called by {@link describeEnded} for the state `failed`.
    * @param failed - The failed state.
    * @param at - When the run ended, as the learner's local time.
    * @param replaced - Whether the run replaced the site on disk.
-   * @returns The description: "Update needs another run" for a replaced site, "Update failed" for a missing or a kept one.
+   * @returns The description: "Update needs another run" for a replaced site, "Update failed" for a missing or a kept one. A kept site is worded by {@link keptSiteClause}: called kept, unless somebody can still publish after this end.
    * @example describeFailed(failed, '21:10', false).rest // => ' at 21:10: Cursor Agent exited with code 1. The last usable site is kept.'
    */
   const describeFailed = (
@@ -266,7 +286,7 @@ export function describeWikiUpdate(
       return describe('Update failed', ' at ' + at + ': ' + sentence, detail)
     return describe(
       'Update failed',
-      ' at ' + at + ': ' + sentence + ' The last usable site is kept.',
+      ' at ' + at + ': ' + sentence + keptSiteClause(failed),
       detail,
     )
   }
@@ -307,7 +327,7 @@ export function describeWikiUpdate(
    * @param timedOut - The timed-out state.
    * @param at - When the run was stopped, as the learner's local time.
    * @param replaced - Whether the site on disk was replaced before the stop.
-   * @returns The description: "Update timed out" for Cursor, "No new site appeared" for VS Code, each with the bound in minutes and the next step.
+   * @returns The description: "Update timed out" for Cursor, whose agent was stopped, with the bound in minutes and the next step; "No new site appeared" for VS Code, whose chat was not stopped with the watch and can still publish: what held when the watch stopped, in words that stay true after a later publish, and a step for a chat that waits for the learner, one that still works and one that stopped (the press that Codebook refuses while it waits for that chat, and the override the refusal offers).
    * @example describeTimedOut(timedOut, '21:15', false).lead // => 'Update timed out'
    */
   const describeTimedOut = (
@@ -335,7 +355,8 @@ export function describeWikiUpdate(
         at +
         (replaced
           ? '. The site on disk changed during the watch; ' + freshnessStep
-          : '. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.'),
+          : // The editor keeps this notice on screen and the chat goes on: nothing here may say "now", and each state the chat can be in gets a step that works (a press is refused while Codebook waits for that chat).
+            '. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.'),
     )
   }
   /**
@@ -419,6 +440,22 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
+   * Words a start refused because the Wiki folder is itself a link or a file; called by {@link describeConflict} between {@link describePageRefusal} and {@link describeRecoveryRefusal}.
+   * @param cause - The cause of the conflict.
+   * @param named - The Wiki folder's own name, as the sentence names it.
+   * @returns The sentence after the time for `not-a-folder`, with the next step; undefined for every other cause.
+   * @example describeFolderRefusal('not-a-folder', 'wiki')?.slice(0, 52) // => 'the Wiki folder itself (wiki) is a link or a file, an'
+   */
+  const describeFolderRefusal = (
+    cause: WikiUpdateStatusOf<'conflict'>['cause'],
+    named: string,
+  ): string | undefined =>
+    cause === 'not-a-folder'
+      ? 'the Wiki folder itself (' +
+        named +
+        ') is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.'
+      : undefined
+  /**
    * Words a start refused because of the Wiki's manifest or an unfinished publish, each ending with the recovery request for the editor chat; called by {@link describeConflict} after {@link describePageRefusal}.
    * @param cause - The cause of the conflict.
    * @param named - The paths as the sentence names them.
@@ -450,19 +487,31 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
+   * Words what became of the site when a run stopped before it would overwrite the learner's own files; called by {@link describeConflict} for {@link describeOverwriteStop}.
+   * @param replaced - Whether the site on disk changed during the run.
+   * @returns That the site changed, with the freshness label to check; otherwise that nothing was replaced, in the past tense of the stop, which a later publish of a chat that goes on leaves true.
+   * @example siteAtOverwriteStop(false) // => 'Nothing was replaced.'
+   */
+  const siteAtOverwriteStop = (replaced: boolean): string =>
+    replaced
+      ? 'The site on disk changed during the run; ' + freshnessStep
+      : 'Nothing was replaced.'
+  /**
    * Words a run that stopped before it would overwrite the learner's own files; called by {@link describeConflict} for a cause that did not refuse the start.
    * @param at - When the run stopped, as the learner's local time.
-   * @param replaced - Whether the site on disk changed during the run.
+   * @param site - What became of the site, as {@link siteAtOverwriteStop} words it.
    * @param named - The paths as the sentence names them.
    * @param many - Whether more than one file is in the way.
+   * @param isChatStillThere - Whether the agent was not stopped with the run (VS Code's chat, which Codebook only stopped watching): the next step then names that chat and its two ways on, to answer it so that it publishes, or to stop it and press, which Codebook answers with the wait for it. The step is kept short: with twelve long paths the sentence must still fit the rail's bound of 45vh at 960 x 600.
    * @returns The rest of the sentence after "Update stopped", with the next step.
-   * @example describeOverwriteStop('21:10', false, 'notes.md', false) // => ' at 21:10: it would overwrite your own file in the Wiki folder (notes.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.'
+   * @example describeOverwriteStop('21:10', 'Nothing was replaced.', 'notes.md', false, false) // => ' at 21:10: it would overwrite your own file in the Wiki folder (notes.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.'
    */
   const describeOverwriteStop = (
     at: string,
-    replaced: boolean,
+    site: string,
     named: string,
     many: boolean,
+    isChatStillThere: boolean,
   ): string =>
     ' at ' +
     at +
@@ -471,18 +520,18 @@ export function describeWikiUpdate(
     ' in the Wiki folder (' +
     named +
     '). ' +
-    (replaced
-      ? 'The site on disk changed during the run; ' + freshnessStep
-      : 'Nothing was replaced.') +
+    site +
     ' Move or rename ' +
     (many ? 'them' : 'the file') +
-    ', then press Update LLM Wiki again.'
+    (isChatStillThere
+      ? '. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.'
+      : ', then press Update LLM Wiki again.')
   /**
    * Words an update that paths in the Wiki folder kept from starting or from finishing; called by {@link describeStoppedRun} for the state `conflict`.
    * @param conflict - The conflict state.
    * @param at - When the conflict was found, as the learner's local time.
    * @param replaced - Whether the site on disk changed during the run.
-   * @returns The description: "Update not started" for a cause that refused the start, "Update stopped" otherwise (also for a cause this version does not know); `detail` holds all paths when the sentence names only the first.
+   * @returns The description: "Update not started" for a cause that refused the start, "Update stopped" otherwise (also for a cause this version does not know), with the chat named for VS Code, where it was not stopped; `detail` holds all paths when the sentence names only the first.
    * @example describeConflict(conflict, '21:10', false).lead // => 'Update not started'
    */
   const describeConflict = (
@@ -494,12 +543,21 @@ export function describeWikiUpdate(
     const many = conflict.paths.length > 1
     const refusal =
       describePageRefusal(conflict.cause, named, many) ??
+      describeFolderRefusal(conflict.cause, named) ??
       describeRecoveryRefusal(conflict.cause, named)
     if (refusal !== undefined)
       return describe('Update not started', ' (' + at + '): ' + refusal, detail)
+    // Only a Cursor agent is stopped with its run; VS Code's chat goes on after the watch.
+    const isChatStillThere = conflict.host !== 'cursor'
     return describe(
       'Update stopped',
-      describeOverwriteStop(at, replaced, named, many),
+      describeOverwriteStop(
+        at,
+        siteAtOverwriteStop(replaced),
+        named,
+        many,
+        isChatStillThere,
+      ),
       detail,
     )
   }

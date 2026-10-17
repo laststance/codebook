@@ -13,6 +13,7 @@ import type { WikiIncludedSource } from './answerDeepWikiQuestion'
 import { hashFileSha256 } from './hashFileSha256'
 import { isWikiSourceCandidate } from './isWikiSourceCandidate'
 import { mapWithConcurrencyLimit } from './mapWithConcurrencyLimit'
+import { systemErrorCode } from './systemErrorCode'
 
 const runGit = promisify(execFile)
 
@@ -345,32 +346,15 @@ function sourceCheckOfHash(
 }
 
 /**
- * Says whether a thrown value reports a file that is gone; called by {@link sourceCheckOfFailure}.
- * @param error - What resolving or hashing the file threw.
- * @returns Whether it is an object whose `code` is `ENOENT`.
- * @example
- * isMissingFileError({ code: 'ENOENT' }) // => true
- * isMissingFileError({ code: 'EACCES' }) // => false
- */
-function isMissingFileError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'ENOENT'
-  )
-}
-
-/**
  * Names what a failed read says about an indexed source; called by {@link checkSource} in {@link inspectDeepWikiFreshness} with what resolving or hashing the file threw.
  * @param error - What was thrown.
- * @returns `changed` for a file that is gone ({@link isMissingFileError}), `unchecked` for a file that is there and cannot be read.
+ * @returns `changed` for a file that is gone (the system error `ENOENT`, read by {@link systemErrorCode}), `unchecked` for a file that is there and cannot be read.
  * @example
- * sourceCheckOfFailure({ code: 'ENOENT' }) // => 'changed'
- * sourceCheckOfFailure({ code: 'EACCES' }) // => 'unchecked'
+ * sourceCheckOfFailure(Object.assign(new Error('no such file'), { code: 'ENOENT' }))     // => 'changed'
+ * sourceCheckOfFailure(Object.assign(new Error('permission denied'), { code: 'EACCES' })) // => 'unchecked'
  */
 function sourceCheckOfFailure(error: unknown): 'changed' | 'unchecked' {
-  return isMissingFileError(error) ? 'changed' : 'unchecked'
+  return systemErrorCode(error) === 'ENOENT' ? 'changed' : 'unchecked'
 }
 
 /**

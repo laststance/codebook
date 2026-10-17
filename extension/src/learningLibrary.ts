@@ -54,6 +54,7 @@ import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
+import { recordingMayStillBeWritten } from './utils/recordingMayStillBeWritten'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'
@@ -82,8 +83,22 @@ type StudyRemovalChanges = {
   ledgerBytesBefore?: Buffer | null
 }
 
+/** The format of a study that has an archive: a known format, or `newer` for one this Codebook does not know yet. */
+type ArchiveFormat = Exclude<
+  StudyCatalogEntry['format'],
+  'node-test-history' | 'archive-missing'
+>
+
 /** One study of the library directory as {@link LearningLibrary.entries} lists it: its id, the path, the format and the format number of its newest archive. */
-type LibraryEntry = Awaited<ReturnType<LearningLibrary['entries']>>[number]
+type LibraryEntry = {
+  id: string
+  path: string
+  format: ArchiveFormat
+  version: number
+}
+
+/** The paths of one study under the library directory by kind, as {@link LearningLibrary.studyPaths} finds them. */
+type StudyPaths = Awaited<ReturnType<LearningLibrary['studyPaths']>>
 
 /** The stat of a bounded regular archive, as {@link LearningLibrary.archiveStat} reads it. */
 type ArchiveStat = Awaited<ReturnType<LearningLibrary['archiveStat']>>
@@ -111,9 +126,10 @@ export class LearningLibrary {
     return savedStudyLimit(this.capacity())
   }
 
-  /** Lists bounded sidecars without reading image blobs; incomplete catalog writes remain visible. @example await library.list() */
+  /** Lists bounded sidecars without reading image blobs; incomplete catalog writes remain visible, and so does what is left of a study whose archive is gone ({@link entriesWithoutArchive}), as an entry that cannot be opened. @example await library.list() */
   async list(): Promise<StudyCatalogEntry[]> {
-    const entries = await this.entries()
+    const names = await this.libraryNames(),
+      entries = this.entriesOfNames(names)
     // An archive moved to the Trash between the directory read and its stat is no longer listed.
     const present = (
       await Promise.all(
@@ -143,9 +159,141 @@ export class LearningLibrary {
         }
       }),
     )
-    return catalog.sort((left, right) =>
-      right.savedAt.localeCompare(left.savedAt),
+    return [
+      ...catalog,
+      ...(await this.entriesWithoutArchive(names, entries)),
+    ].sort((left, right) => right.savedAt.localeCompare(left.savedAt))
+  }
+
+  /**
+   * Lists what is left of the studies that have no archive any more, so that their files stay reachable from Saved studies and nothing takes a place of the saved study limit that no list shows; called by {@link list} with its one reading of the library directory.
+   * Such a study is found by a catalog sidecar in the library directory or by a recording directory in a recording root, as after the learner removed a study's files by hand and left some. It cannot be opened, repaired or counted as a saved study; {@link studyFiles} names its files and {@link removeStudy} moves them.
+   * @param names - The file names of the library directory.
+   * @param kept - The studies that have an archive, which are listed by it.
+   * @returns One entry a study without an archive of which something is left ({@link isLeftWithoutArchive}); a study that cannot be inspected is left out, so it never hides the saved studies.
+   * @example await this.entriesWithoutArchive(['<id>.study.meta.v3.json'], []) // => [{ id, savedAt, format: 'archive-missing', metadata: 'unavailable', outcome: 'Archive missing; remaining files kept' }]
+   */
+  private async entriesWithoutArchive(
+    names: string[],
+    kept: LibraryEntry[],
+  ): Promise<StudyCatalogEntry[]> {
+    const keptIds = new Set(kept.map((entry) => entry.id))
+    const candidates = new Set([
+      ...this.sidecarStudyIds(names),
+      ...(await this.recordedStudyIds()),
+    ])
+    const left: StudyCatalogEntry[] = []
+    for (const id of candidates) {
+      // A study with an archive, also one of a newer format, is listed by its archive.
+      if (keptIds.has(id)) continue
+      const entry = await this.entryWithoutArchive(id).catch(() => undefined)
+      if (entry) left.push(entry)
+    }
+    return left
+  }
+
+  /**
+   * Finds the studies a catalog sidecar in the library directory belongs to; called by {@link entriesWithoutArchive}.
+   * @param names - The file names of the library directory.
+   * @returns The study id of every file named like a catalog sidecar of a known format; a file whose prefix is no study id is nobody's and is left out.
+   * @example this.sidecarStudyIds(['<id>.study.meta.v3.json', 'x.study.meta.v3.json']) // => ['<id>']
+   */
+  private sidecarStudyIds(names: string[]): string[] {
+    const suffixes = STUDY_STORAGE_FORMATS.flatMap((format) =>
+      format.metadataSuffix ? [format.metadataSuffix] : [],
     )
+    return names.flatMap((name) => {
+      const suffix = suffixes.find((candidate) => name.endsWith(candidate))
+      return suffix ? this.studyIdNamed(name.slice(0, -suffix.length)) : []
+    })
+  }
+
+  /** Reads a name as a study id, for the names of sidecars and recording folders that {@link entriesWithoutArchive} looks at. @example this.studyIdNamed('x') // => [], and ['<id>'] for a study id */
+  private studyIdNamed(name: string): string[] {
+    const parsedId = studyIdSchema.safeParse(name)
+    return parsedId.success ? [parsedId.data] : []
+  }
+
+  /**
+   * Finds the studies that have a recording directory in a recording root; called by {@link entriesWithoutArchive}.
+   * @returns The study id of every folder named like one in every recording root ({@link recordedStudyIdsIn}).
+   * @example await this.recordedStudyIds() // => ['<id>'] beside '/…/recordings.v2/<id>'
+   */
+  private async recordedStudyIds(): Promise<string[]> {
+    const ids: string[] = []
+    for (const storage of RECORDING_STORAGE_FORMATS)
+      ids.push(
+        ...(await this.recordedStudyIdsIn(
+          join(this.directory, storage.directory),
+        )),
+      )
+    return ids
+  }
+
+  /**
+   * Finds the studies that have a recording directory in one recording root; called by {@link recordedStudyIds} for the root of every recording format.
+   * @param root - The recording root.
+   * @returns The study id of every folder of the root that is named like one. A root that is absent, replaced by a link or cannot be read gives none, and so does an entry that is no folder.
+   * @example await this.recordedStudyIdsIn('/…/recordings.v2') // => ['<id>']
+   */
+  private async recordedStudyIdsIn(root: string): Promise<string[]> {
+    // Only a real directory is read: a listing would follow a link that replaced the root.
+    const stat = await this.optionalStat(root).catch(() => undefined)
+    if (!stat?.isDirectory()) return []
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => this.studyIdNamed(entry.name))
+  }
+
+  /**
+   * Builds the catalog entry of one study without an archive of which something is left; called by {@link entriesWithoutArchive} for every study a sidecar or a recording directory names.
+   * @param id - The validated study id.
+   * @returns The entry with `format: 'archive-missing'` and `metadata: 'unavailable'`, which has no reason: nothing Retry storage does brings the archive back. Its saved time is the latest modification of what is left. `undefined` when nothing is left that makes the study one ({@link isLeftWithoutArchive}).
+   * @throws When a path of the study cannot be inspected.
+   * @example (await this.entryWithoutArchive(id))?.outcome // => 'Archive missing; remaining files kept'
+   */
+  private async entryWithoutArchive(
+    id: string,
+  ): Promise<StudyCatalogEntry | undefined> {
+    const paths = await this.studyPaths(id, undefined)
+    if (!(await this.isLeftWithoutArchive(paths))) return undefined
+    const modified = await Promise.all(
+      [...paths.recordings, ...paths.sidecars].map((path) => lstat(path)),
+    )
+    return {
+      id,
+      savedAt: new Date(
+        Math.max(...modified.map((stat) => stat.mtimeMs)),
+      ).toISOString(),
+      format: 'archive-missing',
+      metadata: 'unavailable',
+      outcome: 'Archive missing; remaining files kept',
+    }
+  }
+
+  /**
+   * Says whether the paths of a study are what is left of a saved study without its archive, which is listed ({@link entriesWithoutArchive}) and may be removed ({@link removeStudy}).
+   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one only when no editor may still be writing it ({@link recordingMayStillBeWritten}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run.
+   * @param paths - The study's paths as {@link studyPaths} found them.
+   * @returns `true` when no archive is left and a sidecar, or a recording that nobody writes, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only a recording that may still be written.
+   * @example await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }) // => true once that recording is sealed
+   */
+  private async isLeftWithoutArchive(paths: StudyPaths): Promise<boolean> {
+    if (paths.archives.length) return false
+    return (
+      paths.sidecars.length > 0 ||
+      this.hasRecordingNobodyWrites(paths.recordings)
+    )
+  }
+
+  /** Says whether one of a study's recording directories is finished or abandoned, so that it is no reservation of a run that still writes it; asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNobodyWrites(['/…/recordings.v2/<id>']) // => true once that recording is sealed */
+  private async hasRecordingNobodyWrites(
+    recordings: string[],
+  ): Promise<boolean> {
+    for (const recording of recordings)
+      if (!(await recordingMayStillBeWritten(recording))) return true
+    return false
   }
 
   /**
@@ -254,14 +402,22 @@ export class LearningLibrary {
 
   /** Prefers v3/v2 by existence, validates full bytes and never hides corruption with older history. @example await library.readStudy(id) */
   async readStudy(id: string): Promise<RetainedStudy> {
-    return (await this.readArchive(id)).study
+    const identity = studyIdSchema.parse(id)
+    return (
+      await this.readArchive(identity, await this.newerFormatOf(identity))
+    ).study
   }
 
-  /** Retains the selected format across I/O so missing modern metadata cannot be mistaken for legacy history. @example await this.readArchive(id) */
-  private async readArchive(id: string) {
-    const identity = studyIdSchema.parse(id)
+  /**
+   * Retains the selected format across I/O so missing modern metadata cannot be mistaken for legacy history; called by {@link readStudy}, {@link readCheckpoint}, {@link saveStudy} and {@link reconcile}.
+   * @param identity - The validated study id.
+   * @param newerFormat - The format number of the study's archive a newer Codebook saved, as the caller's listing of the library directory found it ({@link newerFormatOf}, {@link newerFormatOfEntry}); `undefined` when there is none.
+   * @returns The study with the known format it was read from and its archive path.
+   * @throws A {@link NewerStudyFormatError} when `newerFormat` is set or the archive holds a newer format; a {@link StudyArchiveUnavailableError} when no archive exists; what reading or decoding the archive throws.
+   * @example await this.readArchive(study.id, undefined) // => { study, storage: { format: 'v3', … }, path: '/…/<id>.study.v3.json' }
+   */
+  private async readArchive(identity: string, newerFormat: number | undefined) {
     // A file of a format this Codebook does not know yet owns the study: an older file beside it is never read in its place.
-    const newerFormat = await this.newerFormatOf(identity)
     if (newerFormat !== undefined) throw new NewerStudyFormatError(newerFormat)
     // Presence selects the decoder; a broken newer file cannot resurrect an older run.
     for (const storage of STUDY_STORAGE_FORMATS) {
@@ -291,7 +447,7 @@ export class LearningLibrary {
   }
 
   /**
-   * Finds the format number of a study's archive that a newer Codebook saved, by the file names of the library directory; called by {@link readArchive} before any known format is tried and by {@link studyPaths} before any file of the study is named for a removal.
+   * Finds the format number of a study's archive that a newer Codebook saved, by the file names of the library directory; called by the reads and removals of one study ({@link readStudy}, {@link readCheckpoint}, {@link removeStudy}, {@link studyFiles}) before {@link readArchive} or {@link studyPaths}, which a caller that has listed the library already feeds from its entry instead ({@link newerFormatOfEntry}).
    * @param identity - The validated study id.
    * @returns The highest such number, or `undefined` when every archive of the study has a known format or the directory does not exist.
    * @example await this.newerFormatOf(study.id) // => 5 beside '<id>.study.v5.json'
@@ -308,25 +464,53 @@ export class LearningLibrary {
     return versions.length ? Math.max(...versions) : undefined
   }
 
+  /**
+   * Reads the format number of a study's newer archive from its entry, so a caller that has listed the library with {@link entries} hands {@link readArchive} what {@link newerFormatOf} would find without listing the directory again.
+   * @param entry - The study as the library directory lists it; its newest archive owns it, and a newer format is always above the known ones.
+   * @returns
+   * - the format number, when the study's newest archive is of a format this Codebook does not know
+   * - `undefined` for a study whose newest archive has a known format
+   * @example this.newerFormatOfEntry({ id, path: '/…/<id>.study.v5.json', format: 'newer', version: 5 }) // => 5
+   */
+  private newerFormatOfEntry(entry: LibraryEntry): number | undefined {
+    return entry.format === 'newer' ? entry.version : undefined
+  }
+
   /** Qualifies selected history against its exact sidecar while preserving readable partial archives for {@link StudyWorkspace}. @example (await library.readCheckpoint(id)).status // 'saved' */
   async readCheckpoint(id: string): Promise<{
     study: RetainedStudy
     status: 'saved' | 'failed'
     reason?: string
   }> {
-    const { study, storage, path } = await this.readArchive(id)
+    const identity = studyIdSchema.parse(id)
+    return this.checkpointOf(identity, await this.newerFormatOf(identity))
+  }
+
+  /**
+   * Qualifies one study's archive against its catalog sidecar; the body of {@link readCheckpoint}, also called by {@link reconcile} for each study its one listing of the library found with a known format.
+   * @param identity - The validated study id.
+   * @param newerFormat - The format number of the study's newer archive, or `undefined` ({@link readArchive}).
+   * @returns The study with `saved` when the sidecar matches its archive (always for the first format, which has none), otherwise `failed` with the reason.
+   * @throws What {@link readArchive} throws; a {@link NewerStudyFormatError} also for a sidecar a newer Codebook wrote under a known file name beside a readable archive: the study is that Codebook's, as {@link list} shows it, and no failed checkpoint that Retry storage could repair.
+   * @example (await this.checkpointOf(study.id, undefined)).status // => 'saved'
+   */
+  private async checkpointOf(
+    identity: string,
+    newerFormat: number | undefined,
+  ): ReturnType<LearningLibrary['readCheckpoint']> {
+    const { study, storage, path } = await this.readArchive(
+      identity,
+      newerFormat,
+    )
     if (storage.format === 'legacy-v1') return { study, status: 'saved' }
     try {
       const metadata = await this.readMetadata(study.id, storage.version),
         stat = await this.archiveStat(path)
-      const { archive, ...identity } = metadata
+      const { archive, ...checkpointedFields } = metadata
       const schema = configuredStudyMetadataSchema
-      const expectedIdentity = schema
-        .omit({ archive: true })
-        .strip()
-        .parse(study)
+      const expectedFields = schema.omit({ archive: true }).strip().parse(study)
       if (
-        JSON.stringify(identity) !== JSON.stringify(expectedIdentity) ||
+        JSON.stringify(checkpointedFields) !== JSON.stringify(expectedFields) ||
         archive.hash !== sha256(JSON.stringify(study)) ||
         archive.byteLength !== stat.size ||
         archive.modifiedMs !== stat.mtimeMs
@@ -334,6 +518,8 @@ export class LearningLibrary {
         throw new Error('Selected archive differs from its catalog checkpoint.')
       return { study, status: 'saved' }
     } catch (error) {
+      // A sidecar of a newer format is that Codebook's note of the study, not an incomplete checkpoint: Retry storage must not write over it.
+      if (error instanceof NewerStudyFormatError) throw error
       return {
         study,
         status: 'failed',
@@ -356,7 +542,10 @@ export class LearningLibrary {
       const path = join(this.directory, filename),
         stat = await this.optionalStat(path)
       if (!stat) continue
-      if (!stat.isFile()) throw new Error('Progress is not a regular file.')
+      if (!stat.isFile())
+        throw new Error(
+          `Progress is not a regular file: ${path}. Put the file itself at that path, or move what stands there away, then try again.`,
+        )
       const value: unknown = JSON.parse(
         (await readBoundedFile(path, PROGRESS_LIMIT_BYTES)).toString(),
       )
@@ -483,7 +672,8 @@ export class LearningLibrary {
   }
 
   /**
-   * Counts the studies this library keeps now, for the saved-study count {@link StudyService.status} reports beside the limit.
+   * Counts the studies this library keeps now, as its own admission counts them ({@link admits}): for the saved-study count {@link StudyService.status} reports beside the limit, and for the admission of a Node test, to which {@link StudyWorkspace} hands this count ({@link NodeTestHistoryStore}).
+   * A study counts by its archive. What is left of a study without its archive is listed ({@link list}) and counts nothing, here as in every admission.
    * @returns The number of saved studies.
    * @throws When the library directory cannot be read.
    * @example
@@ -514,8 +704,14 @@ export class LearningLibrary {
             this.removalAvailability(),
           ),
         )
-      if (existing.some((value) => value.id === study.id))
-        assertStudyCheckpoint(await this.readStudy(study.id), study)
+      const kept = existing.find((value) => value.id === study.id)
+      // The study's own listing tells its newer format; the library directory is not listed again.
+      if (kept)
+        assertStudyCheckpoint(
+          (await this.readArchive(kept.id, this.newerFormatOfEntry(kept)))
+            .study,
+          study,
+        )
       const storage = STUDY_STORAGE_FORMATS.find(
         (format) => format.version === study.version,
       )!
@@ -557,10 +753,11 @@ export class LearningLibrary {
    * 6. the archives from the lowest format to the highest.
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
+   * What is left of a study whose archive is gone, as {@link list} shows it, is moved in the same order ({@link isLeftWithoutArchive}); the recording of a run that has not saved its study yet is not.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
-   * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, a study without an archive and a study in a newer format (`nothing-moved` with the sentence of {@link NewerStudyFormatError}), is a result and not a rejection.
+   * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, an id of which no file is left and a study in a newer format (`nothing-moved` with the sentence of {@link NewerStudyFormatError}), is a result and not a rejection.
    * @throws When `id` is not a study identity.
    * @example
    * await library.removeStudy(study.id, moveToTrash) // => { outcome: 'moved' }
@@ -575,8 +772,13 @@ export class LearningLibrary {
     // The lock call also rejects when its release fails after the steps ran; what they settled then decides the outcome.
     let settled: StudyRemoval | undefined
     return this.locked(async (): Promise<StudyRemoval> => {
-      const paths = await this.studyPaths(identity)
-      if (!paths.archives.length) throw new StudyArchiveUnavailableError()
+      const paths = await this.studyPaths(
+        identity,
+        await this.newerFormatOf(identity),
+      )
+      // What is left of a study without its archive is removed like a study; an id of which nothing is left, or only a recording that may still be written, names no study.
+      if (!paths.archives.length && !(await this.isLeftWithoutArchive(paths)))
+        throw new StudyArchiveUnavailableError()
       // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
       const progress = await this.readProgress().catch(() => undefined),
         ledger = progress && withoutStudyReferences(progress, identity)
@@ -615,18 +817,21 @@ export class LearningLibrary {
    * Finds the paths of one saved study under the library directory, by kind and in the order a removal takes them; the one list {@link removeStudy} moves and {@link studyFiles} shows.
    * The ledger is not among them: it holds the learner's decisions, and a removal rewrites it instead of moving it.
    * @param identity - The validated study id.
+   * @param newerFormat - The format number of the study's newer archive, as the caller's listing found it ({@link newerFormatOf}); `undefined` when there is none.
    * @returns The existing recording directories, the playback position file when it names the study, the catalog sidecars, and the archives from the lowest format to the highest (the highest archive is the last move, so the study is listed until then).
    * @throws A {@link NewerStudyFormatError} for a study with an archive in a format this Codebook does not know: which files that format keeps is not known here, so none of the study's files is named, moved or shown, whatever the caller's catalog said.
-   * @example await this.studyPaths(study.id) // => { recordings: [], playback: [], sidecars: ['/…/<id>.study.meta.v3.json'], archives: ['/…/<id>.study.v3.json'] }
+   * @example await this.studyPaths(study.id, undefined) // => { recordings: [], playback: [], sidecars: ['/…/<id>.study.meta.v3.json'], archives: ['/…/<id>.study.v3.json'] }
    */
-  private async studyPaths(identity: string): Promise<{
+  private async studyPaths(
+    identity: string,
+    newerFormat: number | undefined,
+  ): Promise<{
     recordings: string[]
     playback: string[]
     sidecars: string[]
     archives: string[]
   }> {
     // The file of a newer format owns the study, as for a read: an older archive beside it is not removed in its place.
-    const newerFormat = await this.newerFormatOf(identity)
     if (newerFormat !== undefined) throw new NewerStudyFormatError(newerFormat)
     const archives = await this.existingPaths(
       STUDY_STORAGE_FORMATS.toReversed().map(
@@ -648,13 +853,17 @@ export class LearningLibrary {
    * The ledger is not listed: {@link forgetAbsentStudies} drops its references once the study is gone.
    * @param id - The saved study.
    * @param evidenceDirectory - The raw evidence directory of the study's run; listed when it is a real directory, omitted when it must stay in place.
-   * @returns The existing paths; empty when the library holds nothing of that study.
+   * @returns The existing paths, also those of a study whose archive is gone; empty when the library holds nothing of that study.
    * @throws When `id` is not a study identity, or a path cannot be inspected; a {@link NewerStudyFormatError} for a study a newer Codebook saved, whose files are not listed for removal.
    * @example
    * await library.studyFiles(study.id) // => ['/…/recordings.v2/<id>', '/…/<id>.study.meta.v3.json', '/…/<id>.study.v3.json']
    */
   async studyFiles(id: string, evidenceDirectory?: string): Promise<string[]> {
-    const paths = await this.studyPaths(studyIdSchema.parse(id))
+    const identity = studyIdSchema.parse(id)
+    const paths = await this.studyPaths(
+      identity,
+      await this.newerFormatOf(identity),
+    )
     const evidence =
       evidenceDirectory &&
       (await this.optionalStat(evidenceDirectory))?.isDirectory()
@@ -864,14 +1073,21 @@ export class LearningLibrary {
     return names ? [path] : []
   }
 
-  /** Explicit Retry repairs current archive sidecars while unsupported historical bytes stay untouched. @example await library.reconcile() */
+  /** Explicit Retry repairs current archive sidecars while unsupported historical bytes and a study a newer Codebook saved under a known file name, its archive or its catalog sidecar, stay untouched; the library directory is listed once for all studies. @example await library.reconcile() */
   reconcile(): Promise<void> {
     return this.locked(async () => {
       for (const entry of await this.entries()) {
+        // Only a study whose newest archive has a known format with a checkpoint goes on: a study listed as `newer` by its file name never reaches the read below.
         if (!this.keepsCheckpoint(entry.format)) continue
-        // Explicit Retry verifies content too; a matching stat cannot repair or certify a wrong checkpoint hash.
-        const checkpoint = await this.readCheckpoint(entry.id)
-        if (checkpoint.status === 'failed')
+        // Explicit Retry verifies content too; a matching stat cannot repair or certify a wrong checkpoint hash. The listing found no newer archive for this study, so the read is told of none; a newer format inside a known file is found by the read itself.
+        const checkpoint = await this.checkpointOf(entry.id, undefined).catch(
+          (error: unknown) => {
+            // A known file name that holds a newer Codebook's format, the archive or the sidecar, is that study's and is kept as it is; the other studies are still repaired.
+            if (error instanceof NewerStudyFormatError) return undefined
+            throw error
+          },
+        )
+        if (checkpoint?.status === 'failed')
           await this.writeMetadata(checkpoint.study)
       }
     })
@@ -918,52 +1134,81 @@ export class LearningLibrary {
   }
 
   /**
-   * Coalesces the archive file names of the library directory into one entry a study, before the retained-study count limit is applied; called by every listing, admission and read.
-   * The highest format number owns a study, also a number this Codebook does not know yet (`<id>.study.v<n>.json`): such a study is listed and counted as `newer`, so an older file of the same study never stands in for it.
-   * @returns One entry a study with the path, the format and the format number of its newest archive.
+   * Coalesces the archive file names of the library directory into one entry a study, before the retained-study count limit is applied; called by every admission, count and read, and by {@link reconcile}.
+   * @returns One entry a study with the path, the format and the format number of its newest archive ({@link entriesOfNames}).
    * @example await this.entries() // => [{ id, path: '/…/<id>.study.v3.json', format: 'v3', version: 3 }]
    */
-  private async entries() {
+  private async entries(): Promise<LibraryEntry[]> {
+    return this.entriesOfNames(await this.libraryNames())
+  }
+
+  /** Reads the file names of the library directory once, creating the directory first; called by {@link entries} and by {@link list}, which also looks for what is left of studies without an archive among them. @example await this.libraryNames() // => ['<id>.study.meta.v3.json', '<id>.study.v3.json'] */
+  private async libraryNames(): Promise<string[]> {
     await this.initialize()
-    const entries = new Map<
-      string,
-      {
-        id: string
-        path: string
-        format: Exclude<StudyCatalogEntry['format'], 'node-test-history'>
-        version: number
-      }
-    >()
-    for (const name of await readdir(this.directory)) {
-      const archive = this.archiveOfName(name)
-      if (!archive) continue
-      const id = studyIdSchema.parse(archive.id),
-        prior = entries.get(id)
-      if (!prior || archive.version > prior.version)
-        entries.set(id, {
-          id,
-          path: join(this.directory, name),
-          format: archive.format,
-          version: archive.version,
-        })
+    return readdir(this.directory)
+  }
+
+  /**
+   * Coalesces archive file names into one entry a study; the body of {@link entries}, also called by {@link list} with its one reading of the library directory.
+   * The highest format number owns a study, also a number this Codebook does not know yet (`<id>.study.v<n>.json`): such a study is listed and counted as `newer`, so an older file of the same study never stands in for it. A file of that shape whose prefix is no study id is not listed.
+   * @param names - The file names of the library directory.
+   * @returns One entry a study with the path, the format and the format number of its newest archive.
+   * @example this.entriesOfNames(['<id>.study.v2.json', '<id>.study.v3.json']) // => [{ id, path: '/…/<id>.study.v3.json', format: 'v3', version: 3 }]
+   */
+  private entriesOfNames(names: string[]): LibraryEntry[] {
+    const entries = new Map<string, LibraryEntry>()
+    for (const name of names) {
+      const entry = this.entryOfName(name)
+      // A file named like an archive whose prefix is no study id (a stray `x.study.v5.json`) is nobody's study and is skipped.
+      if (!entry) continue
+      if (this.ownsStudyOver(entry, entries.get(entry.id)))
+        entries.set(entry.id, entry)
     }
     // More archives than the maximum (a study restored from the Trash into a full library) stay listed, so the learner can delete them; admission refuses new studies until the count is below the limit.
     return [...entries.values()]
   }
 
   /**
-   * Reads which study a file of the library directory is the archive of, and in which format; called by {@link entries} for every file name.
+   * Reads the entry a file of the library directory gives its study; called by {@link entries} for every file name.
+   * @param name - A file name of the library directory.
+   * @returns The study id with the file's path, format and format number; `undefined` for a file that is no study archive ({@link archiveOfName}) and for one whose prefix is no study id.
+   * @example this.entryOfName('x.study.v5.json') // => undefined
+   */
+  private entryOfName(name: string): LibraryEntry | undefined {
+    const archive = this.archiveOfName(name),
+      parsedId = studyIdSchema.safeParse(archive?.id)
+    if (!archive || !parsedId.success) return undefined
+    return {
+      id: parsedId.data,
+      path: join(this.directory, name),
+      format: archive.format,
+      version: archive.version,
+    }
+  }
+
+  /**
+   * Says whether an archive owns its study over the one found before; asked by {@link entries} for every archive of the library directory.
+   * @param entry - The archive just read.
+   * @param prior - The study's archive found so far, `undefined` for the first one.
+   * @returns `true` for a study's first archive and for one with a higher format number than the one found before.
+   * @example this.ownsStudyOver({ id, path, format: 'v3', version: 3 }, { id, path, format: 'v2', version: 2 }) // => true
+   */
+  private ownsStudyOver(
+    entry: LibraryEntry,
+    prior: LibraryEntry | undefined,
+  ): boolean {
+    return !prior || entry.version > prior.version
+  }
+
+  /**
+   * Reads which study a file of the library directory is the archive of, and in which format; called by {@link entryOfName} for every file name.
    * @param name - A file name of the library directory.
    * @returns The unvalidated study id with the format and its number: a known format by its suffix, `newer` for a format number this Codebook does not know yet. `undefined` for a file that is no study archive.
    * @example this.archiveOfName('a_b.study.v3.json') // => { id: 'a_b', format: 'v3', version: 3 }
    */
-  private archiveOfName(name: string):
-    | {
-        id: string
-        format: Exclude<StudyCatalogEntry['format'], 'node-test-history'>
-        version: number
-      }
-    | undefined {
+  private archiveOfName(
+    name: string,
+  ): { id: string; format: ArchiveFormat; version: number } | undefined {
     const storage = STUDY_STORAGE_FORMATS.find((format) =>
       name.endsWith(format.archiveSuffix),
     )

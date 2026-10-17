@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm'
 
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
 import { focusWebview } from '../utils/focusWebview'
+import { readWebviewFocus } from '../utils/readWebviewFocus'
 
 /** Executes the actual serialized renderer protocol with isolated document events, without claiming native focus proof. @example const renderer = focusRenderer(); renderer.send(request) */
 function focusRenderer(emit: (message: unknown) => void = () => {}) {
@@ -101,6 +102,7 @@ function focusHarness() {
       }
     },
     webview: {
+      html: '<owned-focus-document>',
       onDidReceiveMessage(listener: (value: unknown) => void) {
         listeners.add(listener)
         return {
@@ -133,6 +135,8 @@ function focusHarness() {
         assertBeforeCommit: () => beforeCommit(),
         isActive: () => nativeActive,
       }),
+    inspect: (timeoutMs = 1_000): Promise<boolean | undefined> =>
+      readWebviewFocus(panel, timeoutMs),
     intercept(value: typeof onPost): void {
       onPost = value
     },
@@ -162,6 +166,124 @@ function focusHarness() {
     listenerCount: () => listeners.size + disposals.size,
   }
 }
+
+test('inspecting an owned pane leaves outside typing untouched and releases its listeners', async () => {
+  // Arrange: the owned document has no keyboard focus.
+  const harness = focusHarness()
+
+  // Act
+  const focused = await harness.inspect()
+
+  // Assert
+  assert.equal(focused, false)
+  assert.deepEqual(
+    harness.messages.map((message) => message.phase),
+    ['inspect'],
+  )
+  assert.deepEqual(harness.reveals, [])
+  assert.equal(harness.renderer().calls(), 0)
+  assert.equal(harness.listenerCount(), 0)
+})
+
+test('inspecting an already focused document confirms its keyboard without another native reveal', async () => {
+  // Arrange
+  const harness = focusHarness()
+  harness.renderer().focusLater()
+
+  // Act
+  const focused = await harness.inspect()
+
+  // Assert
+  assert.equal(focused, true)
+  assert.deepEqual(harness.reveals, [])
+  assert.equal(harness.renderer().calls(), 0)
+  assert.equal(harness.listenerCount(), 0)
+})
+
+test('read-only inspection preserves a focus handoff already prepared in the same document', async () => {
+  // Arrange
+  const renderer = focusRenderer()
+  const originalRequest = '00000000-0000-4000-8000-000000000001'
+  renderer.send({
+    type: 'codebook-focus',
+    phase: 'prepare',
+    requestId: originalRequest,
+    expiresAt: Date.now() + 1_000,
+  })
+  const originalEpoch = renderer.receipts[0]!.epoch
+
+  // Act: an independent inspection occurs before the original handoff commits.
+  renderer.send({
+    type: 'codebook-focus',
+    phase: 'inspect',
+    requestId: '00000000-0000-4000-8000-000000000002',
+  })
+  renderer.send({
+    type: 'codebook-focus',
+    phase: 'commit',
+    requestId: originalRequest,
+    epoch: originalEpoch,
+  })
+  renderer.focusLater()
+
+  // Assert: the original handoff still observes actual native focus.
+  assert.deepEqual(
+    renderer.receipts.map((receipt) => ({
+      phase: receipt.phase,
+      requestId: receipt.requestId,
+      focused: receipt.focused,
+    })),
+    [
+      { phase: 'prepared', requestId: originalRequest, focused: false },
+      {
+        phase: 'prepared',
+        requestId: '00000000-0000-4000-8000-000000000002',
+        focused: false,
+      },
+      { phase: 'focused', requestId: originalRequest, focused: true },
+    ],
+  )
+  assert.equal(renderer.calls(), 0)
+})
+
+for (const failure of [
+  'refused delivery',
+  'stalled delivery',
+  'wrong request',
+  'wrong phase',
+  'replaced document',
+])
+  test(`unconfirmed inspection of an owned pane stays unknown after ${failure} and cannot focus anything`, async () => {
+    // Arrange
+    const harness = focusHarness()
+    harness.intercept((message) => {
+      if (failure === 'refused delivery') return Promise.resolve(false)
+      if (failure === 'stalled delivery') return new Promise(() => {})
+      if (failure === 'replaced document') {
+        harness.panel.webview.html = '<replacement-focus-document>'
+        harness.renderer().send(message)
+      } else {
+        harness.emit({
+          type: 'codebook-focus-receipt',
+          phase: failure === 'wrong phase' ? 'focused' : 'prepared',
+          requestId:
+            failure === 'wrong request' ? randomUUID() : message.requestId,
+          epoch: randomUUID(),
+          focused: true,
+        })
+      }
+      return Promise.resolve(true)
+    })
+
+    // Act
+    const focused = await harness.inspect(25)
+
+    // Assert
+    assert.equal(focused, undefined)
+    assert.deepEqual(harness.reveals, [])
+    assert.equal(harness.renderer().calls(), 0)
+    assert.equal(harness.listenerCount(), 0)
+  })
 
 test('owned focus completes only after the current document confirms focus and cleans up its listeners', async () => {
   // Arrange

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fsPromises, {
   lstat,
@@ -11,6 +10,7 @@ import fsPromises, {
   rename,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
@@ -22,6 +22,7 @@ import { RecordingStore } from '../recordingStore'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 
 /**
  * Creates a private learning directory with a study library and a recording store that share it and one limit, plus a Trash outside it.
@@ -947,13 +948,6 @@ async function placeArchive(directory: string): Promise<string> {
   return studyId
 }
 
-/** Gives the id of a process that has already exited on this machine, as the editor that left a lock or a connection descriptor behind. @example const pid = exitedProcessId() */
-function exitedProcessId(): number {
-  const exited = spawnSync(process.execPath, ['-e', ''])
-  assert.equal(typeof exited.pid, 'number')
-  return exited.pid
-}
-
 // Value: protects=a library holding more saved studies than its maximum (a study restored from the Trash into a full library) can still be listed, counted and emptied; fails_when=the library refuses every list, usage, admission and save above the maximum (0038-F8), so the learner cannot delete anything; why_new=no test placed more than 256 archives; seam=none
 test('a library holding 257 saved studies after one was restored from the Trash lists and counts them all, refuses a new study and lets one be removed', async (context) => {
   // Arrange: 257 archives at the maximum limit of 256.
@@ -1128,32 +1122,6 @@ test('moving the evidence of an instance’s only run also removes the instance 
   assert.deepEqual(await readdir(join(agent, 'shared-instance')), ['other-run'])
 })
 
-// Value: protects=an interrupted reservation's recording directory, which has no study, is not moved by asking to remove that id; fails_when=a removal without an archive moves the recording (the recording would be orphaned from nothing, or a later study's recording lost); why_new=the unknown-id test used an id without any files (0038-T4); seam=the injected mover
-test('a recording directory without a saved study stays in place when that id is asked to be removed, and nothing moves', async (context) => {
-  // Arrange: a recording directory under an id the library holds no archive for.
-  const storage = await removalStorage(context, 4)
-  const study = await saveStudyWithRecording(storage)
-  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
-  await rm(join(storage.directory, `${study.id}.study.v3.json`))
-  // Act
-  const removal = await storage.library.removeStudy(
-    study.id,
-    storage.moveToTrash,
-  )
-  // Assert
-  assert.deepEqual(removal, {
-    outcome: 'nothing-moved',
-    cause: 'Study archive is unavailable.',
-  })
-  assert.deepEqual(storage.moved, [])
-  assert.equal(
-    (
-      await lstat(join(storage.directory, 'recordings.v2', study.id))
-    ).isDirectory(),
-    true,
-  )
-})
-
 // Value: protects=only a study identity can name what a removal moves; fails_when=a path-like id reaches the steps (0038-T5); why_new=no negative identity test existed; seam=the injected mover
 test('removing an id that is not a study identity is refused before anything is inspected or moved', async (context) => {
   // Arrange
@@ -1203,14 +1171,14 @@ test('removing a cross-runtime study moves its recordings.v3 directory, its v4 s
   assert.deepEqual(await storage.library.list(), [])
 })
 
-// Value: protects=a storage lock left by an editor that was killed mid-removal does not refuse every later write until it is removed by hand; fails_when=a lock whose process no longer exists on this machine is treated like a live writer's lock (0038-F13); why_new=the lock tests used a lock of a live process; seam=a real exited process
+// Value: protects=a storage lock left by an editor that was killed mid-removal does not refuse every later write until it is removed by hand; fails_when=a lock whose process no longer exists on this machine is treated like a live writer's lock (0038-F13); why_new=the lock tests used a lock of a live process; seam=none (the lock names a process id that no process has)
 test('a storage lock left by an exited editor process on this machine is taken over and the removal completes', async (context) => {
-  // Arrange: the lock file names a process of this machine that has exited.
+  // Arrange: the lock file names a process of this machine that has exited: an id no process can have, because the id of a child that just exited could be given to another process before the lock is judged.
   const storage = await removalStorage(context, 4)
   const study = await saveStudy(storage)
   await writeFile(
     join(storage.directory, 'writer.lock'),
-    JSON.stringify({ pid: exitedProcessId(), hostname: hostname() }),
+    JSON.stringify({ pid: ID_OF_NO_PROCESS, hostname: hostname() }),
   )
   // Act
   const removal = await storage.library.removeStudy(
@@ -1287,4 +1255,180 @@ test('after a removal could not release its storage lock and the lock stayed, a 
   await assert.rejects(save, {
     message: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
   })
+})
+
+// Value: protects=what a removal by hand left of a saved study stays reachable: it is listed, its files are named, and removing them frees the place its recording takes; fails_when=a study is listed by its archive alone, so after the learner removed only the archive its recording still counts against the limit, no list shows it, and the "full" message points at a study that is not listed (Cycle 0046 row 86); why_new=every removal by hand in the tests removed all files of a study; seam=the file system, on which the test removes the files as the learner does
+test('what is left of a saved study whose archive alone was removed by hand stays listed as an entry that cannot be opened, with its remaining files, and removing them frees its place', async (context) => {
+  // Arrange: a limit of one; the one saved study has a finished recording. The learner removes the archive alone and presses Retry storage / refresh, which forgets absent studies and repairs the catalog.
+  const storage = await removalStorage(context, 1)
+  const study = await saveStudyWithRecording(storage)
+  const archive = join(storage.directory, `${study.id}.study.v3.json`),
+    sidecar = join(storage.directory, `${study.id}.study.meta.v3.json`),
+    recording = join(storage.directory, 'recordings.v2', study.id)
+  await utimes(
+    sidecar,
+    new Date('2026-09-20T00:00:01.000Z'),
+    new Date('2026-09-20T00:00:01.000Z'),
+  )
+  await utimes(
+    recording,
+    new Date('2026-09-20T00:00:02.000Z'),
+    new Date('2026-09-20T00:00:02.000Z'),
+  )
+  const nextRecording = (): Promise<string> => {
+    const runId = randomUUID()
+    return storage.recordings
+      .start(
+        {
+          workspaceKey: study.workspaceKey,
+          studyId: `${study.instanceId}_${runId}`,
+          instanceId: study.instanceId,
+          runId,
+          runtimeId: randomUUID(),
+          profile: study.profile,
+          sourceBuild: {
+            revision: 'removal-test',
+            dirty: false,
+            sourceHash: '1'.repeat(64),
+          },
+        },
+        0,
+      )
+      .then(
+        () => 'admitted',
+        (error: unknown) => String(error),
+      )
+  }
+  // Act
+  await rm(archive)
+  await storage.library.forgetAbsentStudies()
+  await storage.library.reconcile()
+  const listedAfterRetry = await storage.library.list()
+  const filesLeft = await storage.library.studyFiles(study.id)
+  const readOfTheStudy = await storage.library.readStudy(study.id).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+  const recordingWhileListed = await nextRecording()
+  for (const path of filesLeft) await rm(path, { recursive: true })
+  const listedAfterRemoval = await storage.library.list()
+  const recordingAfterRemoval = await nextRecording()
+  // Assert
+  assert.deepEqual(listedAfterRetry, [
+    {
+      id: study.id,
+      savedAt: '2026-09-20T00:00:02.000Z',
+      format: 'archive-missing',
+      metadata: 'unavailable',
+      outcome: 'Archive missing; remaining files kept',
+    },
+  ])
+  assert.deepEqual(filesLeft, [recording, sidecar])
+  assert.equal(readOfTheStudy, 'Error: Study archive is unavailable.')
+  assert.equal(
+    recordingWhileListed,
+    'Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study that has a recording from Saved studies in the Study workspace, before starting another session. Existing recordings were kept.',
+  )
+  assert.deepEqual(listedAfterRemoval, [])
+  assert.equal(recordingAfterRemoval, 'admitted')
+})
+
+// Value: protects=in a window with a Trash the learner can delete what is left of a saved study without its archive, so its recording stops taking a place of the limit; fails_when=a removal refuses every study without an archive, so the listed entry cannot be deleted (Cycle 0046 row 86); why_new=the test this one replaces, "a recording directory without a saved study stays in place when that id is asked to be removed, and nothing moves", stated the opposite for the same files: a finished recording whose archive and catalog sidecar were removed; seam=the injected mover
+test('what is left of a saved study without its archive and its catalog sidecar, a finished recording, is listed and moves to the Trash when the study is deleted', async (context) => {
+  // Arrange: a finished recording whose study lost its archive and its catalog sidecar.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
+  await rm(join(storage.directory, `${study.id}.study.v3.json`))
+  // Act
+  const listedBefore = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+    outcome: entry.outcome,
+  }))
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(listedBefore, [
+    {
+      id: study.id,
+      format: 'archive-missing',
+      outcome: 'Archive missing; remaining files kept',
+    },
+  ])
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
+  assert.deepEqual(await storage.library.list(), [])
+  assert.deepEqual(await storage.recordings.list(), [])
+})
+
+// Value: protects=the recording of a run whose study is not saved yet is not taken for what is left of a removed study: it is neither listed as an entry that cannot be opened nor moved by a removal of its id; fails_when=every recording directory without an archive is listed and removable, so a learner (also one in another window) deletes the recording a running editor is writing (0038-T4), or a recording whose writer has ended stays unlisted and keeps its place for good (Cycle 0046 row 86); why_new=the listing of studies without an archive is new; seam=the recording's header, in which the test names an owner process that has ended, and the injected mover
+test('a recording that is still being written for a study that is not saved yet is neither listed nor moved, and one whose writer has ended is listed', async (context) => {
+  // Arrange: two reserved recordings without a saved study. This test process writes the first; the header of the second names an editor process that has ended.
+  const storage = await removalStorage(context, 4)
+  const reserve = async (): Promise<string> => {
+    const instanceId = randomUUID(),
+      runId = randomUUID()
+    await storage.recordings.start(
+      {
+        workspaceKey: storage.workspaceKey,
+        studyId: `${instanceId}_${runId}`,
+        instanceId,
+        runId,
+        runtimeId: randomUUID(),
+        profile: 'repository-browser',
+        sourceBuild: {
+          revision: 'removal-test',
+          dirty: false,
+          sourceHash: '1'.repeat(64),
+        },
+      },
+      0,
+    )
+    return `${instanceId}_${runId}`
+  }
+  const beingWritten = await reserve(),
+    leftByKilledEditor = await reserve()
+  const headerOfKilledEditor = join(
+    storage.directory,
+    'recordings.v2',
+    leftByKilledEditor,
+    'header.json',
+  )
+  const header: { owner: { pid: number } } = JSON.parse(
+    await readFile(headerOfKilledEditor, 'utf8'),
+  )
+  await writeFile(
+    headerOfKilledEditor,
+    JSON.stringify({
+      ...header,
+      owner: { ...header.owner, pid: ID_OF_NO_PROCESS },
+    }),
+  )
+  // Act
+  const listed = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  const removalOfTheOneBeingWritten = await storage.library.removeStudy(
+    beingWritten,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(listed, [
+    { id: leftByKilledEditor, format: 'archive-missing' },
+  ])
+  assert.deepEqual(removalOfTheOneBeingWritten, {
+    outcome: 'nothing-moved',
+    cause: 'Study archive is unavailable.',
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.equal(
+    (
+      await lstat(join(storage.directory, 'recordings.v2', beingWritten))
+    ).isDirectory(),
+    true,
+  )
 })

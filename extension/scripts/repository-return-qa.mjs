@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { repositoryHtml } from '../dist/ui/repositoryHtml.js'
 
-// Exercise the compiled renderer in Chromium; host messages and cached webview state are controlled inputs.
-const [
-  mode = 'verify',
-  outputPath = 'artifacts/cycle-0016/repository-return-qa',
-] = process.argv.slice(2)
+import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
+import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
+import { readerDomSessionName } from './utils/readerDomSessionName.mjs'
+
+// Exercise the compiled renderer of the Repository Wiki pane in Chromium; host messages and cached webview state are controlled inputs.
+const [mode = 'verify', outputPath = 'artifacts/repository-pane-dom'] =
+  process.argv.slice(2)
 assert.ok(['red', 'verify'].includes(mode))
 const output = resolve(outputPath),
-  session = `cb-repository-return-${mode}`,
+  session = readerDomSessionName('repository-pane', mode, output),
   html = repositoryHtml()
 await mkdir(output, { recursive: true })
 const anchor = {
@@ -94,22 +96,146 @@ const message = {
   },
 }
 
-/** Runs one CLI step for this renderer regression and preserves transport failures. @example await command(['open', 'about:blank'], 'open') */
+/** Runs one CLI step for this renderer regression and preserves transport failures; {@link readerDomCommandOptions} gives the call labelled `flow` the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
-  const result = spawnSync('playwright-cli', [`-s=${session}`, ...arguments_], {
-    encoding: 'utf8',
-    timeout: 30000,
-    maxBuffer: 4 * 1024 * 1024,
-  })
-  await writeFile(`${output}/${label}.log`, result.stdout + result.stderr)
-  assert.equal(result.status, 0, result.stderr)
+  const result = await new Promise((resolve) =>
+    execFile(
+      'playwright-cli',
+      [`-s=${session}`, ...arguments_],
+      readerDomCommandOptions(label),
+      (error, stdout, stderr) => resolve({ error, stdout, stderr }),
+    ),
+  )
+  await writeFile(
+    `${output}/${label}.log`,
+    result.stdout +
+      result.stderr +
+      (result.error ? `\n${String(result.error)}\n` : ''),
+  )
+  assert.equal(result.error, null, String(result.error))
   assert.equal(result.stdout.includes('### Error'), false, result.stdout)
   return result.stdout
 }
 
-/** Recreates the actual reader with competing saved/explicit locations to expose native Return precedence. @example await check(page, { html, message, output }) */
-async function check(page, options) {
-  const cases = []
+/** Recreates the actual reader with competing saved/explicit locations to expose native Return precedence, then leaves it and returns to it the way the editor does, to expose where the keyboard stands afterwards. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers. @example await check(page, { html, message, output }, { cases: [], errors: [] }) */
+async function check(page, options, collected) {
+  const { cases } = collected
+  page.on('pageerror', (error) => collected.errors.push(String(error)))
+  page.setDefaultTimeout(5_000)
+  /** Loads the pane's document anew over the state the webview kept for it; the host's message follows with {@link publish}. */
+  const openPane = async (savedState) => {
+    await page.goto('about:blank')
+    await page.setViewportSize({ width: 326, height: 442 })
+    await page.evaluate((state) => {
+      window.sent = []
+      window.acquireVsCodeApi = () => ({
+        getState: () => state,
+        setState() {},
+        postMessage: (value) => window.sent.push(value),
+      })
+    }, savedState)
+    await page.setContent(options.html)
+  }
+  /** Hands the pane one message of the host and waits until the frame in which the pane restores its place has passed. */
+  const publish = async (message) => {
+    await page.evaluate(
+      (value) =>
+        window.dispatchEvent(new MessageEvent('message', { data: value })),
+      message,
+    )
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    )
+  }
+  /** Names the element that has the focus: its id, or `body` while no control has it. */
+  const focusedId = () =>
+    page.evaluate(() =>
+      document.activeElement === document.body
+        ? 'body'
+        : document.activeElement.id,
+    )
+  /**
+   * Takes the focus from the pane the way the editor does when the learner goes to another part of it, as seen in VS Code 1.140.0 (Cycle 0046 row 326): the webview first takes the focus from the control (a focusout without a related target, after which the active element is the page body), then the window gets its blur event, and the document reports that it has no focus.
+   * With an id the learner first reaches that control and leaves at once, within the same task, so no timer of the pane runs in between.
+   */
+  const leavePane = (idReachedFirst) =>
+    page.evaluate((id) => {
+      if (id) document.getElementById(id).focus()
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement && focused !== document.body)
+        focused.blur()
+      document.hasFocus = () => false
+      window.dispatchEvent(new Event('blur'))
+    }, idReachedFirst)
+  /** Gives the pane the focus back the way the editor's Focus into Panel command does: the window's focus event, at which the active element is still the page body. */
+  const returnToPane = () =>
+    page.evaluate(() => {
+      delete document.hasFocus
+      window.dispatchEvent(new Event('focus'))
+    })
+  /**
+   * Returns to the pane with a real pointer press at a point, in one of the two orders in which the window's focus event and the press can reach the page; the pane must handle both, because the editor's order is not fixed by anything the pane can rely on.
+   * `focus-first`: the focus event fires before the pane sees the press (a capturing listener on the window runs ahead of the pane's on the document). `press-first`: it fires after the pane saw the pointerdown and before the browser's own handling of the press, which takes the focus off a control when the press is on the background (a bubbling listener on the document).
+   */
+  const returnToPaneByPressAt = async (point, order) => {
+    await page.evaluate((order) => {
+      const giveFocusBack = () => {
+        delete document.hasFocus
+        window.dispatchEvent(new Event('focus'))
+      }
+      if (order === 'focus-first')
+        window.addEventListener('pointerdown', giveFocusBack, {
+          capture: true,
+          once: true,
+        })
+      else
+        document.addEventListener('pointerdown', giveFocusBack, { once: true })
+    }, order)
+    await page.mouse.click(point.x, point.y)
+  }
+  /** The middle of one control of the pane, for a press on it; the control is brought into the viewport first. */
+  const middleOf = async (selector) => {
+    await page.locator(selector).scrollIntoViewIfNeeded()
+    const box = await page.locator(selector).boundingBox()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }
+  /** Finds a point of the pane's background in the viewport: a place whose element, and everything around it, takes no focus when it is pressed. */
+  const backgroundPoint = () =>
+    page.evaluate(() => {
+      for (let y = 4; y < innerHeight; y += 8)
+        for (let x = innerWidth - 4; x > 0; x -= 8)
+          if (
+            !document
+              .elementFromPoint(x, y)
+              ?.closest(
+                'button,a[href],input,select,textarea,summary,label,[tabindex],[contenteditable]',
+              )
+          )
+            return { x, y }
+      throw new Error('The pane shows no background to press.')
+    })
+  /** Adds one case whose values are compared whole with the values it expects. */
+  const addCase = (name, expected, actual) =>
+    cases.push({
+      name,
+      expected,
+      actual,
+      passed: JSON.stringify(actual) === JSON.stringify(expected),
+    })
+  /** Checks exact default-title placement or the retained-pose pixel tolerance for the location cases in {@link check}; kept inside the serialized browser flow. @param actual - Measured scroll and control position. @param scenario - The frozen position expectation for this case. @returns Whether the reading offset matches. @example matchesExpectedReadingOffset({ scrollY: 16, top: 412 }, { foreign: true, expectedScroll: 16, expectedTop: 412 }) */
+  const matchesExpectedReadingOffset = (actual, scenario) =>
+    scenario.foreign
+      ? actual.scrollY === scenario.expectedScroll &&
+        actual.top === scenario.expectedTop
+      : Math.abs(actual.top - scenario.expectedTop) <= 1
+  /** Checks focus, visibility and unchanged learner state for the reading cases in {@link check}. @param actual - Measured focused control and learner state. @param scenario - The frozen focus destination. @returns Whether reading returns without granting understanding. @example matchesExpectedReadingState({ focusedId: 'article-title', visible: true, understood: false }, { focusId: 'article-title' }) */
+  const matchesExpectedReadingState = (actual, scenario) =>
+    actual.focusedId === scenario.focusId &&
+    actual.visible === true &&
+    actual.understood === false
   for (const scenario of [
     {
       name: 'observation Return overrides a cached temporary pane position',
@@ -130,53 +256,33 @@ async function check(page, options) {
       expectedTop: 110.5,
     },
     {
-      name: 'a different article ignores the previous article cached location',
+      name: 'a different article ignores cached reading and keeps its default title visible',
       focusId: 'article-title',
       explicit: false,
       foreign: true,
+      expectedTop: 412,
+      expectedScroll: 16,
     },
   ]) {
     // Arrange: the host's original control was halfway down; hidden-pane persistence saved one quarter instead.
-    await page.goto('about:blank')
-    await page.setViewportSize({ width: 326, height: 442 })
     const location = {
       sectionIndex: 4,
       fraction: 0,
       focusId: scenario.focusId,
       focusViewportFraction: 0.5,
     }
-    const saved = {
+    await openPane({
       key: scenario.foreign ? 'different/1/article' : 'checkout/1/order',
       location: { ...location, focusViewportFraction: 0.25 },
-    }
-    await page.evaluate((state) => {
-      window.sent = []
-      window.acquireVsCodeApi = () => ({
-        getState: () => state,
-        setState() {},
-        postMessage: (value) => window.sent.push(value),
-      })
-    }, saved)
-    await page.setContent(options.html)
-    const message = {
+    })
+    // Act: an explicit Study Return or ordinary reopen reconstructs the webview after native pane movement.
+    await publish({
       ...options.message,
       selection: {
         ...options.message.selection,
         ...(scenario.explicit ? { location } : {}),
       },
-    }
-    // Act: an explicit Study Return or ordinary reopen reconstructs the webview after native pane movement.
-    await page.evaluate(
-      (value) =>
-        window.dispatchEvent(new MessageEvent('message', { data: value })),
-      message,
-    )
-    await page.evaluate(
-      () =>
-        new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve)),
-        ),
-    )
+    })
     const actual = await page.evaluate((id) => {
       const control = document.getElementById(id),
         bounds = control.getBoundingClientRect()
@@ -184,16 +290,14 @@ async function check(page, options) {
         focusedId: document.activeElement.id,
         top: bounds.top,
         scrollY,
+        visible: bounds.top >= 0 && bounds.bottom <= innerHeight,
         understood: document.getElementById('understand').checked,
       }
     }, scenario.focusId)
     // Assert: exact control and reading offset survive; this action never grants understanding.
     const passed =
-      actual.focusedId === scenario.focusId &&
-      actual.understood === false &&
-      (scenario.foreign
-        ? actual.scrollY === 0
-        : Math.abs(actual.top - scenario.expectedTop) <= 1)
+      matchesExpectedReadingState(actual, scenario) &&
+      matchesExpectedReadingOffset(actual, scenario)
     await page.screenshot({
       path: `${options.output}/case-${cases.length + 1}.png`,
     })
@@ -205,7 +309,547 @@ async function check(page, options) {
       passed,
     })
   }
-  return cases
+
+  /** Checks real wheel reading while Return is still pending; called by {@link verifyCitationStatusReturn} after its first-focus case. @example await verifyPendingCitationWheel(checkingMessage, verifiedMessage) */
+  async function verifyPendingCitationWheel(checkingMessage, verifiedMessage) {
+    // Arrange: this new document still owes its first Return focus when real wheel input changes reading.
+    await openPane(undefined)
+    await page.setViewportSize({ width: 339, height: 654 })
+    await leavePane()
+    await publish(checkingMessage)
+    await page.mouse.move(180, 320)
+    await page.mouse.wheel(0, 48)
+    await page.waitForFunction(
+      () =>
+        document
+          .getElementById('evidence-0-observation')
+          .getBoundingClientRect().top < 300,
+    )
+    // Act: the pending control anchors current geometry, without replaying its earlier saved offset or taking focus.
+    await publish(verifiedMessage)
+    const focusBeforeFirstReturn = await focusedId()
+    await returnToPane()
+    // Assert
+    addCase(
+      'citation verification preserves recent wheel reading before the document first gains focus',
+      { whileAway: 'body', focus: 'evidence-0-observation', top: 278.5 },
+      {
+        whileAway: focusBeforeFirstReturn,
+        ...(await page.evaluate(() => ({
+          focus: document.activeElement.id,
+          top: document
+            .getElementById('evidence-0-observation')
+            .getBoundingClientRect().top,
+        }))),
+      },
+    )
+  }
+  /** Checks recent wheel reading after a remembered Return; called by {@link verifyCitationStatusReturn}. @example await verifyRememberedCitationWheel(checkingMessage, verifiedMessage) */
+  async function verifyRememberedCitationWheel(
+    checkingMessage,
+    verifiedMessage,
+  ) {
+    // Arrange: real wheel input moves reading before the debounced saved location catches up.
+    await page.mouse.move(180, 320)
+    await page.mouse.wheel(0, 48)
+    await page.waitForFunction(
+      () =>
+        document
+          .getElementById('evidence-0-observation')
+          .getBoundingClientRect().top < 300,
+    )
+    // Act: a status refresh must preserve the current viewport, not replay the older Return location.
+    await publish(checkingMessage)
+    await publish(verifiedMessage)
+    // Assert: neither keyboard nor the learner's new reading position is replaced.
+    addCase(
+      'citation status refresh preserves recent wheel scrolling and the focused observation',
+      { focus: 'evidence-0-observation', top: 278.5 },
+      await page.evaluate(() => ({
+        focus: document.activeElement.id,
+        top: document
+          .getElementById('evidence-0-observation')
+          .getBoundingClientRect().top,
+      })),
+    )
+  }
+  /** Runs the wheel check only for the after-frame case, selecting its appropriate starting document. @example await verifyCitationWheelAfterReturn('after restoration', false, checkingMessage, verifiedMessage) */
+  async function verifyCitationWheelAfterReturn(
+    statusTiming,
+    hasRememberedControl,
+    checkingMessage,
+    verifiedMessage,
+  ) {
+    // The before-frame case owns no wheel transition.
+    if (statusTiming !== 'after restoration') return
+    const verifyWheel = hasRememberedControl
+      ? verifyRememberedCitationWheel
+      : verifyPendingCitationWheel
+    await verifyWheel(checkingMessage, verifiedMessage)
+  }
+  /** Leaves the reused title with an earlier article's actual keyboard memory; {@link verifyCitationStatusReturn} calls it before opening a different explicit Return. @example await leavePreviousArticle() */
+  async function leavePreviousArticle() {
+    const previousArticle = structuredClone(options.message)
+    previousArticle.selection.bookId = 'previous-checkout'
+    previousArticle.catalog[0].bookId = 'previous-checkout'
+    previousArticle.book.bookId = 'previous-checkout'
+    await publish(previousArticle)
+    await leavePane('article-title')
+  }
+  /** Prepares actual current, prior-article or absent keyboard memory before {@link verifyCitationStatusReturn} opens its Return target. @example await leaveCitationReading(statusMessage, returnLocation, false, true) */
+  async function leaveCitationReading(
+    statusMessage,
+    returnLocation,
+    hasRememberedControl,
+    hasPreviousArticle,
+  ) {
+    // Prior title memory belongs to a different article even though its DOM element is reused.
+    if (hasPreviousArticle) {
+      await leavePreviousArticle()
+      return
+    }
+    // Existing same-article Return retains its actual observation control.
+    if (hasRememberedControl) {
+      await publish({
+        ...statusMessage,
+        selection: { ...statusMessage.selection, location: returnLocation },
+      })
+      await leavePane('evidence-0-observation')
+      return
+    }
+    // A recreated Wiki can receive Return and citation verification before any control ever gets keyboard focus.
+    await leavePane()
+  }
+  /** Verifies citation reflow before and after Return plus recent wheel input; called by {@link check} against the same renderer. @param hasPreviousArticle - Whether the reused title belongs to an earlier article instead of the current Return. @example await verifyCitationStatusReturn(true, ' after leaving another article', true) */
+  async function verifyCitationStatusReturn(
+    hasRememberedControl,
+    focusCaption,
+    hasPreviousArticle = false,
+  ) {
+    // Citation checks can settle before or after the frame that restores an explicit native Return.
+    for (const statusTiming of ['before restoration', 'after restoration']) {
+      // Arrange: the real side-pane width wraps the verified status onto two lines.
+      const statusMessage = structuredClone(options.message)
+      const paths = ['app/ui/login-form.tsx', 'auth.ts', 'app/lib/actions.ts']
+      statusMessage.book.revision.document.nodes[0].anchors = paths.map(
+        (path) => ({
+          ...statusMessage.book.revision.document.nodes[0].anchors[0],
+          path,
+        }),
+      )
+      statusMessage.sources = paths.map((path) => ({
+        ...statusMessage.sources[0],
+        path,
+      }))
+      statusMessage.book.links.push({
+        ...statusMessage.book.links[0],
+        linkIndex: 1,
+        studyId: 'another-retained-study',
+        elapsedMs: 100000,
+      })
+      const returnLocation = {
+        sectionIndex: 4,
+        fraction: 0,
+        focusId: 'evidence-0-observation',
+        focusViewportFraction: 0.5,
+      }
+      await openPane(undefined)
+      await page.setViewportSize({ width: 339, height: 654 })
+      await leaveCitationReading(
+        statusMessage,
+        returnLocation,
+        hasRememberedControl,
+        hasPreviousArticle,
+      )
+
+      // Act: the usable article arrives before its asynchronous source verification.
+      const checkingMessage = {
+        ...statusMessage,
+        revision: 8,
+        selection: { ...statusMessage.selection, location: returnLocation },
+        sources: [],
+      }
+      const verifiedMessage = {
+        ...checkingMessage,
+        sources: statusMessage.sources,
+      }
+      if (statusTiming === 'after restoration') {
+        await publish(checkingMessage)
+        await publish(verifiedMessage)
+      } else {
+        await page.evaluate(
+          (messages) => {
+            for (const message of messages)
+              window.dispatchEvent(
+                new MessageEvent('message', { data: message }),
+              )
+          },
+          [checkingMessage, verifiedMessage],
+        )
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      }
+      const focusDuringVerification = await focusedId()
+      await returnToPane()
+
+      // Assert: two-line verification keeps the exact Return offset and takes no keyboard while away.
+      addCase(
+        `citation verification ${statusTiming} preserves the explicit Return reading position${focusCaption}`,
+        {
+          whileAway: 'body',
+          focus: 'evidence-0-observation',
+          top: 326.5,
+          statusHeight: 48,
+        },
+        {
+          whileAway: focusDuringVerification,
+          ...(await page.evaluate(() => ({
+            focus: document.activeElement.id,
+            top: document
+              .getElementById('evidence-0-observation')
+              .getBoundingClientRect().top,
+            statusHeight: document
+              .getElementById('source-status')
+              .getBoundingClientRect().height,
+          }))),
+        },
+      )
+      // The old-article variants own only the new memory boundary; existing cases already exercise wheel input after Return.
+      if (!hasPreviousArticle)
+        await verifyCitationWheelAfterReturn(
+          statusTiming,
+          hasRememberedControl,
+          checkingMessage,
+          verifiedMessage,
+        )
+    }
+  }
+  await verifyCitationStatusReturn(true, '')
+  await verifyCitationStatusReturn(
+    false,
+    ' before the document first gains focus',
+  )
+  await verifyCitationStatusReturn(
+    true,
+    ' after leaving another article title',
+    true,
+  )
+
+  // Cycle 0046 row 331. Arrange: the learner works in another part of the editor (the chat, a file), and the pane's document has no focus.
+  await openPane(undefined)
+  await leavePane()
+  // Act: an agent opens an article in the pane, and later the learner comes to the pane.
+  await publish(options.message)
+  const focusWhileArticleOpens = await focusedId()
+  await returnToPane()
+  // Assert: a focus by script in a webview takes the window's keyboard, so the title waits for the pane's own focus.
+  addCase(
+    'an article that opens while the pane’s document has no focus takes no focus, and its title has the focus at the pane’s next focus event',
+    { whileAway: 'body', atReturn: 'article-title' },
+    { whileAway: focusWhileArticleOpens, atReturn: await focusedId() },
+  )
+
+  // Cycle 0046 row 331. Arrange: the learner read the article and left the pane.
+  await openPane(undefined)
+  await publish(options.message)
+  await leavePane()
+  // Act: the host shows a new revision of its message with a place to return to (a Return from a study), and later the learner comes to the pane.
+  await publish({
+    ...options.message,
+    revision: options.message.revision + 1,
+    selection: {
+      ...options.message.selection,
+      location: {
+        sectionIndex: 4,
+        fraction: 0,
+        focusId: 'evidence-0-observation',
+        focusViewportFraction: 0.5,
+      },
+    },
+  })
+  const focusWhileRevisionArrives = await focusedId()
+  await returnToPane()
+  // Assert
+  addCase(
+    'a revision with a place to return to that arrives while the pane’s document has no focus takes no focus, and the control it names has the focus at the pane’s next focus event',
+    { whileAway: 'body', atReturn: 'evidence-0-observation' },
+    { whileAway: focusWhileRevisionArrives, atReturn: await focusedId() },
+  )
+
+  // A newly selected article owns its initial focus; only a list update within the same article inherits the old control.
+  for (const scenario of [
+    {
+      name: 'revision in the side pane',
+      nodeId: 'order',
+      revision: 2,
+      width: 339,
+      height: 654,
+    },
+    {
+      name: 'article in the side pane',
+      nodeId: 'review-order',
+      revision: 1,
+      width: 339,
+      height: 654,
+    },
+    {
+      name: 'revision in the bottom pane',
+      nodeId: 'order',
+      revision: 2,
+      width: 821,
+      height: 293,
+    },
+    {
+      name: 'article in the bottom pane',
+      nodeId: 'review-order',
+      revision: 1,
+      width: 821,
+      height: 293,
+    },
+    {
+      name: 'revision below a wrapped toolbar in the bottom pane',
+      nodeId: 'order',
+      revision: 2,
+      width: 821,
+      height: 293,
+      bookTitle: 'Recorded repository login history (native focus QA)',
+    },
+  ]) {
+    // Arrange: the learner leaves a recording control in the original article.
+    await openPane(undefined)
+    // These are the actual C21 native Wiki viewport sizes, not a reduced whole-editor acceptance target.
+    await page.setViewportSize({
+      width: scenario.width,
+      height: scenario.height,
+    })
+    const initialMessage = {
+      ...options.message,
+      catalog: options.message.catalog.map((entry) => ({
+        ...entry,
+        title: scenario.bookTitle ?? entry.title,
+      })),
+    }
+    await publish(initialMessage)
+    await leavePane('evidence-0-recording')
+    // Act: the agent selects a new article or revision without an explicit reading location.
+    await publish({
+      ...options.message,
+      revision: options.message.revision + 1,
+      catalog: initialMessage.catalog.map((entry) => ({
+        ...entry,
+        revision: scenario.revision,
+        revisions: scenario.revision === 2 ? [1, 2] : [1],
+        firstNodeId: scenario.nodeId,
+      })),
+      selection: {
+        ...options.message.selection,
+        revision: scenario.revision,
+        nodeId: scenario.nodeId,
+      },
+      book: {
+        ...options.message.book,
+        latestRevision: scenario.revision,
+        links: options.message.book.links.map((link) => ({
+          ...link,
+          nodeId: scenario.nodeId,
+        })),
+        revision: {
+          ...options.message.book.revision,
+          revision: scenario.revision,
+          document: {
+            ...options.message.book.revision.document,
+            nodes: options.message.book.revision.document.nodes.map((node) => ({
+              ...node,
+              id: scenario.nodeId,
+            })),
+          },
+        },
+      },
+    })
+    const whileAway = await focusedId()
+    const scrollWhileAway = await page.evaluate(() => window.scrollY)
+    await returnToPane()
+    const actual = await page.evaluate(() => {
+      const bounds = document
+        .getElementById('article-title')
+        .getBoundingClientRect()
+      return {
+        atReturn: document.activeElement.id,
+        titleVisible: bounds.top >= 0 && bounds.bottom <= innerHeight,
+        scrollY,
+      }
+    })
+    // Assert: an old observation cannot replace the new article's visible title as the return destination.
+    addCase(
+      `opening a new ${scenario.name} while away restores its visible title instead of the previous recording control`,
+      {
+        whileAway: 'body',
+        atReturn: 'article-title',
+        titleVisible: true,
+        // A wrapped toolbar may require scrolling to reveal the title; the short-title cases keep their exact top position.
+        ...(scenario.bookTitle ? { scrollWhileAway: 0 } : { scrollY: 0 }),
+      },
+      {
+        whileAway,
+        atReturn: actual.atReturn,
+        titleVisible: actual.titleVisible,
+        ...(scenario.bookTitle
+          ? { scrollWhileAway }
+          : { scrollY: actual.scrollY }),
+      },
+    )
+  }
+
+  // Cycle 0046 row445: a pending old reading restore must not replace newer input during loading.
+  await openPane(undefined)
+  await page.evaluate(() => {
+    window.heldRestoreFrames = []
+    window.nativeAnimationFrame = window.requestAnimationFrame
+    window.requestAnimationFrame = (callback) => {
+      window.heldRestoreFrames.push(callback)
+      return window.heldRestoreFrames.length
+    }
+  })
+  const pendingRestore = {
+    ...options.message,
+    selection: {
+      ...options.message.selection,
+      location: { sectionIndex: 0, fraction: 0, focusId: 'article-title' },
+    },
+  }
+  await page.evaluate(
+    (data) => window.dispatchEvent(new MessageEvent('message', { data })),
+    pendingRestore,
+  )
+  await page.locator('#connect').focus()
+  await page.evaluate(
+    (data) => window.dispatchEvent(new MessageEvent('message', { data })),
+    { ...pendingRestore, loading: true },
+  )
+  const beforeOldRestore = await focusedId()
+  await page.evaluate(() => {
+    window.requestAnimationFrame = window.nativeAnimationFrame
+    for (const callback of window.heldRestoreFrames.splice(0))
+      callback(performance.now())
+  })
+  addCase(
+    'a pending previous reading restore preserves newer control input while the host loads',
+    { before: 'connect', after: 'connect' },
+    { before: beforeOldRestore, after: await focusedId() },
+  )
+
+  // Cycle 0046 row 332. Arrange: the keyboard stands on View recording.
+  await openPane(undefined)
+  await publish(options.message)
+  // Act: the learner goes to the editor, which takes the focus from the control, and returns.
+  await leavePane('evidence-0-recording')
+  const focusWhileAway = await focusedId()
+  await returnToPane()
+  // Assert
+  addCase(
+    'the control the learner left the pane at has the focus again when the learner returns, and none is taken while the learner is away',
+    { whileAway: 'body', atReturn: 'evidence-0-recording' },
+    { whileAway: focusWhileAway, atReturn: await focusedId() },
+  )
+
+  // Cycle 0046 row 332. Arrange: the learner left the pane at View recording.
+  await openPane(undefined)
+  await publish(options.message)
+  await page.evaluate(() => {
+    window.controlLeft = document.getElementById('evidence-0-recording')
+  })
+  await leavePane('evidence-0-recording')
+  // Act: the observations are rendered again under the same revision (the linked study's time changed), and the learner returns.
+  await publish({
+    ...options.message,
+    book: {
+      ...options.message.book,
+      links: [{ ...options.message.book.links[0], elapsedMs: 76000 }],
+    },
+  })
+  const focusWhileListChanges = await focusedId()
+  await returnToPane()
+  // Assert: the part puts the focus on the same control of its new list.
+  addCase(
+    'when the observations are rendered again while the learner is away, the same control of the new list has the focus at the return, and none is taken before',
+    {
+      whileAway: 'body',
+      atReturn: 'evidence-0-recording',
+      isLeftControlStillShown: false,
+      isFocusOnNewControl: true,
+    },
+    {
+      whileAway: focusWhileListChanges,
+      atReturn: await focusedId(),
+      ...(await page.evaluate(() => ({
+        isLeftControlStillShown: window.controlLeft.isConnected,
+        isFocusOnNewControl:
+          document.activeElement !== window.controlLeft &&
+          document.activeElement.isConnected,
+      }))),
+    },
+  )
+
+  // Cycle 0046 row 332: the return is itself a pointer press, in each of the two orders in which the window's focus event and the press can reach the page.
+  const focusAfterPress = { onAnotherControl: {}, onTheBackground: {} }
+  for (const order of ['focus-first', 'press-first']) {
+    // Arrange: the learner left the pane at View recording.
+    await openPane(undefined)
+    await publish(options.message)
+    await leavePane('evidence-0-recording')
+    // Act: the learner returns with a press on View observation.
+    await returnToPaneByPressAt(
+      await middleOf('#evidence-0-observation'),
+      order,
+    )
+    focusAfterPress.onAnotherControl[order] = await focusedId()
+    // Arrange again, and Act: the learner returns with a press on the pane's background.
+    await openPane(undefined)
+    await publish(options.message)
+    await leavePane('evidence-0-recording')
+    await returnToPaneByPressAt(await backgroundPoint(), order)
+    focusAfterPress.onTheBackground[order] = await focusedId()
+  }
+  // Assert
+  addCase(
+    'a return by a press on another control leaves the focus on that control, and a return by a press on the pane’s background gives the control the learner left the focus back, in both orders of the focus event and the press',
+    {
+      onAnotherControl: {
+        'focus-first': 'evidence-0-observation',
+        'press-first': 'evidence-0-observation',
+      },
+      onTheBackground: {
+        'focus-first': 'evidence-0-recording',
+        'press-first': 'evidence-0-recording',
+      },
+    },
+    focusAfterPress,
+  )
+
+  // Cycle 0046 row 332. Arrange: an open article whose title has the focus.
+  await openPane(undefined)
+  await publish(options.message)
+  const sentBeforeLeaving = await page.evaluate(() => window.sent.length)
+  // Act: the learner reaches View recording and leaves at once, before the pane has saved its reading place; the pane saves it while the learner is away.
+  await leavePane('evidence-0-recording')
+  await page.waitForFunction(
+    (start) =>
+      window.sent.slice(start).some((message) => message.type === 'location'),
+    sentBeforeLeaving,
+  )
+  // Assert: the saved place, which a later Return and a reopened pane restore, names the control the learner left and not the one before it.
+  addCase(
+    'the reading place the pane saves while the learner is away names the control the learner left the pane at',
+    { focusId: 'evidence-0-recording' },
+    await page.evaluate(() => ({
+      focusId: window.sent.findLast((message) => message.type === 'location')
+        .selection.location.focusId,
+    })),
+  )
 }
 
 const report = {
@@ -215,23 +859,25 @@ const report = {
     'Real compiled renderer and Chromium; controlled host/cached-state inputs, separate from native installed validation.',
   cases: [],
 }
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`), as in the other Reader DOM checks: a flow handed over as one command argument stops starting once it outgrows the size the system allows for one argument (E2BIG).
+const flowPath = `${output}/flow.js`
 const failures = []
 let recording = false
 try {
+  await writeFile(flowPath, readerDomFlowText(check, { html, message, output }))
   await command(['open', 'about:blank'], 'open')
   await command(['video-start', `${output}/flow.webm`], 'video-start')
   recording = true
-  const result = await command(
-    [
-      'run-code',
-      `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output })})`,
-    ],
-    'cases',
+  const result = await command(['run-code', `--filename=${flowPath}`], 'flow')
+  Object.assign(
+    report,
+    JSON.parse(result.split('### Result\n')[1].split('\n###')[0]),
   )
-  report.cases = JSON.parse(result.split('### Result\n')[1].split('\n###')[0])
-  assert.deepEqual(
-    report.cases.map((entry) => entry.passed),
-    mode === 'red' ? [false, false, true, true] : [true, true, true, true],
+  assert.deepEqual(report.errors, [])
+  assert.equal(
+    report.cases.every((entry) => entry.passed),
+    mode !== 'red',
+    JSON.stringify(report.cases),
   )
 } catch (error) {
   failures.push(error)
@@ -264,10 +910,6 @@ if (failures.length)
   )
 console.log(
   JSON.stringify(
-    report.cases.map((entry) => ({
-      name: entry.name,
-      passed: entry.passed,
-      actual: entry.actual,
-    })),
+    report.cases.map((entry) => ({ name: entry.name, passed: entry.passed })),
   ),
 )

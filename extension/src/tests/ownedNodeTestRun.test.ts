@@ -41,6 +41,8 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
+ * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
+ * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  *
  * @example
  * ```ts
@@ -63,6 +65,10 @@ async function nodeRunHarness({
   bindingReportedLater,
   bindingReadUnanswered,
   listingNotReleased,
+  declaredColumn = 14,
+  verifiedByNews,
+  openDocumentText,
+  typedWhileRunning,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -90,6 +96,20 @@ async function nodeRunHarness({
   /** The adapter never answers when it is asked where an owned breakpoint is bound. */
   bindingReadUnanswered?: boolean
   listingNotReleased?: VitestListingReleaseFailure
+  /** One-based column every stop is declared at on line 1; at column 1 the editor's breakpoint has no column of its own. */
+  declaredColumn?: number
+  /** Where the adapter verifies a registration it answered as pending, by a `breakpoint` event with the reason `changed`, and when that news arrives. The editor stand-in then answers the binding from that news and, as VS Code and Cursor do, without its column for a breakpoint that has none of its own. Sent after the continuation, the news stands in for the stop: the bound place does not run. */
+  verifiedByNews?: {
+    line: number
+    column?: number
+    when:
+      | 'after the reply'
+      | 'at the binding read'
+      | 'right after the binding read'
+      | 'after the continuation'
+  }
+  openDocumentText?: string
+  typedWhileRunning?: { continueRequest: number; text: string }
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -102,7 +122,7 @@ async function nodeRunHarness({
     path: 'theme.ts',
     hash: sha256(sourceText),
     line: 1,
-    column: 14,
+    column: declaredColumn,
   }
   const testTitles = ['theme', 'loads the dark theme']
   const launch = {
@@ -124,7 +144,32 @@ async function nodeRunHarness({
   }
   const calls: string[] = [],
     verified: unknown[][] = [],
-    events: Array<{ type: string; detail: unknown }> = []
+    events: Array<{ type: string; detail: unknown }> = [],
+    // What the run asked of the editor beside the configuration of each debug session it started.
+    debugStartOptions: (vscode.DebugSessionOptions | undefined)[] = []
+  // How often the run began to check and seal its test, the step that asks Vitest for its files: nothing of the test is listed, launched or attached before it.
+  let launchPreparations = 0
+  // The text the editor holds for the cited source, and the editor's open documents: the cited source's document once it has a text.
+  let documentText = ''
+  const textDocuments: Array<{
+    uri: { scheme: string; fsPath: string }
+    isDirty: boolean
+    getText: () => string
+  }> = []
+  /** Opens the cited source's document with this text, or replaces its text, as a learner who types and does not save. */
+  const typeIntoCitedSource = (text: string): void => {
+    // The first typing opens the document; later typing only changes what it holds.
+    if (!textDocuments.length)
+      textDocuments.push({
+        uri: { scheme: 'file', fsPath: sourceFile },
+        isDirty: true,
+        getText: () => documentText,
+      })
+    documentText = text
+  }
+  if (openDocumentText !== undefined) typeIntoCitedSource(openDocumentText)
+  // How many continue requests Codebook has sent to the session.
+  let continueRequests = 0
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
     continued = 0,
@@ -161,26 +206,57 @@ async function nodeRunHarness({
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
     // The adapter knows only breakpoints the editor still holds; a retired one is answered as gone.
     getDebugProtocolBreakpoint: async (breakpoint: unknown) => {
-      if (!editorBreakpoints.some((kept) => kept === breakpoint))
-        return undefined
+      const kept = editorBreakpoints.find(
+        (candidate) => candidate === breakpoint,
+      )
+      if (!kept) return undefined
       // An adapter that does not answer leaves the read open for as long as the caller waits.
       if (bindingReadUnanswered) {
         bindingReadAsked()
         return new Promise<never>(() => {})
       }
-      return bindingReportedLater
+      // The adapter resolved the pending breakpoint between its reply and this read.
+      if (verifiedByNews?.when === 'at the binding read') announceVerified()
+      // The adapter resolves it only after this read was answered with the pending reply; the news reaches the run before the read's caller goes on.
+      if (verifiedByNews?.when === 'right after the binding read') {
+        queueMicrotask(announceVerified)
+        return adapterReplies.get(kept)
+      }
+      const news = newsBindings.get(kept)
+      if (!news) return bindingReportedLater
+      // As VS Code and Cursor do: the editor drops the column of the adapter's news about a breakpoint that has no column of its own.
+      const keepsColumn =
+        kept.location.range.start.character > 0 && news.column !== undefined
+      return {
+        id: OWNED_BREAKPOINT_ID,
+        verified: true,
+        line: news.line,
+        ...(keepsColumn ? { column: news.column } : {}),
+      }
     },
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
       if (command === 'continue') {
         calls.push('continue')
+        // The test runs again: a learner who types now does so between the resume and the next stop.
+        if (++continueRequests === typedWhileRunning?.continueRequest)
+          typeIntoCitedSource(typedWhileRunning.text)
         // A cited test that Vitest skipped never reaches the source: its process exits and the owned session ends.
         if (exitAfterEntry) {
           queueMicrotask(() => terminate?.(session))
           return {}
         }
         if (neverReachStop) return {}
+        // The module loads only now: the adapter verifies the pending breakpoint by news, at a place the test does not run.
+        if (
+          verifiedByNews?.when === 'after the continuation' &&
+          hasPendingBreakpoint()
+        ) {
+          continued++
+          queueMicrotask(announceVerified)
+          return {}
+        }
         // A pause Codebook did not make holds the test before its first declared stop; only the learner releases it.
         if (firstPause && continued === 0) {
           continued++
@@ -245,6 +321,10 @@ async function nodeRunHarness({
     }
     onRequest(): void {}
     onResponse(): void {}
+    onEvent(): void {}
+    refusedPlace(): undefined {
+      return undefined
+    }
   }
   class Position {
     constructor(
@@ -267,7 +347,42 @@ async function nodeRunHarness({
     constructor(readonly location: Location) {}
   }
   const editorBreakpoints: SourceBreakpoint[] = [],
-    adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>()
+    adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>(),
+    // Where the adapter's news verified a breakpoint it had answered as pending, by editor breakpoint.
+    newsBindings = new Map<
+      SourceBreakpoint,
+      { line: number; column?: number }
+    >()
+  /** Tells whether the editor holds a breakpoint the adapter answered as pending and has sent no news about. */
+  const hasPendingBreakpoint = (): boolean =>
+    editorBreakpoints.some(
+      (breakpoint) =>
+        adapterReplies.get(breakpoint)?.verified === false &&
+        !newsBindings.has(breakpoint),
+    )
+  /** Sends the adapter's `breakpoint` event for every breakpoint it answered as pending: verified at the place of `verifiedByNews`. The run's tracker reads it before the editor stand-in keeps it. */
+  const announceVerified = (): void => {
+    if (!verifiedByNews) return
+    const { line, column } = verifiedByNews
+    for (const breakpoint of editorBreakpoints) {
+      if (adapterReplies.get(breakpoint)?.verified !== false) continue
+      if (newsBindings.has(breakpoint)) continue
+      newsBindings.set(breakpoint, { line, column })
+      tracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'breakpoint',
+        body: {
+          reason: 'changed',
+          breakpoint: {
+            id: OWNED_BREAKPOINT_ID,
+            verified: true,
+            line,
+            ...(column === undefined ? {} : { column }),
+          },
+        },
+      })
+    }
+  }
   let setBreakpointsSequence = 100,
     armedBreakpoints = 0
   /** Passes the editor's replacement of this source's breakpoints, and the adapter's reply to it, through the run's tracker. */
@@ -296,6 +411,8 @@ async function nodeRunHarness({
         ),
       },
     })
+    // The adapter resolved the pending breakpoint right after it answered.
+    if (verifiedByNews?.when === 'after the reply') announceVerified()
   }
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
@@ -309,7 +426,7 @@ async function nodeRunHarness({
     Position,
     Location,
     SourceBreakpoint,
-    workspace: { getWorkspaceFolder: () => undefined },
+    workspace: { getWorkspaceFolder: () => undefined, textDocuments },
     debug: {
       breakpoints: editorBreakpoints,
       addBreakpoints(added: SourceBreakpoint[]): void {
@@ -350,7 +467,9 @@ async function nodeRunHarness({
       async startDebugging(
         _folder: unknown,
         configuration: vscode.DebugConfiguration,
+        startOptions?: vscode.DebugSessionOptions,
       ) {
+        debugStartOptions.push(startOptions)
         // The run recognizes only sessions carrying its own configuration name.
         session.name = configuration.name
         session.configuration = {
@@ -374,7 +493,10 @@ async function nodeRunHarness({
         resolve(__dirname, '../ownedRepositoryBreakpoint.js'),
         { vscode: editor },
       )
-    : { OwnedRepositoryBreakpoint: Breakpoint }
+    : {
+        OwnedRepositoryBreakpoint: Breakpoint,
+        OwnedBreakpointMovedError: class extends Error {},
+      }
   const module = await loadModule<typeof OwnedNodeTestRunModule>(
     resolve(__dirname, '../ownedNodeTestRun.js'),
     {
@@ -392,6 +514,7 @@ async function nodeRunHarness({
           _configuration: NodeTestConfiguration,
           listTestFiles: (request: ListVitestTestFilesRequest) => unknown,
         ) => {
+          launchPreparations += 1
           // Only a test of the listing's release asks for the listing; every other test gets its launch at once.
           if (listingNotReleased)
             await listTestFiles({
@@ -476,12 +599,16 @@ async function nodeRunHarness({
     (type, detail) => {
       events.push({ type, detail })
     },
+    [{ path: 'theme.ts', hash: source.hash, text: sourceText, lineCount: 2 }],
   )
   return {
     run,
     calls,
     verified,
     events,
+    debugStartOptions,
+    launchPreparations: (): number => launchPreparations,
+    typeIntoCitedSource,
     launch,
     reportDirectory,
     sourceFile,
@@ -1306,6 +1433,305 @@ test('a run cancelled while the adapter does not answer the breakpoint read ends
     assert.equal(outcome, 'Error: Cancelled owned breakpoint binding')
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+for (const when of [
+  'after the reply',
+  'at the binding read',
+  'right after the binding read',
+] as const)
+  // Cycle 0046 (row 130): red while the read of a binding had to name its column and the adapter's news never reached the owned breakpoint: both editors drop the column from the news about a breakpoint requested at column 1, so nothing was refused and the test was resumed towards a stop that could not be captured at its declared position.
+  test(`a second Node test stop declared at column 1 that the adapter answers as pending and verifies by news at another column ${when} is refused before the test continues, naming both positions`, async () => {
+    // Arrange: both stops are declared at 1:1. The first is acknowledged there; the next one is answered pending and then verified by news at 1:14, and the editor answers its binding without a column.
+    const harness = await nodeRunHarness({
+      declaredStops: 2,
+      declaredColumn: 1,
+      acknowledgements: [
+        { verified: true, line: 1, column: 1 },
+        { verified: false },
+      ],
+      verifiedByNews: { line: 1, column: 14, when },
+    })
+    try {
+      await harness.run.prepare()
+
+      // Act
+      const refusal = await harness.run.advance().then(
+        () => 'advanced',
+        (error: unknown) => String(error),
+      )
+
+      // Assert
+      assert.equal(
+        refusal,
+        'Error: Declared breakpoint 1:1 is bound at 1:14; this stop is captured at its declared position, so declare 1:14 or another statement.',
+      )
+      // Only the continuation from the entry pause to the first stop was sent.
+      assert.equal(
+        harness.calls.filter((call) => call === 'continue').length,
+        1,
+      )
+    } finally {
+      await harness.run.stop()
+      await harness.cleanup()
+    }
+  })
+
+// Cycle 0046 (row 130): without a column from the editor or from the adapter, the line decides. Red while a binding without a column decided nothing, also on another line.
+test('a second Node test stop declared at column 1 whose news names another line and no column is refused before the test continues, naming that line', async () => {
+  // Arrange: the next stop is answered pending and then verified by news that names line 2 and no column.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    declaredColumn: 1,
+    acknowledgements: [
+      { verified: true, line: 1, column: 1 },
+      { verified: false },
+    ],
+    verifiedByNews: { line: 2, when: 'at the binding read' },
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const refusal = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'Error: Declared breakpoint 1:1 is bound on line 2; this stop is captured at its declared position, so declare a statement of line 2 or another statement.',
+    )
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 130): a verified binding on the declared line that names no column names no other column either, so it refuses nothing and the stop's pause is checked at the declared position as before; red if a missing column were read as another column.
+test('a second Node test stop declared at column 1 whose news names its declared line and no column is not refused for it and is captured at its pause', async () => {
+  // Arrange: the next stop is answered pending and then verified by news that names line 1 and no column; the test then pauses at 1:1.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    declaredColumn: 1,
+    acknowledgements: [
+      { verified: true, line: 1, column: 1 },
+      { verified: false },
+    ],
+    verifiedByNews: { line: 1, when: 'at the binding read' },
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const next = await harness.run.advance()
+
+    // Assert
+    assert.deepEqual(
+      [next.index, next.source.line, next.source.column],
+      [1, 1, 1],
+    )
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 2)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 130): news that arrives only after the test was resumed ends the wait for the stop at once; red while the adapter's news never reached the owned breakpoint, so a stop bound where the test does not run ended as "Timed out waiting for checked Node source stop".
+test('a second Node test stop that the adapter verifies by news at another column after the test was resumed ends the wait for it with the refusal, not with the timeout', async () => {
+  // Arrange: the next stop is answered pending and stays so until the test is resumed; then the adapter verifies it at 1:14, which the test does not run. The stop's budget is 300 ms.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    declaredColumn: 1,
+    budgetMs: 300,
+    acknowledgements: [
+      { verified: true, line: 1, column: 1 },
+      { verified: false },
+    ],
+    verifiedByNews: { line: 1, column: 14, when: 'after the continuation' },
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const refusal = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'Error: Declared breakpoint 1:1 is bound at 1:14; this stop is captured at its declared position, so declare 1:14 or another statement.',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 314): red while the run attached to its test process without the option, so the editor saved every modified editor of the learner when a chat request started a test.
+test('a Node test run attaches its debugger without making the editor save the learner’s unsaved documents', async () => {
+  // Arrange
+  const harness = await nodeRunHarness()
+  try {
+    // Act
+    await harness.run.prepare()
+
+    // Assert: one session was started, and it was told not to save.
+    assert.deepEqual(
+      harness.debugStartOptions.map(
+        (startOptions) => startOptions?.suppressSaveBeforeStart,
+      ),
+      [true],
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 314): red while a Node test run never looked at the editor's documents: the test ran the saved file while the editor's debugger showed the unsaved lines at its pause.
+test('a Node test run whose cited source is open in the editor with other text than the article cites is refused before the test is listed, launched or attached, naming the file and what the learner and the agent do', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    openDocumentText: 'export const nextTheme = "light";\n',
+  })
+  try {
+    // Act
+    const refusal: unknown = await harness.run
+      .prepare()
+      .catch((error: unknown) => error)
+
+    // Assert
+    assert.deepEqual(
+      refusal instanceof Error && 'code' in refusal
+        ? { code: refusal.code, message: refusal.message }
+        : refusal,
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
+    )
+    assert.equal(harness.launchPreparations(), 0)
+    assert.equal(harness.debugStartOptions.length, 0)
+    assert.deepEqual(harness.events, [])
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 314): the guard of the refusal above. A document the editor marks as modified while it holds the cited text (here with a byte order mark and other line ends) is no other text.
+test('a Node test run whose cited source is marked as modified in the editor with the text the article cites, in other line ends, reaches its declared stop', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    openDocumentText: '\uFEFFexport const nextTheme = "dark";\r\n',
+  })
+  try {
+    // Act
+    const firstStop = await harness.run.prepare()
+
+    // Assert
+    assert.equal(firstStop.index, 0)
+    assert.equal(harness.launchPreparations(), 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 322): red while a Node test run compared the editor's documents at its start only: after a change the learner did not save, the next stop was captured although the editor's debugger marked a line of the unsaved text, not the line the test executed. Since row 324 a change made before the continuation ends the run before the resume (the next test), so this one types after the resume.
+test('a Node test run whose cited source the learner changes in the editor without saving while the test runs to its next stop ends at that stop with the sentence that names the file, and that stop is not captured', async () => {
+  // Arrange: the learner types right after the continuation of the first stop was requested.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    typedWhileRunning: {
+      continueRequest: 2,
+      text: '// a line the learner typed\nexport const nextTheme = "dark";\n',
+    },
+  })
+  try {
+    await harness.run.prepare()
+    harness.calls.length = 0
+
+    // Act
+    const refusal: unknown = await harness.run
+      .advance()
+      .catch((error: unknown) => error)
+
+    // Assert
+    assert.deepEqual(
+      refusal instanceof Error && 'code' in refusal
+        ? { code: refusal.code, message: refusal.message }
+        : refusal,
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
+    )
+    assert.equal(
+      harness.events.filter(
+        (event) => event.type === 'node-test.source-stopped',
+      ).length,
+      1,
+    )
+    assert.deepEqual(harness.calls, [
+      'retire',
+      'arm',
+      'continue',
+      'remove',
+      'stop-debugging',
+    ])
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 324): red while a Node test run compared the editor's documents only when a stop was captured: after a change the learner did not save, the continuation resumed the test once more and the editor's debugger showed the next pause, on a line of the unsaved text, for the moment of a capture that was then thrown away.
+test('a Node test run whose cited source the learner changes in the editor without saving between two stops is ended by the continuation with the sentence that names the file, and the test is not resumed', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 })
+  try {
+    await harness.run.prepare()
+    harness.calls.length = 0
+    harness.typeIntoCitedSource(
+      '// a line the learner typed\nexport const nextTheme = "dark";\n',
+    )
+
+    // Act
+    const refusal: unknown = await harness.run
+      .advance()
+      .catch((error: unknown) => error)
+
+    // Assert: no continue request was sent, so the test stayed paused until the run released it.
+    assert.deepEqual(
+      refusal instanceof Error && 'code' in refusal
+        ? { code: refusal.code, message: refusal.message }
+        : refusal,
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
+    )
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 0)
+    assert.equal(harness.calls.at(-1), 'stop-debugging')
+    assert.equal(
+      harness.events.filter((event) => event.type === 'node-test.dap-stopped')
+        .length,
+      2,
+    )
   } finally {
     await harness.run.stop()
     await harness.cleanup()

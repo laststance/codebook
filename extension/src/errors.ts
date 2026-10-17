@@ -20,7 +20,7 @@ export const ERROR_RECOVERY = {
     'Inspect playback and the selected recording for missing/corrupt data. Leave and reopen Recording after repair; playback never retries application input.',
   BUSY: 'Read the run resource and its nextActions. Do not send another click with a new key.',
   SOURCE_CHANGED:
-    'Read the captured source resource. The current editor file no longer matches that capture.',
+    'At a start, a cited source open in the editor with text that differs from the article refuses the run before the application, test, browser or debugger starts; Codebook saves no document. During a repository-browser or node-test run, the same change ends the run at its next stop or before a continuation; that continuation sends no resume. Earlier committed observations and their captured source remain readable. Read the existing run and its captured source resources; ask the learner to save or revert the named file: after a save, read the source again and publish the article again; after a revert, change nothing. Then start a new deliberate run. Never retry application input automatically.',
   SOURCE_UNAVAILABLE:
     'Use codebook_sources to discover an eligible tracked path, then codebook_source to read its current hash. See codebook://help/repository for source boundaries.',
   STALE_SOURCE_CATALOG:

@@ -3,6 +3,7 @@ import fsPromises, { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
 
+import { StudyClient } from '../client'
 import { IMAGE_LIMIT_BYTES } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import {
@@ -12,6 +13,7 @@ import {
 } from '../recordingStore'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { startServer } from '../server'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { captureStudy } from '../utils/captureStudy'
 import { projectRecording } from '../utils/projectRecording'
@@ -864,10 +866,12 @@ test('the saved learning resource of a stop Codebook requested after its declare
   }
 })
 
-test('ordinary readers discover bounded actual facts and saved explanations without opening debugger graphs', async () => {
+test('MCP readers follow returned saved-learning and content-page URIs to exact facts and explanations without opening debugger graphs', async () => {
   // Arrange
   const harness = await contextHarness(),
     { service, record, store } = harness
+  let endpoint: Awaited<ReturnType<typeof startServer>> | undefined,
+    client: StudyClient | undefined
   try {
     record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
     harness.clock(100)
@@ -914,16 +918,19 @@ test('ordinary readers discover bounded actual facts and saved explanations with
     await harness.checkpoint()
     const id = record.recording!.header.studyId,
       recordingUri = `codebook://${service.instanceId}/studies/${id}/recording`
-    const metadata = await readResource(service, recordingUri)
+    // Regression412: direct reader calls bypassed the missing MCP learning-resource templates.
+    endpoint = await startServer(service)
+    client = await StudyClient.connect(endpoint.descriptor)
+    const metadata = (await client.read(recordingUri)).contents[0]!
     assert.ok('text' in metadata)
     const links = JSON.parse(metadata.text),
-      learning = await readResource(service, links.learningUri)
+      learning = (await client.read(links.learningUri)).contents[0]!
     assert.ok('text' in learning)
     let page = JSON.parse(learning.text),
       content = page.content,
       pageCount = 1
     while (page.nextUri) {
-      const next = await readResource(service, page.nextUri)
+      const next = (await client.read(page.nextUri)).contents[0]!
       assert.ok('text' in next)
       assert.ok(Buffer.byteLength(next.text) < 10000)
       page = JSON.parse(next.text)
@@ -974,6 +981,8 @@ test('ordinary readers discover bounded actual facts and saved explanations with
     })
     assert.equal(harness.runtime.dispatches, 1)
   } finally {
+    await client?.close()
+    await endpoint?.close()
     await harness.close()
   }
 })

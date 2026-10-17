@@ -1,4 +1,12 @@
-import { chmod, mkdir, open, readdir, readFile, lstat } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  lstat,
+  rm,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -35,6 +43,8 @@ import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { systemErrorCode } from './utils/systemErrorCode'
+import { withStorageLock } from './utils/withStorageLock'
 type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
   ? Entry extends NodeTestHistoryEntry
     ? Omit<Entry, 'sequence'>
@@ -49,6 +59,8 @@ const LEARNING_DECISION_FILE = 'learning-decision.json'
 const LEARNING_MATERIAL_FILE = 'learning-material.json'
 const HEADER_LIMIT_BYTES = 8_388_608
 const REASON_LIMIT_CHARS = 1_024
+/** The name of a history's folder: its study id. Any other entry of the history directory (a `.DS_Store`, a stray folder) is nobody's history. */
+const HISTORY_IDENTITY = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/
 
 /** Appends bounded, workspace-bound Node execution evidence before test input and seals it after owned cleanup. @example const writer = await store.start(header); await writer.appendStop(stop); await writer.finish('complete') */
 export class NodeTestHistoryStore {
@@ -61,7 +73,7 @@ export class NodeTestHistoryStore {
   >()
 
   constructor(
-    learningDirectory: string,
+    private readonly learningDirectory: string,
     readonly workspaceKey: string,
     private readonly capacity: () => number = () => 64,
     private readonly savedArtifactCount: () => Promise<number> = async () => 0,
@@ -69,28 +81,103 @@ export class NodeTestHistoryStore {
     this.directory = join(learningDirectory, NODE_TEST_HISTORY_DIRECTORY)
   }
 
-  /** Reserves a private history before the owned test process can start. @example const writer = await store.start(header) */
+  /**
+   * Reserves a private history before the owned test process can start; called by {@link StudyService} when it admits a Node test run.
+   * The admission and the creation of the history's folder with its header run under the storage lock of the learning directory ({@link withStorageLock}), as the start of a recording does, so two starts never both take the last place, in one window or in two: the lock is held from the count until the header is written, so every other start is decided either before this folder exists or when its header does. No start is noted beside the lock. Under the lock the start reads the directory and the headers of the histories and writes one header and one empty journal, all on the local disk; it waits for nothing else.
+   * @param input - The history's header without its version; its study id names the history's folder.
+   * @returns The writer of the reserved history.
+   * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, when the study id already has a history, and when the history's first files cannot be written; "Learning storage is locked …", naming the lock file, while another window holds the storage lock or a lock stays that cannot be judged: nothing was written then. Only a history the list shows counts ({@link listedHistoryCount}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
+   * @example const writer = await store.start(header)
+   */
   async start(
     input: Omit<NodeTestHistoryHeader, 'version'>,
   ): Promise<NodeTestHistoryWriter> {
     const header = nodeTestHistoryHeaderSchema.parse({ ...input, version: 1 })
     if (header.workspaceKey !== this.workspaceKey)
       throw new Error('Node history belongs to another workspace.')
+    return withStorageLock(this.learningDirectory, () => this.reserve(header))
+  }
+
+  /**
+   * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}, run while the storage lock is held.
+   * @param header - The validated header of this workspace.
+   * @returns The writer of the reserved history.
+   * @throws What {@link start} names for a full store, a header above its limit and files that cannot be written.
+   * @example const writer = await this.reserve(header)
+   */
+  private async reserve(
+    header: NodeTestHistoryHeader,
+  ): Promise<NodeTestHistoryWriter> {
     await mkdir(this.directory, {
       recursive: true,
       mode: PRIVATE_DIRECTORY_MODE,
     })
     await chmod(this.directory, PRIVATE_DIRECTORY_MODE)
-    const entries = await readdir(this.directory)
-    if (entries.length + (await this.savedArtifactCount()) >= this.capacity())
+    // The histories may take the places the saved studies leave of the limit.
+    const places = this.capacity() - (await this.savedArtifactCount())
+    if ((await this.listedHistoryCount(places)) >= places)
       throw new Error(
         'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
       )
-    const runDirectory = this.path(header.studyId)
-    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE })
+    // The header's size is checked before the history's folder is made, so a header above its limit leaves nothing behind.
     const headerBytes = Buffer.from(JSON.stringify(header))
     if (headerBytes.byteLength > HEADER_LIMIT_BYTES)
       throw new Error('Node history article context exceeds its storage limit.')
+    const runDirectory = this.path(header.studyId)
+    await this.createHistoryFolder(runDirectory, headerBytes)
+    this.active.add(header.studyId)
+    return new NodeTestHistoryWriter(runDirectory, header, () =>
+      this.active.delete(header.studyId),
+    )
+  }
+
+  /**
+   * Makes the folder of a new history with its first two files, or leaves no folder: one whose files could not be written is removed again; called by {@link start} once the history is admitted and its header is within its size limit.
+   * A folder without a header is shown by no list and would take a place of the saved study limit for good.
+   * @param runDirectory - The history's folder; it must not exist yet.
+   * @param headerBytes - The header as it is stored.
+   * @throws "A Node test history already exists for this study." when the folder exists, which is left as it is; what else making the folder throws; and what writing its files throws, after the folder was removed again.
+   * @example
+   * await this.createHistoryFolder('/…/node-tests.v1/<study id>', Buffer.from(JSON.stringify(header)))
+   */
+  private async createHistoryFolder(
+    runDirectory: string,
+    headerBytes: Buffer,
+  ): Promise<void> {
+    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE }).catch(
+      (error: unknown) => {
+        // A study id that already has a history is told as such: the file system's own text would name the path of the private storage.
+        if (systemErrorCode(error) === 'EEXIST')
+          throw new Error(
+            'A Node test history already exists for this study.',
+            { cause: error },
+          )
+        throw error
+      },
+    )
+    try {
+      await this.createHistoryFiles(runDirectory, headerBytes)
+    } catch (error) {
+      // The removal is tried once; its own failure does not replace the error of the start.
+      await rm(runDirectory, { recursive: true, force: true }).catch(
+        () => undefined,
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Writes the two files a history starts with into its new folder, the header and the empty journal, each created anew and flushed; called by {@link createHistoryFolder}, which removes the folder again when this fails.
+   * @param runDirectory - The history's folder, which {@link createHistoryFolder} has just made.
+   * @param headerBytes - The header as it is stored, already within its size limit.
+   * @throws What creating, writing or flushing either file throws, for example on a full disk.
+   * @example
+   * await this.createHistoryFiles('/…/node-tests.v1/<study id>', Buffer.from(JSON.stringify(header)))
+   */
+  private async createHistoryFiles(
+    runDirectory: string,
+    headerBytes: Buffer,
+  ): Promise<void> {
     const headerHandle = await open(
       join(runDirectory, HEADER_FILE),
       'wx',
@@ -112,13 +199,53 @@ export class NodeTestHistoryStore {
     } finally {
       await journalHandle.close()
     }
-    this.active.add(header.studyId)
-    return new NodeTestHistoryWriter(runDirectory, header, () =>
-      this.active.delete(header.studyId),
-    )
   }
 
-  /** Lists histories for the current workspace without exposing the private storage directory. @example await store.list() */
+  /**
+   * Counts the histories the list shows, so that nothing takes a place of the saved study limit that no list shows; called by {@link reserve} for every start, under the storage lock.
+   * A history counts when {@link listedHeader} reads its header: a folder without one (made by hand, or left by a failed start of an earlier build), one whose header cannot be read, and any entry not named like a study id count nothing. A history that is being started is never met without its header here: its start holds the storage lock until the header is written.
+   * It costs one read and one parse of a header for each folder named like a study id, one after another, so one header is in memory at a time; a header is some kilobytes as a rule and {@link HEADER_LIMIT_BYTES} at most. The count stops at `places`, because a start only needs to know whether they are taken.
+   * @param places - The places the histories may take; the count is not carried beyond it.
+   * @returns The number of listed histories, or `places` once that many are found.
+   * @throws When the history directory cannot be read.
+   * @example await this.listedHistoryCount(1) // => 0 beside a `.DS_Store` and a folder without a header
+   */
+  private async listedHistoryCount(places: number): Promise<number> {
+    let listed = 0
+    for (const name of await readdir(this.directory)) {
+      if (listed >= places) break
+      if (await this.listedHeader(name)) listed += 1
+    }
+    return listed
+  }
+
+  /**
+   * Reads the header by which an entry of the history directory is a history of this workspace; the one rule {@link list} shows a history by and {@link listedHistoryCount} counts it by. A history whose journal verifies has such a header too ({@link read}).
+   * @param name - The name of an entry of the history directory.
+   * @returns The header, or `undefined` for a name that is no study id, a folder without a header, a header that is no bounded regular file or does not parse, and a header of another workspace.
+   * @example await this.listedHeader('.DS_Store') // => undefined
+   */
+  private async listedHeader(
+    name: string,
+  ): Promise<NodeTestHistoryHeader | undefined> {
+    try {
+      const header = nodeTestHistoryHeaderSchema.parse(
+        JSON.parse(
+          (
+            await this.readPrivateFile(
+              join(this.path(name), HEADER_FILE),
+              HEADER_LIMIT_BYTES,
+            )
+          ).toString('utf8'),
+        ),
+      )
+      return header.workspaceKey === this.workspaceKey ? header : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Lists histories for the current workspace without exposing the private storage directory: a history whose journal verifies, and one whose header alone can be read ({@link listedHeader}), as partial. @example await store.list() */
   async list(): Promise<
     Array<
       Pick<NodeTestHistoryIndex, 'status' | 'reason'> & {
@@ -148,19 +275,9 @@ export class NodeTestHistoryStore {
               verification: 'verified' as const,
             }
           } catch (error) {
-            try {
-              const header = nodeTestHistoryHeaderSchema.parse(
-                JSON.parse(
-                  (
-                    await this.readPrivateFile(
-                      join(this.path(studyId), HEADER_FILE),
-                      HEADER_LIMIT_BYTES,
-                    )
-                  ).toString('utf8'),
-                ),
-              )
-              if (header.workspaceKey !== this.workspaceKey) return undefined
-              return {
+            const header = await this.listedHeader(studyId)
+            return (
+              header && {
                 studyId,
                 createdAt: header.createdAt,
                 profile: header.profile,
@@ -168,9 +285,7 @@ export class NodeTestHistoryStore {
                 reason: `History integrity check failed: ${String(error).slice(0, REASON_LIMIT_CHARS)}`,
                 verification: 'unavailable' as const,
               }
-            } catch {
-              return undefined
-            }
+            )
           }
         }),
     )
@@ -517,7 +632,7 @@ export class NodeTestHistoryStore {
   }
 
   private path(studyId: string): string {
-    if (!/^[0-9a-f-]{36}_[0-9a-f-]{36}$/.test(studyId))
+    if (!HISTORY_IDENTITY.test(studyId))
       throw new Error('Invalid Node history identity.')
     return join(this.directory, studyId)
   }

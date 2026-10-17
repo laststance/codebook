@@ -5,7 +5,7 @@
 Before implementation or runtime trials, complete this sequence at each new session, after context compaction and after a controlling specification changes:
 
 1. Read **in full** [PRODUCT_GOAL.md](PRODUCT_GOAL.md) and its normative [replay](docs/specs/learning-replay.md), [DeepWiki](docs/specs/llm-wiki.md) and [shortcut](docs/specs/keyboard-shortcuts.md) contracts.
-2. Read **in full** [IMPLEMENTATION.md](IMPLEMENTATION.md), [PROJECT_STATE.md](PROJECT_STATE.md), its active cycle and [DESIGN.md](DESIGN.md). Verify the actual branch, dirty files, tools and relevant runtime/PR state.
+2. Read **in full** [IMPLEMENTATION.md](IMPLEMENTATION.md), [PROJECT_STATE.md](PROJECT_STATE.md), its active cycle and [DESIGN.md](DESIGN.md). The record of Cycle 0046 ([docs/cycles/0046-carried-defects-of-cycle-0045.md](docs/cycles/0046-carried-defects-of-cycle-0045.md)) is skipped at an entry (owner, 2026-10-17); its sections are consulted when the work needs them. Verify the actual branch, dirty files, tools and relevant runtime/PR state.
 3. **Open [the approved PNG](docs/designs/assets/codebook-product-spec-v9.png) with an image-viewing tool. This is the product to build.** Match DESIGN.md's identity; record observed live, replay, DeepWiki and shortcut regions. Reading a filename, prompt or alt text does not count.
 4. Follow IMPLEMENTATION.md's **gap audit → selected increment → proof → updated gaps** loop. Record entry evidence in the cycle. Missing reads, visual inspection or required gap analysis keep the implementation-entry gate incomplete; continue independent preparation and report the missing item.
 
@@ -30,7 +30,7 @@ Historical cycles, generation prompts and external references are evidence consu
 
 - PRODUCT_GOAL owns outcomes; its feature contracts own details; DESIGN owns the approved visual target; PROJECT_STATE owns current gaps; the active cycle owns the bounded plan/results. Later explicit owner direction takes precedence. A rule the owner sets is stated, as the rule itself, in the required read that governs the work; there is no decision log.
 - Preserve all active goals while selecting one increment. Change accepted behavior only on explicit owner direction. Routine implementation choices within the authorized phase need no repeated permission. An open gap does not authorize leaving that phase.
-- Keep VS Code and Cursor evidence separate. Use the designated dashboard for development and the fixed nine-project protocol for final acceptance. Preserve runtime/library coverage and stage order; fixture or development passes earn no acceptance credit.
+- Keep VS Code and Cursor evidence separate, and the evidence of each target operating system (macOS, Windows, Ubuntu). Use the designated dashboard for development and the fixed nine-project protocol for final acceptance. Preserve runtime/library coverage and stage order; fixture or development passes earn no acceptance credit.
 - Complete the authorized cycle, update records and recommend one next action. Continue further cycles only within owner authorization. These instructions do not create background jobs, separate tasks or automations.
 - Require mapped evidence and a current image comparison for changed UI before declaring work review-complete. Keep implementation, live validation, review, merge, packaging, publication, installed verification and owner acceptance distinct. Missing required checks prevent completion claims.
 - Preserve other people's edits and existing skills/settings/learning. Keep private recordings and sensitive runtime data outside public changes; link sanitized evidence with stable locations and source identities.
@@ -53,6 +53,17 @@ This rule is absolute. No planning choice, review outcome or skill default overr
 ## External validation targets
 
 Never embed a demonstration or validation application in the extension, its runtime dependencies, build graph, commands, or VSIX. Open the owner-designated real repository as an external workspace. Keep isolated unit-test data outside production imports and package assets. Packaging must reject application fixtures or experiment dependencies.
+
+## WSL development desktop
+
+When developing and testing Ubuntu applications through WSLg on the Windows host:
+
+- Keep at most **one application window each** for the browser, VS Code and Cursor across QA profiles. Reuse existing windows and tabs; preserve drafts, unsaved files and settings before closing extra owned windows. Chromium/Electron child processes are not additional application windows.
+- Use the owner's desktop split: **the supervising terminal stays on the left; the active validation application occupies the larger region on the right**. Apply this placement to Ubuntu/WSLg windows too, using supported window move/resize actions. Preserve the terminal and use normal zoom.
+- Take and inspect a **current screenshot before testing** to confirm this layout. Record the display size, actual window/viewport geometry, scaling, host and theme; derive coordinates from the current screen rather than reusing another machine's coordinates.
+- Put the browser and editors in the same right-hand region and switch their foreground there for browser display and browser-to-editor verification. Confirm the actual visible application and input focus after each switch before further input; an activation command's success alone is insufficient. If ordinary switching still prevents verified native input, report the failure so the owner can temporarily minimize the supervising terminal.
+- Respect desktop user-control signals: yield input while the owner operates the desktop, then rediscover the intended window before continuing. Preserve the one-window limit when reopening or following editor protocol links.
+- Record interactions and inspect video frames for transitions and motion, following the existing evidence rules. The desktop screenshot establishes placement only; the approved product PNG, both-host coverage and every required acceptance condition still govern the product.
 
 ## Working conventions
 

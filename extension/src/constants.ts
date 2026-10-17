@@ -1,7 +1,11 @@
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 
-export const API_VERSION = '1.6'
-export const EXTENSION_VERSION = '0.2.29'
+/**
+ * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
+ * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ */
+export const API_VERSION = '1.7'
+export const EXTENSION_VERSION = '0.2.30'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -13,6 +17,30 @@ export const PRIVATE_FILE_MODE = 0o600
 export const KERNEL_BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
 /** How far the boot time a storage owner recorded may lie before this boot's and still be the same boot. Each is the wall clock minus the uptime, so a clock correction moves it by seconds, while a restart moves it by at least the earlier session's length. */
 export const STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS = 60_000
+/** The largest id a process can have on any system this extension runs on: a process id is a signed 32-bit integer on Linux and macOS (whose own limits are 4194304 and 99998), a Windows id stays far below it, and the system's probe takes no larger number. A recorded id above it names no process ({@link isProcessGone}). */
+export const LARGEST_PROCESS_ID = 2 ** 31 - 1
+/** How long the query for one process's start (`ps` on macOS, PowerShell on Windows) may run before it is ended and the start counts as unreadable. */
+export const PROCESS_START_QUERY_TIMEOUT_MS = 3_000
+/** The most bytes the query for one process's start may print; a longer answer is no start. */
+export const PROCESS_START_QUERY_MAX_BYTES = 1_024
+/** How long a failed read of this process's own start is kept before the start is read again. */
+export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
+/** The longest text `ps -o lstart=` may answer and still be taken for a process's start ("Mon Oct  5 09:12:33 2026" has 24 characters). */
+export const PROCESS_START_PS_TEXT_MAX_LENGTH = 64
+/** Where the start time (field 22 of `/proc/<pid>/stat`) is among the values that follow the command name's closing parenthesis; the first of them is field 3. */
+export const LINUX_STAT_START_TIME_INDEX = 19
+/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. On Linux the form also names the pid namespace, as `linux@<number>` ({@link processStartFormHere}). Two starts of different forms were read in two spaces of process ids and are never compared, and for a record in a project folder neither are two Linux starts that name no pid namespace ({@link canJudgeOwnerHere}). */
+export const PROCESS_START_FORMS = {
+  linux: 'linux',
+  darwin: 'ps',
+  win32: 'win',
+} as const satisfies Partial<Record<NodeJS.Platform, string>>
+/** What stands between the system and the pid namespace in the form of a Linux process start: `linux@4026531836`. */
+export const PROCESS_START_NAMESPACE_MARK = '@'
+/** Where Linux names the pid namespace of the reading process, as a link to `pid:[<number>]`. A process id means a process only inside one pid namespace ({@link processStartFormHere}). */
+export const LINUX_PID_NAMESPACE_PATH = '/proc/self/ns/pid'
+/** How many hex characters of a SHA-256 name a machine in a storage owner record ({@link deriveMachineKeys}). */
+export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
 export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
 /** What an editor that runs without its telemetry service answers as `vscode.env.machineId` on every computer; it identifies none. */
@@ -54,6 +82,11 @@ export const MAX_EXPLANATIONS = 32
 export const MAX_VALUE_PATHS = 10
 export const EVENT_PAGE_SIZE = 50
 export const EVENT_DETAIL_LIMIT_BYTES = 8_192
+/**
+ * What ends a text {@link cutTextToFit} cut to fit a bound, so a reader sees that the text went on: the reason of the one run failure the evidence keeps past a refusal, cut to fit {@link EVENT_DETAIL_LIMIT_BYTES} (Cycle 0046 row 698).
+ * @example cutTextToFit('x'.repeat(100), (candidate) => candidate.length <= 20) // => 'xxxxxxxxxxxxx… [cut]'
+ */
+export const CUT_TEXT_MARKER = '… [cut]'
 export const MAX_EVENTS = 10_000
 export const MAX_RETAINED_EVENT_BYTES = 4_194_304
 export const MAX_QUEUED_EVIDENCE_BYTES = 16_777_216
@@ -126,6 +159,9 @@ export type ReaderErrorKind = (typeof READER_ERROR_KINDS)[number]['kind']
 /** What the reader says when the learner follows the current run after its Application pane was closed: the pane's closure released the run's viewport and ended the run, so nothing can be shown for it until a new run opens the pane again. */
 export const APPLICATION_PANE_CLOSED_MESSAGE =
   'The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.'
+/** What the reader says when {@link StudyWorkspace}'s arrangement leaves the learner's editor groups as they are: the grid holds more groups than the Study layout describes, so applying that layout would merge a group into its neighbour. */
+export const EDITOR_GROUPS_PRESERVED_MESSAGE =
+  'Existing editor groups were preserved. Use the focus commands or arrange the Codebook panes manually.'
 // The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
 export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<ReaderErrorKind> =
   new Set(
@@ -150,6 +186,12 @@ export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
 export const MAX_DEFERRED_OPEN_REPLIES = 32
 // The one sentence for a saved study whose archive is gone or on its way to the Trash: read by the library, the reader and the removal refusals.
 export const STUDY_ARCHIVE_UNAVAILABLE_MESSAGE = 'Study archive is unavailable.'
+// The Study reader's progress line for an understanding choice made while an earlier one still waits to be written: the new choice is not taken, so the earlier one is neither replaced nor lost.
+export const UNSAVED_UNDERSTANDING_WAITS_MESSAGE =
+  'Not saved: an earlier understanding choice still waits to be written, and this one was not taken. Press Retry storage / refresh to write the earlier one, then choose again.'
+// What the reader made after a change of the workspace's folders says after "History not saved: " for a study archive the reader before it handed over without a reason of its own: its write had not ended when the readers were replaced.
+export const UNSAVED_STUDY_HANDED_OVER_REASON =
+  "a study of an earlier run was still being written when the workspace's folders changed. Press Retry storage / refresh to write it."
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
@@ -162,9 +204,26 @@ export const STUDY_REMOVAL_REFUSALS = {
   newerFormat:
     'This study was saved by a newer Codebook and is kept as it is. Update the extension, then delete it there.',
 } as const
-/** What Saved studies answers a delete request with in a window without a Trash; the reader lists the study's files with it and deletes nothing itself. */
+/** The same reasons as a window without a Trash words them: nothing is deleted there, so none speaks of deleting; each names the removal of the study's files by hand, which the "Remove by hand" disclosure of Saved studies lists. The Study pane shows them and the host repeats them when it refuses a request for a study's files. */
+export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
+  keyof typeof STUDY_REMOVAL_REFUSALS,
+  string
+> = {
+  nothingChosen:
+    'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
+  nodeHistory:
+    'Codebook cannot list the files of a Node test history for removal by hand yet.',
+  runNotStopped: "Stop the run before removing its study's files by hand.",
+  recordingOpen:
+    "Choose Overview or Live to leave Recording before removing this study's files by hand.",
+  studyOpening: STUDY_REMOVAL_REFUSALS.studyOpening,
+  unavailable: STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
+  newerFormat:
+    'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.',
+}
+/** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
-  "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh."
+  'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.'
 // Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
 export const AGENT_STORAGE_DIRECTORY = 'agent'
 export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
@@ -187,8 +246,16 @@ export const LIVE_EDITOR_LAYOUT = {
 } as const
 export const REPOSITORY_MIN_EDITOR_GROUP_COUNT = 2
 export const HORIZONTAL_EDITOR_ORIENTATION = 0
+/** The orientation of an editor layout whose groups stand in rows, one above the other (`vscode.getEditorLayout`'s `orientation: 1`); {@link StudyWorkspace} stacks the groups so after the removal of an earlier window's leftover group (row 639). */
+export const VERTICAL_EDITOR_ORIENTATION = 1
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
+/** The workspace-state key of the record {@link StudyWorkspace} keeps of the Application group it claimed and locked; after Developer: Reload Window the editor keeps that group empty, and only this record proves it is Codebook's own. */
+export const APPLICATION_GROUP_MARKER_KEY = 'codebook.applicationGroup.v1'
+/** The version of the record under {@link APPLICATION_GROUP_MARKER_KEY} that names one group by its `column`, the shape 0.2.30 candidates write and read; {@link StudyWorkspace} still writes it whenever the record names one group. */
+export const APPLICATION_GROUP_MARKER_VERSION = 1
+/** The version of the record under {@link APPLICATION_GROUP_MARKER_KEY} that names two or more groups Codebook created by their `columns` (the Application's group and the Study Context's created group, finding 599); a reader of {@link APPLICATION_GROUP_MARKER_VERSION} alone ignores it, so it never retires one group of the pair on a proof made for the pair. */
+export const STUDY_GROUPS_MARKER_VERSION = 2
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
 /**
  * How much wider the editor area must have become, in pixels, for {@link StudyWorkspace} to conclude that a side bar was open before it was hidden: the editor's side bars are at least 170 px wide, and a sash or a rounded size moves the width by a few pixels at most.
@@ -196,6 +263,189 @@ export const PRESENTATION_READY_TIMEOUT_MS = 5_000
  * widthWithoutPrimaryPx - widthPx > HIDDEN_SIDE_BAR_MIN_GAIN_PX // => true for 874 - 660
  */
 export const HIDDEN_SIDE_BAR_MIN_GAIN_PX = 50
+/**
+ * How long a Restore waits, after its own commands ended a Read's maximization, for the editor to name the focused tab's group as the active one again before it counts another group as the learner's change: Cursor names another group for a moment while a maximization ends (Cycle 0045 NF-7b), as it did for 25 to 46 ms while a layout was applied (Cycle 0045 NF-7).
+ * @example
+ * await waitUntil(() => retainsFocus(), 'the focus after the maximization ended', UNMAXIMIZE_FOCUS_SETTLE_MS)
+ */
+export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
+/**
+ * How long before a pause of a live run the editor's own opening of the paused file may lie and still not count as the learner leaving the chat: the editor's debugger opens that file with the keyboard first and selects the stack item right after it, so {@link StudyWorkspace} sees a text editor become active a moment before it sees the pause.
+ * @example performance.now() - leftAtMs <= PAUSE_FOCUS_LOOKBACK_MS // => true for the paused file the debugger opened 20 ms before the stack item
+ */
+export const PAUSE_FOCUS_LOOKBACK_MS = 1_000
+/**
+ * The reasons a debug adapter gives in its `stopped` event for a stop the learner started with one of the editor's own debugging commands, as against a stop that happens by itself (`breakpoint`, `exception`, `data breakpoint`, `function breakpoint`, `entry`) or one whose cause the reason does not tell (`pause`, which js-debug also gives for a `debugger` statement and a `debug()` call): `step` is the Debug Adapter Protocol's and js-debug's reason after Step Over, Step Into and Step Out; `goto` is the protocol's reason after a jump to a line; `frame_entry` is what js-debug 1.105 gives after Restart Frame. {@link StudyWorkspace} ends its record of the chat's keyboard at such a stop when a text editor has the keyboard: the learner works in that editor.
+ * @example LEARNER_STARTED_STOP_REASONS.has('step') // => true
+ */
+export const LEARNER_STARTED_STOP_REASONS: ReadonlySet<string> = new Set([
+  'step',
+  'goto',
+  'frame_entry',
+])
+/**
+ * The ways a text editor's selection changes by the learner's own hand, by their numbers in the editor's `TextEditorSelectionChangeKind`: 1 is the keyboard (typing, the cursor keys) and 2 is the mouse (a click, a drag). Every other change is number 3, a command's: the editor's own jump to a line, as for a stack frame's file, and a selection an extension sets (VS Code 1.140 and Cursor 3.23 give 3 for the sources `api`, `code.jump` and `code.navigation`). {@link StudyWorkspace} takes a change of these kinds in the active text editor as a sign that the learner works in that editor. {@link RepositoryReader} takes one as the learner's own selection, which never proves that a requested range was reached. The numbers stand here, and not the editor's names, because this file is also loaded where the editor's API does not exist. A change the editor reports without a kind is asked with `undefined` and is none of them.
+ * @example LEARNER_SELECTION_KINDS.has(3) // => false
+ */
+export const LEARNER_SELECTION_KINDS: ReadonlySet<number | undefined> = new Set<
+  number | undefined
+>([1, 2])
+/**
+ * How long a selection the learner made in the active text editor (a click, a key press) counts as a sign that the keyboard is in that editor, while no stack frame is shown: a session runs, or none exists. {@link StudyWorkspace} then lets a pane or the captured source that covers that editor take the keyboard, which a hidden editor cannot keep.
+ * Nothing the editor reports ends such a sign: a learner who goes on to a side-view chat, the terminal or a view is not reported. A learner who types produces a selection change with every key; one who left for the chat needs longer than this to click there, write a request and have a run reach its next reveal. The price on the other side: a learner who clicked into a file and has read it for longer than this without a key press is not known to be there.
+ * @example performance.now() - learnerWorkedInEditorAtMs <= LEARNER_SIGN_FRESH_MS // => true one second after the last key press
+ */
+export const LEARNER_SIGN_FRESH_MS = 3_000
+/**
+ * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling brings only at its first try: the adapter asked to keep the focus, or the session went on before a frame of it was reported; {@link StudyWorkspace} takes a later frame as one the learner selected.
+ * The first try of the editor's handling comes right after the adapter answered a `threads` and a `stackTrace` request (34 to 65 ms after the stop; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). A stop read behind another session's frame is not judged by this bound but by {@link EDITOR_FOCUS_PASS_DELAY_MS}.
+ * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a frame the learner selects two seconds after a stop the editor never showed
+ */
+export const STOP_OWN_FOCUS_BOUND_MS = 500
+/**
+ * How long after a debug session went on both editors wait before they pass the focus to a session that is still stopped, without the keyboard (`passFocusScheduler` of VS Code 1.140 and Cursor 3.23: a timer of 800 ms, started anew when the session is told to go on and when its adapter reports that it does). {@link StudyWorkspace} takes the frame of a stop that was read behind that session's frame as brought by the stop's own handling, with the keyboard, when it arrives before this delay has passed, and as passed the focus from then on.
+ * The stop's own handling tries at once and, where a frame of the other session still had the focus then, a second time when the rest of the call stack is loaded, which both editors start 420 ms after the top frame. Measured natively on 2026-10-07 in VS Code 1.140.0 for Linux, nine runs of nine: a browser stop read 17 to 23 ms after the server session went on had its frame 450 to 468 ms after its `stopped` event (467 to 491 ms after the server session went on), with the keyboard in the paused file; in the other order a frame came 34 to 65 ms after its `stopped` event, and once 454 ms after one read 197 ms after the other session went on (651 ms after it). No frame at 800 ms was seen in any run.
+ * @example performance.now() - wentOnAtMs < EDITOR_FOCUS_PASS_DELAY_MS // => true for a frame 491 ms after the other session went on
+ */
+export const EDITOR_FOCUS_PASS_DELAY_MS = 800
+/**
+ * How long "Codebook: Close Study Workspace" waits, once its panes' tabs are gone, for the editor to remove the groups those tabs left empty before it gives the active editor group the keyboard: the removal rebuilds the editor grid and takes the keyboard from the editor that had it (Cursor removed the captured source's group 57 ms after its tab, and the Study pane's 12 ms after its tab).
+ * @example await waitUntil(() => hasNoEmptiedGroup(), 'the emptied editor groups to close', CLOSE_GROUP_SETTLE_MS)
+ */
+export const CLOSE_GROUP_SETTLE_MS = 250
+/**
+ * What "Codebook: Close Study Workspace" tells the learner, once in an editor session, when it gave the active editor group the keyboard after it closed a pane or the captured source while a pane, the captured source or the learner's own file was the active editor. Closing the panes can leave the keyboard on no element at all (the editor rebuilds its grid when their groups close), so the group gets it. The extension API cannot tell whether the keyboard was in that editor or in the terminal, a view or a side-view chat before (`window.activeTerminal` is also the terminal that had the focus last, a webview panel stays `active` while another part has the keyboard, the active text editor stays the active one, and every webview reports a blur when the Command Palette opens): for a learner who was typing there this Close moves the keyboard into the editor, and the sentence says so.
+ * @example void showPlainNotice(vscode.window, 'information', STUDY_CLOSE_KEYBOARD_MESSAGE)
+ */
+export const STUDY_CLOSE_KEYBOARD_MESSAGE =
+  'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.'
+/**
+ * What the reader tells the learner, once in an editor session, when a live run ended while the Study workspace was closed, the run's Application pane was the editor's active editor in the focused window, and the reader therefore gave the active editor group the keyboard after it closed that pane: a pane that is closed while it has the keyboard leaves the keyboard on no element. As at a Close ({@link STUDY_CLOSE_KEYBOARD_MESSAGE}), the editor does not say whether the keyboard was in the pane or in the terminal, a view or a side-view chat beside it, so the sentence says where it is now.
+ * @example void showPlainNotice(vscode.window, 'information', RUN_CLOSED_PANE_KEYBOARD_MESSAGE)
+ */
+export const RUN_CLOSED_PANE_KEYBOARD_MESSAGE =
+  'The run ended and Codebook closed its Application pane. The keyboard is in the active editor group now: closing the pane can leave it nowhere, and the editor does not tell Codebook whether it was in the pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.'
+/**
+ * What the reader tells the learner, once in an editor session, when one of its panes (the Application pane or the captured source) took the keyboard from the file the editor's debugger had opened at a pause of a live run (`debug.focusEditorOnBreak`) and the reader knew of no chat to give it back to. That is VS Code, where the chat is a side view, and Cursor while its Agent chat is a pane of the secondary side bar: there the extension API reads the same whether the keyboard was in a file or in the chat input (Cycle 0045 X7-A.4, Cycle 0046 row 5), so Codebook cannot give it back and says where it is instead. Where Cursor's chat is a tab of another editor part and had the keyboard before the pause, the reader gives it back and tells nothing.
+ * @example void showPlainNotice(vscode.window, 'information', SOURCE_TOOK_PAUSED_FOCUS_MESSAGE)
+ */
+export const SOURCE_TOOK_PAUSED_FOCUS_MESSAGE =
+  'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.'
+/**
+ * What the reader tells the learner, once in an editor session, when one of its panes (the Application pane or the captured source) came to the front over a file the learner was working in and took the keyboard, without the debugger having given that file the keyboard: after a frame the learner selected in the Call Stack view, at a stop with `debug.focusEditorOnBreak` off, and while a session runs. A hidden editor cannot keep the keyboard, so the pane takes it and Codebook says where it is.
+ * @example void showPlainNotice(vscode.window, 'information', PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE)
+ */
+export const PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE =
+  'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session, when it placed the Application pane in a new editor group of the only editor part (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar) after focusing an editor group: another group than the first was the active one (`workbench.action.newGroupAbove` adds above the active group only: VS Code 1.140.0 `workbench.desktop.main.js` 990:31741, Cursor 17388:33629), or an earlier window's leftover group had to take the keyboard for its proof. The new group has the keyboard then. The extension API reads the same whether the keyboard was in a file or in the chat view before (the active text editor stays the active one while a view has it), so Codebook gives it to no file, except one the learner clicked or typed in a moment ago ({@link LEARNER_SIGN_FRESH_MS}), and says where it is (Cycle 0046 row 612).
+ * Without such a focus the new group takes the keyboard only from the editor area, and a chat view keeps it; {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE} is told then.
+ * @example void showPlainNotice(vscode.window, 'information', APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE)
+ */
+export const APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE =
+  'Codebook opened its Application pane in a new editor group, and that group has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session, when a Study selection an agent asked for through codebook_presentation placed its panes in the only editor part (VS Code, and Cursor while its Agent chat is a pane of the secondary side bar): the placement gives the captured source the keyboard to hold its own panes against a learner's newer input, and the place the selection found the keyboard in reads the same whether it was a file or the chat view, so Codebook gives the keyboard to no file it cannot prove and says where it is (Cycle 0046 row 613). The learner's own selection (the Study pane's control, a command) returns the keyboard to the active editor as before.
+ * @example void showPlainNotice(vscode.window, 'information', AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE)
+ */
+export const AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE =
+  'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session for each place, when a Study selection an agent asked for through codebook_presentation failed after its placement focused the captured source: the sentence names the place the editor names as the active one by then, one of the reader's two panes (Cycle 0046 row 634) or the captured source. As after a placement that holds ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613), no file the learner is not known to work in gets the keyboard back. Each sentence says that the arrangement could not be finished: the sentence of a placement that holds says that Codebook arranged it, which a refused selection did not (row 637). `file`: a selection refused after its layout measurement beside another editor part (Cursor's chat part) borrowed the main editor's focus and before any placement moved the keyboard, whose learner was not known to work in the file the editor reported: the inserted Application group's element took the borrow's keyboard and its cleanup left it on the page body, so the file gets it back and the sentence says so, without claiming that the learner typed there (Cycle 0046 row 718).
+ * @example void showPlainNotice(vscode.window, 'information', AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES.application)
+ */
+export const AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES = {
+  application:
+    'Codebook could not finish the Study arrangement an agent asked for, and the Application pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+  study:
+    'Codebook could not finish the Study arrangement an agent asked for, and the Study pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+  source:
+    'Codebook could not finish the Study arrangement an agent asked for, and the captured source has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+  file: 'Codebook could not finish the Study arrangement an agent asked for, and the file you had open has the keyboard again. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+} as const
+/**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki had to measure the main editor beside another editor part (Cursor's chat editor part) by focusing its first group, and the keyboard could not be given back: the chat tab moved or closed, or the host has no command for its chat. The keyboard then goes to the Wiki, no file the learner might type into unknowingly, and the sentence says so (Cycle 0046 row 620). Where the chat tab can be found again it gets its keyboard back and nothing is told.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE)
+ */
+export const REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for, and the Wiki has the keyboard now: arranging the Wiki beside its cited source needed the focus of the first editor group, and Codebook could not give the keyboard back to where you were typing. Click where you want to type.'
+/**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki was created in front of the file the learner was known to type in: the Wiki goes to the second editor group without the keyboard, a webview created in front of the text editor that has the keyboard hides that editor, and the keyboard falls to the page body, where nothing types (C60 in both hosts, Cycle 0046 row 694). Codebook then gives the Wiki the keyboard, and the sentence says so and how to type in the file again: its tab is in the same group, behind the Wiki. "Known" is a fresh sign of the learner's own hand in that file (a click or a key within {@link LEARNER_SIGN_FRESH_MS}); without one, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE} is told instead.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE)
+ */
+export const REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for in front of the file you were typing in, and the Wiki has the keyboard now. To type in that file again, click its tab in the same editor group.'
+/**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki was created in front of the file the editor reported as the active text editor while no sign of the learner's own hand in it was fresh: both editors report the learner's last file so also while a view, the terminal or VS Code's chat view has the keyboard (Cycle 0046 rows 612 and 656), where the Wiki leaves it, so Codebook focuses nothing; but if the learner was typing in that file, the Wiki hid it and the keyboard fell to the page body (row 694), and the sentence says where to click.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE)
+ */
+export const REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for in front of the file you had open in its editor group. If you were typing in that file, click its tab in that group to type in it again.'
+/**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki was created in front of the Study pane while that pane's document reported that it had the keyboard: the Wiki goes to the second editor group without the keyboard, a webview created in front of the pane hides it, and the keyboard falls to the page body, as for a covered file ({@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, Cycle 0046 row 705). The pane's own report is the sign that the learner works there, so Codebook gives the Wiki the keyboard, and the sentence says so and how to use the Study pane again: its tab is in the same group, behind the Wiki.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE)
+ */
+export const REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for in front of the Study pane you were using, and the Wiki has the keyboard now. To use the Study pane again, click its tab, codebook · Study, in the same editor group.'
+/**
+ * What the reader tells the learner, once in an editor session, when a Study arrangement an agent asked for (codebook_presentation, a live request) ended the learner's Read and showed the side bars the Read had hidden again. Both editors show a side bar only with a command that gives it the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1113:32927 `workbench.action.focusSideBar`, 859:17722 `workbench.action.focusAuxiliaryBar`, whose chat view puts it into its input at 3507:67487; Cursor 3.23.12 18340:22765, 17376:10844), and the active editor group, the pane being read, gets it after them. A Read hides the side bars but not the bottom panel (990:15233), so the learner may have been typing to the agent in the terminal, in another view or in a chat; the editor does not tell Codebook, and nothing can give it back there, so the sentence says where it is now (Cycle 0046 row 622). Not told when the Study pane reported having the keyboard, nor for the learner's own Restore.
+ * @example void showPlainNotice(vscode.window, 'information', READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE)
+ */
+export const READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE =
+  'Codebook ended your Read for the Study arrangement an agent asked for and showed the side bars the Read had hidden. Showing a side bar takes the keyboard in this editor, so the pane you were reading has it now: if you were typing in the terminal, a view or the chat, click there to type again.'
+/**
+ * What the reader tells the learner, once in an editor session, when an entry an agent asked for (a recording's open through codebook_playback, a Study selection through codebook_presentation while a replay is loaded) leaves the Learning summary behind the view in front of VS Code's secondary side bar. VS Code puts its chat there by default, and opening the summary's container in that bar removes the chat's element with the keyboard inside, even when the focus is kept (1.140.0 `workbench.desktop.main.js` 1639:157175, 1106:186495, 1106:190002), so the agent's answer would be hidden and the keyboard lost; Codebook keeps the chat in front and says where the summary waits. The same entry leaves the bottom panel as it is unless Observed moments is shown there already (row 621): its container would replace the learner's terminal, or a chat moved into the panel, the same way. The summary and the panel's codebook tab both carry the replay's transport, so the sentence names both places. The learner's own replay open still brings both to the front.
+ * @example void showPlainNotice(vscode.window, 'information', LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE)
+ */
+export const LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE =
+  'Codebook showed the replay an agent asked for without bringing its controls to the front, so a chat or a terminal there keeps its place and your keyboard. To play it, click Learning summary at the top of the secondary side bar (View: Toggle Secondary Side Bar Visibility shows the bar) or the codebook tab of the bottom panel (View: Toggle Panel Visibility shows the panel).'
+/**
+ * What the reader tells the learner, once in an editor session, when it placed the Application pane in a new editor group of the only editor part without focusing any editor group, and nothing proved where the keyboard was: `workbench.action.newGroupAbove` gives the new group the keyboard only when the editor area or the page body had it (VS Code 1.140.0 `workbench.desktop.main.js` 990:31741, Cursor 17388:33629), and a chat view, the terminal or another view keeps it. The extension API reads the same for a file of the first group that had the keyboard without a fresh sign of the learner's hand ({@link LEARNER_SIGN_FRESH_MS}) and for a chat view beside it, and no command focuses a group or a pane only when the editor area has the keyboard short of adding or removing a group, so the sentence names both cases (Cycle 0046 row 614).
+ * @example void showPlainNotice(vscode.window, 'information', APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE)
+ */
+export const APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE =
+  'Codebook opened its Application pane in a new editor group. If you were typing in a file or another editor tab, that group has the keyboard now: click there to type again. If you were typing in the chat, the terminal or another view, the keyboard is still there.'
+/**
+ * What the reader tells the learner, once in an editor session, when a Study selection an agent asked for through codebook_presentation entered a replay or a live run and its Application preparation left the keyboard in the Application's new group while the preparation's own sentence ({@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}), told once in the session already, stayed untold (Cycle 0046 row 640). The new group takes the keyboard from the editor area (VS Code 1.140.0 `workbench.desktop.main.js` 990:31740), and the arrangement's layout command gives it to the Application pane in front of that group (1106:112155 with 1106:112962, 1106:74902, 705:66733; Cursor 3.23.12 17501:57509); row 613 gives a file the learner is not known to work in nothing back. `took` is told when the preparation focused an editor group itself, `mayHave` when the editor area alone could have lost the keyboard.
+ * @example void showPlainNotice(vscode.window, 'information', AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES.mayHave)
+ */
+export const AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES = {
+  took: 'Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group, and the Application pane has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+  mayHave:
+    'Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group. If you were typing in a file or another editor tab, the Application pane has the keyboard now: click where you want to type. If you were typing in the chat, the terminal or another view, the keyboard is still there.',
+} as const
+/**
+ * What the reader tells the learner, once in an editor session, after the learner's own Return to current pause (the Study pane's control, its shortcut or the command while that pane had the keyboard) closed the Study pane for the live arrangement: a pane that is closed while it has the keyboard leaves it on no element, so a key the learner presses then goes nowhere (Cycle 0046 row 624). The invoking control is gone, so the active editor group gets the keyboard by the rule of a Close ({@link STUDY_CLOSE_KEYBOARD_MESSAGE}): the new Application group once the Return placed it, and whatever group the editor names when the Return was refused after the pane closed. The sentence says where the keyboard is in both cases.
+ * @example void showPlainNotice(vscode.window, 'information', LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE)
+ */
+export const LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE =
+  'Return to current pause closed the Study pane, which had the keyboard, to arrange the live run. The active editor group has the keyboard now (the Application pane’s, once it is placed). Click where you want to type.'
+/**
+ * What the reader tells the learner, once in an editor session, after it gave VS Code's chat opened as an editor tab (Chat: Open Chat in Editor, a tab of a main editor group) the keyboard back with its group's focus command where the editor itself had moved the keyboard to another group: at a pause of a live run, where the debugger opened the paused file with the keyboard. Cursor's chat tab gets its keyboard back there with Focus Agent; VS Code's gets it the same way now (Cycle 0046 row 632), also when the learner moved that tab into a floating window, whose group VS Code's numbered focus commands count after the main window's (row 636). While that tab is the active editor the extension API reads the same whether its chat input or a view (the terminal, the Call Stack) had the keyboard, since neither is a text editor (VS Code 1.140.0 `workbench.desktop.main.js` 705:2504), so the sentence says where the keyboard went and what to do if it was elsewhere. Cursor reads the same for its Agent chat tab (Cursor 3.23.12 17269:31242 and 17501:84373: the active tab group changes only when an editor part takes the focus; 17264:2840 and 17264:3411: no text editor is active; 17281:14030: the window keeps its focus), so its return at a pause is told once with this sentence too (row 635). A Close that showed a side bar a Read hid tells {@link STUDY_CLOSE_KEYBOARD_MESSAGE} instead: the chat's group is still the active one there, and the group focus after the bars gave the chat input the keyboard.
+ * @example void showPlainNotice(vscode.window, 'information', CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE)
+ */
+export const CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE =
+  'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.'
+/**
+ * What the reader tells the learner, once in an editor session for each cause, after it gave a chat its keyboard back: VS Code's chat editor tab (in a main group or a floating window) or Cursor's Agent chat tab, where the extension API reads the same whether that chat's input or a view (the terminal, the Call Stack, a side-bar view) had the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 705:2504; Cursor 3.23.12 17501:84373 and 17501:88693: Cursor's active editor part changes only when an editor part takes the focus, 17264:2840 and 17264:3411: no text editor is active either way). Each sentence names its own cause (Cycle 0046 row 648), so none speaks of a pause that did not happen:
+ * - `pause`: the editor's debugger opened the paused file with the keyboard ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, rows 632 and 635).
+ * - `leftoverProof`: Codebook's proof of the editor groups an earlier window left focused one of them before it closed them, at an agent's cold Study selection or first run after a reload (rows 608 and 646).
+ * - `close`: "Codebook: Close Study Workspace" ended a Read and showed the side bars the Read had hidden, whose commands take the keyboard (row 649; VS Code's chat editor tab of the active main group is told {@link STUDY_CLOSE_KEYBOARD_MESSAGE} instead, which names the active editor group the chat is in).
+ * - `arrangement`: an arrangement or an Application preparation whose layout measurement beside the chat borrowed the main editor's focus (rows 647 and 655): both editors answer a layout read, and apply a layout, for the active editor part only (Cursor 3.23.12 17501:90249 `getLayout(){return this.activePart.getLayout()}` and `applyLayout`; VS Code 1.140.0 1106:182079), Cursor's active part changes only when an editor part takes the focus (17501:84373, 17501:88693), and a group's focus focuses its active editor, so the file or pane in front of the main editor's first group has the keyboard until the chat gets it back; the learner's own Arrange Study Workspace run from the terminal or a view loses its keyboard to the chat the same way (row 647).
+ * - `refusedArrangement`: the same borrow of an arrangement or an Application preparation that was refused afterwards: nothing was placed, so the sentence of `arrangement`, which says that Codebook placed its panes, would be untrue (Cycle 0046 row 718).
+ * @example void showPlainNotice(vscode.window, 'information', CHAT_KEYBOARD_RETURNED_MESSAGES.leftoverProof)
+ */
+export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
+  pause: CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE,
+  leftoverProof:
+    'Codebook gave the keyboard back to the chat after it closed the editor groups an earlier window had left, which moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+  close:
+    'Study workspace closed, and Codebook gave the keyboard back to the chat: showing the side bars your Read had hidden took it. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+  arrangement:
+    'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+  refusedArrangement:
+    'Codebook could not finish arranging its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+} as const
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
@@ -214,6 +464,17 @@ export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
 /** The height VS Code and Cursor give an editor group at least (their `DEFAULT_EDITOR_MIN_DIMENSIONS`, 220 × 70 px: the tab row and as much again). A hidden editor area reports every stacked group at this height. */
 export const EDITOR_GROUP_MINIMUM_HEIGHT_PX = 70
+/**
+ * The tab input classes of editors besides `TabInputText` and `TabInputWebview`, by the names under which both editors' extension hosts export them on `vscode` (a diff, a custom editor, a notebook and its diff, a terminal in the editor area); a host that exports one of them not is asked for it in vain and skips it. A group that holds such a tab belongs to a part with editors, not to a chat part (Cycle 0046 row 689).
+ * @example EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)) // => [TabInputTextDiff, TabInputCustom, …]
+ */
+export const EDITOR_TAB_INPUT_KINDS = [
+  'TabInputTextDiff',
+  'TabInputCustom',
+  'TabInputNotebook',
+  'TabInputNotebookDiff',
+  'TabInputTerminal',
+] as const
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
 export const PRESENTATION_READING_ANCHORS = [
@@ -289,6 +550,9 @@ export const SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS = 200
 export const SHOW_NATIVE_VARIABLES_EXPAND_ATTEMPTS = 2
 /** The host's own Run and Debug view command, which Show Variables runs when the host registers no command that focuses Variables. VS Code 1.140 and Cursor 3.23 register `workbench.debug.action.focusVariablesView` (the view's own focus command; a `workbench.debug.variablesView.focus` does not exist in either). */
 export const NATIVE_RUN_AND_DEBUG_VIEW_COMMAND = 'workbench.view.debug'
+/** Selects the current native debugger model without moving editor keyboard focus; {@link ReplayDebugger} uses it only while its historical session remains the active owner. */
+export const NATIVE_DEBUG_FOCUS_SESSION_COMMAND =
+  'workbench.action.debug.focusProcess'
 /** What Show Variables tells the learner when the host registers neither a Variables focus command nor {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND}. */
 export const SHOW_NATIVE_VARIABLES_MANUAL_STEP =
   'Open Run and Debug and expand Variables to see the recorded values.'
@@ -361,6 +625,8 @@ export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
 export const MAIN_THREAD_WEBVIEW_PREFIX = 'mainThreadWebview-'
 export const REPOSITORY_SOURCE_SCHEME = 'codebook-repository-source'
 export const REPOSITORY_READER_DEBOUNCE_MS = 150
+/** Bounds the current-document acknowledgement before {@link RepositoryReader.open} hands native input to the Wiki. */
+export const REPOSITORY_READER_READY_TIMEOUT_MS = PRESENTATION_READY_TIMEOUT_MS
 export const REPOSITORY_VISITED_CITATIONS_LIMIT = 512
 export const REPOSITORY_NARROW_WIDTH_PX = 800
 // Intro, citations, observations and learner progress complement authored article sections.
@@ -413,12 +679,15 @@ export const REPOSITORY_MAX_TRACKED_FILES = 5_000
 export const REPOSITORY_SOURCE_PAGE_SIZE = 100
 export const REPOSITORY_PATH_LIMIT_CHARS = 512
 export const REPOSITORY_SOURCE_LIMIT_BYTES = 262_144
-/** Said where an agent reads source text before it cites lines or declares a stop (the description of `codebook_source`, the source-only help and the repository-browser help), so it takes each line from Codebook's numbered copy instead of counting lines. */
+/** Said where an agent reads source text before it cites lines or declares a stop (the description of `codebook_source`, the source-only help and the repository-browser help), so it takes each line from Codebook's numbered copy, the answer's one copy of the lines, instead of counting lines. */
 export const NUMBERED_SOURCE_LINES_HELP =
-  'numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines.'
+  "numberedText gives the source's lines once, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines."
 /** Said where an agent reads the inspection rule before it declares a stop (the description of every `inspections` field of `codebook_start` and the repository-browser help's `inspections`), so it knows that Codebook requests a stop whose own line declares a binding it requires after that declaration's statement, when the stop stays on its line instead, and what to require for the state before that line. */
 export const SELF_DECLARED_BINDING_HELP =
-  "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow."
+  "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger cannot be asked where it can pause after the statement (a server stop whose module is not loaded before the input, or a debugger that lists no break locations), the stop stays on its line and its failure names the line to follow; when you know the statement spans several lines, declare the stop on a statement after it."
+/** Said where an agent reads what refuses a run (the `recovery` of the repository-browser help and of the node-test help), so it knows that a start saves no document, that a cited source open in the editor with other text refuses the start before anything runs and ends a run that is already going ({@link assertConfiguredSourceDocuments}), and what the learner and it do then. */
+export const OPEN_CITED_SOURCE_HELP =
+  'Codebook starts its debuggers without saving a document of the learner, and a start is refused with SOURCE_CHANGED, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with text that differs from the text the article cites, and a run that is already going ends with it at its next stop at the latest (a document that is only marked as modified and holds the cited text refuses and ends nothing): the message names the file, so ask the learner to save it, then read the source again and publish the article again, or to revert it, and start a new run.'
 /** The most node ids a refused start names of the revision it selected, before the rest is counted ({@link describeMissingBookNode}). */
 export const MISSING_BOOK_NODE_IDS_NAMED_LIMIT = 5
 export const REPOSITORY_SOURCE_EXTENSIONS = [
@@ -477,6 +746,8 @@ export const WIKI_PUBLISH_BACKUP_INFIX = '.previous-'
 export const WIKI_PUBLISH_STAGE_INFIX = '.stage-'
 /** Largest manifest or publication receipt of a Wiki folder the update flow reads; a manifest carries every page's text, so the bound is generous, and it only keeps a link to an endless device from filling memory. */
 export const WIKI_METADATA_FILE_LIMIT_BYTES = 67_108_864
+/** How many bytes one further read of a Wiki manifest, receipt or marker asks for when the file grew after its size was checked; the first read takes the size it had then. */
+export const WIKI_METADATA_READ_CHUNK_BYTES = 65_536
 /** How many indexed sources a freshness check hashes at the same time. */
 export const WIKI_FRESHNESS_HASH_CONCURRENCY = 16
 /** How long a watched Wiki update lets a newly published manifest stay unreadable before it ends as a publish Codebook cannot read; a manifest that is still being written becomes readable well within it. */
@@ -486,29 +757,55 @@ export const WIKI_UPDATE_RECOVERY_REQUEST =
   '/codebook Recover the unfinished LLM Wiki publish for this project'
 /** What a running Wiki update appends to the output folder's path for its marker file, which tells other editor windows that this Wiki is being updated. */
 export const WIKI_UPDATE_RUN_MARKER_SUFFIX = '.update-run.json'
-/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows; it covers the stop of the agent and the end's own file work, and after it a marker whose process id still answers (a killed editor's, given to another process since) is nobody's run. */
+/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows, before {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} is added; it covers the stop of the agent and the end's own file work, and after both a marker whose owner cannot be judged by its process start (one of another machine, or of 0.2.29.0 whose process id still answers) is nobody's run. */
 export const WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS = 60_000
+/** How far the clocks of two windows on one Wiki, or one clock before and after a correction, may differ without changing what a marker means: a run's marker expires this much later than its bound, a marker whose run starts further ahead of the reader's clock is nobody's, and a marker file without content that was written further ahead is not taken for one being written. */
+export const WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS = 300_000
+/** How long a marker file without readable content counts as one another window is writing at this moment; an older one was left by a killed window and is nobody's. A window of this build links a complete marker into place, so only a window of 0.2.29.0, or one on a file system without hard links, shows such a file, for the time of one write. */
+export const WIKI_UPDATE_MARKER_WRITE_GRACE_MS = 2_000
+/** The mode a Wiki update's marker file is created with: that of any file a project holds, which the process's file mode mask narrows, so a window of another user on a shared project folder can read whose update runs. */
+export const WIKI_UPDATE_MARKER_FILE_MODE = 0o666
+/** The mode the claim folder beside a Wiki update's marker is created with: that of any folder a project holds, which the process's file mode mask narrows. With {@link WIKI_UPDATE_MARKER_FILE_MODE} for the claim file inside it, a window of another user on a shared project folder can judge the claim a killed window left, and remove it where the folder's modes let it write. */
+export const WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE = 0o777
 /** How often the end of a Wiki update asks for the exclusive claim on its marker file before it leaves the marker as it is; another window holds that claim for the time of one read and one removal. */
 export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
 /** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */
 export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
-/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, whatever process has its id now; a running window holds the claim for milliseconds. */
+/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, where its owner cannot be judged by this process ({@link canJudgeOwnerHere}: a claim of another machine, of 0.2.29.0, or of a window whose process start could not be read); a running window holds the claim for milliseconds. */
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
-/** How long a VS Code Wiki update waits for the editor's chat command to return before the run ends as failed. */
+/** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the first sign that the chat works on it (its reply or its wait for a confirmation, a step of the update the editor reports, a folder the publisher prepares) before the request is taken back and the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
+/** How long a VS Code Wiki update gives each of the two editor commands that start a chat session of its own (the reveal of the chat and New Chat) to return before it sends the request into the session the learner has open. */
+export const WIKI_CHAT_SESSION_START_TIMEOUT_MS = 5_000
+/** How long the withdrawal of an unanswered Wiki update request gives each of the chat's commands to return, and then the hand-over command to return after it; a request the chat removed or stopped ends its hand-over command within milliseconds, so a command still pending after this time is taken as not ended by that step. */
+export const WIKI_CHAT_WITHDRAW_SETTLE_MS = 2_000
 /** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
 export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
-/** Milliseconds in one second, for naming a bound in seconds. */
-export const MS_PER_SECOND = 1_000
+/** What a Wiki update says when it was blocked by a conflict that names no file, so that the learner cannot be told what to move: the reason of the `failed` state {@link WikiUpdateRun} records for a finished update and for a refused start alike. */
+export const WIKI_UPDATE_UNNAMED_BLOCK_REASON =
+  'The update was blocked, but no blocking file was named.'
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */
 export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
-/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and (as the same words in {@link describeWikiUpdate}) the running line. */
+/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. The watch's status bar entry does not carry it ({@link WIKI_CHAT_WATCH_TOOLTIP}). */
 export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
   'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
-/** `name` of the error a Cursor Wiki update rejects with at its bound, so the caller records `timed-out` instead of `failed`. */
-export const WIKI_UPDATE_TIMED_OUT_ERROR_NAME = 'WikiUpdateTimedOut'
+/** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Cancel. Handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it with where Cancel is, the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}), which names only its Cancel. */
+export const WIKI_REFUSED_STEP_ADVICE =
+  'If you refuse a step of the chat, press Cancel'
+/** The text of the status bar entry that is shown for as long as Codebook watches a VS Code Wiki update, for every entry of the update: a spinning icon, what is watched and its Cancel, which a press on the entry runs ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}). The watch shows no notification: the editor stacks notifications at the window's lower right, over the Chat view in its default place, so any other notification pushes one that lasts the whole watch over the Allow and Skip buttons of an approval the chat asks for (measured in VS Code 1.140.0 with a notification of two lines and the editor's own recommendation below it). The status bar lies below every notification. */
+export const WIKI_CHAT_WATCH_STATUS_TEXT =
+  '$(sync~spin) Watching for the LLM Wiki update · Cancel'
+/** The tooltip and accessible name of the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}). It says what is watched and what its Cancel stops, in words that are true wherever the request went: a new chat, the chat the Chat view restored, or the chat that was open. Where the request went, when the watch ends and what to do after a refused step are said by the confirmation, the page's running line and the README. */
+export const WIKI_CHAT_WATCH_TOOLTIP =
+  'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.'
+/** The command a press on the watch's status bar entry runs: it stops the VS Code watch this window shows, not the chat. Registered at activation and not contributed to the Command Palette: the entry is its one way in. */
+export const WIKI_CHAT_WATCH_CANCEL_COMMAND = 'codebook.cancelWikiChatWatch'
+/** The identifier of the watch's status bar entry, under which the editor keeps whether the learner hid it. */
+export const WIKI_CHAT_WATCH_STATUS_ID = 'codebook.wikiChatWatch'
+/** The name of the watch's status bar entry in the status bar's context menu. */
+export const WIKI_CHAT_WATCH_STATUS_NAME = 'Codebook LLM Wiki update'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request. */
 export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
@@ -519,6 +816,8 @@ export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
 /** How many conflict paths an update sentence names before "and N more". */
 export const WIKI_UPDATE_SHOWN_PATH_LIMIT = 3
+/** How many characters of one repository file name the Wiki update request quotes; a cloned repository chooses its names, so a long one is cut instead of filling the request. */
+export const WIKI_UPDATE_PROMPT_PATH_LIMIT_CHARS = 200
 /** How many characters of a reason an agent, the CLI or a thrown error supplied an update sentence shows before the full text moves to its disclosure, and how many of a freshness reason the label shows; the Wiki's rail is 170 to 210 px wide and "On this page" sits below. A sentence Codebook writes itself ends with its next step and stays whole. */
 export const WIKI_UPDATE_REASON_LIMIT_CHARS = 160
 /** How long after a press of Update LLM Wiki the reader page keeps asking quickly for the run the learner still has to confirm in the editor. */
@@ -531,6 +830,12 @@ export const WIKI_SOURCE_CHANGE_DEBOUNCE_MS = 1_000
 export const WIKI_FRESHNESS_MIN_INTERVAL_MS = 5_000
 /** How many failed status reads in a row the reader page lets a running update survive before it says it lost contact with the editor. */
 export const WIKI_UPDATE_STATUS_RETRY_LIMIT = 3
+/** The id of the visually hidden element that names, as written, the file and line the rail's entry of a Wiki page opens. The entry's link refers to it as its description; the target shown beside the link carries no id and is hidden from assistive technology, because Chrome reads its wrap points as spaces. The publisher prints the same id (a page has one entry), and the reader gives it to the description it adds to a site published without one. */
+export const WIKI_OPEN_TARGET_ELEMENT_ID = 'codebook-open-target'
+/** How long after the window's `load` event the reader page writes the sentence into the line that says the overview stands in for a missing page. The line is in the page, empty, before that, so its text is a change of a status region that already exists; a screen reader speaks the page itself while it loads. */
+export const WIKI_MISSING_PAGE_TEXT_DELAY_MS = 150
+/** How many characters of the page path named in the address the missing-page line shows at most; anyone can write the address, so a longer value gets the sentence without the path instead of filling the reading column. */
+export const WIKI_MISSING_PAGE_PATH_LIMIT_CHARS = 200
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536
 export const WIKI_CURSOR_PROMPT_LIMIT_BYTES = 131_072
 export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192
@@ -789,6 +1094,8 @@ export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
+/** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
+export const REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS = 250
 /** The same bound while the participant's stop is accepted and its own pause is still awaited: the held pause may then be the announced one, which the adapter never resumes by itself. */
 export const REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS = 1_000
 /** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */
@@ -863,6 +1170,10 @@ export const MANAGED_PROFILE_SWEEP_LIMIT = 64
 export const MANAGED_PROFILE_REMOVAL_RETRIES = 3
 /** The pause before the first retry of that removal; each further retry waits this much longer. */
 export const MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS = 100
+/** How long the one listing of this machine's processes ({@link listProcesses}: `ps`, PowerShell on Windows) may run before it is ended and counts as failed. It lies above a cold start of PowerShell and below the 20 s a managed run waits for its browser's processes, so a listing that hangs ends inside that wait and inside the run's close. */
+export const PROCESS_LISTING_TIMEOUT_MS = 10_000
+/** The most bytes that listing may print before it is ended and counts as failed. Node.js gives a child 1 MiB unless told otherwise, which some hundred long command lines pass; 64 MiB hold thirty thousand processes with command lines of two thousand bytes each. */
+export const PROCESS_LISTING_MAX_BYTES = 64 * 1024 * 1024
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
@@ -872,5 +1183,7 @@ export const OPEN_REPLAY_RESULT_WAIT_MS =
   RECORDING_WINDOW_FOCUS_WAIT_MS + PRESENTATION_SETTLE_CEILING_MS
 /** How long the reader waits, after the Learning summary's view was hidden while its document held the keyboard focus, for that document's report that it lost the focus. The report travels from the webview and can arrive after the editor's visibility event: when it comes (the learner opened another view or part), nothing is done; when it does not, the focus is still in the hidden webview and goes to the active editor group. */
 export const SUMMARY_FOCUS_RELEASE_WAIT_MS = 300
+/** How long after the window's focus event a pointer press in a pane Codebook serves into the editor (a Study pane, the Repository Wiki pane) still counts as the press the learner returned to the pane with. The editor reports the focus and the press of one click a few milliseconds apart, in an order the pane cannot rely on; a press on the pane's background that comes later is the learner's own choice to take the focus off a control. */
+export const PANE_RETURN_PRESS_WINDOW_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1

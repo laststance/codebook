@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -650,6 +650,771 @@ test('a run its runtime ends during preparation gives its resource the runtime�
   })
 })
 
+// Value: protects=the cause an agent and the learner read for a run whose preparation failed with an error that is no StudyError (the reader's "The dedicated Application layout could not be confirmed." in Cursor after a reload, C57 rounds 1f and 1f2): the run resource's terminalReason and error.message, and the reason the runtime journals as run.failed, name that cause; fails_when=they say only "The study operation failed." while the cause stays in error.cause alone, so the journal and the saved study's reason tell nobody why the start failed; why_new=Cycle 0046 row 645; seam=environment.createRuntime, runtime.prepare and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, configuredBrowserRun.ts fail)
+test('a run whose preparation fails with an error that is no StudyError names that error in its terminal reason and in the reason it journals as run.failed', async (context) => {
+  // Arrange
+  const { service, configuration, environment } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  const journaledReasons: string[] = []
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    const failRuntime = runtime.fail.bind(runtime)
+    runtime.fail = (reason): void => {
+      journaledReasons.push(reason)
+      failRuntime(reason)
+    }
+    runtime.prepare = async () => {
+      throw new Error(
+        'The dedicated Application layout could not be confirmed.',
+      )
+    }
+    return runtime
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'failed-application-layout',
+    configuration,
+  })
+  await service.record(receipt).preparation
+
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+    },
+    {
+      terminalReason:
+        'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+      error: {
+        code: 'RUNTIME_FAILED',
+        message:
+          'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+        cause:
+          'Error: The dedicated Application layout could not be confirmed.',
+      },
+      journaledReasons: [
+        'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+      ],
+    },
+  )
+})
+
+// Value: protects=the cause an agent and the learner read for a run whose preparation failed when the release that follows fails as well: the run resource's terminalReason and error still name the preparation's cause, and the release's failure is the cleanupError; fails_when=the failed release replaces the run's error with "The study operation failed.", so the run resource no longer says why the start failed; why_new=Cycle 0046 row 653 (the release's catch in StudyService.prepare); seam=runtime.prepare and runtime.stop, both made to reject
+test('a run whose preparation fails and whose release then fails keeps the preparation cause as its terminal reason', async (context) => {
+  // Arrange
+  const { service, configuration, environment } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime,
+    restoreStops: (() => void)[] = []
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    const stopRuntime = runtime.stop.bind(runtime)
+    restoreStops.push(() => {
+      runtime.stop = stopRuntime
+    })
+    runtime.prepare = async () => {
+      throw new Error(
+        'The dedicated Application layout could not be confirmed.',
+      )
+    }
+    runtime.stop = async () => {
+      throw new Error('Owned process still alive')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'failed-preparation-and-release',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+
+  // Act
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the failed release after the failed preparation',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // The harness's own shutdown releases the run once the test has read it.
+  for (const restoreStop of restoreStops) restoreStop()
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+      cleanupError: z.object({ message: z.string(), cause: z.string() }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      cleanupError: state.cleanupError,
+    },
+    {
+      terminalReason:
+        'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+      error: {
+        code: 'RUNTIME_FAILED',
+        message:
+          'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+        cause:
+          'Error: The dedicated Application layout could not be confirmed.',
+      },
+      cleanupError: {
+        message: 'The study operation failed.',
+        cause: 'Error: Owned process still alive',
+      },
+    },
+  )
+})
+
+// Value: protects=the cause an agent and the learner read for a run that the maintenance turn ends because its evidence could not be written: the run resource's terminalReason and error.message, and the reason the runtime journals as run.failed, name the write's failure, also after the release failed on the same storage; fails_when=they say only "Evidence buffering or persistence failed." while the failure stays in error.cause alone, or the failed release replaces the run's error with "The study operation failed."; why_new=Cycle 0046 row 653 (StudyService.maintain); seam=runtime.evidence.failure, set as Evidence sets it after a failed append, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, configuredBrowserRun.ts fail)
+test('a run that the maintenance turn ends for an evidence write failure names that failure in its terminal reason and in the reason it journals as run.failed', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'failed-evidence-write',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  runtime.evidence.failure = 'Error: ENOSPC: no space left on device, write'
+
+  // Act
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+    },
+    {
+      terminalReason:
+        'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
+        cause: 'Error: ENOSPC: no space left on device, write',
+      },
+      journaledReasons: [
+        'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
+      ],
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read for a run whose saved study was removed while it ran (its archive and evidence directory removed by hand or by another Codebook window, which Retry storage reports as archive-removed): the maintenance turn ends the run for the evidence write that failed, and its terminal reason, its error and the reason it journals as run.failed name that failure and the removal, without the internal storage path the write's error names; fails_when=the write's raw error ("ENOENT: no such file or directory, open '<global storage>/…/events.jsonl'") becomes the cause in the terminal reason since row 653 (the release's own failure, the run's cleanupError, is not this test's: it still names the path); why_new=Cycle 0046 row 667 (the 653 fork's finding 3); seam=StudyService.excludeHistory with 'archive-removed', as StudyWorkspace calls it, the run's evidence directory removed, an event recorded after that, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed)
+test('a run whose saved study was removed while it ran ends at the maintenance turn with a terminal reason that names the failed evidence write and the removal and no storage path', async (context) => {
+  // Arrange: a prepared run whose study left the library; its evidence directory is gone, so the next event's append fails.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-during-run',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  service.excludeHistory(record, 'archive-removed')
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  const writeFailureNamesPath = Boolean(
+    runtime.evidence.failure?.includes(runtime.evidence.directory),
+  )
+
+  // Act
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      writeFailureNamesPath,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+      failureNamesPath: JSON.stringify([
+        state.terminalReason,
+        state.error,
+        journaledReasons,
+      ]).includes(runtime.evidence.directory),
+    },
+    {
+      writeFailureNamesPath: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      journaledReasons: [
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      ],
+      failureNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read about the release of a run whose saved study was removed while it ran: the release's final evidence write fails too, since the evidence directory left with the archive, and the run's cleanupError and the explicit retry's error (Stop, as the stop tool and the Study's stop control ask it) name that failed write and the removal, without the internal storage path the write's error names; fails_when=StudyService.stopRecord makes the release's raw error ("Evidence write failed: Error: ENOENT: no such file or directory, open '<global storage>/…/events.jsonl'") the cleanupError's cause and rethrows it to the retry; why_new=Cycle 0046 row 686 (row 667 fixed the terminal reason only); seam=StudyService.excludeHistory with 'archive-removed', as StudyWorkspace calls it, the run's evidence directory removed, an event recorded after that, maintain, the run resource and StudyService.stop
+test('a run whose saved study was removed while it ran keeps a release failure that names the failed evidence write and the removal and no storage path', async (context) => {
+  // Arrange: a prepared run whose study left the library; its evidence directory is gone, so the next event's append and the release's final write fail.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-during-release',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  service.excludeHistory(record, 'archive-removed')
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  const writeFailureNamesPath = Boolean(
+    runtime.evidence.failure?.includes(runtime.evidence.directory),
+  )
+
+  // Act: the maintenance turn ends the run and its release fails; then the learner's Stop asks for the release again.
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  const retryFailure = await service
+    .stop({ instanceId: service.instanceId, runId: record.id })
+    .then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      cleanupError: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      writeFailureNamesPath,
+      cleanupError: state.cleanupError,
+      retryFailure,
+      failureNamesPath: JSON.stringify([
+        state.cleanupError,
+        retryFailure,
+      ]).includes(runtime.evidence.directory),
+    },
+    {
+      writeFailureNamesPath: true,
+      cleanupError: {
+        code: 'RUNTIME_FAILED',
+        message: 'The study operation failed.',
+        cause:
+          "Error: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      retryFailure:
+        "Error: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      failureNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read for a run whose saved study was removed while it ran, in the order the removal usually takes: the run's next evidence append fails first, the maintenance turn ends the run for it and its release fails too, and only the learner's later Retry storage finds the archive gone and excludes the run's history (StudyService.excludeHistory with 'archive-removed'); from then on the run resource and the status resource name the failed evidence write and the removal, without the internal storage path the write's error names; fails_when=the run's error and cleanupError keep the raw write error the maintenance turn and the release gave them before the exclusion ("Evidence buffering or persistence failed. Cause: Error: ENOENT: no such file or directory, open '<global storage>/…/events.jsonl'"), since rows 667 and 686 name the removal only when the exclusion came first; why_new=Cycle 0046 row 700 (open-code-review of cc231f08..e6a3daeb); seam=the run's evidence directory removed, an event recorded after that, maintain, the release's wait, then StudyService.excludeHistory as StudyWorkspace calls it, the run resource and StudyService.status
+test('a run whose saved study was found removed after its evidence write failed and its release ended names the failed write and the removal and no storage path', async (context) => {
+  // Arrange: a prepared run whose evidence directory is gone, so the next event's append fails; the maintenance turn ends the run and its release fails before anything knows that the study was removed.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-after-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const errorNamedPathBefore = Boolean(
+    record.error?.message.includes(runtime.evidence.directory),
+  )
+
+  // Act: the learner's Retry storage finds the archive gone.
+  service.excludeHistory(record, 'archive-removed')
+  const resource = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const failureSchema = z.object({
+    code: z.string(),
+    message: z.string(),
+    cause: z.string(),
+  })
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: failureSchema,
+      cleanupError: failureSchema,
+    })
+    .parse(JSON.parse(resource.text))
+  const statusRun = status.runs.find((run) => run.runId === record.id)
+  assert.deepEqual(
+    {
+      errorNamedPathBefore,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      cleanupError: state.cleanupError,
+      statusNamesPath: JSON.stringify(statusRun).includes(
+        runtime.evidence.directory,
+      ),
+      runNamesPath: resource.text.includes(runtime.evidence.directory),
+    },
+    {
+      errorNamedPathBefore: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      cleanupError: {
+        code: 'RUNTIME_FAILED',
+        message: 'The study operation failed.',
+        cause:
+          "Error: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      statusNamesPath: false,
+      runNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=the evidence that no resource serves the storage path a removed study's kept run.failed holds in memory: once the removal is known, the run's journal (Evidence.events) still holds the run.failed the runtime journaled with the write's raw failure, but every resource below the run, its events among them, refuses with the removal's sentence (StudyService.assertEvidenceReadable), and the run resource and the status resource read the error row 700 worded again; the recording context takes no run.failed reason (only its time, for a paused interval) and is built only from a saved archive, which a removed study no longer gets; fails_when=a resource below a removed run serves its journal again, so an agent reads the storage path in the kept run.failed; why_new=Cycle 0046 row 707 (evidence: the in-memory event is served by no resource after the removal; this test reads every copy a reader can reach); seam=the run's evidence directory removed, an event recorded after that, maintain, the run.failed ConfiguredBrowserRun.fail journals (Evidence.recordFailure with the run's error), the release's wait, StudyService.excludeHistory, readResource of the run, its events and its manifest, and StudyService.status
+test("a removed study's kept run failure with the storage path is served by no resource: its events and manifest are refused with the removal, and the run and status name no path", async (context) => {
+  // Arrange: as above, and the runtime journals the run's failure as ConfiguredBrowserRun.fail does, with the raw write failure in its reason; then the learner's Retry storage finds the archive gone.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-kept-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  service.maintain()
+  runtime.evidence.recordFailure(record.error!.message)
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  service.excludeHistory(record, 'archive-removed')
+  const path = runtime.evidence.directory
+
+  // Act: every copy a reader can reach.
+  const refusalOf = (uri: string) =>
+    readResource(service, uri).then(
+      () => 'served',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+    )
+  const events = await refusalOf(`${receipt.runUri}/events/0`)
+  const manifest = await refusalOf(`${receipt.runUri}/manifest`)
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert: the journal keeps the raw reason in memory, and no resource serves it.
+  assert.ok('text' in run)
+  const keptFailure = runtime.evidence.events.find(
+    (event) => event.type === 'run.failed',
+  )
+  assert.deepEqual(
+    {
+      journalKeepsPath: JSON.stringify(keptFailure?.detail).includes(path),
+      events,
+      manifest,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      journalKeepsPath: true,
+      events:
+        "EVIDENCE_UNAVAILABLE: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      manifest:
+        "EVIDENCE_UNAVAILABLE: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read for a run whose runtime failed itself on an evidence write into the gone directory of its removed study and was stopped before a maintenance turn made that failure the run's error (a learner's or an agent's Stop within MAINTENANCE_INTERVAL_MS of the failure): once the removal is known, the run resource's terminal reason, read from the runtime's own failure (the reason of its kept run.failed too), names the failed write and the removal, and neither the run nor the status resource names the storage path; fails_when=the terminal reason is the runtime's raw failure, "Error: ENOENT: no such file or directory, open '<global storage>/…/snapshot.json.tmp'", which row 700's rewording does not reach because the run has no error of its own; why_new=Cycle 0046 row 707 (the runtime's copy of the kept run.failed's reason, which the run resource serves); seam=the run's evidence directory removed, the snapshot save ConfiguredBrowserRun makes and its own failure (track and fail: the failure listed, the status failed, run.failed journaled), StudyService.stop before maintain, StudyService.excludeHistory, readResource of the run and StudyService.status
+test("a run that failed itself on a removed study's evidence write and was stopped before a maintenance turn names the failed write and the removal, not the storage path", async (context) => {
+  // Arrange: the evidence directory is gone; the runtime's snapshot save fails and the runtime fails itself with that raw error, as ConfiguredBrowserRun does; the learner stops the run before the next maintenance turn.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-runtime-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  await runtime.evidence.save('snapshot.json', {}).catch((error: unknown) => {
+    runtime.failures.push(String(error))
+    runtime.status = 'failed'
+    runtime.evidence.recordFailure(String(error))
+  })
+  await service.stop(receipt).catch(() => undefined)
+  const path = runtime.evidence.directory
+  const terminalNamedPathBefore = Boolean(
+    service.state(record).terminalReason?.includes(path),
+  )
+
+  // Act: the learner's Retry storage finds the archive gone.
+  service.excludeHistory(record, 'archive-removed')
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in run)
+  assert.deepEqual(
+    {
+      terminalNamedPathBefore,
+      terminalReason: z
+        .object({ terminalReason: z.string() })
+        .parse(JSON.parse(run.text)).terminalReason,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      terminalNamedPathBefore: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read for a run whose saved study was removed during its preparation, found removed by the learner's Retry storage after the preparation failed: the runtime's snapshot save into the gone evidence directory failed, the runtime failed itself with that raw error (ConfiguredBrowserRun.track -> fail) and its preparation rejected, so StudyService.preparationError made the runtime's first failure the run's error; once the removal is known, the run resource's terminal reason and error name the failed write and the removal, and neither the run nor the status resource names the storage path; fails_when=the preparation's error keeps "Error: ENOENT: no such file or directory, open '<global storage>/…/snapshot.json.tmp'" as its message and cause because nothing noted what it was made of, so row 700's rewording at the removal does not reach it; why_new=Cycle 0046 row 724; seam=environment.createRuntime and runtime.prepare (the evidence directory removed, the snapshot save's failure taken as the runtime's own, a rejection that is no StudyError), the release's wait, StudyService.excludeHistory, readResource of the run and StudyService.status
+test('a run whose study was removed during its preparation and found removed after the preparation failed names the failed write and the removal, not the storage path', async (context) => {
+  // Arrange: the study's files go while the runtime prepares; its snapshot save fails and the runtime fails itself with the raw error, as ConfiguredBrowserRun does, then its preparation rejects.
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    runtime.prepare = async () => {
+      const controlled = runtimes[0]!
+      await controlled.evidence.initialize()
+      await rm(controlled.evidence.directory, { recursive: true, force: true })
+      await controlled.evidence
+        .save('snapshot.json', {})
+        .catch((error: unknown) => {
+          controlled.failures.push(String(error))
+          controlled.status = 'failed'
+          controlled.evidence.recordFailure(String(error))
+        })
+      throw new Error('Repository run is unavailable')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-during-preparation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  await waitUntil(
+    () => !record.stopping && (record.stopped || Boolean(record.cleanupError)),
+    'the release after the failed preparation',
+    1_000,
+  )
+  const path = runtimes[0]!.evidence.directory
+  const terminalNamedPathBefore = Boolean(
+    service.state(record).terminalReason?.includes(path),
+  )
+
+  // Act: the learner's Retry storage finds the archive gone.
+  service.excludeHistory(record, 'archive-removed')
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtimes[0]!.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in run)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(run.text))
+  assert.deepEqual(
+    {
+      terminalNamedPathBefore,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      terminalNamedPathBefore: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read, and what the runtime journals, for a run whose saved study was removed during its preparation and found removed before the preparation's rejection reached StudyService.prepare's catch (the learner's Retry storage or the library's refresh while the runtime still prepares): the run's error, its terminal reason and the reason handed to runtime.fail name the failed write and the removal, and neither the run nor the status resource names the storage path; fails_when=StudyService.preparationError makes the runtime's raw first failure, "Error: ENOENT: no such file or directory, open '<global storage>/…/snapshot.json.tmp'", the run's error although the removal is already known; why_new=Cycle 0046 row 724; seam=environment.createRuntime, runtime.prepare (the evidence directory removed, the snapshot save's failure taken as the runtime's own, StudyService.excludeHistory, a rejection that is no StudyError) and runtime.fail, readResource of the run and StudyService.status
+test('a run whose study was found removed while its preparation was failing names the failed write and the removal in its error and journaled reason, not the storage path', async (context) => {
+  // Arrange: the study's files go while the runtime prepares; its snapshot save fails, the runtime fails itself with the raw error, the learner's Retry storage finds the archive gone, and the preparation rejects.
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  const journaledReasons: string[] = []
+  let removalFound = (): void => undefined
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    const failRuntime = runtime.fail.bind(runtime)
+    runtime.fail = (reason): void => {
+      journaledReasons.push(reason)
+      failRuntime(reason)
+    }
+    runtime.prepare = async () => {
+      const controlled = runtimes[0]!
+      await controlled.evidence.initialize()
+      await rm(controlled.evidence.directory, { recursive: true, force: true })
+      await controlled.evidence
+        .save('snapshot.json', {})
+        .catch((error: unknown) => {
+          controlled.failures.push(String(error))
+          controlled.status = 'failed'
+          controlled.evidence.recordFailure(String(error))
+        })
+      removalFound()
+      throw new Error('Repository run is unavailable')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removal-found-during-preparation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  removalFound = (): void => service.excludeHistory(record, 'archive-removed')
+
+  // Act
+  await record.preparation
+  await waitUntil(
+    () => !record.stopping && (record.stopped || Boolean(record.cleanupError)),
+    'the release after the failed preparation',
+    1_000,
+  )
+  const path = runtimes[0]!.evidence.directory
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtimes[0]!.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in run)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(run.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      journaledReasons: [
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      ],
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange
@@ -869,6 +1634,8 @@ test('configured help tells an agent that only the next stop is armed and where 
 })
 
 // Cycle 0045 (SM-16, DX-7, ER-9): red while the help counted the rule from the declared line ("no line between the two has a mapped position"), called the column a request and said a slid browser stop fails while it is armed.
+// Cycle 0046 (row 56): red while the help said that every mapped line between the requested and the bound line refuses the binding, although since rows 8 and 50 the debugger's break locations decide once it has listed them.
+// Cycle 0046 (row 77): red while the help said that every line with a break location counts, although only a break location between the requested and the bound place in the generated module does.
 test('configured help states the binding rule from the line the stop is requested on', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
@@ -881,7 +1648,7 @@ test('configured help states the binding rule from the line the stop is requeste
     .parse(JSON.parse(help.text))
   assert.equal(
     sourceBinding.includes(
-      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one), and uses it like a moved column: the inspection's source names the bound line, so cite and explain source. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it.",
+      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one). When a mapped line lies between them, Codebook asks the debugger for the module's break locations and counts only a line that has one between the place the breakpoint was requested at and the place it was bound at in the generated module: a mapped line the debugger cannot pause on, such as a function head or its parameters, is passed over, and so is a line whose break location the build placed elsewhere in the generated module, such as a call it appends at the module's end and maps to a function's name. This also holds for a binding first known at a pause, where the place the program is paused at is the bound place; when either generated place cannot be determined, every line with a break location counts. The journal records breakpoint.rule-from-break-locations with the lines that counted and, when both are known, the two generated places (and breakpoint.requested-again-after-break-locations when a server registration is requested again for it). When the debugger cannot list break locations, the mapped lines decide. Codebook uses an accepted binding like a moved column: the inspection's source names the bound line, so cite and explain source. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it.",
     ),
     true,
   )
@@ -914,12 +1681,14 @@ test('configured help says that any column declared on a blank line is taken as 
 })
 
 // Cycle 0045 (SM-17): red while the README kept the rule counted from the declared line and said nothing about the second request.
+// Cycle 0046 (row 56): red while the README kept the rule of mapped lines alone, without the debugger's break locations.
+// Cycle 0046 (row 77): red while the README counted every line with a break location, wherever that location lies in the generated module.
 test('the extension README states the binding rule from the requested line, as the help does', async () => {
   // Arrange
   const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
   // Act
   const statesRule = readme.includes(
-      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one), and uses it like a moved column: `source` names the bound line.",
+      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one). When a mapped line lies between them, Codebook asks the debugger for the module's break locations and counts only a line that has one between the place the breakpoint was requested at and the place it was bound at in the generated module: a mapped line the debugger cannot pause on, such as a function head or its parameters, is passed over, and so is a line whose break location the build placed elsewhere in the generated module, such as a call it appends at the module's end and maps to a function's name. This also holds for a binding first known at a pause, where the place the program is paused at is the bound place; when either generated place cannot be determined, every line with a break location counts. The run's journal records `breakpoint.rule-from-break-locations` with the lines that counted and, when both are known, the two generated places (and `breakpoint.requested-again-after-break-locations` when a server registration is requested again for it). When the debugger cannot list break locations, the mapped lines decide. Codebook uses an accepted binding like a moved column: `source` names the bound line.",
     ),
     statesSecondRequest = readme.includes(
       "The line is the declaration and the column is a preference: Codebook accepts the debugger's verified binding anywhere on that line and reports the bound position as `source` beside `requestedSource` in the observation's inspection resource. Declare the column where the statement begins. When the debugger binds a stop on a later line although the line the breakpoint was requested on has a break location, Codebook requests the breakpoint once more, at that line's break location before the requested column; the stop fails while it is armed only when that second request is bound on a later line again or the line has no break location before the requested column. A binding that is first known at a pause (a server stop whose registration was still pending when it was armed) is not refused for this: the stop is accepted where it paused, and its inspection's `place` names the column that can pause on the requested line.",
@@ -1024,6 +1793,9 @@ test('configured help tells an agent that a run waits for the debugger’s own p
 })
 
 // Cycle 0045 (B-L5): red while the help said the journal records every pause and every resume, which is false past the cap, and named two of the four resume entries.
+// Cycle 0046 (row 56): red while the list had no entry for a page pause at a server stop's breakpoint, which the run resumes itself since row 7.
+// Cycle 0046 (row 271): red while the help said that both entries of such a pause come before the entry of the page's resume; only the request does, the answered entry is written after the debugger's answer and can follow it.
+// Cycle 0046 (row 283): red while the help said that a request without the second entry was refused or not answered and not what the run's failure then tells the agent (row 268's sentences).
 test('the configured help names every journal entry of a pause and its resume and says that pauses away from a stop are journaled up to the limit', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
@@ -1036,11 +1808,37 @@ test('the configured help names every journal entry of a pause and its resume an
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[4]?.includes(
-      " The journal records a pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts): a declared stop's pause always, and of the pauses away from a stop the first 100 the runtime makes for its own instrumentation and the first 100 others of a run; the rest are counted in cdp.adapter-pauses-not-journaled when the run ends. A resume is recorded with pausedForMs under one of four names: cdp.resumed (a declared stop's pause; an instrumentation pause or a pause from before the action, when its observation was journaled), cdp.adapter-pause-retired (a pause the debugger made for itself and resumed in time, when its observation was journaled), cdp.browser-adapter-pause-retired (the same for a browser pause in a run that declares no browser stop) and cdp.unannounced-pause-resumed-late (a pause no stop announced that was resumed too late, which ends the run). Stop/seal and wait for current history/recording receipts.",
+      " The journal records a pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts): a declared stop's pause always, and of the pauses away from a stop the first 100 the runtime makes for its own instrumentation and the first 100 others of a run; the rest are counted in cdp.adapter-pauses-not-journaled when the run ends. A resume is recorded with pausedForMs under one of four names: cdp.resumed (a declared stop's pause; an instrumentation pause or a pause from before the action, when its observation was journaled), cdp.adapter-pause-retired (a pause the debugger made for itself and resumed in time, when its observation was journaled), cdp.browser-adapter-pause-retired (the same for a browser pause in a run that declares no browser stop) and cdp.unannounced-pause-resumed-late (a pause no stop announced that was resumed too late, which ends the run). A page pause at a server stop's breakpoint that Codebook resumes itself has two more entries (both with declared, hitBreakpointIds, inputDispatched): dap.server-breakpoint-browser-resume-requested when Codebook sends the page's resume, which comes before that entry of the page's resume, and dap.server-breakpoint-browser-stop-resumed once the debugger answered the request, which can come before or after it; a request without the second entry was refused or not answered, and the failure that ends the run for it (the refusal, or a deadline that expires meanwhile) names the page's pause and the declared server stop and says to keep the declaration and start a new run. Stop/seal and wait for current history/recording receipts.",
     ),
     true,
   )
   assert.doesNotMatch(help.text, /records every pause|every resume/)
+})
+
+// Value: protects=an agent that declares a server stop in a "use server" module knowing that the page's pause at that breakpoint is Codebook's to resume, not a reason to change the declaration; fails_when=the help or the README no longer says that Codebook resumes that page pause, or names another journal entry for it than the run writes; why_new=Cycle 0046 row 56: row 7 made the run resume that pause, and only the source said so; seam=none
+test('the configured help and the README say that Codebook resumes a page pause at a server stop’s breakpoint in the page’s stub of a "use server" module', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { additionalStops } = z
+    .object({ additionalStops: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    additionalStops.includes(
+      'Server stops use the owned Next worker and sealed action-browser modules; pending breakpoint registration is not a verified pause. The editor sets a server stop\'s breakpoint in the page too; when the page pauses there, in its stub of a "use server" module, Codebook resumes the page itself and goes on waiting for the stop in the server. Codebook arms only the next expected stop:',
+    ),
+    true,
+  )
+  assert.equal(
+    readme.includes(
+      'One announced pause is expected: the editor sets a server stop\'s breakpoint in the page too, and when the page pauses there, in its stub of a `"use server"` module, Codebook resumes the page itself (`dap.server-breakpoint-browser-stop-resumed` in the run\'s journal) and goes on waiting for the stop in the server.',
+    ),
+    true,
+  )
 })
 
 // Cycle 0045 (B-L5, DX-19): red while "100", "3 seconds", "1 second" were typed in the help beside their constants; the help is loaded over other constants, so a number that is typed stays what it was.
@@ -1126,6 +1924,23 @@ test('no help resource names a path under extension/, the tutorial is named by t
     true,
   )
   assert.doesNotMatch(texts[4] ?? '', /API 1\.2:/)
+})
+
+// Value: protects=an agent that reads the Study help for the step the run resource points it to finding the names the resource uses, save-learning-summary and saveLearningSummary, and what a spent budget means; fails_when=the last step of the help's sequence no longer names them, or names another number than the run's explanation budget; why_new=Cycle 0046 row 45: the run resource sends the agent to this step ("The last step of the sequence in codebook://help/studies describes it"), and the step did not name the action (Cycle 0045, documentation audit DA-2); seam=none
+test('the Study help names save-learning-summary and saveLearningSummary in the last step of its sequence, and what the run resource says once the 32 explanation keys are spent', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/studies')
+  // Assert
+  assert.ok('text' in help)
+  const { sequence } = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    sequence.at(-1),
+    "Read the terminal state and stop result. If terminalReference is present, save a new complete learningSummary through codebook_explain with an observed final-result step citing that exact terminalReference and a new explanation key. While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists save-learning-summary in nextActions and gives this step as saveLearningSummary; once the run's 32 explanation keys are spent it no longer lists the action, and saveLearningSummary says that the saved study will have no learning summary. Preserve earlier unknown-at-pause claims as historical uncertainty. Separate runtime/capture evidence from saved learning history and personal understanding.",
+  )
 })
 
 // Cycle 0044 (0041-DOC1): red while only the CHANGELOG said that an after condition already true before input is refused, and the README left the per-phase fix to the help.
@@ -1261,6 +2076,50 @@ test('configured help tells an agent that only the learner removes a saved study
       ' Only the learner removes a saved study, in the Study workspace; an agent reports a full library and never deletes files.',
     ),
     true,
+  )
+})
+
+// Cycle 0046 (rows 314 and 322): red while neither help said that a start saves no document of the learner, that a cited source open in the editor with other text refuses the start before anything runs, and that it ends a run that is already going at its next stop.
+test('the repository-browser help and the node-test help tell an agent that a start saves no document of the learner, that a cited source open in the editor with other text refuses the start and ends a run that is already going, and what the learner and the agent do then', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const sentence =
+    'Codebook starts its debuggers without saving a document of the learner, and a start is refused with SOURCE_CHANGED, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with text that differs from the text the article cites, and a run that is already going ends with it at its next stop at the latest (a document that is only marked as modified and holds the cited text refuses and ends nothing): the message names the file, so ask the learner to save it, then read the source again and publish the article again, or to revert it, and start a new run.'
+  // Act
+  const recoveries: string[] = []
+  for (const uri of [
+    'codebook://help/repository-browser',
+    'codebook://help/node-test',
+  ]) {
+    const help = await readResource(service, uri)
+    assert.ok('text' in help)
+    recoveries.push(
+      z.object({ recovery: z.string() }).parse(JSON.parse(help.text)).recovery,
+    )
+  }
+  // Assert: once in each help, whole.
+  assert.deepEqual(
+    recoveries.map((recovery) => recovery.split(sentence).length - 1),
+    [1, 1],
+  )
+})
+
+// Cycle 0046 (row 349): a source change can refuse a start before execution or end a running browser/Node test; help must distinguish those outcomes and preserve the earlier evidence instead of implying that nothing ran.
+test('the source-changed error help distinguishes a refused start from an ended browser or Node test, keeps earlier captured observations readable and forbids automatic input replay', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/errors')
+  assert.ok('text' in help)
+  const recovery = z
+    .object({ SOURCE_CHANGED: z.string() })
+    .parse(JSON.parse(help.text)).SOURCE_CHANGED
+
+  // Assert
+  assert.equal(
+    recovery,
+    'At a start, a cited source open in the editor with text that differs from the article refuses the run before the application, test, browser or debugger starts; Codebook saves no document. During a repository-browser or node-test run, the same change ends the run at its next stop or before a continuation; that continuation sends no resume. Earlier committed observations and their captured source remain readable. Read the existing run and its captured source resources; ask the learner to save or revert the named file: after a save, read the source again and publish the article again; after a revert, change nothing. Then start a new deliberate run. Never retry application input automatically.',
   )
 })
 
@@ -1730,7 +2589,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.6, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.7, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -2333,6 +3192,243 @@ test('a run whose whole-run deadline expires while a continuation waits answers 
   )
 })
 
+// Value: protects=the cause an agent and the learner read for a run whose explanation was not committed and whose whole-run deadline passes before the maintenance turn released it: the run resource's terminalReason and error.message, and the reason the deadline journals as run.failed, name why the explanation's write failed; fails_when=they say only "Explanation was not committed." while the write's failure stays in error.cause alone; why_new=Cycle 0046 row 653 (StudyService.expireAtDeadline journals the run's error message); seam=the service's clock, moved by the test, its maintenance turn, switched off and then called once, runtime.evidence.save, made to reject, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, and only the first: its fail returns at once for a run that already failed). Since row 665 the explanation's failure fails the runtime itself, so the deadline's call comes second with the same reason
+test('a run whose explanation was not committed and whose whole-run deadline then passes names the write failure in its terminal reason and in the reason it journals as run.failed', async (context) => {
+  // Arrange: a run is paused at its first stop; the maintenance turn is switched off so that the deadline, not an earlier turn, ends the run.
+  let nowMs = CLOCK_START_MS
+  const { service, configuration, runtimes } = await configuredServiceHarness(
+    context,
+    () => nowMs,
+  )
+  const maintenanceTurn = service.maintain.bind(service)
+  service.maintain = (): void => {}
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'deadline-after-uncommitted-explanation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  runtime.evidence.save = async () => {
+    throw new Error("EACCES: permission denied, open 'agent-explanation.json'")
+  }
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+  await assert.rejects(
+    service.explain({
+      ...receipt,
+      key: 'explain',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    }),
+    { code: 'EVIDENCE_UNAVAILABLE' },
+  )
+  // The explanation's own failure fails the runtime first (row 665); what the deadline then gives runtime.fail is counted apart.
+  const journaledByExplanation = journaledReasons.splice(0)
+  nowMs = record.deadlineAt
+
+  // Act
+  maintenanceTurn()
+  const resource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledByExplanation,
+      journaledByDeadline: journaledReasons,
+    },
+    {
+      terminalReason:
+        "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+        cause:
+          "Error: EACCES: permission denied, open 'agent-explanation.json'",
+      },
+      journaledByExplanation: [
+        "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      ],
+      journaledByDeadline: [
+        "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      ],
+    },
+  )
+})
+
+// Value: protects=the journal of a run that fails because its explanation could not be written: the runtime is failed with the run's error, so it journals run.failed with the write's failure as its cause and accepts no further control, as on every other failure path of a run; fails_when=the explanation's catch sets the run's error and rejects without failing the runtime, so the run ends at the next maintenance turn with no run.failed in its journal; why_new=Cycle 0046 row 665 (the 653 fork's finding 1); seam=runtime.evidence.save, made to reject, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, configuredBrowserRun.ts fail)
+test('a run whose explanation cannot be written fails its runtime with the write failure, which the runtime journals as run.failed', async (context) => {
+  // Arrange: a run is paused at its first stop and its explanation write is made to fail.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'uncommitted-explanation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  runtime.evidence.save = async () => {
+    throw new Error('ENOSPC: no space left on device, write')
+  }
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+
+  // Act
+  const refusal = await service
+    .explain({
+      ...receipt,
+      key: 'explain',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => (error instanceof StudyError ? error.code : error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    { refusal, journaledReasons, runtimeStatus: runtime.view().status },
+    {
+      refusal: 'EVIDENCE_UNAVAILABLE',
+      journaledReasons: [
+        'Explanation was not committed. Cause: ENOSPC: no space left on device, write',
+      ],
+      runtimeStatus: 'failed',
+    },
+  )
+})
+
+// Value: protects=the journal and the outcome of a run whose explanation, accepted after the run stopped (a learning summary saved after the result), could not be written: the save's failure is journaled as explanation.failed, also past the refusal its own failed write leaves in the evidence, and the stopped run's state, terminal reason, error and final outcome stay as they were; fails_when=the explanation's catch sets the stopped run's error, which becomes its terminal reason and outcome, and leaves the journal without the cause, since a stopped ConfiguredBrowserRun's fail returns at once while it cleans up; why_new=Cycle 0046 row 699 (CodeRabbit's review of cc231f08..e6a3daeb); seam=service.stop, runtime.evidence.save, made to reject and set the evidence's failure as Evidence.save does, the run resource and runtime.evidence.events
+test('an explanation of a stopped run that cannot be written journals explanation.failed with its cause and leaves the run’s outcome as it was', async (context) => {
+  // Arrange: a run committed its stop and was stopped; its explanation write is made to fail as a full disk fails Evidence.save.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'explanation-after-stop',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+  await service.stop(receipt)
+  const runtime = runtimes[0]!
+  runtime.evidence.save = async () => {
+    runtime.evidence.failure ??= 'Error: ENOSPC: no space left on device, write'
+    throw new Error('ENOSPC: no space left on device, write')
+  }
+  /** Reads what an agent reads of the run's end in its run resource. */
+  const outcome = async () => {
+    const resource = await readResource(service, receipt.runUri)
+    assert.ok('text' in resource)
+    const state = JSON.parse(resource.text)
+    return {
+      state: state.state,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      finalOutcome: state.finalOutcome,
+    }
+  }
+  const before = await outcome()
+
+  // Act
+  const refusal = await service
+    .explain({
+      ...receipt,
+      key: 'learning-summary-after-stop',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    })
+    .then(
+      () => undefined,
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : error,
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      lastJournaled: runtime.evidence.events
+        .map(({ type, detail }) => ({
+          type,
+          detail,
+        }))
+        .at(-1),
+      before,
+      after: await outcome(),
+    },
+    {
+      refusal: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          'Explanation was not committed. Cause: ENOSPC: no space left on device, write',
+      },
+      lastJournaled: {
+        type: 'explanation.failed',
+        detail: {
+          reason:
+            'Explanation was not committed. Cause: ENOSPC: no space left on device, write',
+        },
+      },
+      before: {
+        state: 'stopped',
+        terminalReason: undefined,
+        error: undefined,
+        finalOutcome: 'not-demonstrated',
+      },
+      after: {
+        state: 'stopped',
+        terminalReason: undefined,
+        error: undefined,
+        finalOutcome: 'not-demonstrated',
+      },
+    },
+  )
+})
+
 // Value: protects=the result of a run that completed keeping its place when the whole-run deadline passes before the service released the run; fails_when=the continuation's wait applies the deadline to a completed run, answers failure and the run resource names the deadline as the run's end; why_new=Cycle 0045 local review (runtime-2 #3: the wait applied the deadline without the guard of the maintenance turn); seam=the service's clock, moved by the test, and its maintenance turn, switched off
 test('a run that completes in the turn in which its whole-run deadline passes answers the continuation with its result', async (context) => {
   // Arrange: a run is paused at its first stop, five seconds before its whole-run deadline. The maintenance turn is switched off, so the completed run is not released before the wait looks at it.
@@ -2718,7 +3814,7 @@ test('the input schema of codebook_start states the inspection rule for the firs
     ],
   )
   const repositoryBrowserRule =
-      "Every stop needs at least one inspection with mode \"value\" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow.",
+      "Every stop needs at least one inspection with mode \"value\" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger cannot be asked where it can pause after the statement (a server stop whose module is not loaded before the input, or a debugger that lists no break locations), the stop stays on its line and its failure names the line to follow; when you know the statement spans several lines, declare the stop on a statement after it.",
     nodeTestRule =
       'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop\'s line runs, so a binding that the stop\'s own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.'
   assert.deepEqual(described, [
@@ -2767,7 +3863,7 @@ test("the input schema of codebook_start says that a required value is read befo
       tools.tools.find((tool) => tool.name === 'codebook_start')?.inputSchema,
     ).properties.configuration.anyOf
   const movedSentence =
-      "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow.",
+      "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger cannot be asked where it can pause after the statement (a server stop whose module is not loaded before the input, or a debugger that lists no break locations), the stop stays on its line and its failure names the line to follow; when you know the statement spans several lines, declare the stop on a statement after it.",
     declaredSentence =
       "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line."
   const saysIt = [...repositoryVariants.anyOf, nodeTestVariant].map(
@@ -2830,7 +3926,7 @@ test("configured help says that a binding the stop's own line declares has no va
     .parse(JSON.parse(help.text)).inspections
   assert.equal(
     inspections.includes(
-      "Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow. DOM conditions use literals, never patterns, and all conditions must hold",
+      "Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger cannot be asked where it can pause after the statement (a server stop whose module is not loaded before the input, or a debugger that lists no break locations), the stop stays on its line and its failure names the line to follow; when you know the statement spans several lines, declare the stop on a statement after it. DOM conditions use literals, never patterns, and all conditions must hold",
     ),
     true,
   )
@@ -2843,7 +3939,7 @@ test('the extension README says that Codebook requests a stop whose own line dec
 
   // Act
   const saysIt = readme.includes(
-    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's `armed` and `place`, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow.",
+    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's `armed` and `place`, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger cannot be asked where it can pause after the statement (a server stop whose module is not loaded before the input, or a debugger that lists no break locations), the stop stays on its line and its failure names the line to follow; when you know the statement spans several lines, declare the stop on a statement after it.",
   )
 
   // Assert
@@ -3432,7 +4528,7 @@ test('a reveal whose pause the learner resumes in the debugger meanwhile answers
   })
 })
 
-test('API 1.6 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
+test('API 1.7 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
   // Arrange
   const { service, runtimes } = await configuredServiceHarness(context)
   // Act
@@ -3442,7 +4538,7 @@ test('API 1.6 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.6')
+  assert.equal(status.apiVersion, '1.7')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')

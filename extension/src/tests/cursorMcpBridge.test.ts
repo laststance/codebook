@@ -79,7 +79,7 @@ test('Cursor stdio bridge exposes the current authenticated Codebook instance wi
     assert.equal(status.workspace, harness.directory)
     assert.deepEqual(resumed, status)
     assert.ok(tools.tools.some((tool) => tool.name === 'codebook_status'))
-    assert.equal(templates.resourceTemplates.length, 20)
+    assert.equal(templates.resourceTemplates.length, 22)
     assert.equal(harness.runtimes.length, 0)
   } finally {
     await client.close()

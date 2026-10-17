@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { learningSummarySchema } from '../learningSummarySchemas'
 import { presentationReadingPoseSchema } from '../presentationSchemas'
@@ -688,6 +689,233 @@ test('a completed run whose explanations carry no learning summary tells the age
     )
     assert.deepEqual(afterTheSummary.nextActions, ['read-history'])
     assert.equal(afterTheSummary.saveLearningSummary, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that used every explanation key of a run without saving a learning summary being told the truth instead of a step that is always refused; fails_when=nextActions keeps save-learning-summary and its advice tells the agent to call codebook_explain with a new key, which explain refuses with LIMIT_EXCEEDED, so nextActions never clears, or the refusal states the budget in other words; why_new=Cycle 0045 PL-17 (row 25 of Cycle 0046); seam=the synthetic runtime, which reports a demonstrated result once it is stopped
+test('a completed run whose 32 explanation keys are spent without a learning summary no longer offers save-learning-summary and says the saved study will have no learning summary', async () => {
+  // Arrange: a run reaches its result with 32 accepted explanation keys, none with a learning summary, and is stopped.
+  class DemonstratedRuntime extends ControlledRuntime {
+    override view(): ConfiguredRuntimeView {
+      const state = super.view()
+      if (!this.stopped) return state
+      return {
+        ...state,
+        status: 'completed',
+        runtimeOutcome: 'demonstrated',
+        captureOutcome: 'complete',
+        finalOutcome: 'demonstrated',
+        operation: state.operation && {
+          ...state.operation,
+          afterVerified: true,
+        },
+      }
+    }
+  }
+  const harness = await createHarness({
+    create: async (directory, definition) =>
+      new DemonstratedRuntime(directory, definition),
+  })
+  const service = harness.service
+  try {
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'budget-spent',
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    service.action({
+      ...receipt,
+      key: 'change-theme',
+      action: 'repository-click',
+    })
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!
+    const sourceHash = snapshotSourceHashes(
+      service.snapshot(record, snapshotUri),
+    ).typescript
+    await service.explain({
+      ...receipt,
+      key: 'at-the-stop',
+      snapshotUri,
+      sourceHash,
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The stop selected dark mode.',
+    })
+    const atTheStop = service.state(record)
+    await service.continue(atTheStop.participants.browser.continueArguments!)
+    await service.stop(receipt)
+    for (let keyNumber = 2; keyNumber <= 32; keyNumber++)
+      await service.explain({
+        ...receipt,
+        key: `note-${keyNumber}`,
+        snapshotUri,
+        sourceHash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: `Note ${keyNumber} about the stop.`,
+      })
+    const terminalReference = service.state(record).terminalReference
+    if (!terminalReference)
+      throw new Error('Expected a demonstrated terminal reference.')
+    const content = summaryFor(snapshotUri, sourceHash)
+    content.steps[1] = {
+      id: 'result',
+      from: 'interface',
+      to: 'interface',
+      label: 'Theme changed',
+      explanation: 'The verified after frame shows dark mode.',
+      evidence: 'observed',
+      reference: terminalReference,
+    }
+
+    // Act
+    const afterTheBudget = service.state(record)
+    let refusal: unknown
+    try {
+      await service.explain({
+        ...receipt,
+        key: 'summary-after-the-budget',
+        snapshotUri,
+        sourceHash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: 'The result was verified after the stop.',
+        learningSummary: content,
+      })
+    } catch (error) {
+      refusal = error
+    }
+
+    // Assert
+    assert.equal(record.explanationKeys.size, 32)
+    assert.deepEqual(afterTheBudget.nextActions, ['read-history'])
+    assert.equal(
+      afterTheBudget.saveLearningSummary,
+      "The run's explanation budget (32 keys) is spent; the saved study will have no learning summary.",
+    )
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'LIMIT_EXCEEDED')
+    assert.equal(
+      refusal.message,
+      "The run's explanation budget (32 keys) is spent; Codebook accepts no new explanation key for this run, and a key it already accepted answers its receipt again.",
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Cycle 0046 (row 161): red while the budget counted the 32nd key as soon as it was reserved: a read of the run resource during its save answered "The run's explanation budget (32 keys) is spent; the saved study will have no learning summary.", although that key carried the summary.
+test('a read of the run resource while the last explanation key’s learning summary is still being saved does not say that the study will have none', async () => {
+  // Arrange: a run reaches its result with 31 accepted explanation keys, none with a learning summary, and is stopped; the save of the next explanation stays open until the test lets it go.
+  class DemonstratedRuntime extends ControlledRuntime {
+    override view(): ConfiguredRuntimeView {
+      const state = super.view()
+      if (!this.stopped) return state
+      return {
+        ...state,
+        status: 'completed',
+        runtimeOutcome: 'demonstrated',
+        captureOutcome: 'complete',
+        finalOutcome: 'demonstrated',
+        operation: state.operation && {
+          ...state.operation,
+          afterVerified: true,
+        },
+      }
+    }
+  }
+  const harness = await createHarness({
+    create: async (directory, definition) =>
+      new DemonstratedRuntime(directory, definition),
+  })
+  const service = harness.service
+  try {
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'summary-on-the-last-key',
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    service.action({
+      ...receipt,
+      key: 'change-theme',
+      action: 'repository-click',
+    })
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!
+    const sourceHash = snapshotSourceHashes(
+      service.snapshot(record, snapshotUri),
+    ).typescript
+    await service.explain({
+      ...receipt,
+      key: 'at-the-stop',
+      snapshotUri,
+      sourceHash,
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The stop selected dark mode.',
+    })
+    const atTheStop = service.state(record)
+    await service.continue(atTheStop.participants.browser.continueArguments!)
+    await service.stop(receipt)
+    for (let keyNumber = 2; keyNumber <= 31; keyNumber++)
+      await service.explain({
+        ...receipt,
+        key: `note-${keyNumber}`,
+        snapshotUri,
+        sourceHash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: `Note ${keyNumber} about the stop.`,
+      })
+    const terminalReference = service.state(record).terminalReference
+    if (!terminalReference)
+      throw new Error('Expected a demonstrated terminal reference.')
+    const content = summaryFor(snapshotUri, sourceHash)
+    content.steps[1] = {
+      id: 'result',
+      from: 'interface',
+      to: 'interface',
+      label: 'Theme changed',
+      explanation: 'The verified after frame shows dark mode.',
+      evidence: 'observed',
+      reference: terminalReference,
+    }
+
+    let releaseSave = (): void => {}
+    const saveHeld = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    const evidence = record.runtime!.evidence,
+      flush = evidence.flush.bind(evidence)
+    evidence.flush = async (): Promise<void> => {
+      await saveHeld
+      await flush()
+    }
+
+    // Act: the 32nd key carries the learning summary; the run resource is read while it is being saved, and again afterwards.
+    const saving = service.explain({
+      ...receipt,
+      key: 'summary-on-the-last-key',
+      snapshotUri,
+      sourceHash,
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The result was verified after the stop.',
+      learningSummary: content,
+    })
+    const whileSaving = service.state(record)
+    releaseSave()
+    await saving
+    const afterTheSave = service.state(record)
+
+    // Assert
+    assert.equal(record.explanationKeys.size, 32)
+    assert.deepEqual(
+      [whileSaving.saveLearningSummary, afterTheSave.saveLearningSummary],
+      [undefined, undefined],
+    )
+    assert.deepEqual(whileSaving.nextActions, ['read-history'])
   } finally {
     await harness.close()
   }

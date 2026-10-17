@@ -32,6 +32,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
+  REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
 } from './constants'
 import { StudyError } from './errors'
@@ -39,7 +40,8 @@ import {
   OwnedBreakpointMovedError,
   OwnedBreakpointRemovedError,
   OwnedRepositoryBreakpoint,
-  verifiedPlaceSchema,
+  verifiedLineSchema,
+  type verifiedPlaceSchema,
 } from './ownedRepositoryBreakpoint'
 import type { BundleSource } from './repositoryBundle'
 import {
@@ -59,6 +61,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import { Cdp } from './runtimeSupport/cdp'
+import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { CAPTURE_TIMEOUT_MS, RESUME_COMMANDS } from './runtimeSupport/constants'
 import { Evidence } from './runtimeSupport/evidence'
 import {
@@ -67,6 +70,7 @@ import {
 } from './runtimeSupport/hostBrowser'
 import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
@@ -78,7 +82,16 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import {
+  breakLocationLinesOnTheWay,
+  type BreakLocationsOnTheWay,
+  type MappedBreakLocation,
+} from './utils/breakLocationLinesOnTheWay'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
+import {
+  completeBindingPlace,
+  type CompletedBindingPlace,
+} from './utils/completeBindingPlace'
 import { configuredConditionHint } from './utils/configuredConditionHint'
 import { configuredDomExpression } from './utils/configuredDomExpression'
 import { configuredStopFields } from './utils/configuredStopFields'
@@ -96,11 +109,19 @@ import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
+import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
+import { isModuleEntryPause } from './utils/isModuleEntryPause'
+import { isPageStubOfSource } from './utils/isPageStubOfSource'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
+import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import {
+  pagePauseUnderResumeText,
+  type PagePauseUnderResume,
+} from './utils/pagePauseUnderResumeText'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
@@ -111,6 +132,7 @@ import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
+import { withFinalPeriod } from './utils/withFinalPeriod'
 import {
   withUnannouncedPauses,
   type UnannouncedPausePlace,
@@ -136,6 +158,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   scan: MappedPositionsScan
   /** Where the stop's breakpoint is requested ({@link resolveArmedPlace}): the declared position, or the first mapped position after a declared line that has none or that declares a binding the stop requires ({@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine}). */
   armed: { line: number; column: number }
+  /** The first line the stop may be requested on: the declared line, or the line after the statement it begins when that statement declares a binding the stop requires ({@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine}); {@link ConfiguredBrowserRun.confirmRequestedPlace} searches the debugger's break locations from it. */
+  earliestRequestLine: number
   /** The place of the stop's first request, kept once {@link ConfiguredBrowserRun.rearmOnRequestedLine} requested the stop a second time, so a text can say which column the second request replaced. */
   firstRequest?: { line: number; column: number }
   /** The debugger's verified binding, on the declared line or on a later line {@link PreparedStop.acceptsBoundLine} accepts; every later check, the saved observation and the display use it instead of the requested position. */
@@ -144,6 +168,12 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   acceptsBoundLine: (line: number) => boolean
   /** Names the condition that refuses a line as this stop's place, for the failure an agent reads; `undefined` for an accepted line. */
   bindingRefusal: (line: number) => string | undefined
+  /** The binding the stop's rule was last built for from the debugger's break locations, with the generated place taken for it ({@link ConfiguredBrowserRun.rebuildRuleFromBreakLocations}); a pause on that line at another generated place is judged once more, and a refusal of that same binding at that same place stands without the debugger being asked again. `generated` is absent when the generated places were not known; the field is absent while the map's rule stands. */
+  judgedBinding?: {
+    line: number
+    column: number
+    generated?: GeneratedPosition
+  }
 }
 /**
  * Names the bindings of a stop's required inspections that its own declared line declares; called by {@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine} at preparation.
@@ -191,6 +221,8 @@ type DebugParticipant = {
     heldAtMs: number
     /** Whether its observation was journaled; past the journal's cap of such pauses only their count is kept. */
     journaled: boolean
+    /** The declared server stop the run was resuming the page for when it took this pause as its own (a page pause read while a resume of the run's own had no answer, {@link ConfiguredBrowserRun.ownPagePauseUnderResume}): its resume is then nobody else's, however long the adapter takes to answer. */
+    resumedByRun?: PreparedStop
   }
   /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
   instrumentationPaused?: boolean
@@ -243,6 +275,11 @@ const bindingReceiptSchema = z.object({
     .object({ path: z.string().max(REPOSITORY_PATH_LIMIT_CHARS).optional() })
     .optional(),
 })
+/** A server stop's owned breakpoint as the editor answers it at the stop's pause: verified, under the adapter's id, on its line and, when the editor kept it, at its column. */
+const pausedServerBindingSchema = verifiedLineSchema.extend({
+  id: z.number().int(),
+  source: z.object({ path: z.string().optional() }).optional(),
+})
 
 /** Owns one configured browser operation and its exact source/pause receipts through the shared Study lifecycle. @example await new ConfiguredBrowserRun(options).prepare() */
 export class ConfiguredBrowserRun implements StudyRuntime {
@@ -293,7 +330,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     timer: ReturnType<typeof setTimeout>
     event: Protocol.Debugger.PausedEvent
     journaled: boolean
+    /** The declared server stop the run was resuming the page for when it took this pause as its own and cleared its timer ({@link ownPagePauseUnderResume}). */
+    resumedByRun?: PreparedStop
   }
+  /** The resumes of a page pause at a server stop's breakpoint the run itself has under way, oldest first, each by the declared server stop its `stopped` named: one more for each `continue` the run sends, one fewer once the debugger answered that request or the request failed ({@link resumeServerBreakpointInBrowser}, {@link pageResumeEnded}). While one is under way a page pause read meanwhile is taken as the run's own, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}). A resume of the page does not end one: the debugger pauses the page at the first position of the module for itself and resumes it before the pause at the breakpoint, so the page's next resume need not be the one the run asked for. */
+  private readonly pageResumesUnderWay: PreparedStop[] = []
+  /** The last resume of a page pause at a server stop's breakpoint that the debugger answered, with the run clock at that answer: the page's own events can be read after the answer, so a page pause in the stub of that stop's module that is read within the debugger's bound of the answer is still taken as that resume's ({@link answeredResumeOfOpenPause}). */
+  private answeredPageResume?: { stop: PreparedStop; answeredAtMs: number }
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
   /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
@@ -447,8 +490,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.entryPath,
     )
     this.alive()
+    // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
     const developmentLock = await lstat(
       join(this.options.workspace, '.next/dev/lock'),
+      { bigint: true },
     ).catch((error) => {
       if (error.code === 'ENOENT') return undefined
       throw error
@@ -474,14 +519,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
       const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
         taken = this.takeDeclaredPosition(stop, index),
+        afterDeclaration = this.requestAfterSelfDeclaringLine(
+          stop,
+          acquired.bundle.source.split(/\r\n|\r|\n/),
+          scan,
+          citation.endLine,
+        ),
         // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
-        armed =
-          this.requestAfterSelfDeclaringLine(
-            stop,
-            acquired.bundle.source.split(/\r\n|\r|\n/),
-            scan,
-            citation.endLine,
-          ) ?? resolveArmedPlace(taken, scan)
+        armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
       const bindingRule = createBindingLineRule(
         stop.source.line,
         citation,
@@ -494,6 +539,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         verifier,
         scan,
         armed: { line: armed.line, column: armed.column },
+        earliestRequestLine: afterDeclaration.earliestLine,
         acceptsBoundLine: bindingRule.accepts,
         bindingRefusal: bindingRule.refusal,
       }
@@ -648,12 +694,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param lines - The lines of the stop's sealed source.
    * @param scan - The stop's one scan of its sealed map, from the declared line to the end of its citation.
    * @param citationEndLine - The last line of the stop's citation.
-   * @returns
-   * - The first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings
-   * - `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the scan cannot tell where it ends), or no later line of the citation can be requested: the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled
+   * @returns `armed` and `earliestLine`:
+   * - `armed`: the first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings; `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the text cannot tell where it ends), or the scan finds no later line of the citation to request (a partial scan may have missed it): the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled
+   * - `earliestLine`: the line after the declaring statement when the statement's end is known, otherwise the declared line; {@link confirmRequestedPlace} searches the debugger's break locations from it when the scan was partial
    * @example
    * ```ts
-   * this.requestAfterSelfDeclaringLine(stop, lines, scan, 25) // => { line: 24, column: 3 } for `const total = useMemo(() => {` on line 21 whose statement ends on line 23, with value:total required
+   * this.requestAfterSelfDeclaringLine(stop, lines, scan, 25) // => { armed: { line: 24, column: 3 }, earliestLine: 24 } for `const total = useMemo(() => {` on line 21 whose statement ends on line 23, with value:total required
    * ```
    */
   private requestAfterSelfDeclaringLine(
@@ -661,20 +707,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     lines: readonly string[],
     scan: MappedPositionsScan,
     citationEndLine: number,
-  ): { line: number; column: number } | undefined {
+  ): { armed?: { line: number; column: number }; earliestLine: number } {
     const bindings = requiredBindingsDeclaredOn(stop, lines)
     // Only a required binding of the declared line itself moves the stop; a stop whose values exist before its line stays where it was declared.
-    if (!bindings.length) return undefined
+    if (!bindings.length) return { earliestLine: stop.source.line }
     const statementEnd = declarationStatementEndLine(
       lines,
       stop.source.line,
       citationEndLine,
     )
-    // A statement that does not end within the citation, or whose end the scan cannot tell, leaves the stop where it was declared.
-    const armed =
-      statementEnd === undefined
-        ? undefined
-        : placeAfterDeclaringLine(statementEnd, scan)
+    // A statement that does not end within the citation, or whose end the text cannot tell, leaves the stop where it was declared.
+    if (statementEnd === undefined) return { earliestLine: stop.source.line }
+    const armed = placeAfterDeclaringLine(statementEnd, scan)
     if (armed)
       this.evidence.record('breakpoint.armed-after-self-declaring-line', {
         participant: stop.participant,
@@ -682,7 +726,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         armed,
         bindings,
       })
-    return armed
+    // The binding has no value before its whole statement ran, so no break location inside the statement may stand in for the stop.
+    return { armed, earliestLine: statementEnd + 1 }
   }
 
   /**
@@ -770,7 +815,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw this.slideRefusal(stop, binding, firstRequest)
     }
     // No second request could be made (the requested line cannot pause, or the debugger cannot say): a later line the stop's rule refuses is refused now.
-    this.assertBindingAccepted(stop, binding)
+    await this.assertBindingAccepted(stop, binding)
     this.bindBoundPlace(stop, binding)
     this.evidence.record('breakpoint.bound', {
       ...binding,
@@ -781,20 +826,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a browser stop's verified binding on a line the stop's rule does not accept, for {@link armStop} once no second request could move it back to the requested line.
+   * Refuses a browser stop's verified binding on a line the stop's rule does not accept, also by the debugger's own break locations ({@link acceptsByBreakLocations}), for {@link armStop} once no second request could move it back to the requested line.
    * @param stop - The browser stop being armed.
    * @param binding - The verified binding the stop would be bound at.
    * @throws The binding failure that names the declared stop, the place and the rule's reason ({@link refusedBindingText}), with the mapping hints.
    * @example
    * ```ts
-   * this.assertBindingAccepted(stop, { line: 26, column: 5 }) // throws 'Declared stop app/page.tsx:22 bound at 26:5, refused: line 23 between the declared line 22 and line 26 has a mapped position. …'
+   * await this.assertBindingAccepted(stop, { line: 26, column: 5 }) // throws 'Declared stop app/page.tsx:22 bound at 26:5, refused: line 23 between the declared line 22 and line 26 has a mapped position. …'
    * ```
    */
-  private assertBindingAccepted(
+  private async assertBindingAccepted(
     stop: PreparedStop,
     binding: { line: number; column: number },
-  ): void {
-    if (!stop.acceptsBoundLine(binding.line))
+  ): Promise<void> {
+    const accepted = await this.acceptsByBreakLocations(stop, binding)
+    this.alive()
+    if (!accepted)
       throw this.bindingFailure(stop, this.refusedBindingText(stop, binding))
   }
 
@@ -820,8 +867,70 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     if (laterPlace && (await this.rearmOnRequestedLine(stop, laterPlace)))
       acknowledged = await this.secondServerAcknowledgement(stop, firstRequest)
+    if (acknowledged.refusal !== undefined)
+      await this.requestRefusedAgain(stop, acknowledged)
+  }
+
+  /**
+   * Decides a refused server registration for {@link acknowledgedOnRequestedLine}, once no second request on the requested line stands in its place: a reply the source map alone refused on a later line is requested again when the debugger's own break locations accept that line ({@link requestAgainUnderBreakLocations}).
+   * @param stop - The server stop being armed.
+   * @param refused - The refused acknowledgement ({@link serverAcknowledgement} with its `refusal`).
+   * @returns Once the new request was acknowledged without a refusal.
+   * @throws The registration's refusal when the break locations do not accept its place, and the new request's refusal when it was refused too.
+   * @example
+   * ```ts
+   * if (acknowledged.refusal !== undefined) await this.requestRefusedAgain(stop, acknowledged)
+   * ```
+   */
+  private async requestRefusedAgain(
+    stop: PreparedStop,
+    refused: Awaited<ReturnType<ConfiguredBrowserRun['serverAcknowledgement']>>,
+  ): Promise<void> {
+    // A reply the source map alone refused on a later line is requested again when the debugger's own break locations accept that line.
+    const acknowledged =
+      refused.place && (await this.acceptsByBreakLocations(stop, refused.place))
+        ? await this.requestAgainUnderBreakLocations(stop, refused.place)
+        : refused
     // No second request could be made for a refused registration, or the second one was refused too: the refusal stands.
     if (acknowledged.refusal !== undefined) throw acknowledged.refusal
+  }
+
+  /**
+   * Requests a server stop's breakpoint once more at the same place after its registration reply was refused on a later line that the debugger's own break locations accept ({@link acceptsByBreakLocations}), for {@link requestRefusedAgain}: a refused reply is never taken back, so the refused registration is retired, confirmed by the adapter, and the new one is judged by the stop's rebuilt rule.
+   * @param stop - The server stop being armed; its rule was just rebuilt from the break locations.
+   * @param place - Where the adapter verified the refused registration.
+   * @returns The acknowledgement of the new request ({@link serverAcknowledgement}).
+   * @throws When the refused registration's retirement is not confirmed, naming the stop and the place; a cancelled run keeps its own reason.
+   * @example
+   * ```ts
+   * acknowledged = await this.requestAgainUnderBreakLocations(stop, { line: 32, column: 11 })
+   * ```
+   */
+  private async requestAgainUnderBreakLocations(
+    stop: PreparedStop,
+    place: { line: number; column: number },
+  ): Promise<
+    Awaited<ReturnType<ConfiguredBrowserRun['serverAcknowledgement']>>
+  > {
+    try {
+      await stop.breakpoint!.retire(
+        this.participants[stop.participant].selected!,
+        this.abort.signal,
+      )
+    } catch (error) {
+      if (this.abort.signal.aborted) throw error
+      throw new Error(
+        `Declared stop ${this.declaredAt(stop)} bound at ${place.line}:${place.column}, which the debugger's break locations accept, and its refused breakpoint could not be retired before a new request: ${thrownMessage(error)}`,
+      )
+    }
+    this.alive()
+    stop.breakpoint = this.requestBreakpoint(stop)
+    this.evidence.record('breakpoint.requested-again-after-break-locations', {
+      participant: stop.participant,
+      ...declaredAndArmedPlace(stop.source, stop.armed),
+      refusedPlace: { line: place.line, column: place.column },
+    })
+    return this.serverAcknowledgement(stop)
   }
 
   /**
@@ -908,7 +1017,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stop.armed.line,
       stop.armed.column,
       'declared-line',
-      stop.acceptsBoundLine,
+      // The stop's rule is read at each acknowledgement, so a rule built again from the debugger's break locations ({@link acceptsByBreakLocations}) also judges the adapter's later news.
+      (line) => stop.acceptsBoundLine(line),
     )
   }
 
@@ -942,14 +1052,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             pollFailure = error
             throw error
           }
-          const parsed = verifiedPlaceSchema.safeParse(result)
-          if (!parsed.success) return undefined
+          const binding = this.verifiedBinding(stop, result)
+          if (!binding) return undefined
           // The debugger chose a line the stop's rule refuses and no later poll moves it back, so the wait ends at once. A refused line after the requested one is returned: the requested line may still pause at an earlier column.
-          if (this.isRefusedBeforeRequest(stop, parsed.data.line)) {
-            boundElsewhere = parsed.data
+          if (this.isRefusedBeforeRequest(stop, binding.line)) {
+            boundElsewhere = binding
             throw new Error('Repository breakpoint bound on another line')
           }
-          return parsed.data
+          return binding
         },
         `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${this.requestedAt(stop)}); declare the stop on an executable statement the action reaches (${this.declaredField(stop)})`,
         ACTIVE_TIMEOUT_MS,
@@ -958,6 +1068,73 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } catch (error) {
       throw this.bindingWaitFailure(stop, error, boundElsewhere, pollFailure)
     }
+  }
+
+  /**
+   * Reads a browser stop's verified binding from what the editor answered while the stop is armed, for each look of {@link verifiedBrowserBinding}; a binding the editor answered without a column gets the adapter's ({@link completedPlace}).
+   * @param stop - The browser stop being armed.
+   * @param answered - What the editor answered for the stop's owned breakpoint.
+   * @returns The verified line and column; `undefined` while the binding is unverified, absent, or names no column the adapter reported either.
+   * @example
+   * ```ts
+   * this.verifiedBinding(stop, { id: 12, verified: true, line: 22 }) // { verified: true, line: 22, column: 3 } once the adapter's news named 22:3
+   * ```
+   */
+  private verifiedBinding(
+    stop: PreparedStop,
+    answered: unknown,
+  ): z.infer<typeof verifiedPlaceSchema> | undefined {
+    const place = this.completedPlace(
+      stop,
+      verifiedLineSchema.safeParse(answered).data,
+    )
+    return place && { verified: true, line: place.line, column: place.column }
+  }
+
+  /**
+   * Gives a verified binding the editor answered its whole place: a binding without a column, as both editors answer for a stop requested at column 1 once the adapter sent news about it, takes the column the adapter itself reported for that breakpoint, or, at a pause, the paused top frame's on that line ({@link completeBindingPlace}). Called wherever the run reads a binding from the editor: {@link verifiedBinding}, {@link pauseAtMovedColumn}, {@link serverBindingAtPause} and {@link movedBrowserBinding}.
+   * @param stop - The stop whose owned breakpoint was read.
+   * @param binding - The verified binding's line and, when the editor kept it, its column; `undefined` for an answer that is no verified binding.
+   * @param pausedAt - The generated place of the paused top frame, when the binding is read at the stop's pause; left out where no pause can vouch for a column.
+   * @returns The binding's line and column with where the column came from; `undefined` for no verified binding, and for one without a column when neither the adapter nor the paused frame names one on its line.
+   * @example
+   * ```ts
+   * this.completedPlace(stop, { line: 32 }) // { line: 32, column: 11, columnFrom: 'adapter' } for a breakpoint the adapter reported verified at 32:11
+   * ```
+   */
+  private completedPlace(
+    stop: PreparedStop,
+    binding: { line: number; column?: number } | undefined,
+    pausedAt?: Protocol.Debugger.Location,
+  ): CompletedBindingPlace | undefined {
+    if (!binding) return undefined
+    const session = this.participants[stop.participant].selected!
+    return completeBindingPlace(
+      binding,
+      stop.breakpoint!.reportedPlace(session),
+      pausedAt && this.sourcePlaceOf(stop, pausedAt),
+    )
+  }
+
+  /**
+   * Maps a generated location of a stop's module back to its place in the sealed original, for {@link completedPlace} (the paused top frame) and {@link mappedBreakLocations} (each listed break location).
+   * @param stop - The stop whose sealed map is asked.
+   * @param location - A generated position in the stop's module.
+   * @returns The one-based source line and column; `undefined` for unmapped generated code and for a place in another original.
+   * @example
+   * ```ts
+   * this.sourcePlaceOf(stop, { lineNumber: 32, columnNumber: 52 }) // { line: 32, column: 11 }
+   * ```
+   */
+  private sourcePlaceOf(
+    stop: PreparedStop,
+    location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
+  ): { line: number; column: number } | undefined {
+    const line = stop.verifier.originalLine(location),
+      column = stop.verifier.originalColumn(location)
+    return line === undefined || column === undefined
+      ? undefined
+      : { line, column }
   }
 
   /** Says whether a line the debugger bound a browser stop on is refused by the stop's rule and no second request can help, for each look of {@link verifiedBrowserBinding}: a refused line up to the requested one (a line before the declared line). @example this.isRefusedBeforeRequest(stop, 21) // true for a stop declared and requested on line 22 */
@@ -1150,9 +1327,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Waits for a declared stop's acknowledged registration, called wherever the run needs that receipt (arming, the final input check and the pause).
    * The tracker's refusal carries positions only as JSON, so the failure gains the declared stop and the mapping hints here; a breakpoint that was removed gets no hints, because another line would not help.
+   * When the adapter's news moved the acknowledged breakpoint to a later line that the source map alone refuses (js-debug verifies a pending server breakpoint when its module loads), the debugger's own break locations judge that line once more ({@link acceptsByBreakLocations}); when they accept it, the owned breakpoint takes that place again ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}) and its receipt is read once more.
    * @param stop - A declared server stop whose owned breakpoint exists.
+   * @param pausedAt - The generated place of the paused top frame, when the receipt is read at the stop's pause ({@link inspect}): refused news is then judged up to that place.
    * @returns The adapter's current receipt, `pending` until the module loads and `bound` afterwards.
-   * @throws When the adapter refuses or revokes the registration, for example by acknowledging a line the stop's binding rule refuses.
+   * @throws When the adapter refuses or revokes the registration, for example by acknowledging a line the stop's binding rule refuses, also by the break locations.
    * @example
    * ```ts
    * const receipt = await this.registeredStop(stop) // { status: 'pending', ... }
@@ -1160,16 +1339,100 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async registeredStop(
     stop: PreparedStop,
+    pausedAt?: Protocol.Debugger.Location,
   ): Promise<Awaited<ReturnType<OwnedRepositoryBreakpoint['registered']>>> {
+    const session = this.participants[stop.participant].selected!
     try {
-      return await stop.breakpoint!.registered(
-        this.participants[stop.participant].selected!,
-        this.abort.signal,
-      )
+      return await stop.breakpoint!.registered(session, this.abort.signal)
     } catch (error) {
       if (this.abort.signal.aborted) throw error
-      throw this.registrationFailure(stop, error)
+      // Only news that moved the breakpoint to a refused place is judged once more; every other failure stands.
+      if (!(error instanceof OwnedBreakpointMovedError))
+        throw this.registrationFailure(stop, error)
+      return this.registeredAfterRefusedNews(stop, session, error, pausedAt)
     }
+  }
+
+  /**
+   * Reads a server stop's receipt once more after the adapter's news moved its acknowledged breakpoint to a place the source map alone refuses, for {@link registeredStop} when its read failed for that reason.
+   * @param stop - The declared server stop whose receipt was read.
+   * @param session - The stop's selected session.
+   * @param moved - The failure of the read, which carries the refused place.
+   * @param pausedAt - The generated place of the paused top frame, when the receipt is read at the stop's pause.
+   * @returns The receipt read again ({@link registeredStop}), once the debugger's own break locations accepted the place and the owned breakpoint took it again ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), or once later news moved the breakpoint away from that place while this judgement waited ({@link isStillRefusedAt}).
+   * @throws The registration failure ({@link registrationFailure}) when the breakpoint still stands at the refused place and the break locations refuse it too, or the module is not announced within the bound ({@link moduleAnnouncedForJudgement}) and the map's rule stands.
+   * @example
+   * ```ts
+   * return this.registeredAfterRefusedNews(stop, session, error) // { status: 'bound', movedTo: { line: 32, column: 11 }, ... }
+   * ```
+   */
+  private async registeredAfterRefusedNews(
+    stop: PreparedStop,
+    session: vscode.DebugSession,
+    moved: OwnedBreakpointMovedError,
+    pausedAt?: Protocol.Debugger.Location,
+  ): ReturnType<ConfiguredBrowserRun['registeredStop']> {
+    // The adapter can report the breakpoint verified before the run's own channel announced the module, and the break locations cannot be asked without it.
+    await this.moduleAnnouncedForJudgement(stop, moved.place.line)
+    // The wait lasts up to the capture bound, and later news may have moved the breakpoint meanwhile: the receipt is read for the place it has now, and nothing is judged or refused for a place it left.
+    if (!this.isStillRefusedAt(stop, session, moved.place))
+      return this.registeredStop(stop, pausedAt)
+    // The news named a place the map alone refused; the debugger's break locations may accept it, and then the breakpoint stands there (it may already, when {@link retakeNewsByBreakLocations} judged that news first), so the receipt is read once more.
+    if (await this.acceptsByBreakLocations(stop, moved.place, pausedAt)) {
+      stop.breakpoint!.retakeRefusedPlace(session)
+      return this.registeredStop(stop, pausedAt)
+    }
+    // The debugger's answer took time too: the refusal stands only for the place the breakpoint still has.
+    if (!this.isStillRefusedAt(stop, session, moved.place))
+      return this.registeredStop(stop, pausedAt)
+    throw this.registrationFailure(stop, moved)
+  }
+
+  /**
+   * Tells {@link registeredAfterRefusedNews} after each of its waits whether a stop's owned breakpoint still stands at the refused place that judgement began with; the adapter's later news can put the breakpoint at an accepted place, or at another refused one, while the run waits for the module or for the debugger's break locations.
+   * @param stop - The declared server stop whose receipt is being read.
+   * @param session - The stop's selected session.
+   * @param place - The refused place the read of the receipt failed for.
+   * @returns `true` while the breakpoint's refused place is that line and column; `false` once it stands at an accepted place (no refused place is left) or was refused at another place.
+   * @example
+   * ```ts
+   * this.isStillRefusedAt(stop, session, { line: 4, column: 3 }) // false after news verified the breakpoint at 1:1, which the stop's rule accepts
+   * ```
+   */
+  private isStillRefusedAt(
+    stop: PreparedStop,
+    session: vscode.DebugSession,
+    place: { line: number; column: number },
+  ): boolean {
+    const refusedNow = stop.breakpoint!.refusedPlace(session)
+    return refusedNow?.line === place.line && refusedNow.column === place.column
+  }
+
+  /**
+   * Waits a bounded time for a stop's module to be announced when only the debugger's break locations could lift the refusal of a line, for {@link registeredAfterRefusedNews}: the adapter's news about a pending breakpoint can be read before the run's own channel announces the module, and a receipt read in that window (before the input, or while a later stop is armed) would be refused by the source map alone, with a reason the judgement at the module's announcement lifts milliseconds later.
+   * The wait ends with the module or after the capture bound; the map's reason is then given only when the module did not arrive.
+   * @param stop - The stop whose receipt was read.
+   * @param line - The line the adapter's news named, which the stop's rule refuses.
+   * @example
+   * ```ts
+   * await this.moduleAnnouncedForJudgement(stop, 32) // returns at once for a parsed module, and for a line the break locations could not judge
+   * ```
+   */
+  private async moduleAnnouncedForJudgement(
+    stop: PreparedStop,
+    line: number,
+  ): Promise<void> {
+    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    // A parsed module can be asked at once; a line before the requested one or after the citation is refused whatever the debugger lists.
+    if (stop.script || line <= stop.armed.line || line > citation.endLine)
+      return
+    await waitUntil(
+      () => stop.script,
+      `the announcement of the module of declared stop ${this.declaredAt(stop)}`,
+      CAPTURE_TIMEOUT_MS,
+      this.abort.signal,
+    ).catch(() => undefined)
+    this.alive()
   }
 
   /**
@@ -1483,11 +1746,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param range - The generated range to ask for, with an exclusive `end`; without it the whole module is asked.
    * @param timeoutMs - How long the adapter's answer is waited for; the request's own default (the active bound) when left out.
    * @returns
-   * - The one-based source place of every answered location the sealed map puts in the stop's original; a location in unmapped code or in another original is left out
+   * - The one-based source place of every answered location the sealed map puts in the stop's original, with its zero-based generated position; a location in unmapped code or in another original is left out
    * - `undefined` when the adapter cannot list break locations, or did not answer within the bound
    * @example
    * ```ts
-   * await this.mappedBreakLocations(stop) // [{ line: 22, column: 3 }, { line: 23, column: 5 }]
+   * await this.mappedBreakLocations(stop) // [{ line: 22, column: 3, generated: { lineNumber: 21, columnNumber: 2 } }, { line: 23, column: 5, generated: { lineNumber: 22, columnNumber: 4 } }]
    * ```
    */
   private async mappedBreakLocations(
@@ -1496,7 +1759,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ReturnType<PreparedStop['verifier']['generatedRangeOfLine']>['range']
     >,
     timeoutMs?: number,
-  ): Promise<{ line: number; column: number }[] | undefined> {
+  ): Promise<MappedBreakLocation[] | undefined> {
     const scriptId = stop.script!.scriptId
     let locations: Protocol.Debugger.BreakLocation[]
     try {
@@ -1516,18 +1779,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.alive()
     return locations.flatMap((location) => {
-      const line = stop.verifier.originalLine(location),
-        column = stop.verifier.originalColumn(location)
-      return line === undefined || column === undefined
-        ? []
-        : [{ line, column }]
+      const place = this.sourcePlaceOf(stop, location)
+      if (!place) return []
+      const { lineNumber, columnNumber = 0 } = location
+      return [{ ...place, generated: { lineNumber, columnNumber } }]
     })
   }
 
   /**
-   * Chooses the place of a stop whose sealed map was too large to scan completely and whose scan found no position on the declared line, when {@link armStop} first arms it: a partial scan cannot say whether that line, or which later line, holds code, so the debugger's break locations decide.
-   * The stop is requested at the first place the debugger can pause at from the declared line to the end of its citation: the declared line itself when it can pause there ("not found in a partial scan" is not "absent"), otherwise the first later line that can, and the stop's line rule is then measured from that line. A line that only looks like code in the text (the body of a block comment, a `>` that closes an opening tag) has no break location and is never requested.
-   * The declared place is kept when the debugger cannot be asked: the module is not parsed yet (a server stop before the input), the adapter cannot list break locations, or none lies in the citation.
+   * Chooses the place of a stop whose sealed map was too large to scan completely and whose scan found no position on the line it is requested on, when {@link armStop} first arms it: a partial scan cannot say whether that line, or which later line, holds code, so the debugger's break locations decide.
+   * The stop is requested at the first place the debugger can pause at from its earliest line ({@link PreparedStop.earliestRequestLine}) to the end of its citation: the declared line itself when it can pause there ("not found in a partial scan" is not "absent"), otherwise the first later line that can, and the stop's line rule is then measured from that line. A stop whose declared line declares a binding it requires is searched from the line after that whole declaration, so a break location inside a multi-line initializer or its callback, where the binding has no value yet, is never requested. A line that only looks like code in the text (the body of a block comment, a `>` that closes an opening tag) has no break location and is never requested.
+   * The place chosen at preparation is kept when the debugger cannot be asked: the module is not parsed yet (a server stop before the input), the adapter cannot list break locations, or none lies in the citation.
    * @param stop - The stop being armed for the first time.
    * @example
    * ```ts
@@ -1535,22 +1797,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private async confirmRequestedPlace(stop: PreparedStop): Promise<void> {
-    const declaredLine = stop.source.line
     if (this.keepsPlaceUnasked(stop)) return
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!,
       first = (await this.mappedBreakLocations(stop))
         ?.filter(
           (place) =>
-            place.line >= declaredLine && place.line <= citation.endLine,
+            place.line >= stop.earliestRequestLine &&
+            place.line <= citation.endLine,
         )
         .sort(
           (left, right) => left.line - right.line || left.column - right.column,
         )[0]
-    if (!first || first.line === declaredLine) return
-    stop.armed = first
-    // The rule was built for a request on the declared line; it is measured from the line the stop is requested on.
+    // The place chosen at preparation stands when it is the first place that can pause, or the debugger named none.
+    if (!first || first.line === stop.armed.line) return
+    stop.armed = { line: first.line, column: first.column }
+    // The rule was built for a request on the line chosen at preparation; it is measured from the line the stop is requested on.
     const rule = createBindingLineRule(
-      declaredLine,
+      stop.source.line,
       citation,
       stop.scan,
       first.line,
@@ -1562,21 +1825,391 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Says whether a stop keeps the place its scan chose without the debugger being asked, as the first check of {@link confirmRequestedPlace}.
    * @param stop - The stop being armed for the first time.
-   * @returns `true` for a complete scan and for a partial one that found the declared line (they already chose the place), and for a module that is not parsed yet (the debugger cannot be asked); `false` when the break locations must decide.
+   * @returns `true` for a complete scan, for a partial one that found the line the stop is requested on when that line is not before its earliest line ({@link PreparedStop.earliestRequestLine}): they already chose the place, and for a module that is not parsed yet (the debugger cannot be asked); `false` when the break locations must decide.
    * @example
    * ```ts
    * this.keepsPlaceUnasked(stop) // true for a stop whose map was scanned completely
    * ```
    */
   private keepsPlaceUnasked(stop: PreparedStop): boolean {
-    // A complete scan, and a partial one that found the declared line, already chose the place.
+    // A complete scan, and a partial one that found the requested line from the stop's earliest line on, already chose the place.
     return (
       stop.scan.complete ||
-      stop.scan.positions.some(
-        (position) => position.line === stop.source.line,
-      ) ||
+      (stop.armed.line >= stop.earliestRequestLine &&
+        stop.scan.positions.some(
+          (position) => position.line === stop.armed.line,
+        )) ||
       !stop.script
     )
+  }
+
+  /**
+   * Judges a binding the sealed map alone refuses once more from the debugger's own break locations, so a mapped line the debugger cannot pause on (a function head, its parameters, `try {`) does not lie between the requested and the bound line; {@link assertBindingAccepted}, {@link requestRefusedAgain}, {@link registeredAfterRefusedNews}, {@link retakeNewsByBreakLocations} and {@link bindAtPause} call it before they refuse a binding.
+   * A generated module does not keep the order of its source, so a break location lies between only when it lies, in the generated module, between the place the stop was requested at and the place of the binding ({@link breakLocationsOnTheWayTo}). When the debugger lists its break locations, the stop's rule is built again from them ({@link createBindingLineRule}) and kept for every later check of the stop, and `breakpoint.rule-from-break-locations` journals the lines that counted. The map's rule stands when the line lies before the requested one or after the citation, the module is not parsed yet, or the adapter cannot list break locations.
+   * @param stop - The stop whose binding is judged.
+   * @param bound - The line and column the debugger bound the stop at.
+   * @param pausedAt - The generated place of the paused top frame, when the binding is judged at the stop's pause: on the bound line it is the binding's generated place. Without it the sealed map's place of the bound line and column is taken.
+   * @returns `true` when the stop's rule, rebuilt from the break locations when they were read, accepts the line; `false` when it still refuses it.
+   * @example
+   * ```ts
+   * await this.acceptsByBreakLocations(stop, { line: 32, column: 11 }) // true for a stop requested on line 26 whose lines 27 to 31 are mapped but have no break location between the two generated places
+   * ```
+   */
+  private async acceptsByBreakLocations(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+    pausedAt?: Protocol.Debugger.Location,
+  ): Promise<boolean> {
+    const pausedThere = this.pausedOnLine(stop, bound.line, pausedAt)
+    if (this.acceptsAsJudged(stop, bound.line, pausedThere)) return true
+    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    if (
+      this.keepsMapRuleUnasked(stop, bound.line, citation) ||
+      this.isRefusalJudged(stop, bound, pausedThere)
+    )
+      return false
+    const places = await this.mappedBreakLocations(stop)
+    return this.acceptsUnderBreakLocations(
+      stop,
+      bound,
+      citation,
+      places,
+      pausedThere,
+    )
+  }
+
+  /**
+   * Gives the generated place of a paused top frame when it is the place of a binding on a line, for {@link acceptsByBreakLocations}: only a frame in the stop's module that the sealed map puts on the bound line says where that binding lies in the generated module.
+   * @param stop - The stop whose binding is judged.
+   * @param line - The line the debugger bound the stop on.
+   * @param pausedAt - The generated place of the paused top frame; `undefined` when the binding is judged before any pause.
+   * @returns The frame's generated position; `undefined` without a pause, for a frame in another script, and for one the map puts on another line.
+   * @example
+   * ```ts
+   * this.pausedOnLine(stop, 32, { scriptId: '1922', lineNumber: 32, columnNumber: 52 }) // { lineNumber: 32, columnNumber: 52 }
+   * ```
+   */
+  private pausedOnLine(
+    stop: PreparedStop,
+    line: number,
+    pausedAt: Protocol.Debugger.Location | undefined,
+  ): GeneratedPosition | undefined {
+    if (!pausedAt || !this.isInModuleOnLine(stop, pausedAt, line))
+      return undefined
+    const { lineNumber, columnNumber = 0 } = pausedAt
+    return { lineNumber, columnNumber }
+  }
+
+  /** Tells {@link pausedOnLine} whether a generated location lies in a stop's module and the sealed map puts it on a line. @example this.isInModuleOnLine(stop, { scriptId: '1922', lineNumber: 32, columnNumber: 52 }, 32) // true */
+  private isInModuleOnLine(
+    stop: PreparedStop,
+    location: Protocol.Debugger.Location,
+    line: number,
+  ): boolean {
+    return (
+      location.scriptId === stop.script?.scriptId &&
+      stop.verifier.originalLine(location) === line
+    )
+  }
+
+  /**
+   * Says whether a stop's rule already accepts a bound line for the generated place it is judged at, as the first check of {@link acceptsByBreakLocations} and of {@link acceptsUnderBreakLocations}, so the debugger is asked only for a line the rule refuses, or for a pause the rule was not built for.
+   * A rule rebuilt for this line before its pause took the binding's generated place from the sealed map ({@link PreparedStop.judgedBinding}); a pause at another generated place is judged once more, up to where the program really stands.
+   * @param stop - The stop whose binding is judged.
+   * @param line - The line the debugger bound the stop on.
+   * @param pausedThere - The generated place of the paused top frame on that line ({@link pausedOnLine}); `undefined` before any pause.
+   * @returns `false` for a line the rule refuses, and for a pause at another generated place than the rule was built for; `true` otherwise.
+   * @example
+   * ```ts
+   * this.acceptsAsJudged(stop, 23, undefined) // true for a stop requested on line 22: the next line has nothing between
+   * ```
+   */
+  private acceptsAsJudged(
+    stop: PreparedStop,
+    line: number,
+    pausedThere: GeneratedPosition | undefined,
+  ): boolean {
+    if (!stop.acceptsBoundLine(line)) return false
+    return !pausedThere || this.isRuleBuiltForPlace(stop, line, pausedThere)
+  }
+
+  /**
+   * Says whether a stop's rule holds for a pause on a bound line, as the second check of {@link acceptsAsJudged}.
+   * @param stop - The stop whose binding is judged.
+   * @param line - The line the debugger bound the stop on, which the rule accepts.
+   * @param pausedThere - The generated place of the paused top frame on that line.
+   * @returns `true` when the rule was not built for a generated place of this line (the map's rule, or a judgement of another line), and when it was built for exactly this place; `false` when it was built for another generated place of the line.
+   * @example
+   * ```ts
+   * this.isRuleBuiltForPlace(stop, 32, { lineNumber: 32, columnNumber: 52 }) // true once the rule was built for the binding at generated 32:52
+   * ```
+   */
+  private isRuleBuiltForPlace(
+    stop: PreparedStop,
+    line: number,
+    pausedThere: GeneratedPosition,
+  ): boolean {
+    const judged = stop.judgedBinding
+    // A rule that was not built for a generated place of this line holds wherever the program stands on it.
+    if (judged?.line !== line || !judged.generated) return true
+    return isSameGeneratedPosition(judged.generated, pausedThere)
+  }
+
+  /**
+   * Says whether the stop's rule already refused this very binding at the generated place it is judged at, as the third check of {@link acceptsByBreakLocations} and of {@link acceptsUnderBreakLocations}: the refusal then stands, and the debugger is not asked and the journal not written a second time. The first judgement of a binding (when the adapter's news arrives, or the module is announced) keeps the journal entry, because that is when the run learned it; a later read of the receipt, before the input or at the pause, has nothing new to judge.
+   * A pause at another generated place than the refusal was built for is new information and is judged once more, and so is a pause after a refusal that knew no generated place.
+   * @param stop - The stop whose binding is judged.
+   * @param bound - The line and column the debugger bound the stop at.
+   * @param pausedThere - The generated place of the paused top frame on the bound line ({@link pausedOnLine}); `undefined` before any pause.
+   * @returns `true` when the rule refuses the line and was built for this line and column, before a pause or for exactly the place of this pause; `false` otherwise.
+   * @example
+   * ```ts
+   * this.isRefusalJudged(stop, { line: 7, column: 3 }, undefined) // true once the news that named 7:3 was judged and refused
+   * ```
+   */
+  private isRefusalJudged(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+    pausedThere: GeneratedPosition | undefined,
+  ): boolean {
+    const judged = this.judgementOf(stop, bound)
+    if (!judged || stop.acceptsBoundLine(bound.line)) return false
+    return (
+      !pausedThere || isSameGeneratedPosition(judged.generated, pausedThere)
+    )
+  }
+
+  /** Gives {@link isRefusalJudged} the judgement a stop's rule was last built for when it was this binding's line and column. @example this.judgementOf(stop, { line: 7, column: 3 }) // { line: 7, column: 3, generated: { lineNumber: 6, columnNumber: 2 } } */
+  private judgementOf(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+  ): PreparedStop['judgedBinding'] {
+    const judged = stop.judgedBinding
+    return judged?.line === bound.line && judged.column === bound.column
+      ? judged
+      : undefined
+  }
+
+  /**
+   * Says whether the map's rule stands for a refused line without the debugger being asked, as the second check of {@link acceptsByBreakLocations}.
+   * @param stop - The stop whose binding is judged.
+   * @param line - The line the debugger bound the stop on, which the stop's rule refuses.
+   * @param citation - The stop's article excerpt.
+   * @returns `true` for a line up to the requested one, for a line after the citation and for a module that is not parsed yet; `false` when the break locations can judge the line.
+   * @example
+   * ```ts
+   * this.keepsMapRuleUnasked(stop, 96, { endLine: 95 }) // true: the line lies after the citation
+   * ```
+   */
+  private keepsMapRuleUnasked(
+    stop: PreparedStop,
+    line: number,
+    citation: { endLine: number },
+  ): boolean {
+    // Only a later line within the citation is refused for what lies between it and the requested line, and only a parsed module can be asked.
+    return line <= stop.armed.line || line > citation.endLine || !stop.script
+  }
+
+  /**
+   * Judges a binding by the break locations the debugger listed, as the last step of {@link acceptsByBreakLocations}: the stop's rule is built again from them ({@link rebuildRuleFromBreakLocations}), kept on the stop and journaled as `breakpoint.rule-from-break-locations`.
+   * For the judged binding only the break locations between the two generated places count ({@link breakLocationsOnTheWayTo}); when either generated place cannot be known, every line with a break location counts, as for every other line the kept rule is asked about later.
+   * @param stop - The stop whose binding is judged.
+   * @param bound - The line and column the debugger bound the stop at.
+   * @param citation - The stop's article excerpt.
+   * @param places - The module's break locations mapped back to the source ({@link mappedBreakLocations}); `undefined` when the adapter could not list them.
+   * @param pausedThere - The generated place of the paused top frame on the bound line ({@link pausedOnLine}); `undefined` before any pause.
+   * @returns What the stop's rule says without break locations (the rule in force stands) and when another judgement of the same stop already accepted the binding; otherwise what the rebuilt rule says.
+   * @example
+   * ```ts
+   * this.acceptsUnderBreakLocations(stop, { line: 32, column: 11 }, citation, places, undefined) // true for a stop requested on line 26 when no listed place lies between the two generated places
+   * ```
+   */
+  private acceptsUnderBreakLocations(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+    citation: { endLine: number },
+    places: MappedBreakLocation[] | undefined,
+    pausedThere: GeneratedPosition | undefined,
+  ): boolean {
+    if (!places) return stop.acceptsBoundLine(bound.line)
+    // Another judgement of the same stop finished while the debugger answered: its rule stands, also when it refused this binding.
+    if (this.acceptsAsJudged(stop, bound.line, pausedThere)) return true
+    if (this.isRefusalJudged(stop, bound, pausedThere)) return false
+    this.rebuildRuleFromBreakLocations(
+      stop,
+      bound,
+      citation,
+      places,
+      pausedThere,
+    )
+    return stop.acceptsBoundLine(bound.line)
+  }
+
+  /**
+   * Builds a stop's rule again for one binding from the break locations the debugger listed, keeps it on the stop with the generated place it was built for and journals it; the last step of {@link acceptsUnderBreakLocations}.
+   * @param stop - The stop whose binding is judged.
+   * @param bound - The line and column the debugger bound the stop at.
+   * @param citation - The stop's article excerpt.
+   * @param places - The module's break locations mapped back to the source.
+   * @param pausedThere - The generated place of the paused top frame on the bound line; `undefined` before any pause.
+   * @example
+   * ```ts
+   * this.rebuildRuleFromBreakLocations(stop, { line: 32, column: 11 }, citation, places, undefined) // stop.acceptsBoundLine(32) is then true when nothing lies between the two generated places
+   * ```
+   */
+  private rebuildRuleFromBreakLocations(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+    citation: { endLine: number },
+    places: MappedBreakLocation[],
+    pausedThere: GeneratedPosition | undefined,
+  ): void {
+    const onTheWay = this.breakLocationsOnTheWayTo(
+        stop,
+        bound,
+        places,
+        pausedThere,
+      ),
+      breakLocationLines = [...new Set(places.map((place) => place.line))].sort(
+        (left, right) => left - right,
+      )
+    const rule = createBindingLineRule(
+      stop.source.line,
+      citation,
+      stop.scan,
+      stop.armed.line,
+      breakLocationLines,
+      onTheWay && {
+        line: bound.line,
+        breakLocationLinesBetween: onTheWay.lines,
+      },
+    )
+    stop.acceptsBoundLine = rule.accepts
+    stop.bindingRefusal = rule.refusal
+    stop.judgedBinding = {
+      line: bound.line,
+      column: bound.column,
+      generated: onTheWay?.boundAt,
+    }
+    this.journalRuleFromBreakLocations(
+      stop,
+      bound.line,
+      citation,
+      onTheWay ?? breakLocationLines,
+    )
+  }
+
+  /**
+   * Finds the break locations the debugger passed on its way to a binding, for {@link rebuildRuleFromBreakLocations}: from the first generated position the sealed map puts on the line the stop was requested on, to the generated place of the binding ({@link breakLocationLinesOnTheWay}).
+   * @param stop - The stop whose binding is judged.
+   * @param bound - The line and column the debugger bound the stop at.
+   * @param places - The module's break locations mapped back to the source.
+   * @param pausedThere - The generated place of the paused top frame on the bound line; `undefined` before any pause, when the first listed place from the requested one on that the map puts at `bound` is taken.
+   * @returns The lines on the way with both generated places; `undefined` when the map names no generated position for the requested line, no listed place lies at the binding, or the binding lies before the requested place.
+   * @example
+   * ```ts
+   * this.breakLocationsOnTheWayTo(stop, { line: 32, column: 11 }, places, undefined) // { lines: [], requestedAt: { lineNumber: 30, columnNumber: 1 }, boundAt: { lineNumber: 32, columnNumber: 52 } }
+   * ```
+   */
+  private breakLocationsOnTheWayTo(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+    places: MappedBreakLocation[],
+    pausedThere: GeneratedPosition | undefined,
+  ): BreakLocationsOnTheWay | undefined {
+    return breakLocationLinesOnTheWay(
+      places,
+      // The scan reads the map in generated order, so the first position it found for the line is the earliest, also when it stopped at its size limit.
+      stop.verifier.generatedRangeOfLine(stop.armed.line).range?.start,
+      bound,
+      pausedThere,
+    )
+  }
+
+  /**
+   * Journals `breakpoint.rule-from-break-locations` for {@link rebuildRuleFromBreakLocations}: the lines of the citation after the requested one whose break location counted for the judged binding.
+   * @param stop - The stop whose rule was rebuilt.
+   * @param boundLine - The line the debugger bound the stop on.
+   * @param citation - The stop's article excerpt.
+   * @param counted - The break locations on the way to the binding, with both generated places, which the entry then names one-based; or, when the generated places were not known, every source line with a break location.
+   * @example
+   * ```ts
+   * this.journalRuleFromBreakLocations(stop, 32, citation, { lines: [], requestedAt, boundAt }) // breakLocationLines: [32]
+   * ```
+   */
+  private journalRuleFromBreakLocations(
+    stop: PreparedStop,
+    boundLine: number,
+    citation: { endLine: number },
+    counted: BreakLocationsOnTheWay | readonly number[],
+  ): void {
+    const oneBased = (place: GeneratedPosition) => ({
+      line: place.lineNumber + 1,
+      column: place.columnNumber + 1,
+    })
+    // On the way to a binding, the lines passed and the bound line itself count; without the generated places every line with a break location does.
+    const lines = 'lines' in counted ? [...counted.lines, boundLine] : counted
+    this.evidence.record('breakpoint.rule-from-break-locations', {
+      participant: stop.participant,
+      ...declaredAndArmedPlace(stop.source, stop.armed),
+      boundLine,
+      breakLocationLines: [...new Set(lines)]
+        .sort((left, right) => left - right)
+        .filter(
+          (candidate) =>
+            candidate > stop.armed.line && candidate <= citation.endLine,
+        ),
+      ...('lines' in counted
+        ? {
+            generatedPlaces: {
+              requested: oneBased(counted.requestedAt),
+              bound: oneBased(counted.boundAt),
+            },
+          }
+        : {}),
+    })
+  }
+
+  /**
+   * Judges the adapter's news about a stop's owned breakpoint once more by the debugger's own break locations when the source map alone refused the place it names, for {@link onEvent} right after a `breakpoint` event changed that place and for {@link judgeNewsRefusedBeforeModule} once the stop's module is announced: when they accept it, the breakpoint stands there ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), so its verified place is what a pause is compared with, and a pause of the stop that was held meanwhile is taken at once ({@link admitPauseHeldFor}).
+   * @param stop - The declared stop whose owned breakpoint the news is about.
+   * @param session - The session that sent the news.
+   * @example
+   * ```ts
+   * this.track(this.retakeNewsByBreakLocations(stop, session))
+   * ```
+   */
+  private async retakeNewsByBreakLocations(
+    stop: PreparedStop,
+    session: vscode.DebugSession,
+  ): Promise<void> {
+    const place = stop.breakpoint?.refusedPlace(session)
+    // News that restored an accepted place, or a refusal the break locations keep, leaves the registration as it is.
+    if (!place || !(await this.acceptsByBreakLocations(stop, place))) return
+    stop.breakpoint?.retakeRefusedPlace(session)
+    // The stop may have paused while the debugger was asked: that pause was held because its line was still refused.
+    this.admitPauseHeldFor(stop)
+  }
+
+  /**
+   * Takes a pause that is held for a stop as that stop's pause once the stop's rule accepts its place, for {@link retakeNewsByBreakLocations}: a pause that arrived while the debugger still had to answer the break-location request was held because its line was refused then, and nothing else looks at it again before the wait for the stop's own pause ends.
+   * The pause is stored as {@link admitPause} would have stored it had the judgement been finished when it arrived, so {@link pauseOfAcceptedStop} finds it at once and no adoption is journaled.
+   * @param stop - The stop whose owned breakpoint just took its verified place.
+   * @example
+   * ```ts
+   * this.admitPauseHeldFor(stop) // the pause held on line 32 becomes the pause of the stop declared on line 26
+   * ```
+   */
+  private admitPauseHeldFor(stop: PreparedStop): void {
+    const participant = this.participants[stop.participant],
+      held = this.pauseHeldForStop(stop)
+    // A pause elsewhere than the verified place stays held: the end of the wait judges it.
+    if (!held || !this.isPauseOfStop(held.event, stop)) return
+    participant.unannouncedPause = undefined
+    // The expected stop's pause becomes current only after the preceding continuation has all its receipts.
+    if (this.continuation)
+      this.pendingCdpStop = { participant: stop.participant, event: held.event }
+    else participant.stopped = { event: held.event }
   }
 
   /**
@@ -1626,13 +2259,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Words the failure of an action whose first declared stop was not hit after the input was sent; the second half of {@link unreachedFirstStopReason}, reached when no pause of that stop is held.
    * @param stop - The first declared stop.
    * @param opening - The text every form of the failure begins with.
-   * @returns The text that names the stop and, in this order, the place a moved breakpoint is bound at, a server stop's registration ({@link notHitServerFirstStopReason}), or that its line must execute.
+   * @returns The opening alone while the page stands paused at a server stop's breakpoint under the run's own resume: the deadline's text names that pause next ({@link withPagePauseUnderResume}), and it, not a line that did not run, is why no stop followed. Otherwise the text that names the stop and, in this order, the place a moved breakpoint is bound at, a server stop's registration ({@link notHitServerFirstStopReason}), or that its line must execute.
    * @example
    * ```ts
    * this.notHitFirstStopReason(stop, 'Repository input reached no verified pause') // '…: declared stop app/ui/login-form.tsx:74 was not hit within 20 s of the accepted action; its line must execute after the input'
    * ```
    */
   private notHitFirstStopReason(stop: PreparedStop, opening: string): string {
+    // The page stands paused under the run's own resume: no line of a declared stop is to blame.
+    if (this.openPageResume()) return opening
     const moved = this.movedPlace(stop),
       notHit = `was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action`
     if (moved)
@@ -1798,20 +2433,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Words the failure of a continuation whose next declared stop never paused, read when that deadline expires (see {@link beginAfter}).
    * @param stop - The declared stop that was armed inside the continuation.
-   * @returns The text that names the stop and the order rule; for a breakpoint the debugger moved to a later line it names that place and says that this line must run.
+   * @returns The text that names the stop: paused there without the debugger announcing it, or what {@link notHitNextStopReason} says.
    * @example
    * ```ts
    * this.unreachedNextStopReason(stop) // '... declared stop app/ui/login-form.tsx:74 (bound at 75:13) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation'
    * ```
    */
   private unreachedNextStopReason(stop: PreparedStop): string {
-    const moved = this.movedPlace(stop),
-      opening = `Repository continuation reached no next declared pause: declared stop ${this.declaredAt(stop)}`,
-      within = `was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`,
+    const unreached = 'Repository continuation reached no next declared pause',
+      opening = `${unreached}: declared stop ${this.declaredAt(stop)}`,
       paused = this.unannouncedStopPlace(stop)
     // The stop's own pause arrived and was admitted, so the line ran; only the debugger's announcement is missing.
     if (paused)
       return `${opening} is paused at ${paused}, but the debugger did not announce that stop within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the preceding continuation`
+    // The page stands paused under the run's own resume: no line of a declared stop is to blame, and the deadline's text names that pause next.
+    if (this.openPageResume()) return unreached
+    return this.notHitNextStopReason(stop, opening)
+  }
+
+  /**
+   * Words the failure of a continuation whose next declared stop was not hit; the second half of {@link unreachedNextStopReason}, reached when no pause of that stop is held and the page does not stand paused under the run's own resume.
+   * @param stop - The declared stop that was armed inside the continuation.
+   * @param opening - The text that names the stop.
+   * @returns The text that names the stop and the order rule; for a breakpoint the debugger moved to a later line it names that place and says that this line must run, and for a server stop that is not bound yet what its registration explains ({@link unboundServerNextStopReason}).
+   * @example
+   * ```ts
+   * this.notHitNextStopReason(stop, opening) // '... declared stop app/ui/login-form.tsx:74 was not hit within 20 s; its line must execute after the preceding continuation'
+   * ```
+   */
+  private notHitNextStopReason(stop: PreparedStop, opening: string): string {
+    const moved = this.movedPlace(stop),
+      within = `was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
     if (moved)
       return `${opening} ${this.boundAt(moved)} ${within}; the bound line, not the declared one, must execute after the preceding continuation`
     return (
@@ -1821,7 +2473,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Words the failure of a continuation whose next declared stop is a server stop that is not bound yet and whose registration explains more than the order rule; called by {@link unreachedNextStopReason} when no pause is held and the breakpoint did not move.
+   * Words the failure of a continuation whose next declared stop is a server stop that is not bound yet and whose registration explains more than the order rule; called by {@link notHitNextStopReason} when the breakpoint did not move.
    * @param stop - The declared stop that was armed inside the continuation.
    * @param opening - The text that names the stop.
    * @param within - The part that says the stop was not hit within the bound.
@@ -1967,6 +2619,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Gives every declared stop of a participant the script its sealed module was parsed as, for the `Debugger.scriptParsed` handler of {@link observeParticipant}.
    * A module that is parsed again under another script id after it was sealed fails the run, and no later stop is given the script.
+   * News about a stop's owned breakpoint that the source map alone refused before the module was announced is judged now ({@link judgeNewsRefusedBeforeModule}).
    * @param name - The participant whose runtime announced the script.
    * @param event - The announced script.
    * @example
@@ -1985,7 +2638,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return
       }
       stop.script = event
+      this.judgeNewsRefusedBeforeModule(stop)
     }
+  }
+
+  /**
+   * Judges the adapter's news about a stop's owned breakpoint by the debugger's break locations once the stop's module is announced, for {@link bindParsedScript}: the adapter can report a pending breakpoint verified before the run's own channel announces the module, and news the source map alone refuses cannot be judged without the module ({@link retakeNewsByBreakLocations}). Judged now, the stop's pause is matched as it arrives instead of being held for the whole wait for its own pause.
+   * @param stop - The stop whose module was just announced.
+   * @example
+   * ```ts
+   * this.judgeNewsRefusedBeforeModule(stop) // asks the break locations when the adapter's news named a place the map alone refuses
+   * ```
+   */
+  private judgeNewsRefusedBeforeModule(stop: PreparedStop): void {
+    const session = this.participants[stop.participant].selected
+    if (session) this.track(this.retakeNewsByBreakLocations(stop, session))
   }
 
   /** Tells {@link bindParsedScript} whether a stop's module was already announced under another script id than the one announced now. @example this.isSealedAsAnotherScript(stop, event) // false for the module's first announcement */
@@ -2074,11 +2741,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         timer: setTimeout(() => {
           if (this.transientBrowserPause === transient)
             this.fail('Unowned browser stop remained paused')
-        }, 250),
+        }, this.unownedPagePauseLimitMs(event)),
         event,
         journaled,
       }
       this.transientBrowserPause = transient
+      // The run resumes this page pause itself, so the stop the adapter reports for it is the run's.
+      this.openCausalWindow('browser')
+      this.ownPagePauseUnderResume()
       if (journaled)
         this.evidence.record('cdp.browser-pause-awaiting-adapter', {
           scriptId: event.callFrames[0]?.location.scriptId,
@@ -2086,6 +2756,108 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     this.admitPause(name, event, journaled)
+    // Asked after a server pause too, where it finds nothing to take: the page's open pause was judged when the run sent its resume or when that pause was read.
+    this.ownPagePauseUnderResume()
+  }
+
+  /**
+   * Chooses how long a page pause may last in a run that declares no browser stop, for the timer {@link onCdpPaused} starts for it.
+   * The debugger also sets a server stop's breakpoint in the page, and the page pauses there in its stub of the server module. The debug adapter reports that pause as a stop that names the server breakpoint, which the run then resumes itself ({@link resumeServerBreakpointInBrowser}); it may first resolve which breakpoints were hit, so that report can come later than the short bound of a pause nobody owns. Such a pause is known by its place before the report arrives, and has the bound of a pause of the adapter's own until then.
+   * The adapter's own breakpoint at a module's first position is set by the bare base name of the declared stop's file, so the page also pauses for a moment at the first position of every other script whose address contains that name, until the adapter has read that script's source map; such a pause is known by its one breakpoint ({@link isModuleEntryPause}) and has the adapter's bound too.
+   * @param event - The page's pause.
+   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageStubOfSource}) and for the adapter's own pause at the first position of a module named like a declared stop's file; {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
+   * @example
+   * ```ts
+   * this.unownedPagePauseLimitMs(event) // 3000 for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts, otherwise 250
+   * ```
+   */
+  private unownedPagePauseLimitMs(
+    event: Protocol.Debugger.PausedEvent,
+  ): number {
+    const scriptUrl = this.pageScriptUrlOf(event),
+      sourcePaths = this.stops.map((stop) => stop.source.path)
+    const isAdaptersOwn =
+      sourcePaths.some((path) => isPageStubOfSource(scriptUrl, path)) ||
+      isModuleEntryPause(event, scriptUrl, sourcePaths)
+    return isAdaptersOwn
+      ? REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
+      : REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS
+  }
+
+  /** Gives the address the page's runtime announced for the script a page pause is in, for {@link unownedPagePauseLimitMs}, {@link answeredResumeOfOpenPause}, {@link isPageEntryPause} and {@link isPagePauseInServerStub}; `undefined` for a pause without a frame and for a script the page never announced. @example this.pageScriptUrlOf(event) // 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts' */
+  private pageScriptUrlOf(
+    event: Protocol.Debugger.PausedEvent,
+  ): string | undefined {
+    const scriptId = event.callFrames[0]?.location.scriptId
+    return scriptId === undefined
+      ? undefined
+      : this.participants.browser.scriptUrls.get(scriptId)
+  }
+
+  /**
+   * Takes the page pause the run itself is resuming out of the bounds of a pause nobody owns and marks it with the declared server stop of that resume ({@link stopOfPageResume}); called by {@link resumeServerBreakpointInBrowser} when it sends that resume and by {@link onCdpPaused} for a page pause read while a resume has no answer yet, or in that stop's stub shortly after the debugger answered one. Such a pause can also be the one the debugger makes for itself at the module's first position before the pause at the breakpoint; it resumes that one within milliseconds, and the mark goes with the pause.
+   * In a run without browser stops such a pause runs against the short bound of an unowned page pause, and in a run with browser stops a held pause that is resumed late is taken for a competing resume. Neither holds for a pause the run resumes itself: it is bounded by the request the run sent (the adapter's answer within the active bound) and by the action's own deadline, and either end names the pause and what became of the resume ({@link pageResumeFailure}, {@link withPagePauseUnderResume}).
+   * It reads only the run's resumes and the page's open pause, never which participant paused, so {@link onCdpPaused} asks it after a server pause as well, and a server pause never makes a waiting page pause the run's own: a resume marks every open page pause when it is sent, a page pause read while one has no answer is marked when it is read, and the bound of an answered resume only runs out, so a page pause that was not taken when it was read is taken later only by a resume the run sends then. The one thing a call after another pause can change is which of two declared stops an already taken pause is kept for (the oldest resume still without an answer).
+   * @example
+   * ```ts
+   * this.ownPagePauseUnderResume() // clears the 250 ms timer of the page pause the run is resuming
+   * ```
+   */
+  private ownPagePauseUnderResume(): void {
+    const stop = this.stopOfPageResume(),
+      transient = this.transientBrowserPause,
+      held = this.participants.browser.unannouncedPause
+    if (!stop) return
+    // The timed pause of a run without browser stops loses its timer; either pause keeps the stop it was taken for.
+    if (transient) {
+      clearTimeout(transient.timer)
+      transient.resumedByRun = stop
+    }
+    if (held) held.resumedByRun = stop
+  }
+
+  /** Gives {@link ownPagePauseUnderResume} the declared server stop whose resume the page's open pause belongs to: the oldest resume without an answer, otherwise the one the debugger just answered when that pause lies in its stub ({@link answeredResumeOfOpenPause}); `undefined` when the pause is nobody's. @example this.stopOfPageResume() // the server stop declared at app/lib/actions.ts:27 */
+  private stopOfPageResume(): PreparedStop | undefined {
+    return this.pageResumesUnderWay[0] ?? this.answeredResumeOfOpenPause()
+  }
+
+  /**
+   * Finds the answered resume the page's open pause belongs to, for {@link stopOfPageResume}: the debugger's answer can be read before the page's own events (240 ms before them in a native run), so a pause that is read after the answer is not known as the run's own by a request under way. Within the debugger's bound of the answer, a pause in the stub of that stop's module is taken as the one the debugger answered for: when the debugger resumes it, as it does, it is retired like every pause; when the page never reports that resume, the run ends naming the pause and saying that the debugger answered ({@link openPageResume}).
+   * @returns The declared server stop of the last answered resume, when it was answered at most {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} ago and the page's open pause lies in the page's stub of that stop's module ({@link isPageStubOfSource}); `undefined` otherwise, also for a pause in any other script.
+   * @example
+   * ```ts
+   * this.answeredResumeOfOpenPause() // the stop declared at app/lib/actions.ts:27 for a pause in (app-pages-browser)/./app/lib/actions.ts read 240 ms after the debugger's answer
+   * ```
+   */
+  private answeredResumeOfOpenPause(): PreparedStop | undefined {
+    const answered = this.recentlyAnsweredPageResume(),
+      open = this.openPagePause()
+    if (!answered || !open) return undefined
+    return isPageStubOfSource(
+      this.pageScriptUrlOf(open.event),
+      answered.source.path,
+    )
+      ? answered
+      : undefined
+  }
+
+  /** Gives {@link answeredResumeOfOpenPause} the declared server stop of the last resume the debugger answered, while that answer is no older than the debugger's bound for a pause of its own; `undefined` afterwards and before any answer. @example this.recentlyAnsweredPageResume() // undefined 3,001 ms after the answer */
+  private recentlyAnsweredPageResume(): PreparedStop | undefined {
+    const answered = this.answeredPageResume
+    return answered &&
+      performance.now() - answered.answeredAtMs <=
+        REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
+      ? answered.stop
+      : undefined
+  }
+
+  /** Gives the page's pause that is open and that no declared stop owns: the timed one of a run that declares no browser stop, or the held one of a run that declares one; {@link answeredResumeOfOpenPause} and {@link pagePauseTakenUnderResume} read it. @example this.openPagePause()?.event // the paused event in the page's copy of app/lib/actions.ts */
+  private openPagePause():
+    | { event: Protocol.Debugger.PausedEvent; resumedByRun?: PreparedStop }
+    | undefined {
+    return (
+      this.transientBrowserPause ?? this.participants.browser.unannouncedPause
+    )
   }
 
   /** Tells whether a pause is at a declared stop's bound place: on its line by {@link isPauseAtStop}, asked with {@link pauseTarget} so a server stop the adapter already verified is compared with that line, and, once the run knows the binding, at its column by {@link isPauseAtBoundColumn}. @example this.isPauseOfStop(event, this.expectedStop('server')) // false for the adapter's entry breakpoint */
@@ -2202,6 +2974,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells {@link retireUnannouncedPause} whether a held pause was resumed by someone other than the debug adapter or the run: it lasted longer than the adapter holds a pause of its own, and the run did not resume it itself.
+   * @param held - The held pause that the runtime just resumed.
+   * @param limitMs - The longest a pause of the adapter's own lasts ({@link adapterPauseLimitMs}).
+   * @returns `true` for a pause that outlasted the bound and that the run did not resume; `false` otherwise.
+   * @example
+   * ```ts
+   * this.isResumedBySomeoneElse(held, 3_000) // false for a page pause at a server stop's breakpoint that the run resumed after 4 s
+   * ```
+   */
+  private isResumedBySomeoneElse(
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+    limitMs: number,
+  ): boolean {
+    return !held.resumedByRun && performance.now() - held.heldAtMs > limitMs
+  }
+
+  /**
    * Retires a pause that no debugger stop announced when the runtime resumes it, called by {@link onCdpResumed}.
    * The adapter made the pause for itself (a module entry breakpoint, its WebAssembly hook) and resumed it. No stop, receipt or generation of the run changes; the journal keeps where the pause was and how long it lasted (past its cap of such pauses, only their count). Nothing on either channel says who sent a resume, so a pause on the expected stop's line is never retired here, and a pause that outlasted the adapter's bound ({@link adapterPauseLimitMs}) ends the run as a manual or competing resume.
    * @param name - The participant whose runtime resumed.
@@ -2219,10 +3008,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[name],
       held = participant.unannouncedPause
     if (!held) return false
-    const limitMs = this.adapterPauseLimitMs(name)
+    const limitMs = this.adapterPauseLimitMs(name, held.event)
     participant.unannouncedPause = undefined
-    // Nothing says who sent a resume, but the adapter resumes its own pauses within milliseconds: a pause that lasted longer was resumed by someone else.
-    if (performance.now() - held.heldAtMs > limitMs) {
+    // Nothing says who sent a resume, but the adapter resumes its own pauses within milliseconds: a pause that lasted longer was resumed by someone else, unless the run resumed it itself.
+    if (this.isResumedBySomeoneElse(held, limitMs)) {
       const place = this.placeOf(name, held.event)
       this.evidence.record('cdp.unannounced-pause-resumed-late', {
         participant: name,
@@ -2249,24 +3038,84 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Gives {@link retireUnannouncedPause} the longest a pause may have lasted for its resume to be the debug adapter's own.
    * While the participant's stop is accepted and its own pause is still awaited ({@link awaitsOwnPause}), the held pause may be the announced one (bound elsewhere), which the adapter never resumes by itself, so the bound is the short one. Once that stop is captured, also after its continuation and through the after phase of the last stop, a held pause is the adapter's own again.
+   * A page pause the run knows as the adapter's own pause at a module's first position ({@link isPageEntryPause}) is never the announced one: it hit the adapter's breakpoint alone, and the adapter resumes it once it has read that script's source map, which can take longer than the short bound. It has the adapter's bound in both phases, as in a run without browser stops ({@link unownedPagePauseLimitMs}).
+   * A page pause in the page's stub of a declared server stop's module ({@link isPagePauseInServerStub}) is the pause of that server stop's breakpoint, or the adapter's own before it: the adapter resumes it, or reports it as a stop the run resumes, and may first resolve which breakpoints were hit. It has the adapter's bound in both phases too, as the same pause has in a run without browser stops.
    * @param name - The participant whose runtime resumed.
-   * @returns The bound in milliseconds.
+   * @param held - The held pause that was resumed.
+   * @returns {@link REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS} while the participant's accepted stop awaits its own pause and the held pause is neither the adapter's entry pause nor a page pause in a server stop's stub; otherwise {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS}.
    * @example
    * ```ts
-   * this.adapterPauseLimitMs('server') // 3000 while no server stop is accepted, and again once the accepted one is captured
+   * this.adapterPauseLimitMs('server', held.event) // 3000 while no server stop is accepted, and again once the accepted one is captured
    * ```
    */
-  private adapterPauseLimitMs(name: Participant): number {
-    return this.awaitsOwnPause(name)
+  private adapterPauseLimitMs(
+    name: Participant,
+    held: Protocol.Debugger.PausedEvent,
+  ): number {
+    return this.awaitsOwnPause(name) && !this.isAdaptersPagePause(name, held)
       ? REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS
       : REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
   }
 
-  /** Lists where each participant is still paused with no announced stop, server first, for the text of a deadline that expires meanwhile. @example this.unannouncedPausePlaces() // [{ participant: 'server', place: 'auth.ts:18' }] */
+  /** Tells {@link adapterPauseLimitMs} whether a held pause is one of the two page pauses that are the debug adapter's to resume or to report, whatever the phase: its own pause at a module's first position ({@link isPageEntryPause}) or a pause in the page's stub of a declared server stop's module ({@link isPagePauseInServerStub}). @example this.isAdaptersPagePause('browser', held.event) // true for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts */
+  private isAdaptersPagePause(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): boolean {
+    return (
+      this.isPageEntryPause(name, event) ||
+      this.isPagePauseInServerStub(name, event)
+    )
+  }
+
+  /**
+   * Tells {@link isAdaptersPagePause} whether a held pause is a page pause in the page's stub of a declared server stop's module ({@link isPageStubOfSource}), the pause {@link unownedPagePauseLimitMs} gives the adapter's bound in a run without browser stops.
+   * A pause in the module of the stop that is accepted now is left out: when a browser stop is declared in that same file, a held pause there may be that stop's own, announced one, which the adapter never resumes by itself.
+   * @param name - The participant whose runtime resumed.
+   * @param event - The held pause.
+   * @returns `true` for a page pause whose script is the stub of a declared server stop's module and is not the module of the stop whose turn it is; `false` otherwise, also for every server pause.
+   * @example
+   * ```ts
+   * this.isPagePauseInServerStub('browser', held.event) // true for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts and the browser stop in app/ui/login-form.tsx
+   * ```
+   */
+  private isPagePauseInServerStub(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): boolean {
+    if (
+      name !== 'browser' ||
+      isPauseInScript(event, this.stops[this.stopIndex]?.script)
+    )
+      return false
+    const scriptUrl = this.pageScriptUrlOf(event)
+    return this.stops.some(
+      (stop) =>
+        stop.participant === 'server' &&
+        isPageStubOfSource(scriptUrl, stop.source.path),
+    )
+  }
+
+  /** Tells {@link isAdaptersPagePause} and {@link pauseHeldBeforeTurn} whether a held pause is the page's pause at the debug adapter's own breakpoint at a module's first position ({@link isModuleEntryPause}, asked with the page's script addresses and the files of every declared stop); the rule was observed for the page only, so a server pause is never taken for one. @example this.isPageEntryPause('browser', held.event) // true for a pause at 1:1 of (app-pages-browser)/./app/lib/my-actions.ts that hit br:2:0:0:actions */
+  private isPageEntryPause(
+    name: Participant,
+    event: Protocol.Debugger.PausedEvent,
+  ): boolean {
+    return (
+      name === 'browser' &&
+      isModuleEntryPause(
+        event,
+        this.pageScriptUrlOf(event),
+        this.stops.map((stop) => stop.source.path),
+      )
+    )
+  }
+
+  /** Lists where each participant is still paused with no announced stop, server first, for the text of a deadline that expires meanwhile. A page pause the run itself is resuming is left out: a stop announced it, and the deadline's text names it with what became of that resume ({@link withPagePauseUnderResume}). @example this.unannouncedPausePlaces() // [{ participant: 'server', place: 'auth.ts:18' }] */
   private unannouncedPausePlaces(): UnannouncedPausePlace[] {
     return (['server', 'browser'] as const).flatMap((name) => {
       const held = this.participants[name].unannouncedPause
-      return held
+      return held && !held.resumedByRun
         ? [{ participant: name, place: this.placeOf(name, held.event) }]
         : []
     })
@@ -2321,6 +3170,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           },
           timeout: ACTIVE_TIMEOUT_MS,
         },
+        // Without this the editor saves every modified editor of the learner as the session starts, and a cited source written then no longer is the file the run sealed.
+        { suppressSaveBeforeStart: true },
       ),
     )
     this.alive()
@@ -2462,10 +3313,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private selectVerifiedServer(matches: ServerMatch[]): boolean {
-    if (!matches.length) return false
+    // A background worker shares the server's PID but cannot supply its route's native pauses.
+    const mainThreads = matches.filter(
+      (candidate) => candidate.identity.isMainThread,
+    )
+    if (!mainThreads.length) return false
     // A native adapter may expose one inspected worker through nested sessions; use only its deepest session.
-    const selected = matches.find((candidate) =>
-      matches.every((other) => {
+    const selected = mainThreads.find((candidate) =>
+      mainThreads.every((other) => {
         if (candidate.session.id === other.session.id) return true
         for (
           let ancestor = candidate.session.parentSession;
@@ -2478,7 +3333,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     if (
       !selected ||
-      matches.some(
+      mainThreads.some(
         (candidate) =>
           candidate.identity.pid !== selected.identity.pid ||
           candidate.identity.processGroup !== selected.identity.processGroup ||
@@ -2635,6 +3490,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       afterVerified: false,
     }
     this.status = 'acting'
+    // The input's first stop is the run's, so its causal window opens with the input.
+    this.openCausalWindowOfStop(this.stopIndex)
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
       this.unreachedFirstStopReason(),
     )
@@ -2642,25 +3499,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.track(this.dispatchInput())
     return { id: this.operation.id }
   }
-  /** Verifies sources, exact origin and a unique enabled center immediately before the one mouse sequence. @example await this.dispatchInput() */
+  /** Verifies sources, exact origin and a unique enabled center immediately before the one mouse sequence. The page is read once more, and only once, when the adapter's news about a server stop's breakpoint arrived during the first read and had to be judged by the debugger's break locations ({@link judgeNewsRefusedBeforeInput}); the synchronous receipt check stays the last step before the input. @example await this.dispatchInput() */
   private async dispatchInput(): Promise<void> {
     await this.verifySources()
-    for (const stop of this.stops.filter(
-      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
-    )) {
+    for (const stop of this.armedServerStops()) {
       await this.registeredStop(stop)
       this.alive()
     }
-    const target = await this.readDom('before')
-    this.alive()
-    const point = this.clickPoint(target)
-    // A result predicate already true before the click cannot prove this operation caused the result.
-    const priorResult = await this.readDom('after')
-    this.alive()
-    if (priorResult.ready)
-      throw new Error(
-        'Configured after conditions were already true before application input',
-      )
+    let point = await this.clickPointBeforeInput()
+    // The DOM reads yielded to the adapter's news: a place the source map alone refused is judged by the break locations first, and the page, which went on meanwhile, is read again.
+    if (await this.judgeNewsRefusedBeforeInput())
+      point = await this.clickPointBeforeInput()
     // DOM checks yield to native events; recheck pending authority synchronously before dispatching the first input.
     this.assertServerRegistrationsHeld()
     this.operation!.inputDispatched = true
@@ -2698,6 +3547,57 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.evidence.record('input.acknowledged')
   }
 
+  /** Lists the server stops whose owned breakpoint exists, for the receipt reads of {@link dispatchInput}, {@link judgeNewsRefusedBeforeInput} and {@link assertServerRegistrationsHeld}. @example this.armedServerStops() // [stops[0]] before the first input of a run whose first stop is a server stop */
+  private armedServerStops(): PreparedStop[] {
+    return this.stops.filter(
+      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
+    )
+  }
+
+  /**
+   * Reads the page right before the input, for {@link dispatchInput}: the before conditions with the click target, then the after conditions, which must not hold yet.
+   * @returns The center of the unique enabled click target, in viewport coordinates.
+   * @throws When the before conditions do not hold or name no point ({@link clickPoint}), and when the after conditions already hold: a result that is true before the click cannot prove this operation caused it.
+   * @example
+   * ```ts
+   * const point = await this.clickPointBeforeInput() // { x: 120, y: 48 }
+   * ```
+   */
+  private async clickPointBeforeInput(): Promise<{ x: number; y: number }> {
+    const target = await this.readDom('before')
+    this.alive()
+    const point = this.clickPoint(target)
+    // A result predicate already true before the click cannot prove this operation caused the result.
+    const priorResult = await this.readDom('after')
+    this.alive()
+    if (priorResult.ready)
+      throw new Error(
+        'Configured after conditions were already true before application input',
+      )
+    return point
+  }
+
+  /**
+   * Judges news about an armed server stop's breakpoint that arrived while {@link dispatchInput} read the page and that the source map alone refused, before the synchronous receipt check would end the run with that refusal: the debugger's break locations need a round trip, which {@link registeredStop} makes.
+   * @returns `true` when at least one armed server stop had a refused place and its receipt stands again, so the caller reads the page once more; `false` when no stop had one.
+   * @throws The registration failure of {@link registeredStop} when the break locations keep the refusal, or the registration was refused for another reason.
+   * @example
+   * ```ts
+   * if (await this.judgeNewsRefusedBeforeInput()) point = await this.clickPointBeforeInput()
+   * ```
+   */
+  private async judgeNewsRefusedBeforeInput(): Promise<boolean> {
+    const session = this.participants.server.selected
+    const refused = this.armedServerStops().filter(
+      (stop) => session && stop.breakpoint!.refusedPlace(session),
+    )
+    for (const stop of refused) {
+      await this.registeredStop(stop)
+      this.alive()
+    }
+    return refused.length > 0
+  }
+
   /**
    * Takes the point of the one mouse sequence from what the page answered for the before conditions, for {@link dispatchInput} right after that read.
    * @param target - The answer of the page for the `before` phase.
@@ -2725,9 +3625,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private assertServerRegistrationsHeld(): void {
-    for (const stop of this.stops.filter(
-      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
-    )) {
+    for (const stop of this.armedServerStops()) {
       let receipt: ReturnType<OwnedRepositoryBreakpoint['registration']>
       try {
         receipt = stop.breakpoint!.registration(
@@ -2756,6 +3654,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): void {
     for (const stop of this.stops) stop.breakpoint?.onRequest(session, request)
     const name = this.participantName(session)
+    this.closeWindowAtLearnerPause(session, request)
     if (this.cleaning || !name || !RESUME_COMMANDS.has(request.command)) return
     const participant = this.participants[name]
     this.evidence.record('dap.resume-request', {
@@ -2800,9 +3699,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[name]
     // The adapter's later news about an owned breakpoint (a pending one verified when its module loads) gives that stop its place.
     if (event.event === 'breakpoint')
-      for (const stop of this.stops) stop.breakpoint?.onEvent(session, event)
+      for (const stop of this.stops) {
+        const refusedBefore = stop.breakpoint?.refusedPlace(session)
+        stop.breakpoint?.onEvent(session, event)
+        // News of the stop's own participant that the source map alone refused is judged once more by the debugger's break locations as it arrives, so the stop's pause is matched at once and a deadline names no refusal they would lift.
+        if (
+          stop.participant === name &&
+          stop.breakpoint?.refusedPlace(session) !== refusedBefore
+        )
+          this.track(this.retakeNewsByBreakLocations(stop, session))
+      }
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body
+      // The editor sends a server stop's breakpoint to the browser session too, and the page's stub of a "use server" module maps the same line: that browser pause belongs to the server stop's breakpoint, not to a stop of the page, so it is resumed.
+      const serverStop =
+        name === 'browser'
+          ? this.serverStopOfBrowserPause(session, body)
+          : undefined
+      this.recordStopVerdict(session, participant, serverStop !== undefined)
+      if (serverStop) {
+        this.track(
+          this.resumeServerBreakpointInBrowser(session, body, serverStop),
+        )
+        return
+      }
       if (name === 'browser' && this.transientBrowserPause) {
         this.fail('Unowned browser DAP stop invalidated the declared operation')
         return
@@ -2880,6 +3800,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return
       }
       this.acceptedStop = true
+      // The accepted stop ends its causal window: the session's next stop needs an input, a continuation or a resume of the run's own.
+      codebookStopLedger.closeWindow([session.id])
       const pause = participant.gate.stop(session.id, body.threadId!)
       // The run's status stays what it was until inspect has committed the observation: a read in between must not answer a pause it can neither read nor continue.
       this.holdPauseDeadline()
@@ -2978,6 +3900,200 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (name === 'browser') this.browser.resumeViewport()
       this.beginAfter(continuation)
     }
+  }
+
+  /**
+   * Finds the declared server stop whose owned breakpoint a browser `stopped` event names, for {@link onEvent} before it judges that event as a stop of the page.
+   * The editor sends every breakpoint to every debug session, so a server stop's breakpoint is set in the browser session as well. The page holds a stub of a `"use server"` module (the client's reference to each exported action), and when the stub's source map maps the stop's line, the debugger pauses the page there when the stub is evaluated and reports a `stopped` whose breakpoint ids name that breakpoint. A pause that names no id, or also a breakpoint that is not a server stop's, is left to the run's own rules.
+   * @param session - The browser session that sent the event.
+   * @param body - The event's body: its thread and the adapter's ids of the breakpoints it hit.
+   * @returns The server stop whose breakpoint every hit id names, while the browser holds no pause, queued stop or unacknowledged continuation of its own; `undefined` otherwise.
+   * @example
+   * ```ts
+   * this.serverStopOfBrowserPause(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [12] }) // the server stop declared at app/lib/actions.ts:27 whose breakpoint the browser adapter calls 12
+   * ```
+   */
+  private serverStopOfBrowserPause(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): PreparedStop | undefined {
+    // A pause of the browser's own, or one whose thread or breakpoints are unknown, is never resumed by the run.
+    if (!Number.isInteger(body.threadId) || this.browserHoldsOwnPause())
+      return undefined
+    return this.serverStopOfEveryBreakpoint(
+      session,
+      body.hitBreakpointIds ?? [],
+    )
+  }
+
+  /**
+   * Says whether the browser holds a pause, a queued stop or an unacknowledged continuation of its own, for {@link serverStopOfBrowserPause}: a `stopped` that arrives then is never taken for a pause in a stub of a server module.
+   * @returns `true` while the browser's gate holds a pause, its announced stop is queued, or its continuation still waits for the adapter's `continued`.
+   * @example
+   * ```ts
+   * this.browserHoldsOwnPause() // true while a declared browser stop is being inspected
+   * ```
+   */
+  private browserHoldsOwnPause(): boolean {
+    return Boolean(
+      this.participants.browser.gate.current ||
+      this.pendingDapStop?.participant === 'browser' ||
+      this.awaitsContinued('browser'),
+    )
+  }
+
+  /**
+   * Finds the server stop a browser pause names with every breakpoint it hit, for {@link serverStopOfBrowserPause} once the pause is known to be none of the browser's own.
+   * @param session - The browser session that sent the `stopped` event.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit; empty when the event named none.
+   * @returns The server stop whose owned breakpoint the first id names, when every id names a server stop's breakpoint in this session; `undefined` when one of them does not, and for a pause that names no breakpoint.
+   * @example
+   * ```ts
+   * this.serverStopOfEveryBreakpoint(session, [12]) // the server stop whose breakpoint the browser adapter calls 12
+   * ```
+   */
+  private serverStopOfEveryBreakpoint(
+    session: vscode.DebugSession,
+    hitIds: readonly number[],
+  ): PreparedStop | undefined {
+    const serverStopOf = (id: number): PreparedStop | undefined =>
+      this.stops.find(
+        (stop) =>
+          stop.participant === 'server' &&
+          stop.breakpoint?.acknowledgedId(session) === id,
+      )
+    // Every breakpoint the pause hit must be a server stop's, so a breakpoint of the page's own is never resumed past.
+    return hitIds.length > 0 && hitIds.every((id) => serverStopOf(id))
+      ? serverStopOf(hitIds[0]!)
+      : undefined
+  }
+
+  /**
+   * Resumes a browser pause at a server stop's breakpoint ({@link serverStopOfBrowserPause}), for {@link onEvent}: the run sends the `continue` itself and reserves it, so {@link onRequest} does not take it for a manual resume, and journals `dap.server-breakpoint-browser-resume-requested` when it sends the request and `dap.server-breakpoint-browser-stop-resumed` once the adapter answered it: a request the adapter refuses or never answers leaves no entry that says resumed. The runtime pause it ends is retired by {@link onCdpResumed} like a pause the debugger made for itself.
+   * @param session - The browser session that is paused.
+   * @param body - The `stopped` event's body; its thread is resumed.
+   * @param stop - The server stop whose breakpoint the page paused at.
+   * @throws When the adapter refuses the `continue` or does not answer it within the bound: the failure that names the page's pause, the declared stop and what the request failed with ({@link pageResumeFailure}); {@link track} then ends the run with that reason.
+   * @example
+   * ```ts
+   * this.track(this.resumeServerBreakpointInBrowser(session, body, stop))
+   * ```
+   */
+  private async resumeServerBreakpointInBrowser(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+    stop: PreparedStop,
+  ): Promise<void> {
+    this.participants.browser.expectedResumeRequests++
+    // The run's own resume of a server stop's page pause: the stop the adapter reports next for this session is the run's.
+    codebookStopLedger.openWindow([session.id])
+    // From here on the page's pause is the run's own to resume, also when its runtime event is read only later.
+    this.pageResumesUnderWay.push(stop)
+    this.ownPagePauseUnderResume()
+    const detail = {
+      participant: 'browser',
+      threadId: body.threadId,
+      hitBreakpointIds: body.hitBreakpointIds,
+      declared: this.declaredAt(stop),
+      inputDispatched: this.operation?.inputDispatched ?? false,
+    }
+    // The journal says what happened: the request now, the resume only once the adapter answered it.
+    this.evidence.record(
+      'dap.server-breakpoint-browser-resume-requested',
+      detail,
+    )
+    try {
+      await awaitResponse(
+        session.customRequest('continue', { threadId: body.threadId }),
+        'browser resume of a server stop breakpoint',
+        this.abort.signal,
+      )
+    } catch (error) {
+      throw this.pageResumeFailure(stop, error)
+    }
+    // The debugger answered: the request is no longer under way, whatever resumes of the page were read meanwhile; a pause of the page that is read only now is still this resume's for the debugger's bound.
+    this.pageResumeEnded(stop)
+    this.answeredPageResume = { stop, answeredAtMs: performance.now() }
+    this.evidence.record('dap.server-breakpoint-browser-stop-resumed', detail)
+  }
+
+  /**
+   * Takes one resume of the run's own off those under way ({@link pageResumesUnderWay}); called by {@link resumeServerBreakpointInBrowser} once the debugger answered its request and by {@link pageResumeFailure} when the request failed.
+   * @param stop - The declared server stop of the request that ended; the oldest resume under way for that stop is taken.
+   * @example
+   * ```ts
+   * this.pageResumeEnded(stop) // 2 resumes under way become 1
+   * ```
+   */
+  private pageResumeEnded(stop: PreparedStop): void {
+    const ended = this.pageResumesUnderWay.indexOf(stop)
+    if (ended >= 0) this.pageResumesUnderWay.splice(ended, 1)
+  }
+
+  /**
+   * Words the failure of the run's own resume of a page pause at a server stop's breakpoint, for {@link resumeServerBreakpointInBrowser} when the debugger refused its request or did not answer it within the bound: the debugger's bare text ("Thread is not paused") says neither what was paused nor that the stop's declaration is not the reason.
+   * The request is no longer under way afterwards ({@link pageResumeEnded}).
+   * @param stop - The declared server stop whose breakpoint the page paused at.
+   * @param error - What the request failed with.
+   * @returns `error` itself for a cancelled run, otherwise the error that names the page's pause, the declared stop and the failure in quotation marks ({@link pagePauseUnderResumeText}); {@link track} ends the run with it.
+   * @example
+   * ```ts
+   * throw this.pageResumeFailure(stop, new Error('Thread is not paused')) // 'The page paused at …, at the breakpoint of declared server stop app/lib/actions.ts:27, …. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.'
+   * ```
+   */
+  private pageResumeFailure(stop: PreparedStop, error: unknown): unknown {
+    const pause = this.pagePauseOf(stop)
+    this.pageResumeEnded(stop)
+    if (this.abort.signal.aborted) return error
+    return new Error(
+      pagePauseUnderResumeText(pause, { failure: thrownMessage(error) }),
+    )
+  }
+
+  /**
+   * Describes the page pause the run itself is resuming for a failure text, for {@link pageResumeFailure} and {@link withPagePauseUnderResume}.
+   * The pause is the one {@link ownPagePauseUnderResume} took out of the bounds of a pause nobody owns: the timed page pause of a run without browser stops, or the held one marked as resumed by the run. Neither exists while only the debugger's `stopped` was read, and for a pause from before the action.
+   * @param stop - The declared server stop whose breakpoint the page paused at.
+   * @returns The declared stop as the failures name it ({@link declaredAt}) and the place of the page's pause ({@link placeOf}), `undefined` while that pause was not read.
+   * @example
+   * ```ts
+   * this.pagePauseOf(stop) // { declared: 'app/lib/actions.ts:27', place: 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts 11:116' }
+   * ```
+   */
+  private pagePauseOf(stop: PreparedStop): PagePauseUnderResume {
+    const taken = this.pagePauseTakenUnderResume()
+    return {
+      declared: this.declaredAt(stop),
+      place: taken && this.placeOf('browser', taken.event),
+    }
+  }
+
+  /** Gives {@link pagePauseOf} and {@link openPageResume} the page pause that is open and that {@link ownPagePauseUnderResume} took for a resume of the run's own, with the declared server stop it marked: the held one of a run that declares a browser stop, or the timed one of a run that declares none; `undefined` when no such pause is open, also while the page's own pause was not read. @example this.pagePauseTakenUnderResume()?.resumedByRun // the server stop declared at app/lib/actions.ts:27 */
+  private pagePauseTakenUnderResume():
+    | { event: Protocol.Debugger.PausedEvent; resumedByRun: PreparedStop }
+    | undefined {
+    const taken = this.openPagePause()
+    if (!taken?.resumedByRun) return undefined
+    return { event: taken.event, resumedByRun: taken.resumedByRun }
+  }
+
+  /**
+   * Tells the deadline texts whether the page stands paused under a resume of the run's own, and what became of that resume; {@link withPagePauseUnderResume}, {@link notHitFirstStopReason} and {@link unreachedNextStopReason} ask it when their deadline expires.
+   * @returns
+   * - The declared server stop of the oldest request without an answer, as `unanswered`
+   * - Otherwise, while a page pause the run took as its own is still open: its declared server stop, as `answered` (the debugger answered every request, and the page reported no resume of that pause)
+   * - `undefined` otherwise
+   * @example
+   * ```ts
+   * this.openPageResume() // { stop, outcome: 'unanswered' } while the debugger has not answered the run's continue
+   * ```
+   */
+  private openPageResume():
+    { stop: PreparedStop; outcome: 'unanswered' | 'answered' } | undefined {
+    const unanswered = this.pageResumesUnderWay[0]
+    if (unanswered) return { stop: unanswered, outcome: 'unanswered' }
+    const answeredFor = this.pagePauseTakenUnderResume()?.resumedByRun
+    return answeredFor && { stop: answeredFor, outcome: 'answered' }
   }
 
   /** Tells {@link onEvent} and {@link adapterPauseLimitMs} whether this participant's accepted stop has no pause of its own yet: {@link inspect} is still waiting for it, or took a pause held elsewhere in the stop's module and is about to judge its binding. @example this.awaitsOwnPause('server') // true during the wait of pauseOfAcceptedStop */
@@ -3208,8 +4324,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.abort.signal,
       )
     } catch (error) {
-      // An announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
-      const held = this.adoptPauseHeldInModule(stop)
+      // The stop's pause may have been taken just as the wait ended, when a judgement by break locations accepted its place ({@link admitPauseHeldFor}); otherwise an announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
+      const held =
+        this.unboundPauseInModule(participant, stop) ??
+        this.adoptPauseHeldInModule(stop)
       if (held) return held
       throw this.unreachedPauseFailure(stop, error)
     }
@@ -3283,7 +4401,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Takes a pause held for an accepted browser stop on its bound line at another column as that stop's pause without waiting for the bound of {@link pauseOfAcceptedStop}, when the debugger moved the stop's binding to that column after it was armed.
-   * The binding is read again once: only when it names the held pause's column is the pause the announced one. A pause the debugger makes for itself at another statement of that line leaves the binding where it was and keeps waiting for its resume, and a held pause on any other line is judged when the wait has ended ({@link adoptPauseHeldInModule}).
+   * The binding is read again once: only when it names the held pause's column is the pause the announced one. A binding the editor answers without a column (a stop requested at column 1, after the adapter's news) takes the column the adapter itself reported, never the held pause's own, which would prove nothing ({@link completedPlace}). A pause the debugger makes for itself at another statement of that line leaves the binding where it was and keeps waiting for its resume, and a held pause on any other line is judged when the wait has ended ({@link adoptPauseHeldInModule}).
    * @param stop - The declared stop whose `stopped` was accepted.
    * @param held - The pause held for that stop in its module ({@link pauseHeldForStop}).
    * @returns
@@ -3302,15 +4420,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       location = this.heldLocationOnBoundLine(stop, held)
     if (!location) return undefined
     // A binding that cannot be read now decides nothing: the pause stays held and the end of the wait judges it. The read has the wait's own bound, so an adapter that does not answer cannot hold the wait past it.
-    const binding = verifiedPlaceSchema.safeParse(
-      await awaitResponse(
-        participant.selected!.getDebugProtocolBreakpoint(
-          stop.breakpoint!.breakpoint,
-        ),
-        'held browser binding',
-        this.abort.signal,
-        CAPTURE_TIMEOUT_MS,
-      ).catch(() => undefined),
+    const binding = this.completedPlace(
+      stop,
+      verifiedLineSchema.safeParse(
+        await awaitResponse(
+          participant.selected!.getDebugProtocolBreakpoint(
+            stop.breakpoint!.breakpoint,
+          ),
+          'held browser binding',
+          this.abort.signal,
+          CAPTURE_TIMEOUT_MS,
+        ).catch(() => undefined),
+      ).data,
     )
     // The pause may have been resumed while the binding was read.
     if (
@@ -3363,30 +4484,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Says whether a binding read again names the column of a held pause on the stop's bound line, as the last check of {@link pauseAtMovedColumn} once that read has answered.
    * @param stop - A bound browser stop ({@link heldLocationOnBoundLine} gave the location); its bound line is read now, after the wait for the binding.
-   * @param binding - The parsed answer of the adapter; unsuccessful when the binding could not be read or is not verified at a whole position.
+   * @param binding - The place the adapter's answer names ({@link completedPlace}); `undefined` when the binding could not be read, is not verified, or names no column the adapter reported either.
    * @param location - The generated location of the held pause's top frame.
    * @returns `true` when the binding is on the bound line at the pause's column; `false` when it could not be read, is on another line, or did not move to that column.
    * @example
    * ```ts
-   * this.isBoundAtHeldColumn(stop, verifiedPlaceSchema.safeParse(undefined), location) // false
+   * this.isBoundAtHeldColumn(stop, undefined, location) // false
    * ```
    */
   private isBoundAtHeldColumn(
     stop: PreparedStop,
-    binding: ReturnType<typeof verifiedPlaceSchema.safeParse>,
+    binding: { line: number; column: number } | undefined,
     location: Protocol.Debugger.Location,
   ): boolean {
     return (
-      binding.success &&
-      binding.data.line === stop.bound!.line &&
-      binding.data.column === stop.verifier.originalColumn(location)
+      binding?.line === stop.bound!.line &&
+      binding.column === stop.verifier.originalColumn(location)
     )
   }
 
   /**
    * Finds a pause in an accepted stop's module that was held before that stop's turn, for {@link pauseOfAcceptedStop}: its line ran before the input was sent or before the preceding continuation was requested.
+   * The debug adapter's own pause at the first position of that module ({@link isPageEntryPause}) is not such a pause: no line of the stop ran, the adapter resumes it once it has read the module's source map, and its resume is measured by the adapter's own bound ({@link adapterPauseLimitMs}).
    * @param stop - The declared stop whose `stopped` was accepted.
-   * @returns The held pause, or `undefined` when none is held or it was held during the stop's turn or in another script.
+   * @returns The held pause, or `undefined` when none is held, it is the adapter's own pause at the module's first position, or it was held during the stop's turn or in another script.
    * @example
    * ```ts
    * this.pauseHeldBeforeTurn(stop) // the pause of a re-render that ran while the stop was being armed
@@ -3396,11 +4517,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): DebugParticipant['unannouncedPause'] {
     const held = this.participants[stop.participant].unannouncedPause
-    return held &&
-      held.expectedStop !== stop &&
-      isPauseInScript(held.event, stop.script)
-      ? held
-      : undefined
+    // The adapter's own pause at the module's first position is no early run of the stop's line.
+    if (!held || this.isPageEntryPause(stop.participant, held.event))
+      return undefined
+    return this.isHeldBeforeTurnOf(stop, held) ? held : undefined
+  }
+
+  /** Tells {@link pauseHeldBeforeTurn} whether a held pause lies in a stop's module and was held while that stop was not the expected one. @example this.isHeldBeforeTurnOf(stop, held) // true for the pause of a re-render that ran while the stop was being armed */
+  private isHeldBeforeTurnOf(
+    stop: PreparedStop,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): boolean {
+    return (
+      held.expectedStop !== stop && isPauseInScript(held.event, stop.script)
+    )
   }
 
   /** Words the failure of an accepted stop whose only pause came before its turn, so the agent learns that the line ran early instead of reading a timeout. @example this.earlyPauseFailure(stop, held).message // 'Declared stop app/ui/form.tsx:22 paused at app/ui/form.tsx:22 before its turn: …' */
@@ -3492,6 +4622,198 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Reads where the editor has a server stop's owned breakpoint at the stop's pause, for {@link inspect}: a registration that was pending while the stop was armed names its place only now. The answer is journaled as `breakpoint.pause-binding`, with `columnFrom` when the editor answered no column and it was taken from the adapter's report or the paused frame ({@link completedPlace}).
+   * @param stop - The paused server stop.
+   * @param pause - The identity of its pause, for the journal.
+   * @param breakpointId - The adapter's id of the acknowledged registration, which the binding must carry.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @param current - Throws when the pause is no longer the inspected one; asked once the editor answered, before the answer is journaled or judged.
+   * @returns The binding's line and column, and where the column came from.
+   * @throws "Pending server breakpoint did not bind to the captured source" when the answer is absent, unverified, under another id, in another file, or names no column and neither the adapter nor the paused frame names one on its line.
+   * @example
+   * ```ts
+   * await this.serverBindingAtPause(stop, pause, 0, pausedAt, current) // { line: 32, column: 11, columnFrom: 'adapter' } for an answer { id: 0, verified: true, line: 32 }
+   * ```
+   */
+  private async serverBindingAtPause(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+    breakpointId: number,
+    pausedAt: Protocol.Debugger.Location | undefined,
+    current: () => void,
+  ): Promise<CompletedBindingPlace> {
+    const answered = await awaitResponse(
+      this.participants[stop.participant].selected!.getDebugProtocolBreakpoint(
+        stop.breakpoint!.breakpoint,
+      ),
+      'paused server binding',
+      this.abort.signal,
+    )
+    current()
+    const place = this.ownedBindingPlace(stop, answered, breakpointId, pausedAt)
+    this.journalPauseBinding(stop, pause, breakpointId, answered, place)
+    if (!place)
+      throw new Error(
+        'Pending server breakpoint did not bind to the captured source',
+      )
+    return place
+  }
+
+  /**
+   * Reads the place of a server stop's binding from what the editor answered at its pause when that answer is the acknowledged breakpoint in the cited file, for {@link serverBindingAtPause}.
+   * @param stop - The paused server stop.
+   * @param answered - What the editor answered for the stop's owned breakpoint.
+   * @param breakpointId - The adapter's id of the acknowledged registration.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @returns The binding's whole place ({@link completedPlace}); `undefined` for an absent or unverified answer, another id, another file, and a binding whose column nothing names.
+   * @example
+   * ```ts
+   * this.ownedBindingPlace(stop, { id: 7, verified: true, line: 32, column: 11 }, 0, pausedAt) // undefined: another breakpoint's id
+   * ```
+   */
+  private ownedBindingPlace(
+    stop: PreparedStop,
+    answered: unknown,
+    breakpointId: number,
+    pausedAt: Protocol.Debugger.Location | undefined,
+  ): CompletedBindingPlace | undefined {
+    const parsed = pausedServerBindingSchema.safeParse(answered)
+    if (
+      !parsed.success ||
+      !this.isAcknowledgedInSource(stop, parsed.data, breakpointId)
+    )
+      return undefined
+    return this.completedPlace(stop, parsed.data, pausedAt)
+  }
+
+  /**
+   * Tells {@link ownedBindingPlace} whether a verified binding is the acknowledged breakpoint in the stop's cited file.
+   * @param stop - The paused server stop.
+   * @param binding - The binding's id and, when the adapter names it, its file.
+   * @param breakpointId - The adapter's id of the acknowledged registration.
+   * @returns `false` for another id and for a binding the adapter reports in another file; `true` otherwise, also when it names no file.
+   * @example
+   * ```ts
+   * this.isAcknowledgedInSource(stop, { id: 0, source: { path: '/foreign/source.ts' } }, 0) // false
+   * ```
+   */
+  private isAcknowledgedInSource(
+    stop: PreparedStop,
+    binding: z.infer<typeof pausedServerBindingSchema>,
+    breakpointId: number,
+  ): boolean {
+    if (binding.id !== breakpointId) return false
+    const path = binding.source?.path
+    // A binding the adapter reports in another file is not the cited source's.
+    return !path || resolve(path) === stop.bundle.sourcePath
+  }
+
+  /**
+   * Journals what the editor answered for a server stop's owned breakpoint at its pause as `breakpoint.pause-binding`, for {@link serverBindingAtPause}, before that answer is judged.
+   * @param stop - The paused server stop.
+   * @param pause - The identity of its pause.
+   * @param breakpointId - The adapter's id of the acknowledged registration.
+   * @param answered - What the editor answered.
+   * @param place - The binding's whole place when the answer was taken; its `columnFrom` is journaled when the column did not come from the answer itself.
+   * @example
+   * ```ts
+   * this.journalPauseBinding(stop, pause, 0, { id: 0, verified: true, line: 32 }, { line: 32, column: 11, columnFrom: 'adapter' })
+   * ```
+   */
+  private journalPauseBinding(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+    breakpointId: number,
+    answered: unknown,
+    place: CompletedBindingPlace | undefined,
+  ): void {
+    const receipt = bindingReceiptSchema.safeParse(answered)
+    this.evidence.record('breakpoint.pause-binding', {
+      participant: stop.participant,
+      sessionId: pause.sessionId,
+      expected: {
+        id: breakpointId,
+        line: stop.source.line,
+        column: stop.source.column,
+        path: stop.bundle.sourcePath,
+      },
+      ...declaredAndArmedPlace(stop.source, stop.armed),
+      returned: this.describeAnswer(answered, receipt.success),
+      observed: receipt.success ? receipt.data : undefined,
+      // The editor answered no column: the entry says where the run took it from.
+      ...(place && place.columnFrom !== 'binding'
+        ? { completedColumn: place.column, columnFrom: place.columnFrom }
+        : {}),
+    })
+  }
+
+  /** Names what the editor answered for a binding in the journal entry of {@link journalPauseBinding}. @example this.describeAnswer(undefined, false) // 'absent' */
+  private describeAnswer(
+    answered: unknown,
+    isReadable: boolean,
+  ): 'absent' | 'parsed' | 'malformed' {
+    if (answered === undefined) return 'absent'
+    return isReadable ? 'parsed' : 'malformed'
+  }
+
+  /**
+   * Reads a browser stop's binding again at a pause that was adopted away from the binding verified at arming, for {@link inspect}: the debugger may have moved that binding since.
+   * @param stop - The paused browser stop, bound at arming.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @returns The binding's whole place ({@link completedPlace}) when it is another place than the stop is bound at; `undefined` when the binding stands where it was, is unverified, or names no column and nothing names one on its line.
+   * @example
+   * ```ts
+   * await this.movedBrowserBinding(stop, pausedAt) // { line: 23, column: 5, columnFrom: 'adapter' } for a stop bound at 22:3 that the debugger moved
+   * ```
+   */
+  private async movedBrowserBinding(
+    stop: PreparedStop,
+    pausedAt: Protocol.Debugger.Location | undefined,
+  ): Promise<CompletedBindingPlace | undefined> {
+    const answered = await awaitResponse(
+      this.participants[stop.participant].selected!.getDebugProtocolBreakpoint(
+        stop.breakpoint!.breakpoint,
+      ),
+      'paused browser binding',
+      this.abort.signal,
+    )
+    const place = this.completedPlace(
+      stop,
+      verifiedLineSchema.safeParse(answered).data,
+      pausedAt,
+    )
+    return place && !this.isBoundAt(stop, place) ? place : undefined
+  }
+
+  /**
+   * Binds a paused stop at a binding first known, or found moved, at its pause, for the two branches of {@link inspect}: the stop's rule judges the place, also by the debugger's own break locations up to where the program stands ({@link acceptsByBreakLocations}).
+   * @param stop - The paused stop.
+   * @param place - Where the debugger has the stop's breakpoint now.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @param current - Throws when the pause is no longer the inspected one; asked after every wait.
+   * @throws The binding failure that names the declared stop, the place and the rule's reason ({@link refusedBindingText}) for a refused place, and the failure of {@link bindBoundPlace} for a place an earlier stop already bound.
+   * @example
+   * ```ts
+   * await this.bindAtPause(stop, { line: 32, column: 11 }, pausedAt, current)
+   * ```
+   */
+  private async bindAtPause(
+    stop: PreparedStop,
+    place: { line: number; column: number },
+    pausedAt: Protocol.Debugger.Location | undefined,
+    current: () => void,
+  ): Promise<void> {
+    // The owned breakpoint is verified in the cited file but on a line the stop's rule refuses, also by the debugger's own break locations: name where it landed and why so the declaration can be corrected.
+    const accepted = await this.acceptsByBreakLocations(stop, place, pausedAt)
+    current()
+    if (!accepted)
+      throw this.bindingFailure(stop, this.refusedBindingText(stop, place))
+    this.bindBoundPlace(stop, place)
+    await this.journalSlidePastPausableLine(stop, place)
+    current()
+  }
+
+  /**
    * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
    * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
    * @param pause - The identity the pause gate gave the accepted stop.
@@ -3515,86 +4837,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     current()
     stopped.generation = pause.generation
+    // Where the program stands in the generated module: the place of a binding first known now, and the column of one the editor answers without.
+    const pausedAt = stopped.event.callFrames[0]?.location
     if (stop.participant === 'server') {
-      const registered = await this.registeredStop(stop)
+      const registered = await this.registeredStop(stop, pausedAt)
       current()
-      const binding = await awaitResponse(
-        participant.selected!.getDebugProtocolBreakpoint(
-          stop.breakpoint!.breakpoint,
-        ),
-        'paused server binding',
-        this.abort.signal,
+      const binding = await this.serverBindingAtPause(
+        stop,
+        pause,
+        registered.breakpointId,
+        pausedAt,
+        current,
       )
-      current()
-      const receipt = bindingReceiptSchema.safeParse(binding)
-      this.evidence.record('breakpoint.pause-binding', {
-        participant: stop.participant,
-        sessionId: pause.sessionId,
-        expected: {
-          id: registered.breakpointId,
-          line: stop.source.line,
-          column: stop.source.column,
-          path: stop.bundle.sourcePath,
-        },
-        ...declaredAndArmedPlace(stop.source, stop.armed),
-        returned:
-          binding === undefined
-            ? 'absent'
-            : receipt.success
-              ? 'parsed'
-              : 'malformed',
-        observed: receipt.success ? receipt.data : undefined,
-      })
-      const parsed = verifiedPlaceSchema
-        .extend({
-          id: z.number().int(),
-          source: z.object({ path: z.string().optional() }).optional(),
-        })
-        .safeParse(binding)
-      if (
-        !parsed.success ||
-        parsed.data.id !== registered.breakpointId ||
-        (parsed.data.source?.path &&
-          resolve(parsed.data.source.path) !== stop.bundle.sourcePath)
-      )
-        throw new Error(
-          'Pending server breakpoint did not bind to the captured source',
-        )
-      // The owned breakpoint is verified in the cited file but on a line the stop's rule refuses: name where it landed and why so the declaration can be corrected.
-      if (!stop.acceptsBoundLine(parsed.data.line))
-        throw this.bindingFailure(
-          stop,
-          this.refusedBindingText(stop, parsed.data),
-        )
-      this.bindBoundPlace(stop, parsed.data)
-      await this.journalSlidePastPausableLine(stop, parsed.data)
-      current()
+      await this.bindAtPause(stop, binding, pausedAt, current)
     } else if (stopped.adopted) {
       // A browser pause away from the binding verified at arming: the debugger may have moved that binding since, so it is read again and named.
-      const moved = verifiedPlaceSchema.safeParse(
-        await awaitResponse(
-          participant.selected!.getDebugProtocolBreakpoint(
-            stop.breakpoint!.breakpoint,
-          ),
-          'paused browser binding',
-          this.abort.signal,
-        ),
-      )
+      const moved = await this.movedBrowserBinding(stop, pausedAt)
       current()
-      if (
-        moved.success &&
-        (moved.data.line !== stop.bound?.line ||
-          moved.data.column !== stop.bound.column)
-      ) {
-        if (!stop.acceptsBoundLine(moved.data.line))
-          throw this.bindingFailure(
-            stop,
-            this.refusedBindingText(stop, moved.data),
-          )
-        this.bindBoundPlace(stop, moved.data)
-        await this.journalSlidePastPausableLine(stop, moved.data)
-        current()
-      }
+      if (moved) await this.bindAtPause(stop, moved, pausedAt, current)
     }
     const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(
       participant.selected!.customRequest('stackTrace', {
@@ -3706,7 +4966,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           line: callFrame.location.lineNumber,
           column: callFrame.location.columnNumber ?? 0,
         },
-        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position, and the requested line is the declared one or the first mapped line after it.
+        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position (or, once the debugger listed its break locations, a break location between the two generated places), and the requested line is the declared one or the first mapped line after it.
         binding: {
           declaredLine: position.line,
           ...(stop.armed.line === position.line
@@ -3749,7 +5009,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Reserves the exact pause before source revalidation, then arms the next declared stop and reads the other participant's earlier pauses before it requests the resume; only an owned, retired breakpoint leads to an acknowledged continuation.
    * @param name - The participant whose committed pause is continued.
    * @param pause - The pause identity the caller copied from the run's view.
-   * @throws `conflict: stale, foreign or unverified pause` without ending the run; every later failure ends the run and is thrown on. The run's reason is "Next declared stop was not armed and no resume was sent: …" or "Next declared stop could not be continued to: … and no resume was sent. …" for the two steps that come before the resume, and "Continue uncertain: …" otherwise.
+   * @throws `conflict: stale, foreign or unverified pause` without ending the run; every later failure ends the run and is thrown on. The run's reason is "Sources were not confirmed before the continuation and no resume was sent: …", "Next declared stop was not armed and no resume was sent: …" or "Next declared stop could not be continued to: … and no resume was sent. …" for the three steps that come before the resume, and "Continue uncertain: …" otherwise.
    * @example
    * ```ts
    * await run.continue('browser', pause)
@@ -3770,7 +5030,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       throw new Error('conflict: stale, foreign or unverified pause')
     try {
-      await this.verifySources()
+      await this.confirmSourcesBeforeResume()
       this.alive()
       if (
         participant.gate.phase !== 'resume-requested' ||
@@ -3809,6 +5069,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         afterStarted: false,
       })
       participant.expectedResumeRequests++
+      // The continuation's next declared stop is the run's, so its window opens with the continuation.
+      this.openCausalWindowOfStop(this.stopIndex + 1)
       this.evidence.record('continue.accepted', pause)
       this.progressDeadline(
         ACTIVE_TIMEOUT_MS,
@@ -3826,6 +5088,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.beginAfter(continuation)
     } catch (error) {
       this.fail(`Continue uncertain: ${String(error)}`)
+      throw error
+    }
+  }
+  /**
+   * Revalidates the cited sources and the editor's documents of them as the first step of {@link continue}, before anything is armed or resumed, so that a refusal there is recorded as what it is.
+   * @throws What {@link verifySources} failed with (a `SOURCE_CHANGED` {@link StudyError} for a changed file or a changed document), after the run was failed with a sentence that says that no resume was sent: this check comes before the resume is requested, so its failure is never an uncertain continuation.
+   * @example
+   * ```ts
+   * await this.confirmSourcesBeforeResume() // run.view().failures[0] === 'Sources were not confirmed before the continuation and no resume was sent: The cited source src/theme.ts is open in the editor with text that differs ...'
+   * ```
+   */
+  private async confirmSourcesBeforeResume(): Promise<void> {
+    try {
+      await this.verifySources()
+    } catch (error) {
+      // Nothing has been armed or resumed yet, so the record says exactly that, as for a next stop that could not be armed.
+      this.fail(
+        `Sources were not confirmed before the continuation and no resume was sent: ${thrownMessage(error)}`,
+      )
       throw error
     }
   }
@@ -4175,7 +5456,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     assertConfiguredSourceDocuments(
       this.options.workspace,
-      this.definition,
+      this.definition.descriptor.sources,
       vscode.workspace.textDocuments,
     )
     if (!this.preparedSources) throw new Error('Prepared sources are absent')
@@ -4185,7 +5466,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     assertConfiguredSourceDocuments(
       this.options.workspace,
-      this.definition,
+      this.definition.descriptor.sources,
       vscode.workspace.textDocuments,
     )
   }
@@ -4370,12 +5651,85 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined
+    codebookStopLedger.closeWindow(this.participantSessionIds())
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate(true)
-    this.evidence.record('run.failed', { reason })
+    // Also after the evidence refused further events: the journal of a failed run ends with its failure (Cycle 0046 row 666).
+    this.evidence.recordFailure(reason)
     queueMicrotask(() => {
       void this.stop().catch((error) => this.failures.push(String(error)))
     })
+  }
+  /**
+   * Lists the debug sessions the run's participants are attached to, for the causal window and for the ledger's cleanup.
+   * @returns The session ids of the attached participants; an unattached participant contributes nothing.
+   * @example this.participantSessionIds() // => ['live-next-browser', 'live-next-server']
+   */
+  private participantSessionIds(): string[] {
+    return Object.values(this.participants).flatMap((participant) =>
+      participant.selected ? [participant.selected.id] : [],
+    )
+  }
+  /**
+   * Opens the causal window of a participant's debug session, so the stop it reports next is judged as the run's; the window is read by {@link CodebookStopLedger}.
+   * @param name - The participant whose next stop the run expects; `undefined` when no stop is declared next.
+   * @example this.openCausalWindow('browser') // the page pause the run resumes itself
+   */
+  private openCausalWindow(name: Participant | undefined): void {
+    const sessionId = name ? this.participants[name].selected?.id : undefined
+    if (sessionId) codebookStopLedger.openWindow([sessionId])
+  }
+  /**
+   * Opens the causal window of the participant of a declared stop; called by {@link action} for the input's first stop and by {@link continue} for the continuation's next stop.
+   * @param stopIndex - The index of the declared stop the run expects next; past the last stop, nothing opens.
+   * @example this.openCausalWindowOfStop(this.stopIndex + 1)
+   */
+  private openCausalWindowOfStop(stopIndex: number): void {
+    this.openCausalWindow(this.stops[stopIndex]?.participant)
+  }
+  /**
+   * Ends the causal window of a session whose program the learner pauses, so the stop the pause makes is the learner's; called by {@link onRequest} for every request, before it looks at resumes only. A resume the run did not make ends the window through {@link fail}.
+   * @param session - The session the request goes to.
+   * @param request - The editor's request.
+   * @example this.closeWindowAtLearnerPause(session, { type: 'request', seq: 4, command: 'pause', arguments: { threadId: 1 } })
+   */
+  private closeWindowAtLearnerPause(
+    session: vscode.DebugSession,
+    request: DebugProtocol.Request,
+  ): void {
+    if (request.command === 'pause')
+      codebookStopLedger.closeWindow([session.id])
+  }
+  /**
+   * Records in {@link CodebookStopLedger} whether a stop the adapter reported is the run's own ({@link isStopCausedByCodebook}); called by {@link onEvent} for every `stopped` event of a participant, also for a queued one it reads again once its continuation completes.
+   * @param session - The session that stopped.
+   * @param participant - Its participant, whose pending refresh marks an adapter refresh of a pause the run holds.
+   * @param isRunResumedPageStop - Whether the stop is a page pause at a server stop's breakpoint that the run resumes itself.
+   * @example this.recordStopVerdict(session, participant, serverStop !== undefined)
+   */
+  private recordStopVerdict(
+    session: vscode.DebugSession,
+    participant: DebugParticipant,
+    isRunResumedPageStop: boolean,
+  ): void {
+    codebookStopLedger.recordStop(
+      session.id,
+      isStopCausedByCodebook({
+        windowOpen: codebookStopLedger.isWindowOpen(session.id),
+        isAdapterRefresh: Boolean(
+          participant.refresh || participant.deferredRefresh,
+        ),
+        isRunResumedPageStop,
+      }),
+    )
+  }
+  /**
+   * Drops the ledger's windows and verdicts of the run's sessions, so a stop held after the run ended is no longer Codebook's; called by {@link cleanupOwned}.
+   * @example this.forgetCausalSessions()
+   */
+  private forgetCausalSessions(): void {
+    for (const sessionId of this.participantSessionIds())
+      codebookStopLedger.forget(sessionId)
   }
   /** Shares owned cleanup and permits explicit retry only after an incomplete release. @example await run.stop() */
   async stop(): Promise<void> {
@@ -4395,6 +5749,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journalLimit: REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT,
       })
     this.evidence.record('cleanup.started')
+    this.forgetCausalSessions()
     if (this.transientBrowserPause) {
       clearTimeout(this.transientBrowserPause.timer)
       this.transientBrowserPause = undefined
@@ -4557,7 +5912,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * A throw inside a timer callback would escape it and leave the run unfailed, so a reason that cannot be composed is replaced by {@link deadlineText} and a paused place that cannot be read by a text that says so.
    * @param reason - The deadline's text, or a function that reads it at expiry.
    * @param milliseconds - The deadline's length, named when the reason cannot be composed.
-   * @returns The reason, followed by where each participant is paused without an announced stop.
+   * @returns The reason, followed by where each participant is paused without an announced stop and by the page pause the run is still resuming ({@link withPagePauseUnderResume}).
    * @example
    * ```ts
    * this.expiredDeadlineText('Repository whole-run deadline exceeded', 300_000) // '… exceeded. The server is paused at auth.ts:18 without a debugger stop.'
@@ -4569,10 +5924,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): string {
     const text = deadlineText(reason, milliseconds)
     try {
-      return withUnannouncedPauses(text, this.unannouncedPausePlaces())
+      return this.withPagePauseUnderResume(
+        withUnannouncedPauses(text, this.unannouncedPausePlaces()),
+      )
     } catch (error) {
       return `${text} (where a participant is paused could not be read: ${thrownMessage(error)})`
     }
+  }
+  /**
+   * Adds to an expired deadline's text the page pause the run itself is still resuming, for {@link expiredDeadlineText}: once the run sent its resume nothing else names that pause, and a deadline that expires while the debugger has not answered would read as if a declared stop's line had not run.
+   * @param text - The deadline's text so far.
+   * @returns The text itself while the page does not stand paused under a resume of the run's own ({@link openPageResume}); otherwise the text, a period, and the sentences of {@link pagePauseUnderResumeText}, which say that the request has no answer, or that the debugger answered it and the page reported no resume.
+   * @example
+   * ```ts
+   * this.withPagePauseUnderResume('Repository input reached no verified pause') // '… pause. The page paused at …, at the breakpoint of declared server stop app/lib/actions.ts:27, …. Codebook asked the debugger to resume the page and got no answer, so the page stayed paused. Keep the declaration and start a new run.'
+   * ```
+   */
+  private withPagePauseUnderResume(text: string): string {
+    const open = this.openPageResume()
+    if (!open) return text
+    const pause = this.pagePauseOf(open.stop)
+    return `${withFinalPeriod(text)} ${pagePauseUnderResumeText(pause, open.outcome)}`
   }
   /** Rejects work after cancellation, source authority failure or trusted-workspace replacement. @example this.alive() */
   private alive(): void {

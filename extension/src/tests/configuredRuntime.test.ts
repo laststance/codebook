@@ -78,6 +78,35 @@ test("a profile folder that cannot be removed is named in the run's cleanup reco
   assert.deepEqual([...view.failures], [])
 })
 
+// Value: protects=the journal an agent reads through the run's events resource, the end of the run's recording and the replay's paused intervals for a run that fails after its evidence refused further events: the run's run.failed with its reason is the journal's last event; fails_when=ConfiguredBrowserRun.fail records run.failed as an ordinary event, which the evidence drops once it has failed, so the failed run's journal ends without its failure; why_new=Cycle 0046 row 666 (the 653 fork's finding 2); seam=configuredRuntimeHarness with the run's evidence failure set as Evidence sets it at a refusal past its bound
+test('a run whose evidence refused further events and which then fails keeps its run.failed with its reason as the last event of its journal', async (context) => {
+  // Arrange: a prepared run whose evidence has refused an event past its bound.
+  const { run } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.evidence.failure = 'Evidence buffering limit exceeded'
+
+  // Act
+  run.fail(
+    'Evidence buffering or persistence failed. Cause: Evidence buffering limit exceeded',
+  )
+  const last = run.view().events.at(-1)
+  // The release fail() schedules, and the harness's own, can save the run's manifest once the test has read the journal.
+  run.evidence.failure = undefined
+
+  // Assert
+  assert.deepEqual(
+    { type: last?.type, detail: last?.detail, status: run.view().status },
+    {
+      type: 'run.failed',
+      detail: {
+        reason:
+          'Evidence buffering or persistence failed. Cause: Evidence buffering limit exceeded',
+      },
+      status: 'failed',
+    },
+  )
+})
+
 test('a required value inspection of an object commits the stop with an object marker and the run continues to completion', async (context) => {
   // Arrange: the agent asked for value:nextTheme, which is an application object at the pause.
   const { run, useObjectValue, commands } =
@@ -935,6 +964,45 @@ test('a dirty target buffer rejects preparation before application effects witho
   assert.equal(document.isDirty, true)
 })
 
+// Cycle 0046 (row 314): red while the refusal named no file and told nobody what to do ("An open cited source document differs from the accepted article. Keep or discard your edits explicitly before a new deliberate study.").
+test('a start whose cited source is open in the editor with other text than the article cites is refused before the application starts, naming the file and what the learner and the agent do', async (context) => {
+  // Arrange
+  const { run, documents, releases, mouse } =
+      await configuredRuntimeHarness(context),
+    document = documents[0]!
+  document.text = 'const nextTheme = "light";\n'
+  document.isDirty = true
+  // Act
+  const refusal: unknown = await run.prepare().catch((error: unknown) => error)
+  await run.stop()
+  // Assert
+  assert.equal(
+    thrownMessage(refusal),
+    'The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+  )
+  assert.equal(releases.includes('application acquired'), false)
+  assert.equal(mouse.length, 0)
+  assert.equal(document.text, 'const nextTheme = "light";\n')
+  assert.equal(document.isDirty, true)
+})
+
+// Cycle 0046 (row 314): the document the editor restored in the native round was marked as modified with the file's own text; such a document refuses nothing, and since the debuggers start without saving it is not written either.
+test('a cited source that is marked as modified in the editor with the text the article cites, in other line ends, does not refuse the start', async (context) => {
+  // Arrange
+  const { run, documents } = await configuredRuntimeHarness(context),
+    document = documents[0]!
+  document.text = '\uFEFFconst nextTheme = "dark";\r\n'
+  document.isDirty = true
+  // Act
+  await run.prepare()
+  // Assert
+  assert.equal(run.view().status, 'ready')
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(document.text, '\uFEFFconst nextTheme = "dark";\r\n')
+  assert.equal(document.isDirty, true)
+  await run.stop()
+})
+
 test('a target buffer changed during the hold rejects Continue and preserves the first captured source and dirty text', async (context) => {
   // Arrange
   const { run, documents, commands } = await configuredRuntimeHarness(context)
@@ -958,6 +1026,36 @@ test('a target buffer changed during the hold rejects Continue and preserves the
   )
   assert.equal(documents[0]?.text, 'unsaved change')
   assert.equal(documents[0]?.isDirty, true)
+})
+
+// Cycle 0046 (row 324): red while a continuation that the comparison of the editor's documents refused, before any resume, ended the run as "Continue uncertain: Error: The cited source ...".
+test('a continuation refused because the learner changed a cited source in the editor during the hold ends the run saying that no resume was sent, not as an uncertain continuation', async (context) => {
+  // Arrange
+  const { run, documents, commands } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured stop',
+  )
+  documents[0]!.text = 'const nextTheme = "light";\n'
+  documents[0]!.isDirty = true
+  // Act
+  const refusal: unknown = await run
+    .continue('browser', snapshot.pause)
+    .catch((error: unknown) => error)
+  await run.stop()
+  // Assert
+  assert.equal(
+    thrownMessage(refusal),
+    'The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+  )
+  assert.equal(
+    run.view().failures[0],
+    'Sources were not confirmed before the continuation and no resume was sent: The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+  )
+  assert.equal(commands.filter((command) => command === 'continue').length, 0)
+  assert.equal(run.view().snapshots.length, 1)
 })
 
 test('manual CDP resume revokes the exact pause and after completion even before a DAP continued event arrives', async (context) => {
@@ -3116,6 +3214,42 @@ test('a stop that requires a value its own line declares, with no later line of 
   )
 })
 
+// Value: protects=a stop on a line that changes a required value, with a declaration of that name only in the comment after the code, reading the value before the change; fails_when=the declaration search reads the comment's `const nextTheme`, so the stop is requested on the next line and reads the value after the change; why_new=Cycle 0045 PL-15 (row 23 of Cycle 0046); seam=the runtime harness's adapter, which verifies a breakpoint on lines 1 and 2 and pauses where it was requested
+test('a stop on `nextTheme += "!"; // Previously: const nextTheme = "dark"` that requires nextTheme stays on its declared line, because a declaration in a comment declares nothing', async (context) => {
+  // Arrange: line 1 changes nextTheme and names a declaration only in its comment; line 2 is the next mapped line, and the citation covers lines 1 to 2.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: {
+        source:
+          'nextTheme += "!"; // Previously: const nextTheme = "dark"\nsetTheme(nextTheme);\n',
+        citationEndLine: 2,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([1, 2])
+
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  await run.stop()
+
+  // Assert: requested at editor position 0:0 (source 1:1), the declared place, and nothing journaled as moved after a declaring line.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 0, character: 0 },
+  )
+  assert.equal(
+    run
+      .view()
+      .events.some(
+        (event) => event.type === 'breakpoint.armed-after-self-declaring-line',
+      ),
+    false,
+  )
+})
+
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).
 test('a stop requested after its unmapped declared line that the debugger then binds on the next line commits there, as a stop declared on the requested line would', async (context) => {
   // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request on line 2 and verifies it at 3:1.
@@ -3375,6 +3509,44 @@ test('a stop declared on the first line of a block comment in a partly scanned m
   }, 'stop captured after the comment')
   await run.stop()
   // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 3, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 4)
+  assert.equal(snapshot.source.column, 1)
+})
+
+// Cycle 0046 (row 29, PL-21): red while the break locations of a partly scanned module were searched from the declared line, so a stop on the first line of a declaration over several lines was requested inside its initializer, where the required binding has no value yet.
+test('a stop on the first line of a declaration over several lines in a partly scanned module is requested on the first line after the whole statement that can pause, not inside its initializer', async (context) => {
+  // Arrange: lines 1 to 3 declare nextTheme through a call over several lines and line 4 reads it; the citation covers lines 1 to 4. The scan stops at its segment limit before any mapping, and the debugger lists break locations inside the initializer (line 2) and on line 4.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;AACA;AACA;AACA`,
+    fixture: {
+      source: 'const nextTheme = pick(\n  "dark",\n)\nsetTheme(nextTheme)\n',
+      citationEndLine: 4,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([2, 4])
+  listPossibleBreakLines([1, 3])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured after the declaring statement')
+  await run.stop()
+  // Assert: requested at editor position 3:0 (source 4:1), after the statement that ends on line 3.
   assert.deepEqual(
     { line: requested?.line, character: requested?.character },
     { line: 3, character: 0 },
@@ -3672,7 +3844,7 @@ test('a browser stop the debugger moved across a mapped line although its own li
   assert.equal(run.view().finalOutcome, 'demonstrated')
 })
 
-// Value: protects=a binding across a mapped line staying refused when a second request cannot help; fails_when=the binding the stop's rule refuses is accepted because the refusal moved behind the question whether the requested line can pause, and that line cannot; why_new=Cycle 0045 local review (runtime-1 #3: the refusal is now made after that question); seam=the harness's adapter, which lists break locations on lines 2 and 3 only
+// Value: protects=a binding across a mapped line staying refused when a second request cannot help; fails_when=the binding the stop's rule refuses is accepted because the refusal moved behind the question whether the requested line can pause, and that line cannot; why_new=Cycle 0045 local review (runtime-1 #3: the refusal is now made after that question); Cycle 0046 (row 8): the debugger lists a break location on line 2, so the refusal names it as one; seam=the harness's adapter, which lists break locations on lines 2 and 3 only
 test('a browser stop the debugger moved across a mapped line is refused naming that line when its own line cannot pause', async (context) => {
   // Arrange: lines 1, 2 and 3 are mapped and the stop is declared at 1:7; the debugger verifies it at 3:1 and lists no break location on line 1.
   const { run, bindFirstStopAt, listPossibleBreakLines, mouse } =
@@ -3702,7 +3874,7 @@ test('a browser stop the debugger moved across a mapped line is refused naming t
   // Assert
   assert.equal(
     refusal,
-    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a mapped position. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
+    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a break location. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
   )
   assert.equal(rearmedCount, 0)
   assert.equal(mouse.length, 0)

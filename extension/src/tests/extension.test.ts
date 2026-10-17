@@ -4,29 +4,55 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import { connectionSchema } from '../client'
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import * as cursorSkillDeployment from '../cursorSkillDeployment'
 import type * as ExtensionModule from '../extension'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 import type { StudyService } from '../service'
+import {
+  captureOwnedCursorMcpCatalogGeneration,
+  refreshCursorMcpCatalog,
+  removeOwnedCursorMcpCatalog,
+} from '../utils/refreshCursorMcpCatalog'
 
 import { createHarness } from './helpers'
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { keepLocalAddress, parseFakeUri } from './utils/fakeEditorAddresses'
 import {
   createFakeFileWatching,
   FakeRelativePattern,
 } from './utils/fakeFileWatching'
 import { loadModule } from './utils/loadModule'
+
+// Value: protects=normal installed breakpoints keeping keyboard input while native frame/value inspection commits; fails_when=the native focus default contribution is omitted or enabled; seam=normal extension manifest, not native keyboard proof.
+test('ordinary installations let native breakpoints preserve keyboard input by default', async () => {
+  // Arrange
+  const manifest = JSON.parse(
+    await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
+  )
+
+  // Act
+  const defaults = manifest.contributes.configurationDefaults
+
+  // Assert
+  assert.deepEqual(defaults, { 'debug.focusEditorOnBreak': false })
+})
 
 test('browser Wiki opening rejects a manifest from another checkout and opens a matching generated site', async () => {
   // Arrange
@@ -875,13 +901,23 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
             commands.set(name, action)
             return { dispose(): void {} }
           },
+          // The confirmation asks which commands the editor has, to say where the request goes.
+          getCommands: async () => [
+            'workbench.action.chat.open',
+            'workbench.action.chat.newChat',
+          ],
+          // The reveal of the chat and New Chat carry no options; only the request does. The chat asks for a confirmation at once, so it works on the request and the run is watched.
           executeCommand: async (name: string, options: unknown) => {
+            if (options === undefined) return undefined
             submissions.push({ name, options })
+            return { type: 'confirmation', kind: 'toolInvocation' }
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          // The update watches for signs of its own steps; this chat shows none.
+          onDidOpenTextDocument: () => ({ dispose(): void {} }),
         },
         window: {
           registerUriHandler: (handler: {
@@ -907,6 +943,8 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
             notices.push(message)
             return Promise.resolve(undefined)
           },
+          onDidOpenTerminal: () => ({ dispose(): void {} }),
+          onDidStartTerminalShellExecution: () => ({ dispose(): void {} }),
         },
       },
       './environment': { requireWorkspace: () => projectRoot },
@@ -968,8 +1006,9 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     // A second start from the command while the first run is still watched is refused, not sent as a second chat request.
     await commands.get('codebook.updateDeepWiki')!()
     assert.equal(submissions.length, 1)
+    // This editor has no progress API, so no notification watches the update and the sentence names none.
     assert.deepEqual(notices, [
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader.',
     ])
   } finally {
     await boundary.deactivate()
@@ -1994,7 +2033,7 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
     assert.ok(rejection instanceof Error)
     assert.equal(
       rejection.message,
-      `ENOENT: no such file or directory, open '${projectRoot}/[Open] (command:x)/codebook-wiki.json'`,
+      `No Wiki was found at ${projectRoot}/[Open] (command:x): its manifest (codebook-wiki.json) does not exist`,
     )
     assert.equal(rejection.message.includes(']('), false)
   } finally {
@@ -2005,7 +2044,7 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
 
 // Cycle 0045 (ST-9): one case per notification that quotes outside text. Each fails when its message reaches the editor without the plain-text wrapper of the notice helper.
 test('a Cursor chat registration that fails with an error quoting a command link warns without a clickable link', async () => {
-  // Arrange: a saved Cursor setup reconnects at activation; the skill check passes once and then names a redirected home folder.
+  // Arrange: a saved Cursor setup reconnects at activation; the skill check passes once and then names a home folder whose Cursor folder is gone.
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-registration-notice-')),
   )
@@ -2080,7 +2119,7 @@ test('a Cursor chat registration that fails with an error quoting a command link
           skillChecks += 1
           if (skillChecks > 1)
             throw new Error(
-              'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor',
+              'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
             )
           return { status: 'current' }
         },
@@ -2102,9 +2141,439 @@ test('a Cursor chat registration that fails with an error quoting a command link
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat to repair the connection.',
+      'Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
     ])
     assert.equal(warnings[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a learner whose Cursor is too old to let an extension register an MCP server, at the start that restores a saved setup and at the setup after the update; fails_when=the sentence says "use the public manual connection setup", which the README does not have, or the notice adds "Run Codebook: Set Up AI Chat to repair the connection." after it, although that setup ends the same way until Cursor is updated; or the setup in the updated Cursor does not finish; why_new=Cycle 0046 row 303; seam=the editor's `cursor.mcp`, which gets its `registerServer` between the start and the setup, as an update of Cursor gives it
+test('a Cursor that exposes no MCP registration is answered with what works, to update Cursor and run the setup again or to connect an external client as the README says, without a second setup step; in the updated Cursor the setup registers the server and finishes', async () => {
+  // Arrange: a saved Cursor setup reconnects at activation in a Cursor whose `cursor.mcp` has no `registerServer`.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-no-registration-')),
+  )
+  const commands = new Map<string, () => Promise<unknown>>(),
+    warnings: string[] = [],
+    informations: string[] = [],
+    registeredServers: string[] = []
+  let reportWarning!: () => void
+  const warned = new Promise<void>((resolveWarned) => {
+    reportWarning = resolveWarned
+  })
+  const cursorMcp: {
+    registerServer?: (definition: { name: string }) => void
+    unregisterServer: () => void
+  } = { unregisterServer(): void {} }
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<unknown>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          getConfiguration: () => ({
+            get: (_setting: string, fallback: string) => fallback,
+          }),
+        },
+        window: {
+          showWarningMessage(message: string) {
+            warnings.push(message)
+            reportWarning()
+            return Promise.resolve(undefined)
+          },
+          showInformationMessage(message: string) {
+            informations.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: { mcp: cursorMcp },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => ({
+          listening: true,
+          resourcesReleased: true,
+          descriptor: {
+            url: 'http://127.0.0.1/instance-1/mcp',
+            token: 'token-instance-1',
+            instanceId: 'instance-1',
+            workspace: directory,
+            apiVersion: '1.5',
+          },
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        deployCursorSkill: async () => ({ status: 'current' }),
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+      },
+      './utils/refreshCursorMcpCatalog': {
+        refreshCursorMcpCatalog: async () => 'generation-1',
+      },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/usr/local/bin/node',
+      },
+    },
+  )
+  try {
+    // Act: the start that restores the saved setup, and then the sentence to the letter: Cursor is updated and the setup is run again.
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await warned
+    cursorMcp.registerServer = (definition): void => {
+      registeredServers.push(definition.name)
+    }
+    const setupInTheUpdatedCursor = await commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'finished',
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      { warnings, setupInTheUpdatedCursor, registeredServers, informations },
+      {
+        warnings: [
+          'Codebook agent server started, but Cursor MCP registration failed: This Cursor version does not expose MCP registration to Codebook. Update Cursor, then run Codebook: Set Up AI Chat again. For an external MCP client, run Codebook: Start Agent Server and Codebook: Copy Agent Connection.',
+        ],
+        setupInTheUpdatedCursor: 'finished',
+        registeredServers: ['codebook-instance-1'],
+        informations: [
+          'Codebook skill and workspace setup saved. Check Cursor Customize > MCPs for Codebook before using /codebook; if absent, close and reopen this work window.',
+        ],
+      },
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a learner whose agent server is stopped (by another command of the window) while Set Up AI Chat connects Cursor; fails_when=the setup ends with "Codebook server did not start.", which is not what happened and names no step, where the same state a line earlier reads "Codebook server is not running. Run Codebook: Set Up AI Chat again."; or the setup run again does not finish; why_new=Cycle 0046, the pass over every sentence of the Cursor setup after rows 277 to 309; seam=the refresh of the Cursor MCP catalog of the loaded extension, during whose first call the server is stopped
+test('a Set Up AI Chat in Cursor whose server is stopped while it connects says that the server is not running and names the setup as the command to run again, and that setup finishes', async () => {
+  // Arrange: a Cursor window without a saved setup; the first refresh of the Cursor MCP catalog stops the agent server.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-setup-stopped-')),
+  )
+  const commands = new Map<string, () => Promise<unknown>>(),
+    informations: string[] = []
+  let isServerStoppedOnce = false
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<unknown>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          getConfiguration: () => ({
+            get: (_setting: string, fallback: string) => fallback,
+          }),
+        },
+        window: {
+          showInformationMessage(message: string) {
+            informations.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => ({
+          listening: true,
+          resourcesReleased: true,
+          descriptor: {
+            url: 'http://127.0.0.1/instance-1/mcp',
+            token: 'token-instance-1',
+            instanceId: 'instance-1',
+            workspace: directory,
+            apiVersion: '1.5',
+          },
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        deployCursorSkill: async () => ({ status: 'current' }),
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+      },
+      './utils/refreshCursorMcpCatalog': {
+        refreshCursorMcpCatalog: async () => {
+          if (!isServerStoppedOnce) {
+            isServerStoppedOnce = true
+            await commands.get('codebook.stopAgentServer')!()
+          }
+          return 'generation-1'
+        },
+      },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/usr/local/bin/node',
+      },
+    },
+  )
+  const setUp = (): Promise<string> =>
+    commands.get('codebook.setupAiChat')!().then(
+      () => 'finished',
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    )
+  try {
+    // Act: the setup during which the server is stopped, and then its sentence to the letter.
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: { get: () => undefined, update: async () => {} },
+    })
+    const setup = await setUp()
+    const setupRunAgain = await setUp()
+
+    // Assert
+    assert.deepEqual(
+      { setup, setupRunAgain, informations },
+      {
+        setup:
+          'Codebook server is not running. Run Codebook: Set Up AI Chat again.',
+        setupRunAgain: 'finished',
+        informations: [
+          'Codebook skill and workspace setup saved. Check Cursor Customize > MCPs for Codebook before using /codebook; if absent, close and reopen this work window.',
+        ],
+      },
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a learner whose agent server is stopped by another command of the window while it starts, before it is running and while it restores a saved Cursor connection; fails_when=the start ends with "Codebook server stopped while starting its chat connection." and names no step, where the start's other refusal of a stop names "Run Codebook: Start Agent Server to start it."; or that command does not start the server afterwards; why_new=Cycle 0046 row 311; seam=the server start and the skill check of the loaded extension, during which the stop command is run
+test('a start of the agent server that a stop overtakes, while the server is prepared and while a saved Cursor connection is restored, says that the server stopped and names Codebook: Start Agent Server as the command that starts it, and that command starts it', async () => {
+  // Arrange: a Cursor window with a saved setup for this workspace; a test decides at which step of a start the stop command runs.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-start-stopped-')),
+  )
+  const commands = new Map<string, () => Promise<unknown>>()
+  let stopAt: 'the preparation' | 'the restored connection' | undefined
+  let stopped: Promise<unknown> = Promise.resolve()
+  let reportReconnected!: () => void
+  const reconnected = new Promise<void>((resolveReconnected) => {
+    reportReconnected = resolveReconnected
+  })
+  const stopHereIfAskedAt = (step: NonNullable<typeof stopAt>): void => {
+    if (stopAt !== step) return
+    stopAt = undefined
+    stopped = commands.get('codebook.stopAgentServer')!()
+  }
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<unknown>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          getConfiguration: () => ({
+            get: (_setting: string, fallback: string) => fallback,
+          }),
+        },
+        window: {
+          showWarningMessage: () => Promise.resolve(undefined),
+          showInformationMessage: () => Promise.resolve(undefined),
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => {
+          // The stop is asked for while the server is prepared: it waits for this start, which then finds it.
+          stopHereIfAskedAt('the preparation')
+          return {
+            listening: true,
+            resourcesReleased: true,
+            descriptor: {
+              url: 'http://127.0.0.1/instance-1/mcp',
+              token: 'token-instance-1',
+              instanceId: 'instance-1',
+              workspace: directory,
+              apiVersion: '1.5',
+            },
+            close: async (): Promise<void> => {},
+          }
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => {
+          // The stop runs to its end while the start restores the saved Cursor connection.
+          stopHereIfAskedAt('the restored connection')
+          await stopped
+          return { status: 'current' }
+        },
+      },
+      './utils/refreshCursorMcpCatalog': {
+        refreshCursorMcpCatalog: async () => {
+          reportReconnected()
+          return 'generation-1'
+        },
+      },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/usr/local/bin/node',
+      },
+    },
+  )
+  const startOrRefusal = (): Promise<string> =>
+    commands.get('codebook.startAgentServer')!().then(
+      () => 'started',
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    )
+  try {
+    // Act: the saved setup reconnects at activation; then the server is stopped, and each start is overtaken by a stop at one of the two steps and followed by its sentence to the letter.
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await reconnected
+    await commands.get('codebook.stopAgentServer')!()
+    stopAt = 'the preparation'
+    const startStoppedWhileItWasPrepared = await startOrRefusal()
+    await stopped
+    const startAfterIt = await startOrRefusal()
+    await commands.get('codebook.stopAgentServer')!()
+    stopAt = 'the restored connection'
+    const startStoppedWhileItRestoredTheConnection = await startOrRefusal()
+    await stopped
+    const startAfterThat = await startOrRefusal()
+
+    // Assert
+    assert.deepEqual(
+      {
+        startStoppedWhileItWasPrepared,
+        startAfterIt,
+        startStoppedWhileItRestoredTheConnection,
+        startAfterThat,
+      },
+      {
+        startStoppedWhileItWasPrepared:
+          'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
+        startAfterIt: 'started',
+        startStoppedWhileItRestoredTheConnection:
+          'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
+        startAfterThat: 'started',
+      },
+    )
   } finally {
     await boundary.deactivate()
     await rm(directory, { recursive: true, force: true })
@@ -2222,7 +2691,9 @@ test('a managed Cursor skill removal whose catalog cleanup error quotes a comman
         removeManagedCursorSkill: async () => ({ status: 'removed' }),
       },
       './utils/refreshCursorMcpCatalog': {
-        captureOwnedCursorMcpCatalogGeneration: async () => 'generation-1',
+        captureOwnedCursorMcpCatalogGeneration: async () => ({
+          ownedGeneration: 'generation-1',
+        }),
         removeOwnedCursorMcpCatalog: async () => {
           throw new Error(
             "EACCES: permission denied, unlink '/home/[Open](command:x)/.cursor/mcp.json'",
@@ -2243,7 +2714,7 @@ test('a managed Cursor skill removal whose catalog cleanup error quotes a comman
 
     // Assert
     assert.deepEqual(warnings, [
-      "Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: Error: EACCES: permission denied, unlink '/home/[Open] (command:x)/.cursor/mcp.json'. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.",
+      "EACCES: permission denied, unlink '/home/[Open] (command:x)/.cursor/mcp.json'. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.",
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
@@ -2367,7 +2838,7 @@ test('a failed Open DeepWiki in Browser whose error quotes a command link shows 
 
     // Assert
     assert.deepEqual(errors, [
-      `Codebook could not open DeepWiki: Error: ENOENT: no such file or directory, open '${projectRoot}/[Open] (command:x)/codebook-wiki.json'. Generate it through /codebook in this project, then retry.`,
+      `Codebook could not open DeepWiki: Error: No Wiki was found at ${projectRoot}/[Open] (command:x): its manifest (codebook-wiki.json) does not exist. Generate it through /codebook in this project, then retry.`,
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
@@ -2544,6 +3015,9 @@ test('a workspace folder change whose cleanup error quotes a command link shows 
       },
       './studyWorkspace': {
         StudyWorkspace: class {
+          releaseUnsavedStudies(): never[] {
+            return []
+          }
           async dispose(): Promise<void> {}
         },
       },
@@ -2563,11 +3037,774 @@ test('a workspace folder change whose cleanup error quotes a command link shows 
 
     // Assert
     assert.deepEqual(errors, [
-      "Codebook cleanup incomplete: Error: EBUSY: resource busy or locked, rmdir '/storage/[Open] (command:x)'",
+      "Codebook did not finish its cleanup after the workspace's folders changed. The Repository Wiki reader could not be closed: EBUSY: resource busy or locked, rmdir '/storage/[Open] (command:x)'. Codebook goes on with new readers. If a Codebook pane stayed open, close it by hand.",
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
+  }
+})
+
+/** What the extension did to one fake Study reader of {@link activateOverRecordedReaders}. */
+interface RecordedStudyReader {
+  /** 1 for the reader made at activation, 2 for the one made after it, and so on. */
+  number: number
+  /** The services the extension attached to this reader. */
+  attachedServices: StudyService[]
+  /** The services the extension retired on this reader. */
+  retiredServices: StudyService[]
+  /** The study archives the extension gave this reader when it made it. */
+  handedOver: unknown[]
+  /** The study archives this reader could not save: a test puts them here, and the reader hands them on when the extension asks. */
+  unsaved: unknown[]
+  /** How many Study commands the extension passed to this reader. */
+  commands: number
+  isDisposed: boolean
+}
+
+/**
+ * Activates the extension over fake readers that record what the extension does with them, with the listener of changed workspace folders and the commands reachable, and with the real agent server over a temporary project.
+ * No other test of this file reaches the extension's handling of a changed workspace folder with a server: the fakes here are what that needs.
+ * @param behavior - `disposeStudyReader` runs inside every dispose of a Study reader, before the reader counts as disposed: a test holds it open, as while the reader's panes close, or throws from it. `beforeStudyReaderIsMade` runs first in every construction of a Study reader, with the number that reader would get: a test throws from it. `disposeRepositoryReader` runs inside every dispose of a Repository reader, with that reader's number, after the reader counts as disposed, as the real one marks itself first: a test throws from it. `retireStudyReader` runs inside every retirement of a server on a Study reader, after it was recorded: a test throws from it, as a reader whose last history save fails does.
+ * @returns The commands by name, `changeWorkspaceFolders` (the editor's event), every Study reader the extension made, what happened in order (`events`), how many environments a server start has built, the error notices, the services the extension started with the runtimes and the configuration of the temporary project (for a test that runs a study on a server), `deactivate` (the extension's own shutdown, for a test of it), and `close`, which deactivates the extension and removes the temporary project.
+ * @example
+ * const editor = await activateOverRecordedReaders()
+ * editor.changeWorkspaceFolders()
+ * await waitUntil(() => editor.readers.length === 2, 'the reader made again', 1_000)
+ */
+async function activateOverRecordedReaders(
+  behavior: {
+    disposeStudyReader?: (reader: RecordedStudyReader) => Promise<void>
+    beforeStudyReaderIsMade?: (number: number) => void
+    disposeRepositoryReader?: (number: number) => Promise<void>
+    retireStudyReader?: (reader: RecordedStudyReader) => Promise<void>
+  } = {},
+) {
+  const harness = await createHarness(),
+    commands = new Map<string, () => Promise<string | void>>(),
+    services: StudyService[] = [],
+    readers: RecordedStudyReader[] = [],
+    events: string[] = [],
+    errors: string[] = []
+  let changeWorkspaceFolders: (() => void) | undefined,
+    repositoryReaders = 0,
+    environments = 0
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<string | void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: (listener: () => void) => {
+            changeWorkspaceFolders = listener
+            return { dispose(): void {} }
+          },
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          private readonly number = ++repositoryReaders
+          private isDisposed = false
+          constructor() {
+            events.push(`Repository reader ${this.number} made`)
+          }
+          async storage() {
+            // As the real reader answers once it was disposed.
+            if (this.isDisposed)
+              throw new Error('Repository reader is disposed.')
+            return undefined
+          }
+          async dispose(): Promise<void> {
+            this.isDisposed = true
+            await behavior.disposeRepositoryReader?.(this.number)
+            events.push(`Repository reader ${this.number} disposed`)
+          }
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class implements RecordedStudyReader {
+          readonly number = readers.length + 1
+          readonly attachedServices: StudyService[] = []
+          readonly retiredServices: StudyService[] = []
+          readonly handedOver: unknown[]
+          unsaved: unknown[] = []
+          commands = 0
+          isDisposed = false
+          presentation = undefined
+          constructor(
+            _context: unknown,
+            _controls: unknown,
+            handedOver: unknown[] = [],
+          ) {
+            behavior.beforeStudyReaderIsMade?.(this.number)
+            this.handedOver = handedOver
+            readers.push(this)
+            events.push(`Study reader ${this.number} made`)
+          }
+          async action(): Promise<void> {
+            this.commands += 1
+          }
+          releaseUnsavedStudies(): unknown[] {
+            events.push(
+              `Study reader ${this.number} handed its unsaved studies on`,
+            )
+            return this.unsaved.splice(0)
+          }
+          async attach(service: StudyService): Promise<void> {
+            this.attachedServices.push(service)
+          }
+          async retire(service: StudyService): Promise<void> {
+            this.retiredServices.push(service)
+            await behavior.retireStudyReader?.(this)
+          }
+          async dispose(): Promise<void> {
+            events.push(`Study reader ${this.number}: dispose started`)
+            await behavior.disposeStudyReader?.(this)
+            this.isDisposed = true
+            events.push(`Study reader ${this.number} disposed`)
+          }
+        },
+      },
+      './environment': {
+        requireWorkspace: () => harness.directory,
+        createEnvironment: async () => {
+          environments += 1
+          return { ...harness.service.environment, dispose(): void {} }
+        },
+      },
+      './server': {
+        startServer: async (service: StudyService) => {
+          service.repository = harness.service.repository
+          services.push(service)
+          return startServer(service)
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: harness.directory },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  assert.ok(changeWorkspaceFolders)
+  return {
+    commands,
+    changeWorkspaceFolders,
+    readers,
+    events,
+    environments: (): number => environments,
+    errors,
+    services,
+    runtimes: harness.runtimes,
+    configuration: harness.configuration,
+    /** Shuts the extension down as a closing window does; a test that calls it reads how the shutdown ended. */
+    deactivate: (): Promise<void> => boundary.deactivate(),
+    async close(): Promise<void> {
+      // The temporary project is removed also when the shutdown fails.
+      try {
+        await boundary.deactivate()
+      } finally {
+        await harness.close()
+      }
+    },
+  }
+}
+
+// Value: protects=a server the learner starts while the workspace's folders change serving the Study reader that lives: its runs are shown, checkpointed and presented by that reader; fails_when=the start runs while the old reader is being disposed, so its service is attached to the disposed reader and the reader made after it has no service until the next stop; why_new=Cycle 0046 row 279 (read in the code while working on row 267); seam=the listener of changed workspace folders and the Start Agent Server command over fake readers (activateOverRecordedReaders), with the first reader's dispose held open as while its panes close
+test('a server started while a change of the workspace’s folders is handled waits for the readers to be replaced and is attached to the Study reader that lives, not to the one being disposed', async () => {
+  // Arrange: the workspace's folders changed, and the dispose of the first Study reader is still closing its panes.
+  let finishDispose!: () => void
+  const disposeHeld = new Promise<void>((resolveHeld) => {
+    finishDispose = resolveHeld
+  })
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: (reader) =>
+      reader.number === 1 ? disposeHeld : Promise.resolve(),
+  })
+  try {
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Study reader 1: dispose started'),
+      'the dispose of the first Study reader',
+      1_000,
+    )
+    // Act: the learner runs Start Agent Server meanwhile; then the panes have closed.
+    const starting = editor.commands.get('codebook.startAgentServer')!()
+    // A start that does not wait for the readers has built its environment and attached its service well within this time.
+    await Promise.race([
+      starting.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolveGrace) => setTimeout(resolveGrace, 150)),
+    ])
+    const environmentsBuiltMeanwhile = editor.environments()
+    finishDispose()
+    const descriptorPath = await starting
+    // The learner's next action works: Stop Agent Server retires the service on the reader it was attached to.
+    await editor.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.deepEqual(
+      editor.readers.map((reader) => ({
+        number: reader.number,
+        isDisposed: reader.isDisposed,
+        attached: reader.attachedServices.length,
+        retired: reader.retiredServices.length,
+      })),
+      [
+        { number: 1, isDisposed: true, attached: 0, retired: 0 },
+        { number: 2, isDisposed: false, attached: 1, retired: 1 },
+      ],
+    )
+    // The start built nothing before the readers were replaced, and then answered as every start does.
+    assert.equal(environmentsBuiltMeanwhile, 0)
+    assert.equal(typeof descriptorPath, 'string')
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    finishDispose()
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner after a change of the workspace's folders on which the Repository Wiki reader could not be closed: the failure is told with what Codebook did, both readers are made anew, the new Study reader has the archives the old one could not save, and the agent server starts; fails_when=the failure ends the handling before the reader's variable is cleared and before the Study reader is replaced, so every later start fails with "Repository reader is disposed." and the Study reader of the folders that were left stays in use, until the folders change again; why_new=Cycle 0046 row 312 (read in the code while working on row 298); seam=the listener of changed workspace folders and Start Agent Server over fake readers (activateOverRecordedReaders), whose first Repository reader's dispose throws
+test('when the Repository Wiki reader cannot be closed during a change of the workspace’s folders, the learner is told, both readers are made anew, the new Study reader is given the archives the old one could not save, and the next start works', async () => {
+  // Arrange: the Study reader holds one archive it could not save, and the Repository Wiki reader cannot be closed at the first attempt.
+  let disposals = 0
+  const editor = await activateOverRecordedReaders({
+    disposeRepositoryReader: async (): Promise<void> => {
+      disposals += 1
+      if (disposals === 1)
+        throw new Error(
+          "EBUSY: resource busy or locked, rmdir '/storage/books'",
+        )
+    },
+  })
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change; then the learner runs Start Agent Server.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the reader that could not be closed',
+      1_000,
+    )
+    const eventsAfterTheChange = [...editor.events]
+    const start = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!().then(
+      (descriptorPath) => typeof descriptorPath,
+      (error: unknown) => String(error),
+    )
+    // Assert
+    assert.deepEqual(editor.errors, [
+      "Codebook did not finish its cleanup after the workspace's folders changed. The Repository Wiki reader could not be closed: EBUSY: resource busy or locked, rmdir '/storage/books'. Codebook goes on with new readers. If a Codebook pane stayed open, close it by hand.",
+    ])
+    assert.deepEqual(eventsAfterTheChange, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Study reader 1 handed its unsaved studies on',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+      'Study reader 2 made',
+      'Repository reader 2 made',
+    ])
+    assert.equal(start, 'string')
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(
+        editor.readers.map((reader) => ({
+          number: reader.number,
+          handedOver: reader.handedOver,
+          attached: reader.attachedServices.length,
+        })),
+      ),
+      [
+        { number: 1, handedOver: [], attached: 0 },
+        { number: 2, handedOver: [unsavedStudy], attached: 1 },
+      ],
+    )
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner after a change of the workspace's folders during which the agent server was stopped but its last history save failed: the failure is told as a server that is stopped, both readers are made anew, the study that was not saved goes to the new Study reader, and the agent server starts again; fails_when=the failed stop ends the handling, so the readers of the folders that were left stay in use and the notice names no state; why_new=Cycle 0046 row 312 (each step of the handling runs whatever the step before it did); seam=the listener of changed workspace folders with Start Agent Server over fake readers (activateOverRecordedReaders), whose first Study reader fails the retirement of its server
+test('when the agent server is stopped for a change of the workspace’s folders and its last history save fails, the learner is told, both readers are made anew with the unsaved archives handed over, and the next start works', async () => {
+  // Arrange: an agent server runs, and the Study reader cannot save its last history when the server is retired.
+  let retirements = 0
+  const editor = await activateOverRecordedReaders({
+    retireStudyReader: async (): Promise<void> => {
+      retirements += 1
+      if (retirements === 1)
+        throw new Error(
+          'Runtime released; final reader history was not saved: Error: disk is read-only',
+        )
+    },
+  })
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    await editor.commands.get('codebook.startAgentServer')!()
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change; then the learner runs Start Agent Server.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the stop whose history save failed',
+      1_000,
+    )
+    const readersAfterTheChange = editor.readers.length
+    const start = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!().then(
+      (descriptorPath) => typeof descriptorPath,
+      (error: unknown) => String(error),
+    )
+    // Assert
+    assert.deepEqual(editor.errors, [
+      "Codebook did not finish its cleanup after the workspace's folders changed. The agent server was stopped, but not all of its cleanup was done: Runtime released; final reader history was not saved: Error: disk is read-only. Codebook goes on with new readers.",
+    ])
+    assert.equal(readersAfterTheChange, 2)
+    assert.equal(start, 'string')
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(
+        editor.readers.map((reader) => ({
+          number: reader.number,
+          handedOver: reader.handedOver,
+          attached: reader.attachedServices.length,
+        })),
+      ),
+      [
+        { number: 1, handedOver: [], attached: 1 },
+        { number: 2, handedOver: [unsavedStudy], attached: 1 },
+      ],
+    )
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner after a change of the workspace's folders during which the agent server could not be released: the notice sends to Stop Agent Server, both readers are made anew, a start refuses with the same step until that stop, and after it the server is retired on the reader that lives and starts again; fails_when=the failed stop ends the handling with a notice that names no step and with the old readers left in use; why_new=Cycle 0046 row 312 (each step of the handling runs whatever the step before it did; the notice is true for the failure it tells); seam=the listener of changed workspace folders with Start and Stop Agent Server over fake readers (activateOverRecordedReaders) and a run whose runtime cannot be stopped
+test('when the agent server cannot be released for a change of the workspace’s folders, the learner is told to run Stop Agent Server again, both readers are made anew, and after that stop the server is retired on the new reader and starts again', async () => {
+  // Arrange: an agent server runs a study whose runtime cannot be stopped.
+  const editor = await activateOverRecordedReaders()
+  let restoreRuntimeStop: (() => void) | undefined
+  try {
+    await editor.commands.get('codebook.startAgentServer')!()
+    const service = editor.services[0]!
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: editor.configuration,
+      key: 'owned-run',
+    })
+    await service.record(receipt).preparation
+    const runtime = editor.runtimes[0]!,
+      stopRuntime = runtime.stop.bind(runtime)
+    restoreRuntimeStop = (): void => {
+      runtime.stop = stopRuntime
+    }
+    runtime.stop = async () => {
+      throw new Error('Owned process still alive')
+    }
+    // Act: the workspace's folders change; the learner runs Start Agent Server, then the runtime can be stopped and the learner runs Stop Agent Server and Start Agent Server.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the server that could not be released',
+      1_000,
+    )
+    const readersAfterTheChange = editor.readers.length
+    const startWhileOwned = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!().then(
+      () => 'started',
+      (error: unknown) => String(error),
+    )
+    restoreRuntimeStop()
+    await editor.commands.get('codebook.stopAgentServer')!()
+    const startAfterTheStop = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!().then(
+      (descriptorPath) => typeof descriptorPath,
+      (error: unknown) => String(error),
+    )
+    // Assert
+    // The cause is the server's own text, which begins with "Error:" because the server joins what each part of its shutdown threw.
+    assert.deepEqual(editor.errors, [
+      "Codebook did not finish its cleanup after the workspace's folders changed. The agent server could not be stopped completely: Error: Owned shutdown remains incomplete. Run Codebook: Stop Agent Server again before you start it. Codebook goes on with new readers.",
+    ])
+    assert.equal(readersAfterTheChange, 2)
+    assert.equal(
+      startWhileOwned,
+      'Error: Previous server shutdown is incomplete. Retry Codebook: Stop Agent Server before starting a new instance.',
+    )
+    assert.equal(startAfterTheStop, 'string')
+    assert.deepEqual(
+      editor.readers.map((reader) => ({
+        number: reader.number,
+        attached: reader.attachedServices.length,
+        retired: reader.retiredServices.length,
+      })),
+      [
+        { number: 1, attached: 1, retired: 0 },
+        { number: 2, attached: 1, retired: 1 },
+      ],
+    )
+  } finally {
+    restoreRuntimeStop?.()
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner's writes and playback position when the window closes while the agent server's stop fails: the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, both run and are waited for, and the editor is still told the stop's failure; fails_when=the stop's failure ends the shutdown before either dispose, so a write that is under way is not waited for before the extension host ends; why_new=Cycle 0046 row 315 (read in the code while working on row 312, whose fault it shares); seam=the extension's deactivation over fake readers (activateOverRecordedReaders) whose disposes record what they save, with a server whose retirement fails
+test('when the agent server’s stop fails as the window closes, the Repository Wiki reader’s dispose still waits for the learner’s write under way and the Study reader’s dispose still saves the playback position, and the shutdown ends with the stop’s failure', async () => {
+  // Arrange: an agent server runs; its last history save fails when it is retired; a learner write is under way that the Repository Wiki reader's dispose waits for, and the Study reader's dispose saves the playback position.
+  const saved: string[] = []
+  let retirements = 0
+  const editor = await activateOverRecordedReaders({
+    retireStudyReader: async (): Promise<void> => {
+      retirements += 1
+      if (retirements === 1)
+        throw new Error(
+          'Runtime released; final reader history was not saved: Error: disk is read-only',
+        )
+    },
+    disposeRepositoryReader: async (): Promise<void> => {
+      // The write ends a moment after the dispose began to wait for it.
+      await new Promise<void>((resolveWrite) => setTimeout(resolveWrite, 20))
+      saved.push('the learner’s write under way')
+    },
+    disposeStudyReader: async (): Promise<void> => {
+      saved.push('the playback position')
+    },
+  })
+  try {
+    await editor.commands.get('codebook.startAgentServer')!()
+    // Act: the window closes.
+    const shutdown = await editor.deactivate().then(
+      () => 'shut down without a failure',
+      (error: unknown) => String(error),
+    )
+    const savedWhenTheShutdownEnded = [...saved]
+    // Assert
+    assert.equal(
+      shutdown,
+      'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+    )
+    assert.deepEqual(savedWhenTheShutdownEnded, [
+      'the learner’s write under way',
+      'the playback position',
+    ])
+    assert.deepEqual(editor.events, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+    ])
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the editor's log of a shutdown in which several steps fail naming the failure that came first, the one the later failures may follow from, while every later step still runs; fails_when=the last failure replaces the first, as nested finally blocks do, or a failed dispose keeps the next reader from being disposed; why_new=Cycle 0046 row 315 (the first failure is thrown at the end); seam=the extension's deactivation over fake readers (activateOverRecordedReaders) whose server's retirement and Repository Wiki reader's dispose both fail
+test('when the agent server’s stop and the Repository Wiki reader’s dispose both fail as the window closes, the Study reader is still disposed and the shutdown ends with the first failure, the stop’s', async () => {
+  // Arrange: an agent server runs; its retirement fails, and so does the Repository Wiki reader's dispose.
+  let retirements = 0,
+    disposals = 0
+  const editor = await activateOverRecordedReaders({
+    retireStudyReader: async (): Promise<void> => {
+      retirements += 1
+      if (retirements === 1)
+        throw new Error(
+          'Runtime released; final reader history was not saved: Error: disk is read-only',
+        )
+    },
+    disposeRepositoryReader: async (): Promise<void> => {
+      disposals += 1
+      if (disposals === 1)
+        throw new Error(
+          "EBUSY: resource busy or locked, rmdir '/storage/books'",
+        )
+    },
+  })
+  try {
+    await editor.commands.get('codebook.startAgentServer')!()
+    // Act: the window closes.
+    const shutdown = await editor.deactivate().then(
+      () => 'shut down without a failure',
+      (error: unknown) => String(error),
+    )
+    const eventsWhenTheShutdownEnded = [...editor.events]
+    // Assert
+    assert.equal(
+      shutdown,
+      'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+    )
+    assert.deepEqual(eventsWhenTheShutdownEnded, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+    ])
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner who runs Stop Agent Server while a start still waits for a change of the workspace's folders: no server comes up afterwards, the start says why, and the next start works; fails_when=the stop finds nothing running and the start that waited goes on once the readers are replaced, so a server runs after the learner stopped it; why_new=Cycle 0046 row 301 (named as a limit of row 279's fix); seam=the listener of changed workspace folders with Start and Stop Agent Server over fake readers (activateOverRecordedReaders), with the first reader's dispose held open as while its panes close
+test('a start that waits for a change of the workspace’s folders does not go on when Stop Agent Server is run during the wait: no server comes up, the start says why, and the next start works', async () => {
+  // Arrange: the workspace's folders changed, the first Study reader is still closing its panes, and the learner's Start Agent Server waits.
+  let finishDispose!: () => void
+  const disposeHeld = new Promise<void>((resolveHeld) => {
+    finishDispose = resolveHeld
+  })
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: (reader) =>
+      reader.number === 1 ? disposeHeld : Promise.resolve(),
+  })
+  try {
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Study reader 1: dispose started'),
+      'the dispose of the first Study reader',
+      1_000,
+    )
+    const waitingStart = editor.commands.get(
+      'codebook.startAgentServer',
+    )!().then(
+      () => 'started',
+      (error: unknown) => String(error),
+    )
+    // Act: the learner runs Stop Agent Server during the wait; the panes have closed; then the learner runs Start Agent Server again.
+    await editor.commands.get('codebook.stopAgentServer')!()
+    finishDispose()
+    const outcomeOfWaitingStart = await waitingStart
+    const serversAfterTheStop = {
+      environmentsBuilt: editor.environments(),
+      attached: editor.readers.map((reader) => reader.attachedServices.length),
+    }
+    const descriptorPath = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!()
+    // Assert
+    assert.equal(
+      outcomeOfWaitingStart,
+      "Error: Codebook server was not started: a stop was asked for while the start waited for the workspace's folders to change. Run Codebook: Start Agent Server to start it.",
+    )
+    assert.deepEqual(serversAfterTheStop, {
+      environmentsBuilt: 0,
+      attached: [0, 0],
+    })
+    assert.equal(typeof descriptorPath, 'string')
+    assert.deepEqual(
+      editor.readers.map((reader) => reader.attachedServices.length),
+      [0, 1],
+    )
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    finishDispose()
+    await editor.close()
+  }
+})
+
+// Value: protects=two changes of the workspace's folders in a row each replacing the readers in full: every reader is disposed once before the next is made; fails_when=the second change is handled while the first still disposes, so both dispose the same Study reader and the later one clears a reader the earlier one had just made, without disposing it; why_new=Cycle 0046 row 279 (the changes are handled one after the other, which a waiting start relies on); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), with the first Study reader's dispose held open
+test('a second change of the workspace’s folders that arrives while the first is handled is handled after it, so no reader is disposed twice or cleared without being disposed', async () => {
+  // Arrange: the first change is disposing the first Study reader.
+  let finishDispose!: () => void
+  const disposeHeld = new Promise<void>((resolveHeld) => {
+    finishDispose = resolveHeld
+  })
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: (reader) =>
+      reader.number === 1 ? disposeHeld : Promise.resolve(),
+  })
+  try {
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Study reader 1: dispose started'),
+      'the dispose of the first Study reader',
+      1_000,
+    )
+    // Act: the folders change again, and then the first reader's panes have closed.
+    editor.changeWorkspaceFolders()
+    await new Promise<void>((resolveTask) => setImmediate(resolveTask))
+    finishDispose()
+    // Changes handled at once make no third Repository reader: the events below then say what happened instead.
+    await waitUntil(
+      () => editor.events.includes('Repository reader 3 made'),
+      'the readers of the second change',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.deepEqual(editor.events, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1 handed its unsaved studies on',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+      'Study reader 2 made',
+      'Repository reader 2 made',
+      'Repository reader 2 disposed',
+      'Study reader 2 handed its unsaved studies on',
+      'Study reader 2: dispose started',
+      'Study reader 2 disposed',
+      'Study reader 3 made',
+      'Repository reader 3 made',
+    ])
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    finishDispose()
+    await editor.close()
+  }
+})
+
+// Value: protects=the study archives a Study reader could not save when the workspace's folders change: the extension takes them from the reader before it disposes it and makes the next Study reader with them at once, so the learner reads "History not saved: …" again without running a command, and the Study views have their provider again; fails_when=the handling disposes the reader with its archives, or makes no Study reader until a later command; why_new=Cycle 0046 row 278 (the reader that is disposed hands its pending archives on); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), with a marker in place of an archive
+test('after a change of the workspace’s folders the Study reader is made again at once and is given the study archives the disposed reader could not save', async () => {
+  // Arrange: the Study reader holds one archive it could not save.
+  const editor = await activateOverRecordedReaders()
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change; no command is run.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Repository reader 2 made'),
+      'the readers made again',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.deepEqual(editor.events, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1 handed its unsaved studies on',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+      'Study reader 2 made',
+      'Repository reader 2 made',
+    ])
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(editor.readers.map((reader) => reader.handedOver)),
+      [[], [unsavedStudy]],
+    )
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner after a change of the workspace's folders on which the Study reader's panes could not be closed: the failure is told, a new Study reader stands in its place at once, has the archives the old one could not save, answers the next Study command, and is the reader a server started afterwards is attached to; fails_when=the reader whose dispose threw stays in its place, disposed, so every Study command answers "The study workspace was closed; repeat the action explicitly if needed." and a later server is attached to it, until the folders change again; why_new=Cycle 0046 row 298 (found while working on row 278, whose test of this way waited for a second change); seam=the listener of changed workspace folders, a Study command and Start Agent Server over fake readers (activateOverRecordedReaders), whose first dispose of the first Study reader throws
+test('when the dispose of the Study reader fails during a change of the workspace’s folders, the learner is told, and the Study reader made in its place is given the archives the old one could not save, answers the next Study command and is the one a server started afterwards is attached to', async () => {
+  // Arrange: the Study reader holds one archive it could not save, and its panes cannot be closed at the first attempt.
+  let disposals = 0
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: async (): Promise<void> => {
+      disposals += 1
+      if (disposals === 1) throw new Error('The panes could not be closed.')
+    },
+  })
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change and the dispose fails; then the learner presses Retry storage / refresh and runs Start Agent Server.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the failed dispose',
+      1_000,
+    )
+    const eventsAfterFailedDispose = [...editor.events]
+    await editor.commands.get('codebook.study.retry')!()
+    const descriptorPath = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!()
+    // Assert
+    assert.deepEqual(editor.errors, [
+      "Codebook did not finish its cleanup after the workspace's folders changed. The Study workspace could not be closed: The panes could not be closed. Codebook goes on with new readers. If a Codebook pane stayed open, close it by hand.",
+    ])
+    assert.deepEqual(eventsAfterFailedDispose, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1 handed its unsaved studies on',
+      'Study reader 1: dispose started',
+      'Study reader 2 made',
+      'Repository reader 2 made',
+    ])
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(
+        editor.readers.map((reader) => ({
+          number: reader.number,
+          handedOver: reader.handedOver,
+          commands: reader.commands,
+          attached: reader.attachedServices.length,
+        })),
+      ),
+      [
+        { number: 1, handedOver: [], commands: 0, attached: 0 },
+        { number: 2, handedOver: [unsavedStudy], commands: 1, attached: 1 },
+      ],
+    )
+    assert.equal(typeof descriptorPath, 'string')
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the study archives a disposed Study reader could not save when the reader after it cannot be made at once: they stay with the extension, and the Study reader that the learner's next command makes is given them; fails_when=the archives are taken out of the extension's keeping before the new reader exists, so a constructor that throws loses them; why_new=Cycle 0046 row 278 (no way through the handling may lose an archive); seam=the listener of changed workspace folders and a Study command over fake readers (activateOverRecordedReaders), whose second Study reader cannot be made once
+test('when the Study reader cannot be made after a change of the workspace’s folders, the archives the disposed reader could not save are kept and given to the Study reader the next command makes', async () => {
+  // Arrange: the Study reader holds one archive it could not save, and the reader after it cannot be made at the first attempt.
+  let attempts = 0
+  const editor = await activateOverRecordedReaders({
+    beforeStudyReaderIsMade: (number): void => {
+      if (number !== 2) return
+      attempts += 1
+      if (attempts === 1)
+        throw new Error('The Learning summary could not be registered.')
+    },
+  })
+  const unsavedStudy = { archive: { id: 'unsaved-study' } }
+  try {
+    editor.readers[0]!.unsaved = [unsavedStudy]
+    // Act: the workspace's folders change and the learner is told that the cleanup is incomplete; then the learner presses Retry storage / refresh.
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.errors.length === 1,
+      'the notice of the reader that could not be made',
+      1_000,
+    )
+    const readersAfterFailedChange = editor.readers.length
+    await editor.commands.get('codebook.study.retry')!()
+    // Assert
+    assert.deepEqual(editor.errors, [
+      "Codebook did not finish its cleanup after the workspace's folders changed. Codebook's readers could not be made again: The Learning summary could not be registered. The next Codebook command makes them.",
+    ])
+    assert.equal(readersAfterFailedChange, 1)
+    // Cloned: the list a reader was given was made inside the loaded extension.
+    assert.deepEqual(
+      structuredClone(editor.readers.map((reader) => reader.handedOver)),
+      [[], [unsavedStudy]],
+    )
+  } finally {
+    await editor.close()
   }
 })
 
@@ -2659,7 +3896,7 @@ test('a reconnect that finds the Cursor skill edited says once what happened and
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook AI chat did not reconnect: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      `Codebook AI chat did not reconnect: Cursor skill is missing or was changed: ${join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
     ])
   } finally {
     await boundary.deactivate()
@@ -2669,7 +3906,7 @@ test('a reconnect that finds the Cursor skill edited says once what happened and
 
 // Cycle 0045 (ST-9): the tenth notification that quotes outside text.
 test('a reconnect that fails with an error quoting a command link warns without a clickable link', async () => {
-  // Arrange: Cursor chat was set up for this workspace, and the skill check names a redirected home folder.
+  // Arrange: Cursor chat was set up for this workspace, and the skill check names a home folder whose Cursor folder is a link; its refusal ends with the setup as its own step (row 284: the notice does not say that step a second time).
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-reconnect-link-')),
   )
@@ -2709,7 +3946,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
       './cursorSkillDeployment': {
         verifyManagedCursorSkill: async () => {
           throw new Error(
-            'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor',
+            "Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
           )
         },
       },
@@ -2730,7 +3967,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat.',
+      "Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
@@ -2863,10 +4100,455 @@ test('a Cursor chat registration that finds the skill edited says once what happ
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      `Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed: ${join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')}. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.`,
     ])
   } finally {
     await boundary.deactivate()
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+/** The bundled skill of the removal command's tests, in the form the setup accepts. */
+const REMOVAL_TEST_SKILL =
+  '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
+
+/**
+ * Simulates the catalog's locked-storage refusal when {@link removalCommandOverATemporaryHome} first runs cleanup.
+ * @returns Never resolves; the cleanup rejects with the storage-lock refusal.
+ * @throws Always, with the sentence of a catalog held by another writer.
+ * @example
+ * await refuseAsLockedStorage() // => rejects with 'Learning storage is locked by another writer or an interrupted session ...'
+ */
+async function refuseAsLockedStorage(): Promise<void> {
+  throw new Error(
+    'Learning storage is locked by another writer or an interrupted session (lock file: /storage/cursor-mcp-catalog/writer.lock). No data changed; retry after resolving the lock.',
+  )
+}
+
+/**
+ * Prepares the real skill and catalog in a temporary home when command regression tests need a removal with an interrupted first cleanup.
+ * @param beforeFirstCleanup - What happens once, right before the command's first cleanup of the MCP config reaches the real catalog, given the path of the catalog's receipt: nothing, a refusal thrown in the cleanup's place ({@link refuseAsLockedStorage}), or a change another Cursor window made in the meantime.
+ * @param isCursorChatSetUp - Whether Cursor chat was set up in that home before the command is loaded; without it the home holds nothing, not even a `.cursor` folder.
+ * @returns The command, the notifications it showed, the paths of the skill, of its receipt, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
+ * @example
+ * const removal = await removalCommandOverATemporaryHome(refuseAsLockedStorage)
+ * await removal.runRemoval() // => the skill is removed and the locked catalog is reported
+ * await removal.dispose()
+ */
+async function removalCommandOverATemporaryHome(
+  beforeFirstCleanup: (catalogReceiptPath: string) => Promise<void>,
+  isCursorChatSetUp = true,
+): Promise<{
+  runRemoval: () => Promise<void>
+  informations: string[]
+  warnings: string[]
+  skillPath: string
+  skillReceiptPath: string
+  configPath: string
+  catalogReceiptPath: string
+  dispose: () => Promise<void>
+}> {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-removal-twice-')),
+  )
+  const extensionPath = join(directory, 'extension'),
+    storageRoot = join(directory, 'storage'),
+    homeRoot = join(directory, 'home'),
+    cursorDirectory = join(homeRoot, '.cursor')
+  await mkdir(join(extensionPath, 'skills', 'codebook'), { recursive: true })
+  await mkdir(storageRoot)
+  await mkdir(homeRoot)
+  await writeFile(
+    join(extensionPath, 'skills', 'codebook', 'SKILL.md'),
+    REMOVAL_TEST_SKILL,
+  )
+  if (isCursorChatSetUp) {
+    await cursorSkillDeployment.deployCursorSkill(
+      extensionPath,
+      storageRoot,
+      homeRoot,
+    )
+    await refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+  }
+  const commands = new Map<string, () => Promise<void>>(),
+    informations: string[] = [],
+    warnings: string[] = []
+  const catalogReceiptPath = join(
+    storageRoot,
+    'cursor-mcp-catalog',
+    'receipt.json',
+  )
+  let isFirstCleanup = true
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showInformationMessage(message: string) {
+            informations.push(message)
+            return Promise.resolve(undefined)
+          },
+          showWarningMessage(message: string, options?: { modal?: boolean }) {
+            // The modal confirmation is answered; every other warning is a notification.
+            if (typeof options === 'object' && options.modal)
+              return Promise.resolve('Remove managed skill')
+            warnings.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './environment': { requireWorkspace: () => directory },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      // The real removals, over the temporary home instead of the learner's.
+      './cursorSkillDeployment': {
+        removeManagedCursorSkill: (storage: string) =>
+          cursorSkillDeployment.removeManagedCursorSkill(storage, homeRoot),
+      },
+      './utils/refreshCursorMcpCatalog': {
+        captureOwnedCursorMcpCatalogGeneration: (
+          storage: string,
+          _cursorDirectory: string | undefined,
+          commandToRunAgain: string,
+        ) =>
+          captureOwnedCursorMcpCatalogGeneration(
+            storage,
+            cursorDirectory,
+            commandToRunAgain,
+          ),
+        removeOwnedCursorMcpCatalog: async (
+          storage: string,
+          _cursorDirectory: string | undefined,
+          generation: string,
+          commandToRunAgain: string,
+        ) => {
+          if (isFirstCleanup) {
+            isFirstCleanup = false
+            await beforeFirstCleanup(catalogReceiptPath)
+          }
+          return removeOwnedCursorMcpCatalog(
+            storage,
+            cursorDirectory,
+            generation,
+            commandToRunAgain,
+          )
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath,
+    globalStorageUri: { fsPath: storageRoot },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  return {
+    runRemoval: commands.get('codebook.removeManagedCursorSkill')!,
+    informations,
+    warnings,
+    skillPath: join(cursorDirectory, 'skills', 'codebook', 'SKILL.md'),
+    skillReceiptPath: join(storageRoot, 'cursor-skill', 'receipt.json'),
+    configPath: join(cursorDirectory, 'mcp.json'),
+    catalogReceiptPath,
+    dispose: async (): Promise<void> => {
+      await boundary.deactivate()
+      await rm(directory, { recursive: true, force: true })
+    },
+  }
+}
+
+// Value: protects=a learner whose Remove Managed Cursor Skill removed the skill and could not retire Codebook's empty Cursor MCP config (another window held the storage lock); fails_when=a second removal ends with "No installed Codebook-owned Cursor skill was found; no file was changed." and never reaches the config, which then stays until the learner sets Cursor chat up and removes it again; why_new=Cycle 0046 row 222; seam=the removal command with the real skill and catalog over a temporary home, and a first cleanup that is refused
+test('a second Remove Managed Cursor Skill, after a first whose Cursor MCP config cleanup was refused, goes on to that cleanup: it retires the config Codebook created and says that the skill was already removed', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(refuseAsLockedStorage)
+  try {
+    // Act
+    await cursor.runRemoval()
+    const configAfterTheFirstRemoval = await readFile(cursor.configPath, 'utf8')
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        warnings: cursor.warnings,
+        configAfterTheFirstRemoval,
+        informations: cursor.informations,
+        configAfterTheSecondRemoval: await readFile(
+          cursor.configPath,
+          'utf8',
+        ).catch((error: { code?: string }) => error.code),
+      },
+      {
+        warnings: [
+          'Learning storage is locked by another writer or an interrupted session (lock file: /storage/cursor-mcp-catalog/writer.lock). No data changed; retry after resolving the lock. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
+        ],
+        configAfterTheFirstRemoval: '{"mcpServers":{}}\n',
+        informations: [
+          'The managed Cursor skill was already removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        configAfterTheSecondRemoval: 'ENOENT',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a Cursor MCP config the learner changed after a removal could not retire it; fails_when=the second removal removes a config that is not the empty one Codebook created, or ends without saying why the config was left; why_new=Cycle 0046 row 222: the cleanup the second removal goes on to keeps the catalog's rule; seam=the removal command with the real skill and catalog over a temporary home, and a first cleanup that is refused
+test('a second Remove Managed Cursor Skill leaves a Cursor MCP config the learner changed after the first removal, and says that the skill was already removed and why the config stays', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(refuseAsLockedStorage)
+  const changedConfig = '{"mcpServers":{"mine":{"command":"tool"}}}\n'
+  try {
+    // Act: between the two removals the learner adds a server of their own.
+    await cursor.runRemoval()
+    await writeFile(cursor.configPath, changedConfig)
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        informations: cursor.informations,
+        config: await readFile(cursor.configPath, 'utf8'),
+      },
+      {
+        informations: [
+          'The managed Cursor skill was already removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        config: changedConfig,
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who asks Codebook to remove its Cursor setup while a record of the Cursor MCP catalog is damaged; fails_when=the command ends at its first step, the catalog's generation, with that record's refusal: the skill stays, and the sentence sends a learner who asked for a removal to Codebook: Set Up AI Chat; why_new=Cycle 0046 row 224; seam=the removal command with the real skill and catalog over a temporary home, whose catalog receipt is no JSON
+test('a Remove Managed Cursor Skill whose Cursor MCP catalog record is damaged removes the skill all the same and warns with that record’s refusal, which names the removal as the command to run again; after the learner deletes the record as told, a second removal says that the skill was already removed and leaves the config', async () => {
+  // Arrange: the catalog's receipt was cut off in the middle.
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  await writeFile(cursor.catalogReceiptPath, '{"schemaVersion":1,')
+  try {
+    // Act: the warning is followed to the letter.
+    await cursor.runRemoval()
+    const skillAfterTheFirstRemoval = await access(cursor.skillPath).then(
+      () => 'still there',
+      (error: { code?: string }) => error.code,
+    )
+    const configAfterTheFirstRemoval = await readFile(cursor.configPath, 'utf8')
+    await rm(cursor.catalogReceiptPath)
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        warnings: cursor.warnings,
+        skillAfterTheFirstRemoval,
+        configAfterTheFirstRemoval,
+        informations: cursor.informations,
+        configAfterTheSecondRemoval: await readFile(cursor.configPath, 'utf8'),
+      },
+      {
+        warnings: [
+          `Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${cursor.catalogReceiptPath}, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.`,
+        ],
+        skillAfterTheFirstRemoval: 'ENOENT',
+        configAfterTheFirstRemoval: '{"mcpServers":{}}\n',
+        informations: [
+          'The managed Cursor skill was already removed. Codebook owns no Cursor MCP config; none was changed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        configAfterTheSecondRemoval: '{"mcpServers":{}}\n',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=the same learner when the record is damaged only after the removal's first step read it (another Cursor window, or a hand edit while the confirmation stood open); fails_when=the cleanup's refusal names Codebook: Set Up AI Chat, because the command handed its own title to the catalog's first step only; why_new=Cycle 0046 row 224: both catalog calls of the removal command get the command to name; seam=the removal command with the real skill and catalog over a temporary home, whose catalog receipt is cut off right before the cleanup
+test('a Cursor MCP catalog record that is damaged between the two catalog steps of a Remove Managed Cursor Skill is refused by the cleanup with the removal as the command to run again', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome((catalogReceiptPath) =>
+    writeFile(catalogReceiptPath, '{"schemaVersion":1,'),
+  )
+  try {
+    // Act
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      { warnings: cursor.warnings, informations: cursor.informations },
+      {
+        warnings: [
+          `Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${cursor.catalogReceiptPath}, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.`,
+        ],
+        informations: [],
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=the learner who runs Remove Managed Cursor Skill again after a removal that finished; fails_when=the notice says "Existing or changed Cursor MCP config preserved." although no config is there, because every removal that retires nothing is worded as a preserved config; why_new=Cycle 0046 row 246: the notice tells a config that was already retired from one that was preserved; seam=the removal command with the real skill and catalog over a temporary home
+test('a Remove Managed Cursor Skill that is run again after one that finished says that the skill was already removed and that Codebook’s config was already retired, not that a config was preserved', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  try {
+    // Act
+    await cursor.runRemoval()
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        config: await access(cursor.configPath).then(
+          () => 'still there',
+          (error: { code?: string }) => error.code,
+        ),
+      },
+      {
+        informations: [
+          'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+          "The managed Cursor skill was already removed. Codebook's empty Cursor MCP config was already retired; no config was changed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.",
+        ],
+        warnings: [],
+        config: 'ENOENT',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who asks Codebook to remove its Cursor setup while a link stands at the skill's path; fails_when=the refusal says "then run Codebook: Set Up AI Chat again", which installs again the skill the learner is removing, or the removal does not finish after the link is removed; why_new=Cycle 0046 row 244: every refusal of the skill that a removal meets names the removal; seam=the removal command with the real skill and catalog over a temporary home
+test('a Remove Managed Cursor Skill that meets a link at the skill’s path says to remove the link and to run the removal again; after the learner removes the link, the removal finishes and retires the config Codebook created', async (context) => {
+  // Arrange: the installed skill is moved away and a link to it stands at its path.
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  const movedSkillPath = join(dirname(cursor.skillPath), 'moved-SKILL.md')
+  await rename(cursor.skillPath, movedSkillPath)
+  if (!(await createLinkIfAllowed(movedSkillPath, cursor.skillPath))) {
+    await cursor.dispose()
+    return context.skip(LINK_NOT_ALLOWED)
+  }
+  try {
+    // Act: the refusal is followed to the letter.
+    const refusal = await cursor.runRemoval().then(
+      () => 'no refusal',
+      (error: Error) => error.message,
+    )
+    await rm(cursor.skillPath)
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        movedSkill: await readFile(movedSkillPath, 'utf8'),
+      },
+      {
+        refusal: `Codebook will not read through a link: ${cursor.skillPath}. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+        informations: [
+          'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        warnings: [],
+        movedSkill: REMOVAL_TEST_SKILL,
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who asks Codebook to remove its Cursor setup while the skill's receipt is damaged; fails_when=the refusal sends the learner to Codebook: Set Up AI Chat, or the removal that is run again after the receipt and the folder were deleted ends with an error and leaves the config Codebook created; why_new=Cycle 0046 row 244: the invalid record's sentence names the removal, and a removal without a receipt goes on to the config; seam=the removal command with the real skill and catalog over a temporary home, whose skill receipt is cut off
+test('a Remove Managed Cursor Skill whose skill receipt is invalid says to delete the receipt and the skill folder and to run the removal again; after the learner does so, the removal retires the config Codebook created and says that no Codebook-owned skill was found', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  await writeFile(cursor.skillReceiptPath, '{"schemaVersion":1,')
+  try {
+    // Act: the refusal is followed to the letter.
+    const refusal = await cursor.runRemoval().then(
+      () => 'no refusal',
+      (error: Error) => error.message,
+    )
+    await rm(cursor.skillReceiptPath)
+    await rm(dirname(cursor.skillPath), { recursive: true })
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        config: await access(cursor.configPath).then(
+          () => 'still there',
+          (error: { code?: string }) => error.code,
+        ),
+      },
+      {
+        refusal: `Cursor skill ownership receipt is invalid; no skill file was changed. To start over, delete ${cursor.skillReceiptPath} and the folder ${dirname(cursor.skillPath)} (first copy anything of yours out of that folder), then run Codebook: Remove Managed Cursor Skill again.`,
+        informations: [
+          'No Codebook-owned Cursor skill was found; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        warnings: [],
+        config: 'ENOENT',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who runs Remove Managed Cursor Skill in a Cursor where Codebook's chat was never set up; fails_when=the command ends with an error ("No installed Codebook-owned Cursor skill was found; no file was changed.", or a refusal of the missing skills folder) instead of a notice that nothing was there to remove; why_new=Cycle 0046 row 244; seam=the removal command with the real skill and catalog over a temporary home that holds nothing
+test('a Remove Managed Cursor Skill in a Cursor where Codebook was never set up ends with the notice that nothing was there to remove, and changes no file', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {}, false)
+  try {
+    // Act
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        home: await readdir(dirname(dirname(cursor.configPath))),
+      },
+      {
+        informations: [
+          'Nothing to remove: no Codebook-owned Cursor skill was found and Codebook owns no Cursor MCP config. No file was changed.',
+        ],
+        warnings: [],
+        home: [],
+      },
+    )
+  } finally {
+    await cursor.dispose()
   }
 })

@@ -1,15 +1,18 @@
+import { WIKI_UPDATE_UNNAMED_BLOCK_REASON } from '../constants'
+
 /** Editor host that runs a Wiki update. */
 export type WikiUpdateHost = 'vscode' | 'cursor'
 
-/** Whether the published site was the same when a run ended (`kept`), was replaced during it (`replaced`), or was no longer there (`missing`: a publish that was stopped inside its swap). */
+/** Whether the published site was the same when a run ended (`kept`), was replaced during it (`replaced`), or was not there to be called either (`missing`: a publish that was stopped inside its swap, a start refused because the folder holds no Wiki, or a run whose end could not be read from the disk, {@link unreadWikiUpdateEnd}); a reader says nothing of the site for `missing`. */
 export type WikiUpdateSite = 'kept' | 'replaced' | 'missing'
 
-/** Why an update would overwrite or cannot replace something: a learner's own file, a generated page edited by hand, a generated page that is gone, a link or special file in the Wiki folder, the manifest changed after its publish, a manifest that cannot be read, or an earlier publish that did not finish. */
+/** Why an update would overwrite or cannot replace something: a learner's own file, a generated page edited by hand, a generated page that is gone, a link or special file in the Wiki folder, a Wiki folder that is itself a link or a file, the manifest changed after its publish, a manifest that cannot be read, or an earlier publish that did not finish. */
 export type WikiUpdateConflictCause =
   | 'learner-file'
   | 'edited-page'
   | 'missing-page'
   | 'special-file'
+  | 'not-a-folder'
   | 'edited-manifest'
   | 'unreadable-manifest'
   | 'unfinished-publish'
@@ -37,6 +40,7 @@ export type WikiPublishedIdentity = {
  * `identity` is the display text `<revision or no-revision>+<index>`; `revision` (absent when no Git revision was checked) and `index` carry the same two values as data, so no reader parses the text.
  * `addedFilesUnchecked` is set on `already-current` when the project has no Git repository: every indexed source matches, and added files were not looked for.
  * `isCodebookSentence` marks a failure `reason` that Codebook wrote itself with its next step; a reader shows it whole and shortens only a reason an agent, the CLI or a thrown error supplied.
+ * `mayBeReplacedLater` marks a failure with a kept site after which somebody Codebook did not stop can still publish (a VS Code chat that may still hold its request or that lost its watch, another window's update, an earlier chat the start waits for); a reader then says what held at that time, not that the site is kept.
  * Additive fields may appear; a reader must ignore fields it does not know and treat an unknown `state` as "status unknown".
  */
 export type WikiUpdateStatus =
@@ -67,6 +71,7 @@ export type WikiUpdateStatus =
       finishedAt: string
       reason: string
       isCodebookSentence?: true
+      mayBeReplacedLater?: true
       site: WikiUpdateSite
     } & WikiUpdateOutput)
   | ({
@@ -91,10 +96,16 @@ export type WikiUpdateStatus =
       site: WikiUpdateSite
     } & WikiUpdateOutput)
 
-/** A start that was refused before any agent ran: nothing was replaced. A `failed` refusal marks a sentence Codebook wrote itself with `isCodebookSentence`. */
+/** A start that was refused before any agent ran: nothing was replaced. A `failed` refusal marks a sentence Codebook wrote itself with `isCodebookSentence`, a folder that holds no Wiki with `site: 'missing'`, so nothing claims a site was kept, and a refusal because somebody else is still updating the Wiki with `mayBeReplacedLater`, so nothing claims the site is kept for good. */
 export type WikiUpdateRefusal =
   | { kind: 'conflict'; paths: string[]; cause: WikiUpdateConflictCause }
-  | { kind: 'failed'; reason: string; isCodebookSentence?: true }
+  | {
+      kind: 'failed'
+      reason: string
+      isCodebookSentence?: true
+      mayBeReplacedLater?: true
+      site?: Extract<WikiUpdateSite, 'missing'>
+    }
 
 /** How a run ended, without the fields the run itself knows (host, time, output, bound); {@link classifyWikiUpdateEnd} builds it and {@link WikiUpdateRun.end} records it. */
 export type WikiUpdateEnd =
@@ -102,7 +113,7 @@ export type WikiUpdateEnd =
       WikiPublishedIdentity)
   | Pick<
       Extract<WikiUpdateStatus, { state: 'failed' }>,
-      'state' | 'reason' | 'isCodebookSentence' | 'site'
+      'state' | 'reason' | 'isCodebookSentence' | 'mayBeReplacedLater' | 'site'
     >
   | Pick<Extract<WikiUpdateStatus, { state: 'cancelled' }>, 'state' | 'site'>
   | Pick<Extract<WikiUpdateStatus, { state: 'timed-out' }>, 'state' | 'site'>
@@ -140,7 +151,7 @@ function endedStatus(
     return {
       ...ended,
       state: 'failed',
-      reason: 'The update was blocked, but no blocking file was named.',
+      reason: WIKI_UPDATE_UNNAMED_BLOCK_REASON,
       isCodebookSentence: true,
       site: result.site,
     }
@@ -150,29 +161,49 @@ function endedStatus(
 }
 
 /**
- * Words why a start was refused that names no blocking path; called by {@link WikiUpdateRun.refuseStart} for the `failed` state it records.
+ * Copies the two marks of a `failed` refusal into the state it is recorded as; called by {@link refusalReason}.
+ * @param refusal - The refusal, of which only the marks are read.
+ * @returns `isCodebookSentence` and `mayBeReplacedLater`, each present only when the refusal carries it.
+ * @example
+ * marksOfRefusal({ isCodebookSentence: true, mayBeReplacedLater: true }) // => { isCodebookSentence: true, mayBeReplacedLater: true }
+ * marksOfRefusal({})                                                     // => {}
+ */
+function marksOfRefusal(refusal: {
+  isCodebookSentence?: true
+  mayBeReplacedLater?: true
+}): { isCodebookSentence?: true; mayBeReplacedLater?: true } {
+  return {
+    ...(refusal.isCodebookSentence ? { isCodebookSentence: true } : {}),
+    ...(refusal.mayBeReplacedLater ? { mayBeReplacedLater: true } : {}),
+  }
+}
+
+/**
+ * Words why a start was refused that names no blocking path, and what became of the site; called by {@link WikiUpdateRun.refuseStart} for the `failed` state it records.
  * @param refusal - The block found before the start.
  * @returns
- * - A `failed` refusal: its reason, marked as a Codebook sentence only when the refusal is
- * - A conflict (one that names no path reaches here): a sentence Codebook wrote, since a conflict without a path could not tell the learner what to move
+ * - A `failed` refusal: its reason, marked as a Codebook sentence only when the refusal is and as one the site may be replaced after only when the refusal is, and the site `missing` when the folder held no Wiki, `kept` otherwise
+ * - A conflict (one that names no path reaches here): a sentence Codebook wrote, since a conflict without a path could not tell the learner what to move, and the site `kept`
  * @example
- * refusalReason({ kind: 'failed', reason: 'No LLM Wiki exists yet.', isCodebookSentence: true }) // => { reason: 'No LLM Wiki exists yet.', isCodebookSentence: true }
- * refusalReason({ kind: 'conflict', paths: [], cause: 'edited-page' })                           // => { reason: 'The update was blocked, but no blocking file was named.', isCodebookSentence: true }
+ * refusalReason({ kind: 'failed', reason: 'No LLM Wiki exists yet.', isCodebookSentence: true, site: 'missing' }) // => { reason: 'No LLM Wiki exists yet.', isCodebookSentence: true, site: 'missing' }
+ * refusalReason({ kind: 'conflict', paths: [], cause: 'edited-page' })                                            // => { reason: 'The update was blocked, but no blocking file was named.', isCodebookSentence: true, site: 'kept' }
  */
 function refusalReason(
   refusal: WikiUpdateRefusal,
 ): Pick<
-  Extract<WikiUpdateRefusal, { kind: 'failed' }>,
-  'reason' | 'isCodebookSentence'
+  Extract<WikiUpdateStatus, { state: 'failed' }>,
+  'reason' | 'isCodebookSentence' | 'mayBeReplacedLater' | 'site'
 > {
   if (refusal.kind === 'failed')
     return {
       reason: refusal.reason,
-      ...(refusal.isCodebookSentence ? { isCodebookSentence: true } : {}),
+      ...marksOfRefusal(refusal),
+      site: refusal.site ?? 'kept',
     }
   return {
-    reason: 'The update was blocked, but no blocking file was named.',
+    reason: WIKI_UPDATE_UNNAMED_BLOCK_REASON,
     isCodebookSentence: true,
+    site: 'kept',
   }
 }
 
@@ -253,11 +284,11 @@ export class WikiUpdateRun {
     this.#status = endedStatus(this.#status, this.#now().toISOString(), result)
   }
 
-  /** Records that nothing needed updating; no run starts. @param output - Resolved Wiki folder and its label. @param published - What the current site is called, when known. @param areAddedFilesUnchecked - Whether the project has no Git repository, so "current" covers the indexed sources only; the state then says so. @example run.alreadyCurrent({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }, false) */
+  /** Records that nothing needed updating; no run starts. @param output - Resolved Wiki folder and its label. @param published - What the current site is called. @param areAddedFilesUnchecked - Whether the project has no Git repository, so "current" covers the indexed sources only; the state then says so. @example run.alreadyCurrent({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }, false) */
   alreadyCurrent(
     output: WikiUpdateOutput,
-    published?: WikiPublishedIdentity,
-    areAddedFilesUnchecked = false,
+    published: WikiPublishedIdentity,
+    areAddedFilesUnchecked: boolean,
   ): void {
     if (this.isRunning()) return
     this.#status = {
@@ -293,7 +324,6 @@ export class WikiUpdateRun {
             host,
             finishedAt,
             ...refusalReason(refusal),
-            site: 'kept',
             ...output,
           }
   }

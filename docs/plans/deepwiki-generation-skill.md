@@ -1,7 +1,7 @@
 # DeepWiki generation skill — implementation contract
 
 Status: specification only; no skill implementation or generation PASS.\
-Authority: PRODUCT_GOAL version 9, G02/G12, D033 and [independent DeepWiki specification](../specs/llm-wiki.md)\
+Authority: PRODUCT_GOAL version 10, G02/G12, D033 and [independent DeepWiki specification](../specs/llm-wiki.md)\
 Cycle: [0029](../cycles/0029-feature-specification.md)
 
 ## Outcome and ownership
@@ -20,6 +20,8 @@ Keep the common bundled `/codebook` entry thin. Delegate Wiki generation to deta
 6. **Generate the reader and Q&A context.** Use the approved DeepWiki reproduction layout: chapter navigation, article/relevant-source disclosure, page outline, inline citations, diagrams and repository questions. Publish `vscode://` source/update links as the static fallback; Codebook's reader binds these routes to the active VS Code or Cursor scheme without changing the shared output. Keep the project root and cited source identity in every link. Keep durable pages independently readable; Q&A clearly identifies model/agent availability. Verify activation separately in both hosts.
 7. **Check quality before publishing output.** Check chapter coverage, navigation/anchors, actual cited files/locations, diagram causality, Q&A grounding and source identity. Preserve manual/unrelated files. Publish a coherent result and keep the last usable site on failure.
 8. **Update intentionally.** A chat request or approved browser button starts the same skill. Inspect source additions/changes/deletions/renames, refresh the affected documentation/citations/Q&A source context and remove obsolete owned output. Show freshness and completion; do not recursively ingest generated files or silently erase manual edits.
+
+Temporary scripts of a Wiki run (delivered with skill 1.0.42): code with loops, regular expressions, HTML quotes or template literals is written as a script into the project's hidden `.codebook/scratch/` folder and run with its interpreter named, read-only scans included; the agent removes the folder once the Wiki is published. The folder lies inside the workspace, so the editor asks for no approval of a path outside it, and the Wiki does not index it. A temporary script is never written into project source or outside the workspace.
 
 The skill must derive content from each repository. It must not embed target-specific model answers, prepared stopping locations or final-acceptance expectations. Example documentation templates can define structure, not fabricate facts.
 
