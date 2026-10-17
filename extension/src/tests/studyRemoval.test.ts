@@ -34,6 +34,7 @@ import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 /**
  * Creates a private learning directory with a study library and a recording store that share it and one limit, plus a Trash outside it.
@@ -1400,20 +1401,11 @@ async function nameWriterOfRecording(
     headerPath,
     JSON.stringify({ ...header, owner: { ...header.owner, ...owner } }),
   )
-  const recordPath = recordingOwnerRecordPath(storage.directory, studyId)
-  const record: Record<string, unknown> = JSON.parse(
-    await readFile(recordPath, 'utf8'),
-  )
-  delete record.processStart
-  const processStart = await readProcessStart(owner.pid).catch(() => undefined)
-  await writeFile(
-    recordPath,
-    JSON.stringify({
-      ...record,
-      ...owner,
-      ...(processStart && { processStart }),
-    }),
-  )
+  // The writer's own start, or none for an id of no process.
+  await rewriteWriterRecord(storage.directory, studyId, {
+    ...owner,
+    processStart: await readProcessStart(owner.pid).catch(() => undefined),
+  })
 }
 
 // Value: protects=the recording of a run whose study is not saved yet is not taken for what is left of a removed study: it is neither listed as an entry that cannot be opened nor moved by a removal of its id; fails_when=every recording directory without an archive is listed and removable, so a learner (also one in another window) deletes the recording a running editor is writing (0038-T4), or a recording whose writer has ended stays unlisted and keeps its place for good (Cycle 0046 row 86); why_new=the listing of studies without an archive is new; seam=the recording's header, in which the test names an owner process that has ended, and the injected mover

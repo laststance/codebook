@@ -36,6 +36,7 @@ import {
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -7918,14 +7919,10 @@ async function crashedRecordingOf(
   const recordPath = recordingOwnerRecordPath(directory, study.id)
   if (record === 'header-only') await rm(recordPath)
   else
-    await writeFile(
-      recordPath,
-      JSON.stringify({
-        ...JSON.parse(await readFile(recordPath, 'utf8')),
-        ...owner,
-        processStart: await readProcessStart(owner.pid),
-      }),
-    )
+    await rewriteWriterRecord(directory, study.id, {
+      ...owner,
+      processStart: await readProcessStart(owner.pid),
+    })
   return folder
 }
 

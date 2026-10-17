@@ -32,31 +32,13 @@ import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
 
 import { idleChild } from './utils/idleChild'
+import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
   'base64',
 )
 const workspaceKey = sha256('recording-workspace')
-
-/**
- * Rewrites the record of a recording's writer that this build keeps beside the recordings ({@link recordingOwnerRecordPath}), for a test that names another editor process or another host name there, as it does in the header.
- * @param learningDirectory - The learning directory of the test's store.
- * @param studyId - The recording's study id.
- * @param change - The fields to put in the record.
- * @example await rewriteWriterRecord(directory, binding.studyId, { pid: 2_147_483_647 })
- */
-async function rewriteWriterRecord(
-  learningDirectory: string,
-  studyId: string,
-  change: Record<string, unknown>,
-): Promise<void> {
-  const path = recordingOwnerRecordPath(learningDirectory, studyId)
-  const record: Record<string, unknown> = JSON.parse(
-    await readFile(path, 'utf8'),
-  )
-  await writeFile(path, JSON.stringify({ ...record, ...change }))
-}
 
 /** Gives recording regressions private real files and explicit fault injection, without claiming browser/native capture. @example const { store, binding } = await recordingHarness(context) */
 async function recordingHarness(

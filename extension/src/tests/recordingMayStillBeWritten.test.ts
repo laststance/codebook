@@ -31,6 +31,7 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
+import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 // The editor's id of this machine, which stays the same when the host name follows the network; every record this file's windows write names it.
 before(() => {
@@ -119,25 +120,6 @@ async function rewriteHeader(
   )
 }
 
-/**
- * Rewrites the record of a recording's writer beside the recordings, for a test that names another editor process or another machine there.
- * @param storage - The test's storage.
- * @param studyId - The recording's study id.
- * @param change - The fields to put in the record.
- * @example await rewriteWriterRecord(storage, studyId, { machineId: 'machine-b' })
- */
-async function rewriteWriterRecord(
-  storage: Awaited<ReturnType<typeof recordingStorage>>,
-  studyId: string,
-  change: Record<string, unknown>,
-): Promise<void> {
-  const path = recordingOwnerRecordPath(storage.directory, studyId)
-  const record: Record<string, unknown> = JSON.parse(
-    await readFile(path, 'utf8'),
-  )
-  await writeFile(path, JSON.stringify({ ...record, ...change }))
-}
-
 /** Says whether a path holds anything. @example await isPresent('/tmp/x') // => false */
 function isPresent(path: string): Promise<boolean> {
   return lstat(path).then(
@@ -173,7 +155,7 @@ test('a recording whose writer’s host name has changed since is judged by the 
   await rewriteHeader(recording.folder, {
     owner: { pid: ID_OF_NO_PROCESS, hostname: 'laptop.home-network' },
   })
-  await rewriteWriterRecord(storage, recording.studyId, {
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
     pid: ID_OF_NO_PROCESS,
     hostname: 'laptop.home-network',
   })
@@ -193,7 +175,7 @@ test('a recording whose record names another machine with this host name stays b
   await rewriteHeader(recording.folder, {
     owner: { pid: ID_OF_NO_PROCESS, hostname: hostname() },
   })
-  await rewriteWriterRecord(storage, recording.studyId, {
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
     pid: ID_OF_NO_PROCESS,
     machineId: 'machine-b',
   })
@@ -363,7 +345,9 @@ test('the record of a recording’s writer goes with a removal of its study, and
   await rewriteHeader(removed.folder, {
     owner: { pid: ID_OF_NO_PROCESS, hostname: hostname() },
   })
-  await rewriteWriterRecord(storage, removed.studyId, { pid: ID_OF_NO_PROCESS })
+  await rewriteWriterRecord(storage.directory, removed.studyId, {
+    pid: ID_OF_NO_PROCESS,
+  })
   const removedByHand = await startRecording(storage)
   await rm(removedByHand.folder, { recursive: true })
   const moved: string[] = []
@@ -520,7 +504,7 @@ async function recordingsOfTwoOtherWindows(
     await rewriteHeader(recording.folder, {
       owner: { pid: liveWindow.pid!, hostname: hostname() },
     })
-    await rewriteWriterRecord(storage, recording.studyId, {
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
       pid: liveWindow.pid!,
       processStart: liveStart,
     })
@@ -530,7 +514,7 @@ async function recordingsOfTwoOtherWindows(
   await rewriteHeader(crashed.folder, {
     owner: { pid: laterProcess.pid!, hostname: hostname() },
   })
-  await rewriteWriterRecord(storage, crashed.studyId, {
+  await rewriteWriterRecord(storage.directory, crashed.studyId, {
     pid: laterProcess.pid!,
   })
   return {
