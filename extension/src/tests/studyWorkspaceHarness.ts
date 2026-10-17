@@ -369,6 +369,33 @@ export async function workspaceHarness(
     { viewColumn: 1, tabs: [] },
   ]
   let activeTabGroup = groups[0]!
+  /**
+   * Places a tab the fake editor opens in a group, or moves into it, right after the tab that group shows, as both editors place an editor under their default `workbench.editor.openPositioning` (`right`: `targetIndex = indexOfActive + 1` in VS Code's `EditorGroupModel.openEditor`); called by `showTextDocument` for a document the group has no tab of, and by a pane's creation and move into another group. C60's `c60-cu-567` read it in Cursor 3.23.12: `Captured-source.mts` opened right after the Wiki's cited copy in front of the learner's first group (`3-recording-open.json`), and the parked `codebook · Recorded application` right after the Repository Wiki in front of its group (`5-after-return.json`; Cycle 0046 row 703). The test fixtures' own tabs keep their places.
+   * @param group - The group the tab opens in.
+   * @param tab - The new tab, in no group yet.
+   * @param shownTab - The tab the group showed before the tab came; left out, the one it shows now.
+   * @param shownIndex - Where `shownTab` stood then; a shown tab gone since (a preview pane the moved one replaced) leaves its place to the new tab.
+   * @example
+   * ```ts
+   * insertAfterShownTab(firstGroup, sourceTab) // [login-form.tsx, cited copy, package.json] => [login-form.tsx, cited copy, Captured-source.mts, package.json] while the cited copy is in front
+   * insertAfterShownTab(emptyGroup, applicationTab) // => [applicationTab]
+   * ```
+   */
+  function insertAfterShownTab(
+    group: (typeof groups)[number],
+    tab: Tab,
+    shownTab = group.activeTab,
+    shownIndex = shownTab ? group.tabs.indexOf(shownTab) : -1,
+  ): void {
+    const stillShownIndex = shownTab ? group.tabs.indexOf(shownTab) : -1
+    // The shown tab is still there: the new one follows it.
+    if (stillShownIndex >= 0) group.tabs.splice(stillShownIndex + 1, 0, tab)
+    // The shown tab went while the new one came: the new one takes its place.
+    else if (shownIndex >= 0 && shownIndex <= group.tabs.length)
+      group.tabs.splice(shownIndex, 0, tab)
+    // A group that showed no tab gets the new one at its end.
+    else group.tabs.push(tab)
+  }
   let separateEditorPart:
     | {
         group: (typeof groups)[number]
@@ -2265,12 +2292,13 @@ export async function workspaceHarness(
   }
   /**
    * Makes a Repository Wiki panel's document answer as the Wiki's script does (`ui/repositoryHtml.ts`): once the reader wrote its HTML it posts `ready`, and for every article model the reader posts while the panel is visible it posts `rendered` with that model's revision and selection; called by `panel` for the Wiki's view type, so a real Repository Wiki reader made with `createRepositoryWikiReader` can wait for its article to render (Cycle 0046 row 674).
-   * A model posted while the panel is hidden is not rendered, as a hidden document is gone; the document a panel reloads when it is shown again is not modelled.
+   * A model posted while the panel is hidden is not rendered, as a hidden document is gone. The panel's own `reveal` that brings it to the front of its group again loads its HTML anew, whose script posts `ready` again: "The contents of webviews however are created when the webview becomes visible and destroyed when the webview is moved into the background", and VS Code "will automatically restore the webview's content from `webview.html` when the panel is brought to the foreground again" (the Webview API guide; the Wiki's panel keeps no context while hidden). The Study's article Return reveals the Wiki so after the parked Application covered it (Cycle 0046 row 703); a learner's click on its tab is not modelled.
    * @param wiki - The Wiki's panel, right after `panel` made it.
    * @example answerAsWikiDocument(value) // value.webview.html = repositoryHtml() then posts { type: 'ready' }
    */
   function answerAsWikiDocument(wiki: ReturnType<typeof panel>): void {
-    const postToDocument = wiki.webview.postMessage
+    const postToDocument = wiki.webview.postMessage,
+      reveal = wiki.reveal.bind(wiki)
     let html = ''
     Object.defineProperty(wiki.webview, 'html', {
       get: () => html,
@@ -2280,6 +2308,13 @@ export async function workspaceHarness(
         queueMicrotask(() => wiki.emit({ type: 'ready' }))
       },
     })
+    wiki.reveal = (column?: number, preserveFocus?: boolean): void => {
+      const wasHidden = !wiki.visible
+      reveal(column, preserveFocus)
+      // A document whose panel came back to the front loads again from the panel's HTML.
+      if (wasHidden && wiki.visible && html)
+        queueMicrotask(() => wiki.emit({ type: 'ready' }))
+    }
     wiki.webview.postMessage = async (
       message: Parameters<typeof postToDocument>[0] | RepositoryViewMessage,
     ): Promise<boolean> => {
@@ -2573,6 +2608,10 @@ export async function workspaceHarness(
               group.activeTab === nativeTab &&
               group.viewColumn === value.viewColumn,
           )
+          const homeGroup = groups.find((candidate) =>
+              candidate.tabs.includes(nativeTab),
+            ),
+            homeIndex = homeGroup?.tabs.indexOf(nativeTab) ?? -1
           for (const group of groups) {
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
             if (group.activeTab === nativeTab)
@@ -2583,6 +2622,10 @@ export async function workspaceHarness(
             group.viewColumn,
             !wasInFront || !preserveFocus,
           )
+          const shownBeforeMove = group.activeTab,
+            shownIndexBeforeMove = shownBeforeMove
+              ? group.tabs.indexOf(shownBeforeMove)
+              : -1
           if (
             nativeLayout &&
             previousColumn !== value.viewColumn &&
@@ -2593,7 +2636,15 @@ export async function workspaceHarness(
             )
             replaced?.dispose()
           }
-          group.tabs.push(nativeTab)
+          // A pane revealed in its own group keeps its place there; one that moves comes right after the tab its new group showed (row 703).
+          if (group === homeGroup) group.tabs.splice(homeIndex, 0, nativeTab)
+          else
+            insertAfterShownTab(
+              group,
+              nativeTab,
+              shownBeforeMove,
+              shownIndexBeforeMove,
+            )
           group.activeTab = nativeTab
           endTextEditorReportKeptAtNewGroup(group)
           if (column !== undefined && previousColumn !== column)
@@ -2859,7 +2910,7 @@ export async function workspaceHarness(
         keyboardOnBody = true
       }
       if (!group.tabs.includes(nativeTab)) {
-        group.tabs.push(nativeTab)
+        insertAfterShownTab(group, nativeTab)
         // Cursor reports the opened tab before it reports it as the tab its group shows (obs15 P1: "opened", then "changed").
         if (replacesGroupObjectsOnTabChanges)
           for (const listener of tabChangeListeners)
@@ -4112,7 +4163,7 @@ export async function workspaceHarness(
               label: textTabLabel(sourceDocument.uri),
             }
           const opensTab = !group.tabs.includes(tab)
-          if (opensTab) group.tabs.push(tab)
+          if (opensTab) insertAfterShownTab(group, tab)
           revealIntoHiddenEditorArea(
             group.viewColumn,
             group.activeTab !== tab || !options?.preserveFocus,
@@ -6993,7 +7044,18 @@ export async function configuredWorkspaceHarness(sourceText?: string) {
   }
 }
 
-/** Starts each actual-Return regression from a saved recording and the learner's native two-row article layout; `recordedDebugger` also attaches captured native debugger state to its stop. @example await articleRecordingLayoutHarness() */
+/**
+ * Starts each actual-Return regression from a saved recording and the learner's native two-row article layout; `recordedDebugger` also attaches captured native debugger state to its stop.
+ * Its Return to Wiki restores the learner's layout only ({@link StudyWorkspace.arrangeRepository}) beside a Wiki tab no reader owns, so the tabs it leaves are not the editors': a test of those tabs opens the article in a real Repository Wiki reader first with `openRepositoryWiki`, whose open the Return then runs as the extension's does (Cycle 0046 row 703).
+ * @param capturedApplication - Also retain a real paused-browser PNG checkpoint ({@link recordedReaderHarness}).
+ * @param recordedDebugger - Present the recorded stop through the historical debugger ({@link recordedReaderHarness}).
+ * @returns The recorded reader's harness with the article's `binding` and `origin`, and `openRepositoryWiki`.
+ * @example
+ * ```ts
+ * const harness = await articleRecordingLayoutHarness()
+ * await harness.openRepositoryWiki() // the Return now shows the cited copy and gives the Wiki the keyboard
+ * ```
+ */
 export async function articleRecordingLayoutHarness(
   capturedApplication = false,
   recordedDebugger = false,
@@ -7040,7 +7102,88 @@ export async function articleRecordingLayoutHarness(
         selection,
       )
     }
-    return { ...harness, library, binding, origin }
+    /** The book store {@link openRepositoryWiki} published the article with; the harness's `close` disposes it. */
+    let books: RepositoryBookStore | undefined
+    /**
+     * Opens the learner's article in a real Repository Wiki reader in place of the fixture's Wiki tab, and makes the Study's Return to Wiki open it again as the extension does (`extension.ts`: `returnToRepository` runs the reader's `open(selection, undefined, true, preserveNativeInput)`), for a test of the tabs the article Return leaves (Cycle 0046 row 703).
+     * Without it the Return only restores the learner's layout ({@link StudyWorkspace.arrangeRepository}): the real one then shows the article's cited copy again in front of the first group without the keyboard (`load` → `revealSource`) and reveals the Wiki with the keyboard (`revealReadyPanel` → `activateReadyPanel`), which C60's `c60-cu-567` read in Cursor 3.23.12 as the cited copy in front of the learner's first group and the Repository Wiki in front of the active group. The harness's folder becomes a Git repository whose `app/login-form.tsx` the article cites, as that round's article did; the cited copy opens right after the tab in front of the first group with the keyboard, and the Wiki in the second group with the keyboard, right after the tab that group shows.
+     * @returns The reader, whose `open` the Return runs from now on.
+     * @throws What the reader's first open is refused with.
+     * @example const wiki = await harness.openRepositoryWiki() // login-form.tsx's cited copy in front of the first group, the Wiki in front of the second with the keyboard
+     */
+    const openRepositoryWiki = async () => {
+      // The fixture's Wiki tab has no reader: the real reader's own tab takes its place.
+      for (const group of harness.groups) {
+        group.tabs = group.tabs.filter(
+          (tab) =>
+            Reflect.get(tab.input, 'viewType') !== 'codebook.repositoryWiki',
+        )
+        if (group.activeTab && !group.tabs.includes(group.activeTab))
+          group.activeTab = group.tabs.at(-1)
+      }
+      harness.announceTabChange()
+      const directory = await realpath(harness.directory),
+        git = promisify(execFile)
+      await git('git', ['init', '--quiet', directory])
+      await mkdir(join(directory, 'app'), { recursive: true })
+      await writeFile(
+        join(directory, 'app/login-form.tsx'),
+        'export function LoginForm() {\n  return null\n}\n',
+      )
+      await git('git', ['add', '--', 'app'], { cwd: directory })
+      const sources = new RepositorySourceService(directory)
+      books = new RepositoryBookStore(sources, library)
+      const citedSource = await sources.read('app/login-form.tsx')
+      await books.publish({
+        bookId: origin.bookId,
+        key: 'article-return-wiki',
+        expectedRevision: 0,
+        document: {
+          title: 'Architecture',
+          summary: 'Source-derived architecture.',
+          nodes: [
+            {
+              id: origin.nodeId,
+              title: 'Failed login, form body',
+              sections: [
+                { title: 'Form', text: 'The form posts the credentials.' },
+                { title: 'Failure', text: 'A wrong password shows an error.' },
+              ],
+              anchors: [
+                {
+                  path: citedSource.path,
+                  hash: citedSource.hash,
+                  startLine: 1,
+                  endLine: 1,
+                },
+              ],
+              observations: [],
+            },
+          ],
+          edges: [],
+        },
+      })
+      const wiki = harness.createRepositoryWikiReader()
+      await wiki.open(origin)
+      // The reader passes whether the Return keeps the native input: `false` for the Learning summary's button, `true` for a command (`StudyWorkspace.action`'s `fromPane`).
+      harness.controls.returnToRepository = (
+        selection: RepositorySelection,
+        preserveNativeInput?: boolean,
+      ): Promise<void> =>
+        wiki.open(selection, undefined, true, preserveNativeInput)
+      return wiki
+    }
+    return {
+      ...harness,
+      library,
+      binding,
+      origin,
+      openRepositoryWiki,
+      async close(): Promise<void> {
+        await books?.dispose()
+        await harness.close()
+      },
+    }
   } catch (error) {
     await harness.close()
     throw error

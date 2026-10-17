@@ -1836,6 +1836,159 @@ test('in Cursor, View recording pressed again in the Wiki after the article Retu
   }
 })
 
+// Value: protects=the fidelity of the workspace harness's article Return, on which every test of the tabs that Return leaves rests: in Cursor 3.23.12's model the Return to Wiki pressed in the Learning summary after a Repository Wiki recording visit leaves the learner's groups as C60's c60-cu-567 read them natively (2-before-enter.json and 5-after-return.json): the Wiki's cited copy of login-form.tsx in front of the first group again with Captured-source.mts right behind it, and the parked Application right behind the Repository Wiki, which is in front of the active group; the Return runs the real Repository Wiki reader's open as extension.ts does, both editors place a tab they open or move into a group right after the tab it shows (workbench.editor.openPositioning, right), and the Wiki's hidden document loads again when its panel comes back to the front; fails_when=the fake editor appends Captured-source.mts and the Application at the ends of their groups or moves the Wiki's tab to the end at its reveal, the Wiki's document never loads again so the Return is refused with "Timed out waiting for the current Repository Wiki article to render", or the Return only restores the layout so Captured-source.mts stays in front of the first group, the Application in front of the Wiki and the first group active (what the row 710 tests set by hand); why_new=Cycle 0046 row 703; seam=articleRecordingLayoutHarness with openRepositoryWiki (the real RepositoryReader, and the Return through its open), useHostAppName, useNativeLayout with 328/329 px rows, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, keepTextEditorReportAfterNewGroup, leavePaneFocusUnreportedBesideChat, closeTabByHand, focusMutableDraft, addOpaqueTab, openRepositoryEvidence with the recording, the Learning summary's return-wiki action, the groups' tabs and editorLayout
+test('in Cursor, the article Return of a Wiki recording visit leaves the Wiki’s cited copy in front of the learner’s first group with the captured source right behind it, and the parked Application right behind the Wiki in front of the active group, as Cursor did natively', async () => {
+  // Arrange: c60-cu-567's window before View recording: the learner's two stacked rows beside Cursor's chat part, login-form.tsx's cited copy in front of the first row and the Repository Wiki in front of the second, which is the active group.
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    harness.useHostAppName('Cursor')
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 328 }, { size: 329 }],
+    })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.keepTextEditorReportAfterNewGroup()
+    harness.leavePaneFocusUnreportedBesideChat()
+    // The learner's own files take the place of the fixture's article-source.ts.
+    harness.closeTabByHand(
+      harness.groups.find((group) => group.viewColumn === 1)!.tabs[0]!,
+    )
+    const loginForm = harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('package.json', 1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusMutableDraft('auth.ts', 1)
+    harness.focusMutableDraft('README.md', 2)
+    harness.focusMutableDraft('auth.ts', 2)
+    // The settings pages stand last in their groups, as in that window.
+    for (const [label, column] of [
+      ['Cursor Settings', 1],
+      ['VS Code Settings', 1],
+      ['Cursor Settings', 2],
+    ] as const) {
+      const page = harness.addOpaqueTab(label, column),
+        group = harness.groups.find(
+          (candidate) => candidate.viewColumn === column,
+        )!
+      group.tabs.splice(group.tabs.indexOf(page), 1)
+      group.tabs.push(page)
+    }
+    loginForm.focus()
+    await harness.openRepositoryWiki()
+    const groupsOfWindow = () =>
+      harness.groups
+        .toSorted((left, right) => left.viewColumn - right.viewColumn)
+        .map((group) => {
+          const name = (tab: (typeof group.tabs)[number]): string =>
+            'uri' in tab.input
+              ? tab.input.uri.scheme === 'file'
+                ? tab.label
+                : `${tab.label} (${tab.input.uri.scheme})`
+              : String(Reflect.get(tab.input, 'viewType') ?? tab.label)
+          return {
+            column: group.viewColumn,
+            active:
+              group.viewColumn ===
+              harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+            front: group.activeTab && name(group.activeTab),
+            tabs: group.tabs.map(name),
+          }
+        })
+    const beforeVisit = groupsOfWindow()
+
+    // Act: View recording in the Wiki, then Return to Wiki pressed in the Learning summary.
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const returnRefusal = await harness.reader.action('return-wiki', true).then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+    await harness.controller.settle()
+
+    // Assert: the groups of 2-before-enter.json before the visit, and those of 5-after-return.json after the Return, at the learner's sizes.
+    assert.deepEqual(
+      {
+        beforeVisit,
+        returnRefusal,
+        afterReturn: groupsOfWindow(),
+        layoutAfterReturn: harness.editorLayout(),
+      },
+      {
+        beforeVisit: [
+          {
+            column: 1,
+            active: false,
+            front: 'login-form.tsx (codebook-repository-source)',
+            tabs: [
+              'login-form.tsx',
+              'login-form.tsx (codebook-repository-source)',
+              'package.json',
+              'actions.ts',
+              'auth.ts',
+              'Cursor Settings',
+              'VS Code Settings',
+            ],
+          },
+          {
+            column: 2,
+            active: true,
+            front: 'codebook.repositoryWiki',
+            tabs: [
+              'README.md',
+              'auth.ts',
+              'codebook.repositoryWiki',
+              'Cursor Settings',
+            ],
+          },
+          { column: 3, active: false, front: 'New Agent', tabs: ['New Agent'] },
+        ],
+        returnRefusal: undefined,
+        afterReturn: [
+          {
+            column: 1,
+            active: false,
+            front: 'login-form.tsx (codebook-repository-source)',
+            tabs: [
+              'login-form.tsx',
+              'login-form.tsx (codebook-repository-source)',
+              'Captured-source.mts (codebook-source)',
+              'package.json',
+              'actions.ts',
+              'auth.ts',
+              'Cursor Settings',
+              'VS Code Settings',
+            ],
+          },
+          {
+            column: 2,
+            active: true,
+            front: 'codebook.repositoryWiki',
+            tabs: [
+              'README.md',
+              'auth.ts',
+              'codebook.repositoryWiki',
+              'codebook.scopedBrowser',
+              'Cursor Settings',
+            ],
+          },
+          { column: 3, active: false, front: 'New Agent', tabs: ['New Agent'] },
+        ],
+        layoutAfterReturn: {
+          orientation: 1,
+          groups: [{ size: 328 }, { size: 329 }],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's window when a Repository Wiki recording visit is refused by a real change of the learner's, made while its Application was being placed: the learner typed in the file that had the keyboard, so the visit's focus return refuses, and the Application pane and the group the visit created go again, leaving the learner's two groups at their columns; fails_when=the refusal of the preparation's focus return, which comes after the Application stands in its own group, leaves that pane alone in a new group at column 1 with the learner's groups shifted (C58 c58-vs-567: "Recorded playback unavailable. …" in a new group); why_new=Cycle 0046 row 659 (a failed visit leaves no Application group behind); seam=articleRecordingLayoutHarness, focusMutableDraft and its replaceContent, holdNextCommand on workbench.action.lockEditorGroup, openRepositoryEvidence with the recording, the playback state's refusal and the groups
 test('a Repository Wiki recording visit refused because the learner typed in the focused file during its placement leaves no Application group behind', async () => {
   // Arrange: the learner's two groups are stacked and the learner's notes in the first group have the keyboard; the editor holds its answer to the new Application group's lock.
