@@ -12,10 +12,10 @@ name: Windows file system and process tests
 # owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that
 # refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved
 # file back, of the process listing, of the removal walk and of the folder listing, on Windows, one test file at a time,
-# whenever a file those tests load, or the Node release they run on, changes. The two constants files those tests load
-# are left out of the filter although extension/src/constants.ts holds the lock's times, its path and its file modes:
-# they change with most pull requests. A change there, to the lockfile or to the build that emits the tests is seen by
-# the weekly run instead, within a week of reaching main.
+# whenever a file those tests load, or the Node release they run on, changes. Two files those tests load are left out of
+# the filter, extension/src/constants.ts and extension/src/runtimeSupport/constants.ts, although the first holds the
+# lock's times, its path and its file modes: they change with most pull requests. A change there, to the lockfile or to
+# the build that emits the tests is seen by the weekly run instead, within a week of reaching main.
 on:
   push:
     branches: [main]

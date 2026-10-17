@@ -1376,7 +1376,7 @@ test('what is left of a saved study without its archive and its catalog sidecar,
 })
 
 /**
- * Names another editor process as the writer of a recording this test process started, in both places a window of this build names it: the header, and the record of the writer's full identity beside the recordings ({@link recordingOwnerRecordPath}).
+ * Names an editor process (another window's, or this test process's own) as the writer of a recording this test process started, in both places a window of this build names it: the header, and the record of the writer's full identity beside the recordings ({@link recordingOwnerRecordPath}).
  * @param storage - The removal storage of the test.
  * @param studyId - The recording's study id, a recording of the configured format.
  * @param owner - The editor process: its id and its host name. Its start is read from the system, so a live process is judged by its own start, and an id of no process has none.

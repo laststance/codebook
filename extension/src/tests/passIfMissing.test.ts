@@ -24,7 +24,7 @@ test('a look at a path that holds nothing answers undefined, and a look at an en
   )
 })
 
-// Value: protects=a look that this user may not make, or that the system refuses for another reason, is reported as it is and not taken for a path that holds nothing (where a setup would then create a file, or a removal call a file gone); fails_when=every failure of the look is answered as missing; why_new=Cycle 0046 /ship review S3; seam=none, the system's errors as the file system throws them
+// Value: protects=a look that this user may not make, or that the system refuses for another reason, is reported as it is and not taken for a path that holds nothing (where a setup would then create a file, or a removal call a file gone); fails_when=every failure of the look is answered as missing; why_new=Cycle 0046 /ship review S3; seam=none; errors shaped as the file system throws them (an EACCES with its code, and an error without a code)
 test('every failure of a look but a missing path is passed on as the system’s own error', () => {
   // Arrange
   const refusedLook = Object.assign(

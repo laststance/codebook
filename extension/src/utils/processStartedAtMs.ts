@@ -8,7 +8,7 @@ import {
 } from '../constants'
 
 /**
- * Turns a process start as {@link readProcessStart} reads it into the time of the wall clock at which the process began; called by {@link recordingMayStillBeWritten} to tell a recording's writer from a later process that got its id.
+ * Turns a process start as {@link readProcessStart} reads it into the time of the wall clock at which the process began; called by {@link hasIdGoneToALaterProcess} (in {@link isRecordingWriterLive}) to tell a recording's writer from a later process that got its id.
  * Windows and macOS give a UTC time. Linux gives clock ticks since the kernel's boot, which are added to the boot time (the wall clock minus the uptime): a correction of the clock moves that by seconds, so a caller compares with a tolerance.
  * @param processStart - `win:<UTC time>`, `ps:<text of ps -o lstart= in UTC>`, or `linux[@<pid namespace>]:<ticks>`.
  * @param bootedAtMs - When this machine booted, by the wall clock; computed from the uptime unless a test names its own.
