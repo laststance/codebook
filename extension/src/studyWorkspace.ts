@@ -2953,10 +2953,10 @@ export class StudyWorkspace {
         column + vscode.window.tabGroups.all.length - groupCount
       const target = heldByAnotherPart
         ? undefined
-        : vscode.window.tabGroups.all.find(
+        : (vscode.window.tabGroups.all.find(
             (candidate) =>
               candidate.viewColumn === shownColumn && showsThatTab(candidate),
-          )
+          ) ?? this.onlyGroupShowingAfterLeftoverProof(showsThatTab, toldCause))
       const active = vscode.window.tabGroups.activeTabGroup,
         activeUri =
           active.activeTab?.input instanceof vscode.TabInputText
@@ -3001,6 +3001,23 @@ export class StudyWorkspace {
         chatEditorTab,
       )
     }
+  }
+
+  /**
+   * Finds the group of a remembered tab after a leftover proof, when the column shift the return assumes missed it; asked by the function {@link retainForeignTabFocus} answers once its shifted column shows no such tab (row 648's further finding).
+   * A leftover proof places no pane, it only removes groups an earlier window left: a removed group after the remembered tab's group leaves that group's column as it was, which the shift by the group count does not see, so VS Code's chat editor tab in a group before the leftover got nothing back.
+   * @param showsThatTab - Tells whether a group shows the remembered tab in front.
+   * @param toldCause - The return's cause; only a leftover proof's return looks further.
+   * @returns The one group that shows the tab after a leftover proof; `undefined` for any other cause, and when no group or several groups show it.
+   * @example this.onlyGroupShowingAfterLeftoverProof(showsThatTab, 'leftoverProof') // => the chat tab's group at column 1 after the leftover at column 3 was removed
+   */
+  private onlyGroupShowingAfterLeftoverProof(
+    showsThatTab: (candidate: vscode.TabGroup) => boolean,
+    toldCause: ChatKeyboardReturnCause | undefined,
+  ): vscode.TabGroup | undefined {
+    if (toldCause !== 'leftoverProof') return undefined
+    const showing = vscode.window.tabGroups.all.filter(showsThatTab)
+    return showing.length === 1 ? showing[0] : undefined
   }
 
   /**

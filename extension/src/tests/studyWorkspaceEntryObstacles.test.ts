@@ -2480,6 +2480,68 @@ test('an agent’s cold Study select in VS Code that retires the earlier window�
   }
 })
 
+// Value: protects=the keyboard of VS Code's chat editor tab in a group before the earlier window's leftover when an agent's cold Study select retires that leftover: its removal leaves the chat's group at its column, the chat's group gets its keyboard back through its focus command and the leftovers' sentence is told once; fails_when=the return shifts the remembered column by the group count as if the removed group stood before the chat's, finds no group showing the chat at column 0, and gives nothing back, so the captured source takes the keyboard and only its sentence is told; why_new=Cycle 0046 row 648's further finding (the fixer's own); seam=applicationGroupMarkers, leaveEmptyGroup, leaveDeadCodebookPane, focusChatEditorTab (VS Code's TabInputChat), closeDisposedPanelTabsLater, the reader's changePresentation for an agent, the command log and the information messages
+test('an agent’s cold Study select in VS Code that retires the earlier window’s leftover group after the chat editor tab’s group gives that chat its keyboard back at its unchanged column and says once that closing the leftover moved it', async () => {
+  // Arrange: the earlier window recorded its Application group at column 3, where the old host's Application pane is left dead; the learner's notes stand in column 2, and VS Code's chat editor tab in column 1 has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  harness.closeDisposedPanelTabsLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 3,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyGroup(3)
+    harness.leaveDeadCodebookPane('codebook.scopedBrowser', 3)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.leaveEmptyGroup(1)
+    harness.focusChatEditorTab(1)
+    const commandsBefore = harness.commands.length
+    const state = harness.reader.presentationState()
+
+    // Act: the agent's codebook_presentation select, as the service passes it on.
+    await harness.reader
+      .changePresentation(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      .catch(() => undefined)
+
+    // Assert: the proof focused the leftover at column 3, and the chat tab's group, still column 1, got the keyboard back by its number before the selection went on; the leftovers' sentence was told first.
+    assert.deepEqual(
+      {
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => command.startsWith('workbench.action.focus'))
+          .slice(0, 2),
+        firstMessage: harness.informationMessages[0]?.message,
+      },
+      {
+        focusCommands: [
+          'workbench.action.focusThirdEditorGroup',
+          'workbench.action.focusFirstEditorGroup',
+        ],
+        firstMessage:
+          'Codebook gave the keyboard back to the chat after it closed the editor groups an earlier window had left, which moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of where the keyboard is after an agent's cold Study select in Cursor retired the earlier window's leftover groups from the Agent chat: the proofs focused those groups, and Cursor's Focus Agent gave the chat its keyboard back, which Cursor reads the same whether the chat input or the terminal or a view had it (Cursor 3.23.12 17501:84373, 17501:88693, 17264:2840, 17264:3411), so the learner is told once, as at a pause (row 635), with the leftover's own sentence; fails_when=the leftover proof's return to Cursor's chat moves the keyboard into the chat without a word, or tells row 632's pause sentence; why_new=Cycle 0046 row 648 (Cursor's half of the same give-back); seam=applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, leaveDeadCodebookPane, addSeparateEditorPart with the chat's focusTab, closeDisposedPanelTabsLater, the reader's changePresentation for an agent, the command log and the information messages
 test('in Cursor, an agent’s cold Study select from the chat that retires the earlier window’s leftover groups gives the chat its keyboard back and says once that closing the leftovers moved it', async () => {
   // Arrange: the earlier window recorded its Application group at column 1 and its Context group at column 3; the old host's Study pane is left dead in column 3, the learner's notes stand in column 2, and the chat has the keyboard.
