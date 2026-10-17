@@ -10,6 +10,7 @@ import {
 } from '../constants'
 import { recordingHeaderSchema } from '../recordingSchemas'
 
+import { hasOwnWriterRecordFolder } from './hasOwnWriterRecordFolder'
 import { readWikiRegularFile } from './readWikiRegularFile'
 import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
@@ -65,11 +66,15 @@ export async function lookAtRecording(
     () => false,
   )
   const header = await readHeaderOwner(directory)
-  const hasWriterRecord = await lstat(
-    recordingOwnerRecordPath(dirname(dirname(directory)), basename(directory)),
-  ).then(
-    (entry) => entry.isFile(),
-    () => false,
-  )
+  const learningDirectory = dirname(dirname(directory))
+  // A record behind a link or a junction at the folder's place is none.
+  const hasWriterRecord =
+    (await hasOwnWriterRecordFolder(learningDirectory)) &&
+    (await lstat(
+      recordingOwnerRecordPath(learningDirectory, basename(directory)),
+    ).then(
+      (entry) => entry.isFile(),
+      () => false,
+    ))
   return { isSealed, ...(header && { header }), hasWriterRecord }
 }

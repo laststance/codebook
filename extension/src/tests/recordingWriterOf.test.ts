@@ -9,6 +9,7 @@ import {
   readdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
@@ -765,5 +766,60 @@ test('a named pipe at a recording’s header neither holds the list of saved stu
       removal: removal === 'timed out' ? removal : removal.outcome,
     },
     { listed: [recording.studyId], removal: 'moved' },
+  )
+})
+
+// Value: protects=a file of the learner's that a link (a junction on Windows) at the place of the folder of writer records leads to; fails_when=a record is written, removed at a study's removal or at a recording's seal, or read through that link, so an unrelated `<id>.json` is overwritten or deleted without the Trash, or taken for a writer; why_new=Cycle 0046 Codex review CX14: the record's write, read and removals followed the folder; seam=a link at `recording-owners` to a folder of the test that holds an unrelated file named like each recording's record
+test('a link at the place of the folder of writer records is never followed: a recording’s start writes nothing through it, and a removal and a seal delete nothing behind it', async (context) => {
+  // Arrange: two recordings, then their folder of records replaced by a link to a folder that holds an unrelated file named like each record.
+  const storage = await recordingStorage(context)
+  const removed = await startRecording(storage),
+    sealed = await startRecording(storage)
+  await rewriteHeader(removed.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+  })
+  const elsewhere = join(storage.directory, '..', 'elsewhere')
+  await mkdir(elsewhere)
+  for (const recording of [removed, sealed])
+    await writeFile(
+      join(elsewhere, `${recording.studyId}.json`),
+      'A file of the learner.',
+    )
+  await rm(join(storage.directory, 'recording-owners'), { recursive: true })
+  await symlink(
+    elsewhere,
+    join(storage.directory, 'recording-owners'),
+    'junction',
+  )
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    removed.studyId,
+    async (path) => rm(path, { recursive: true }),
+  )
+  await sealed.writer.finish(1)
+  const started = await startRecording(storage)
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal: removal.outcome,
+      startedWriter: await writerOf(started.folder),
+      behindTheLink: (await readdir(elsewhere)).sort(),
+      contents: await Promise.all(
+        [removed, sealed].map((recording) =>
+          readFile(join(elsewhere, `${recording.studyId}.json`), 'utf8'),
+        ),
+      ),
+    },
+    {
+      removal: 'moved',
+      startedWriter: { kind: 'may-run' },
+      behindTheLink: [
+        `${removed.studyId}.json`,
+        `${sealed.studyId}.json`,
+      ].sort(),
+      contents: ['A file of the learner.', 'A file of the learner.'],
+    },
   )
 })

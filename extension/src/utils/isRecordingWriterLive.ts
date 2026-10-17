@@ -1,9 +1,11 @@
 import { hostname } from 'node:os'
+import { dirname } from 'node:path'
 
 import { STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS } from '../constants'
 import type { RecordingHeader } from '../recordingSchemas'
 
 import { currentStorageOwner } from './currentStorageOwner'
+import { hasOwnWriterRecordFolder } from './hasOwnWriterRecordFolder'
 import { isProcessGone } from './isProcessGone'
 import { isRecordedOwnerGone } from './isRecordedOwnerGone'
 import { isSameStorageMachine } from './isSameStorageMachine'
@@ -186,7 +188,12 @@ export async function recordingWriterState(
   const recording = `${ownerRecordPath}\n${header.createdAt}`
   if (goneWriters.has(recording)) return { kind: 'gone' }
   const readStart = readStartOncePerList(starts)
-  const recordedOwner = await readRecordedOwner(ownerRecordPath)
+  // A record is read only from a real folder of records; one behind a link or a junction is none.
+  const recordedOwner = (await hasOwnWriterRecordFolder(
+    dirname(dirname(ownerRecordPath)),
+  ))
+    ? await readRecordedOwner(ownerRecordPath)
+    : undefined
   // The record of this build names the writer fully; a recording of 0.2.29.0 has its header alone.
   const state = recordedOwner
     ? await writerStateByRecord(recordedOwner, header, ownProcess, readStart)

@@ -56,12 +56,12 @@ import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
-import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import {
   recordingWriterOf,
   type RecordingWriterOfDirectory,
 } from './utils/recordingWriterOf'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
+import { removeWriterRecord } from './utils/removeWriterRecord'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
@@ -1105,10 +1105,7 @@ export class LearningLibrary {
           const steps: (() => Promise<void>)[] = [
             ...paths.recordings.map(trash),
             // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
-            (): Promise<void> =>
-              unlink(recordingOwnerRecordPath(this.directory, identity)).catch(
-                () => undefined,
-              ),
+            (): Promise<void> => removeWriterRecord(this.directory, identity),
             // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
             ...(evidenceDirectory
               ? [

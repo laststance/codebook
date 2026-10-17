@@ -66,6 +66,7 @@ import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
+import { hasOwnWriterRecordFolder } from './utils/hasOwnWriterRecordFolder'
 import {
   isRecordingWriterLive,
   type ProcessStartsOfList,
@@ -74,6 +75,7 @@ import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { recordingPhases } from './utils/recordingPhases'
+import { removeWriterRecord } from './utils/removeWriterRecord'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { validateRecordingContext } from './utils/validateRecordingContext'
 import { withStorageLock } from './utils/withStorageLock'
@@ -293,8 +295,8 @@ export class RecordingStore {
     const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
     try {
       await mkdir(folder, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-      // Only a real folder takes the record; nothing is written through a link.
-      if (!(await lstat(folder)).isDirectory()) return
+      // Only a real folder of the storage takes the record; nothing is written through a link or a junction.
+      if (!(await hasOwnWriterRecordFolder(this.learningDirectory))) return
       await atomicPrivateWrite(
         recordingOwnerRecordPath(this.learningDirectory, studyId),
         { pid: process.pid, ...(await currentStorageOwner()) },
@@ -314,8 +316,8 @@ export class RecordingStore {
     identities: string[],
   ): Promise<void> {
     const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
-    // A link or a file at the folder's path is no folder of records and is not listed.
-    if (!(await lstat(folder).catch(() => undefined))?.isDirectory()) return
+    // A link, a junction or a file at the folder's path is no folder of records and is not listed.
+    if (!(await hasOwnWriterRecordFolder(this.learningDirectory))) return
     for (const name of await readdir(folder).catch(() => [])) {
       // A record is `<study id>.json`; its temporary file adds `.<uuid>.tmp`.
       const studyId = name.slice(0, name.indexOf('.json'))
@@ -1277,12 +1279,10 @@ export class RecordingWriter {
           MAX_RECORDING_HEADER_BYTES,
         )
         // A sealed recording has no writer any more; the record of its writer goes, and one that stays is swept at a later start.
-        await unlink(
-          recordingOwnerRecordPath(
-            dirname(dirname(this.directory)),
-            this.header.studyId,
-          ),
-        ).catch(() => undefined)
+        await removeWriterRecord(
+          dirname(dirname(this.directory)),
+          this.header.studyId,
+        )
         this.finalized = true
         this.sealed()
         return seal
