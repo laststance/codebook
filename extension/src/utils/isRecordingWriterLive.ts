@@ -169,7 +169,7 @@ export async function recordingWriterState(
 }
 
 /**
- * Says whether the editor process that writes an unsealed recording may still run, on this machine or on another one ({@link recordingWriterState}); called by {@link recordingMayStillBeWritten} and by the status {@link RecordingStore} gives a recording another session wrote (`unfinalized` while its writer may run, `interrupted` once it is gone).
+ * Says whether the editor process that writes an unsealed recording may still run, on this machine or on another one ({@link recordingWriterState}); called by the status {@link RecordingStore} gives a recording another session wrote (`unfinalized` while its writer may run, `interrupted` once it is gone).
  * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.

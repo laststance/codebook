@@ -56,11 +56,11 @@ import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
+import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import {
   recordingWriterOf,
   type RecordingWriterOfDirectory,
-} from './utils/recordingMayStillBeWritten'
-import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
+} from './utils/recordingWriterOf'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'

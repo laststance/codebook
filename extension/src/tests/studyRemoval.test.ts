@@ -22,8 +22,8 @@ import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { readProcessStart } from '../utils/readProcessStart'
-import { recordingWriterOf } from '../utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
+import { recordingWriterOf } from '../utils/recordingWriterOf'
 import type * as lockModule from '../utils/withStorageLock'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -1469,7 +1469,7 @@ test('a recording that is still being written for a study that is not saved yet 
   )
 })
 
-// Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so a removal of its id moves it away while the other editor writes it, without the learner's choice; why_new=Cycle 0046 /ship review T1: the "another machine" half of recordingMayStillBeWritten had no test, and dropping it survived every test. Since AF2 such a recording is listed, so the learner can reach the dialog about it, and the removal waits for their choice; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
+// Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so a removal of its id moves it away while the other editor writes it, without the learner's choice; why_new=Cycle 0046 /ship review T1: the "another machine" half of the rule that judges a recording's writer (now recordingWriterOf) had no test, and dropping it survived every test. Since AF2 such a recording is listed, so the learner can reach the dialog about it, and the removal waits for their choice; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
 test('a recording whose header names an editor of another machine is listed but not moved without the learner’s choice, although no process of its id runs on this machine', async (context) => {
   // Arrange: one reserved recording without a saved study, as a window of 0.2.29.0 makes it (a header, and no record of its writer beside the recordings); its header names an editor on another machine, with a process id no process here has.
   const storage = await removalStorage(context, 4)
@@ -1695,7 +1695,7 @@ test('a removal judges the writers of the study’s recordings before it takes t
   >(
     resolve(__dirname, '../learningLibrary.js'),
     {
-      './utils/recordingMayStillBeWritten': {
+      './utils/recordingWriterOf': {
         recordingWriterOf: async (
           ...judging: Parameters<typeof recordingWriterOf>
         ): ReturnType<typeof recordingWriterOf> => {

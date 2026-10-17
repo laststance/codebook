@@ -23,9 +23,9 @@ import { RecordingStore } from '../recordingStore'
 import { useEditorMachineId } from '../utils/currentStorageOwner'
 import type * as judgeModule from '../utils/isRecordingWriterLive'
 import { readProcessStart } from '../utils/readProcessStart'
-import type * as recordingJudgementModule from '../utils/recordingMayStillBeWritten'
-import { recordingMayStillBeWritten } from '../utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
+import type * as writerModule from '../utils/recordingWriterOf'
+import { recordingWriterOf } from '../utils/recordingWriterOf'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
@@ -120,6 +120,23 @@ async function rewriteHeader(
   )
 }
 
+/**
+ * Says what {@link recordingWriterOf} finds of one recording's writer, without the recording's creation time, which the tests of the removal's dialog pin (it names that time).
+ * @param folder - The recording's folder.
+ * @param ownProcess - Whether this test process's own recording counts (`counts`, the default) or is left to the caller (`ignored`).
+ * @returns The answer's kind, with the host for `on-another-host`.
+ * @example await writerOf(folder) // => { kind: 'gone' }
+ */
+async function writerOf(
+  folder: string,
+  ownProcess?: 'counts' | 'ignored',
+): Promise<Record<string, unknown>> {
+  const answer = await recordingWriterOf(folder, ownProcess)
+  return Object.fromEntries(
+    Object.entries(answer).filter(([field]) => field !== 'createdAt'),
+  )
+}
+
 /** Says whether a path holds anything. @example await isPresent('/tmp/x') // => false */
 function isPresent(path: string): Promise<boolean> {
   return lstat(path).then(
@@ -129,7 +146,7 @@ function isPresent(path: string): Promise<boolean> {
 }
 
 // Value: protects=the place of a crashed window's recording in the library when its process id went to another process of this machine; fails_when=a recording of 0.2.29.0 (a header, no record of its writer) is judged by its process id alone, so any process that got the id keeps the recording "being written" for good: the list hides it, a removal refuses it, and it still counts against the library's limit; why_new=Cycle 0046 /ship review R10 (a): no process start was compared for a recording; seam=the recording's header, which names a live child process of the test that began after the recording's creation time
-test('a recording made by 0.2.29.0 on this host whose writer’s process id went to a process begun after the recording was created is no longer being written', async (context) => {
+test('a recording made by 0.2.29.0 on this host whose writer’s process id went to a process begun after the recording was created has a writer that is gone', async (context) => {
   // Arrange: the recording was created ten minutes ago by a window that crashed; a process that began just now has its id.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -141,14 +158,14 @@ test('a recording made by 0.2.29.0 on this host whose writer’s process id went
   })
 
   // Act
-  const mayStillBeWritten = await recordingMayStillBeWritten(recording.folder)
+  const writer = await writerOf(recording.folder)
 
   // Assert
-  assert.equal(mayStillBeWritten, false)
+  assert.deepEqual(writer, { kind: 'gone' })
 })
 
 // Value: protects=the recording of a crashed window on a computer whose host name changed since (macOS names itself after the network); fails_when=the writer is judged by the host name in the header, which is no longer this machine's, so the recording counts as written on another machine for good; why_new=Cycle 0046 /ship review R10 (b): the record of the writer's full identity is new; seam=the header and the record of the writer, which name the old host name, this editor's machine id and a process id of no process
-test('a recording whose writer’s host name has changed since is judged by the record of its writer: of this machine, with a process that is gone, it is no longer being written', async (context) => {
+test('a recording whose writer’s host name has changed since is judged by the record of its writer: of this machine, with a process that is gone, its writer is gone', async (context) => {
   // Arrange
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -161,14 +178,14 @@ test('a recording whose writer’s host name has changed since is judged by the 
   })
 
   // Act
-  const mayStillBeWritten = await recordingMayStillBeWritten(recording.folder)
+  const writer = await writerOf(recording.folder)
 
   // Assert
-  assert.equal(mayStillBeWritten, false)
+  assert.deepEqual(writer, { kind: 'gone' })
 })
 
 // Value: protects=the recording another computer with the same host name is writing into a shared storage folder; fails_when=the writer is judged by the host name, so this machine probes the other machine's process id, finds no process, and lists or removes the recording while it is written; why_new=Cycle 0046 /ship review R10 (b); seam=the header, which names this host name and a process id of no process, and the record of the writer, which names another editor machine id
-test('a recording whose record names another machine with this host name stays being written, although no process of its id runs here', async (context) => {
+test('a recording whose record names another machine with this host name has a writer on another host, although no process of its id runs here', async (context) => {
   // Arrange
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -181,14 +198,14 @@ test('a recording whose record names another machine with this host name stays b
   })
 
   // Act
-  const mayStillBeWritten = await recordingMayStillBeWritten(recording.folder)
+  const writer = await writerOf(recording.folder)
 
   // Assert
-  assert.equal(mayStillBeWritten, true)
+  assert.deepEqual(writer, { kind: 'on-another-host', host: hostname() })
 })
 
 // Value: protects=the recordings a window of 0.2.29.0 made (a header, no record of their writer), which keep the judgment they had; fails_when=a recording of another host, or of a live process that began before it, counts as no longer written (it is listed and removable while written), one of a gone process counts as written, or this window's own recording is not left to it on request; why_new=Cycle 0046 /ship review R10: the record of the writer is new, and a recording without it must behave as before but for the process start; seam=the headers, without records of their writers
-test('a recording made by 0.2.29.0 is judged by its header as before: written on another host or by a live process begun before it, no longer written once its process is gone', async (context) => {
+test('a recording made by 0.2.29.0 is judged by its header as before: its writer is on another host, may run when it is a live process begun before it, and is gone once its process is gone', async (context) => {
   // Arrange: four recordings without records of their writers; the live process of the third began before it.
   const storage = await recordingStorage(context)
   const earlierProcess = await idleChild(context)
@@ -215,25 +232,46 @@ test('a recording made by 0.2.29.0 is judged by its header as before: written on
 
   // Act
   const answers = {
-    ofAnotherHost: await recordingMayStillBeWritten(ofAnotherHost.folder),
-    ofAGoneProcess: await recordingMayStillBeWritten(ofAGoneProcess.folder),
-    ofAnEarlierProcess: await recordingMayStillBeWritten(
-      ofAnEarlierProcess.folder,
-    ),
-    ofThisWindow: await recordingMayStillBeWritten(ofThisWindow.folder),
-    ofThisWindowLeftToIt: await recordingMayStillBeWritten(
-      ofThisWindow.folder,
-      'ignored',
-    ),
+    ofAnotherHost: await writerOf(ofAnotherHost.folder),
+    ofAGoneProcess: await writerOf(ofAGoneProcess.folder),
+    ofAnEarlierProcess: await writerOf(ofAnEarlierProcess.folder),
+    ofThisWindow: await writerOf(ofThisWindow.folder),
+    ofThisWindowLeftToIt: await writerOf(ofThisWindow.folder, 'ignored'),
   }
 
   // Assert
   assert.deepEqual(answers, {
-    ofAnotherHost: true,
-    ofAGoneProcess: false,
-    ofAnEarlierProcess: true,
-    ofThisWindow: true,
-    ofThisWindowLeftToIt: false,
+    ofAnotherHost: { kind: 'on-another-host', host: 'another-machine' },
+    ofAGoneProcess: { kind: 'gone' },
+    ofAnEarlierProcess: { kind: 'may-run' },
+    ofThisWindow: { kind: 'may-run' },
+    ofThisWindowLeftToIt: { kind: 'left-to-caller' },
+  })
+})
+
+// Value: protects=a recording whose run ended, which no writer holds any more, whatever its header names; fails_when=a sealed recording, or a folder whose header cannot be read, is judged by the process its header names, so a sealed recording of a live window is taken for that window's reservation and stays unlisted, or a removal refuses it; why_new=Cycle 0046 review AF4: the seal had no test of its own once the yes-or-no form went; seam=the header, which names a live child process of the test, and a header the test makes unreadable
+test('a sealed recording, and one whose header cannot be read, have no writer any more, whatever their header names', async (context) => {
+  // Arrange: two recordings whose headers name a live process of this machine; one is sealed, the other's header is no JSON.
+  const storage = await recordingStorage(context)
+  const liveProcess = await idleChild(context)
+  const sealed = await startRecording(storage),
+    unreadable = await startRecording(storage)
+  await sealed.writer.finish(1)
+  await rewriteHeader(sealed.folder, {
+    owner: { pid: liveProcess.pid!, hostname: hostname() },
+  })
+  await writeFile(join(unreadable.folder, 'header.json'), 'no JSON')
+
+  // Act
+  const answers = {
+    sealed: await writerOf(sealed.folder),
+    unreadable: await writerOf(unreadable.folder),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    sealed: { kind: 'finished' },
+    unreadable: { kind: 'finished' },
   })
 })
 
@@ -404,12 +442,12 @@ test('a recording starts without a record of its writer when a file stands where
         join(storage.directory, 'recording-owners'),
         'utf8',
       ),
-      mayStillBeWritten: await recordingMayStillBeWritten(recording.folder),
+      writer: await writerOf(recording.folder),
     },
     {
       isRecordingStarted: true,
       fileAtTheFolderPath: 'a file',
-      mayStillBeWritten: true,
+      writer: { kind: 'may-run' },
     },
   )
 })
@@ -458,8 +496,8 @@ async function windowWithCountedStartReads() {
     },
     { Error },
   )
-  const recordingJudgement = await loadModule<typeof recordingJudgementModule>(
-    resolve(__dirname, '../utils/recordingMayStillBeWritten.js'),
+  const recordingJudgement = await loadModule<typeof writerModule>(
+    resolve(__dirname, '../utils/recordingWriterOf.js'),
     { './isRecordingWriterLive': judge },
     { Error },
   )
@@ -474,7 +512,7 @@ async function windowWithCountedStartReads() {
     typeof libraryModule
   >(
     resolve(__dirname, '../learningLibrary.js'),
-    { './utils/recordingMayStillBeWritten': recordingJudgement },
+    { './utils/recordingWriterOf': recordingJudgement },
     { Error },
   )
   return {
