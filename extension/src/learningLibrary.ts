@@ -65,6 +65,10 @@ import { withStorageLock } from './utils/withStorageLock'
 /** Moves one file or directory of a saved study to the system Trash; injected into {@link LearningLibrary.removeStudy} so the library stays free of the editor API. @example const moveToTrash: StudyMover = (path) => workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true }) */
 export type StudyMover = (path: string) => Promise<void>
 
+/** Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write ({@link recordingMayStillBeWritten}): moving it would make that window's next append fail and its next save write the archive again. The removal's outcome line puts it after "Nothing was deleted." */
+const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
+  'Another editor window is still recording this study. Stop its run in that window, then delete the study again.'
+
 /**
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
@@ -293,6 +297,15 @@ export class LearningLibrary {
   ): Promise<boolean> {
     for (const recording of recordings)
       if (!(await recordingMayStillBeWritten(recording))) return true
+    return false
+  }
+
+  /** Says whether a run of another editor window may still write one of a study's recording directories ({@link recordingMayStillBeWritten}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link removeStudy} before the first move. @example await this.isRecordedByAnotherWindow(['/…/recordings.v2/<id>']) // => true while another window records that run */
+  private async isRecordedByAnotherWindow(
+    recordings: string[],
+  ): Promise<boolean> {
+    for (const recording of recordings)
+      if (await recordingMayStillBeWritten(recording, 'ignored')) return true
     return false
   }
 
@@ -754,6 +767,7 @@ export class LearningLibrary {
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
    * What is left of a study whose archive is gone, as {@link list} shows it, is moved in the same order ({@link isLeftWithoutArchive}); the recording of a run that has not saved its study yet is not.
+   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link isRecordedByAnotherWindow}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
@@ -779,6 +793,9 @@ export class LearningLibrary {
       // What is left of a study without its archive is removed like a study; an id of which nothing is left, or only a recording that may still be written, names no study.
       if (!paths.archives.length && !(await this.isLeftWithoutArchive(paths)))
         throw new StudyArchiveUnavailableError()
+      // A recording another window's run may still write keeps every file of the study in place: that window would fail its next append and save the archive again.
+      if (await this.isRecordedByAnotherWindow(paths.recordings))
+        throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
       // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
       const progress = await this.readProgress().catch(() => undefined),
         ledger = progress && withoutStudyReferences(progress, identity)

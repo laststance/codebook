@@ -16,12 +16,14 @@ import fsPromises, {
 import { hostname, tmpdir } from 'node:os'
 import { basename, join, relative } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { isDeepStrictEqual } from 'node:util'
 
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
+import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 
 /**
@@ -1505,6 +1507,124 @@ test('a recording whose header names an editor of another machine is neither lis
       },
       moved: [],
       isRecordingInPlace: true,
+    },
+  )
+})
+
+/**
+ * Starts the recording of a saved study as a run of the given window does, and leaves it unsealed, as a run that still writes it leaves it.
+ * @param storage - The removal storage of the test.
+ * @param study - The saved study whose run is recorded.
+ * @param owner - The editor process the header names: its id and its host name.
+ * @returns The recording's directory.
+ * @example await recordingStillWrittenBy(storage, study, { pid: child.pid!, hostname: hostname() })
+ */
+async function recordingStillWrittenBy(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  study: Awaited<ReturnType<typeof saveStudy>>,
+  owner: { pid: number; hostname: string },
+): Promise<string> {
+  await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId: study.runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  const directory = join(storage.directory, 'recordings.v2', study.id)
+  const header: { owner: { sessionId: string } } = JSON.parse(
+    await readFile(join(directory, 'header.json'), 'utf8'),
+  )
+  await writeFile(
+    join(directory, 'header.json'),
+    JSON.stringify({
+      ...header,
+      owner: { ...owner, sessionId: header.owner.sessionId },
+    }),
+  )
+  return directory
+}
+
+// Value: protects=a saved study whose run another editor window is still recording; fails_when=a removal in this window moves that window's recording (and the study's other files) while it writes it, so its next journal append fails with ENOENT and its next save writes the archive again: the removed study comes back without its recording; why_new=Cycle 0046 /ship review R9: the guard of a recording that may still be written applied only to a study without an archive; seam=the recording's header, which names a live child process of the test as the other window's editor, and the injected mover
+test('a saved study whose recording another live editor window is still writing is not moved: the removal says so and every file stays', async (context) => {
+  // Arrange: a saved study with an archive; another window, a live process of this machine, is still recording its run.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  const recording = await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const filesBefore = await filesBelow(storage.directory)
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      moved: storage.moved,
+      isRecordingInPlace: await lstat(recording).then(
+        (entry) => entry.isDirectory(),
+        () => false,
+      ),
+      isEveryFileUnchanged: isDeepStrictEqual(
+        await filesBelow(storage.directory),
+        filesBefore,
+      ),
+    },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+      isRecordingInPlace: true,
+      isEveryFileUnchanged: true,
+    },
+  )
+})
+
+// Value: protects=a removal in the window whose own run recorded the study, after that run stopped (the window refuses to remove a study whose run has not stopped), also when its recording was never sealed; fails_when=this window's own process counts as another window that still records, so a study whose seal failed can never be removed until the editor restarts; why_new=Cycle 0046 /ship review R9: the new refusal must not hold for this window's own recordings; seam=none, the recording as this window's store starts it
+test('a saved study whose unsealed recording this window’s own process started is moved with its recording', async (context) => {
+  // Arrange: a saved study with an archive whose recording this test process started and never sealed.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await recordingStillWrittenBy(storage, study, {
+    pid: process.pid,
+    hostname: hostname(),
+  })
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { removal, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
     },
   )
 })
