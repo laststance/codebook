@@ -684,7 +684,7 @@ test('the reader refuses a Wiki whose `.codebook` folder in the project is a lin
   // Assert
   assert.equal(
     refusal,
-    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it. Replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project.`,
+    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project`,
   )
 })
 

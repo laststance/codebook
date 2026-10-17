@@ -56,6 +56,7 @@ import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
 } from './utils/answerDeepWikiQuestion'
+import { assertNoLinkOnWikiPath } from './utils/assertNoLinkOnWikiPath'
 import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
 import {
   claimWikiUpdateMarker,
@@ -883,9 +884,11 @@ export function activate(
         'The DeepWiki manifest does not identify this opened project.',
       )
   }
-  /** Checks the generated Wiki's owner and its entry page before the browser entry opens it, each read as a file of the Wiki folder and never through a link ({@link readWikiFileToOpen}); an update checks the owner alone, so a deleted entry page reaches its start check. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
+  /** Checks the generated Wiki's owner and its entry page before the browser entry opens it, each read as a file of the Wiki folder and never through a link ({@link readWikiFileToOpen}), and only after the Wiki folder's path in the project was found to hold no link ({@link assertNoLinkOnWikiPath}); an update checks the owner alone, so a deleted entry page reaches its start check. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
   const currentDeepWiki = async () => {
     const { projectRoot, outputDirectory } = await wikiLocation()
+    // Nothing of the Wiki is read through a link on its folder's path in the project, not even the manifest the owner check reads.
+    await assertNoLinkOnWikiPath(outputDirectory, projectRoot)
     await assertWikiOwner(projectRoot, outputDirectory)
     const entry = join(outputDirectory, WIKI_ENTRY_FILE)
     await readWikiFileToOpen(entry, 'entry page')

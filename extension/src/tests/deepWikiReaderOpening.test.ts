@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { constants as openConstants } from 'node:fs'
-import { open, rename, rm } from 'node:fs/promises'
+import { mkdtemp, open, realpath, rename, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { promisify } from 'node:util'
@@ -371,6 +372,40 @@ test('Open LLM Wiki in a project without a Wiki says that no Wiki was found at i
       withoutAnEntryPage: [
         `Codebook could not open DeepWiki: Error: No Wiki was found at ${wikiOfTheSecond}: its entry page (index.html) does not exist. Generate it through /codebook in this project, then retry.`,
       ],
+    },
+  )
+})
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook` link leads to, when the learner runs "Open LLM Wiki"; fails_when=the open command checks the Wiki's owner by reading its manifest through the link before the reader refuses the path, or opens a reader on the Wiki behind the link; why_new=Cycle 0046 /ship follow-up N3 (the rest of finding F1); seam=none (a junction on Windows, which needs no right)
+test('Open LLM Wiki on a Wiki whose `.codebook` folder in the project is a link to a folder outside it refuses before it reads anything behind the link, names the link, and starts no reader', async (context) => {
+  // Arrange: the one-page Wiki's `.codebook` folder is moved out of the project, and a link to it stands in its place.
+  const window = await openWikiOpeningWindow()
+  context.after(() => window.close())
+  const outside = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-opening-outside-')),
+  )
+  context.after(() => rm(outside, { recursive: true, force: true }))
+  await rename(
+    join(window.projectRoot, '.codebook'),
+    join(outside, 'codebook-moved-out'),
+  )
+  await symlink(
+    join(outside, 'codebook-moved-out'),
+    join(window.projectRoot, '.codebook'),
+    'junction',
+  )
+
+  // Act
+  await window.open().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    { errors: window.errors, readersStarted: window.readers.length },
+    {
+      errors: [
+        `Codebook could not open DeepWiki: Error: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
+      ],
+      readersStarted: 0,
     },
   )
 })
