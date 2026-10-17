@@ -3148,6 +3148,59 @@ test('Update anyway is not offered while another window’s update is running', 
   }
 })
 
+// Value: protects=the learner who presses Cancel in the moment the watch reads the site the chat has just published, and every later press in this and other windows; fails_when=the run's end counts the stopped watch and not the publish on disk, so it keeps a reservation for 15 minutes and records a chat that may still work, and every later start of a Wiki that is not current is refused with "may still be updating" for a chat that has finished, Update anyway being the only way on; why_new=Cycle 0046 /ship red team finding R8; seam=the freshness inspection of the published manifest, held open while the learner presses Cancel
+test('a Cancel pressed while the watch reads a site the chat has published stops the watch with that new site named as published, and leaves no reservation, and a press after a later source change starts the next update instead of waiting for a chat that has finished', async () => {
+  // Arrange: the watch runs; the chat publishes, and the watch's read of the new manifest is held open.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress })
+  try {
+    await wiki.clickUpdate()
+    const read = wiki.hold('freshness-inspection')
+    await wiki.publish('b'.repeat(64))
+    await read.started
+
+    // Act: Cancel while the read is under way; the read then answers that the new site matches the source.
+    progress[0]!.cancel()
+    wiki.setFreshness(CURRENT)
+    read.release()
+    const ended = await waitForEnd(wiki.status)
+    // Another window reads a reservation from this marker file.
+    const isReservedForOtherWindows = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => true,
+      () => false,
+    )
+    // The learner then changes a source, so the Wiki is no longer current, and presses again.
+    wiki.setFreshness({
+      status: 'changed',
+      changedPaths: ['src/a.ts'],
+      addedPaths: [],
+    })
+    await wiki.clickUpdate()
+
+    // Assert: the watch answers the Cancel, and its end says that a new site was published just before it.
+    assert.deepEqual(
+      {
+        ended: ended.state,
+        site: ended.state === 'cancelled' ? ended.site : 'none',
+        isReservedForOtherWindows,
+        nextPress: wiki.status().state,
+        chatRequests: wiki.chatRequests.length,
+      },
+      {
+        ended: 'cancelled',
+        site: 'replaced',
+        isReservedForOtherWindows: false,
+        nextPress: 'running',
+        chatRequests: 2,
+      },
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a VS Code watch that was stopped before the chat staged anything still refuses the next press, until the learner chooses Update anyway', async () => {
   // Arrange
   const progress: CancellableProgress[] = []

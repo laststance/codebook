@@ -91,7 +91,7 @@ async function lookAtNewPublish<Published>(
   token: string,
 ): Promise<WikiPublishLook<Published>> {
   const published = await watch.options.readPublished()
-  // A cancel that arrived while the manifest was read is not answered with a publish.
+  // A cancel that arrived while the manifest was read is answered as the learner's Cancel; the run's end still finds the publish on disk and counts no chat that may still publish.
   if (watch.options.signal.aborted) return { outcome: 'cancelled' }
   if (published !== undefined) return { outcome: 'published', token, published }
   return waitForReadableManifest(watch, token)

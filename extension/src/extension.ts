@@ -1012,24 +1012,31 @@ export function activate(
       published: await readPublishedIfReplaced(run, tokenAtEnd),
     }
   }
-  /** Decides how a run of either host ended from the disk: reads the site again ({@link readWikiSiteAtEnd}) and lets {@link classifyWikiUpdateEnd} decide; called by {@link finishWikiUpdate}. @throws What a read of the disk throws; the caller then ends the run without the disk. @example await readWikiUpdateEnd(run, { cancelled: true }) // => { state: 'cancelled', site: 'kept' } */
+  /** Decides how a run of either host ended from the disk: reads the site again ({@link readWikiSiteAtEnd}) and lets {@link classifyWikiUpdateEnd} decide; called by {@link finishWikiUpdate}. @returns The end, and whether the Wiki has a new publication since the run's start: only the Codebook publisher writes one, so a chat's publish is on disk. @throws What a read of the disk throws; the caller then ends the run without the disk. @example await readWikiUpdateEnd(run, { cancelled: true }) // => { end: { state: 'cancelled', site: 'kept' }, hasNewPublication: false } */
   const readWikiUpdateEnd = async (
     run: WikiRun,
     observed: ObservedWikiRunEnd,
-  ): Promise<WikiUpdateEnd> =>
-    classifyWikiUpdateEnd({
-      host: run.host,
-      cancelled: observed.cancelled ?? false,
-      timedOut: observed.timedOut ?? false,
-      tokenAtStart: run.tokenAtStart,
-      publicationAtStart: run.publicationAtStart,
-      ...(await readWikiSiteAtEnd(run, observed.publish)),
-      uncoveredAtStart: run.uncoveredAtStart,
-      blockingPaths: observed.blockingPaths ?? [],
-      failure: observed.failure,
-      isFailureCodebookSentence: observed.isFailureCodebookSentence,
-      mayBeReplacedLater: observed.mayBeReplacedLater,
-    })
+  ): Promise<{ end: WikiUpdateEnd; hasNewPublication: boolean }> => {
+    const siteAtEnd = await readWikiSiteAtEnd(run, observed.publish)
+    return {
+      end: classifyWikiUpdateEnd({
+        host: run.host,
+        cancelled: observed.cancelled ?? false,
+        timedOut: observed.timedOut ?? false,
+        tokenAtStart: run.tokenAtStart,
+        publicationAtStart: run.publicationAtStart,
+        ...siteAtEnd,
+        uncoveredAtStart: run.uncoveredAtStart,
+        blockingPaths: observed.blockingPaths ?? [],
+        failure: observed.failure,
+        isFailureCodebookSentence: observed.isFailureCodebookSentence,
+        mayBeReplacedLater: observed.mayBeReplacedLater,
+      }),
+      hasNewPublication:
+        siteAtEnd.publicationAtEnd !== undefined &&
+        siteAtEnd.publicationAtEnd !== run.publicationAtStart,
+    }
+  }
   /** Frees the Wiki for other windows at a run's end, or leaves the run's marker as the reservation of a chat that may still work; called by {@link finishWikiUpdate} last. It never rejects: a marker that cannot be written or removed is left to its own expiry. @param endedAtMs - When the run ended, which the reservation names as the end of the watch. @param mayAgentStillWork - Whether the run's chat can still publish ({@link mayWikiChatStillPublish}). @example await settleWikiRunMarker(run, Date.now(), false) */
   const settleWikiRunMarker = async (
     run: WikiRun,
@@ -1057,20 +1064,32 @@ export function activate(
     observed: ObservedWikiRunEnd,
   ): Promise<void> => {
     // The disk says how the run ended; when it cannot be read, what the run observed itself still says whether its chat goes on.
-    const { end, stoppedAs } = await readWikiUpdateEnd(run, observed).then(
-      (readEnd) => ({ end: readEnd, stoppedAs: readEnd.state }),
-      (error: unknown) => unreadWikiUpdateEnd(observed, thrownMessage(error)),
+    const { end, stoppedAs, hasNewPublication } = await readWikiUpdateEnd(
+      run,
+      observed,
+    ).then(
+      (read) => ({
+        end: read.end,
+        stoppedAs: read.end.state,
+        hasNewPublication: read.hasNewPublication,
+      }),
+      (error: unknown) => ({
+        ...unreadWikiUpdateEnd(observed, thrownMessage(error)),
+        hasNewPublication: false,
+      }),
     )
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
-    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off or a request that could not be taken back; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
-    const mayAgentStillWork = mayWikiChatStillPublish(
-      run.host,
-      stoppedAs,
-      isExtensionStopping,
-      // An end the run itself marks as one its chat can publish after (a watch that broke off, a request not taken back) leaves the reservation a stopped watch leaves.
-      observed.mayBeReplacedLater ?? false,
-    )
+    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off or a request that could not be taken back; a Cursor agent is stopped with its run, and a closing window takes its chat with it. A chat whose publish is on disk has done its work, also when the watch was stopped while it read that publish or just before its next look: it leaves no chat that may still publish and no reservation.
+    const mayAgentStillWork =
+      !hasNewPublication &&
+      mayWikiChatStillPublish(
+        run.host,
+        stoppedAs,
+        isExtensionStopping,
+        // An end the run itself marks as one its chat can publish after (a watch that broke off, a request not taken back) leaves the reservation a stopped watch leaves.
+        observed.mayBeReplacedLater ?? false,
+      )
     const recordWritten = rememberLastWikiRun({
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
