@@ -5333,7 +5333,7 @@ export class StudyWorkspace {
       )
         await restoreFocus?.(signal, assertSourceFocus).catch(() => undefined)
       const borrowed = this.focusBorrowCount() !== refusal.borrowsBefore
-      // A refusal after the measurement borrowed the main editor and before the placement moved the keyboard gives the file back what the borrow took (row 718); a refusal for the learner's newer input gives nothing back (row 728).
+      // A refusal after the measurement borrowed the main editor and before the placement moved the keyboard gives the place that had the keyboard, a pane before a file (row 726), back what the borrow took (row 718); a refusal for the learner's newer input gives nothing back (row 728).
       if (
         borrowed &&
         refusal.keyboardHolder !== undefined &&
