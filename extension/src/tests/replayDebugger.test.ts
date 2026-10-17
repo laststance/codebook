@@ -431,6 +431,107 @@ test('the frames of one recorded stop ask the host for its commands once and sel
   }
 })
 
+// Value: protects=the native model of a recorded stop whose stack native Call Stack fetched only after the grace: its first frame selects nothing, and the next frame of the same stop selects it, once (F6's rule: a selection whose model was not selected is tried again); fails_when=the selection is noted as settled before the stack wait ends, so the stop's model is never selected while the learner plays or seeks within it; why_new=TR3, Cycle 0046 repeat testing review (F6's retry had no test); seam=the editor's command port, which counts selections, the native client's threads and stackTrace requests, held back until the grace passed on the faked clock
+test('a recorded stop whose stack arrives after the grace selects its native model at its next frame, once', async (context) => {
+  // Arrange: a client that fetches nothing until the test asks, on a clock that only the test moves.
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  try {
+    const firstFrame = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 1.00 s',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+    // The stack is not fetched within the grace, and then the values are not either.
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await firstFrame
+    const selectionsAtTheFirstFrame = [...selections]
+
+    // Act: the next frame of the same stop, whose stack the client fetches now.
+    const nextFrame = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 1.00 s',
+      new AbortController().signal,
+    )
+    await flushNative()
+    const thread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: thread.id })
+    await flushNative()
+    await nextFrame
+
+    // Assert
+    assert.deepEqual(
+      { selectionsAtTheFirstFrame, selectionsAtTheNextFrame: selections },
+      {
+        selectionsAtTheFirstFrame: [],
+        selectionsAtTheNextFrame: ['workbench.action.debug.focusProcess'],
+      },
+    )
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the native model of a recorded stop shown while another debugger was active: its first frame selects nothing (the default resolver could pick the other session), and the next frame of the same stop, once that debugger ended, selects it, once (F6's rule: a selection whose model was not selected is tried again); fails_when=the selection is noted as settled before the cohort check, so the stop's model is never selected after the other debugger ended; why_new=TR3, Cycle 0046 repeat testing review (F6's retry had no test; the earlier test of an ended competitor presents another label, a new selection); seam=the editor's command port, which counts selections, the public start and end of another debug session, and the native client's threads and stackTrace requests
+test('a recorded stop shown while another debugger was active selects its native model at its next frame once that debugger ended, once', async () => {
+  // Arrange: the first frame of a stop is shown while a learner's debugger starts beside it.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const selections: string[] = []
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async (command) => {
+      selections.push(command)
+      return undefined
+    },
+  }
+  try {
+    const firstFrame = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 1.00 s',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+    fixture.startForeignSession()
+    const thread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: thread.id })
+    await firstFrame
+    const selectionsAtTheFirstFrame = [...selections]
+
+    // Act: the learner's debugger ends, then the next frame of the same stop is shown.
+    fixture.terminateForeign('learner-foreign-session')
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 1.00 s',
+      new AbortController().signal,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { selectionsAtTheFirstFrame, selectionsAtTheNextFrame: selections },
+      {
+        selectionsAtTheFirstFrame: [],
+        selectionsAtTheNextFrame: ['workbench.action.debug.focusProcess'],
+      },
+    )
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
 test('a background native debugger cannot be selected by historical default-session resolution', async () => {
   // Arrange: the host resolver may choose any paused session when no explicit native model is supplied.
   const fixture = harness(undefined, undefined, 0, false, true)
