@@ -480,6 +480,68 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the learner's keyboard when an agent opens an article through codebook_open_book while no Wiki is open and the learner types in a diff editor in front of the second group (the Source Control view's Open Changes), whose text editors both editors report with no view column (C61 c61-688-diffprobe): the diff proves the main editor the active part as a plain file does, so the layout read borrows nothing, and the Wiki created in front of the diff gets the keyboard with row 694's sentence, told once; fails_when=a diff's text editor without a view column proves nothing, so the read borrows the first group and cannot give the keyboard back (C61 c61-cu-688 in Cursor: focusFirstEditorGroup, the Wiki in front of the diff with the keyboard and REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE), or the Wiki covers the diff and nothing settles its keyboard, which falls to the page body; why_new=Cycle 0046 row 709; seam=workspaceHarness's two columns (leaveEmptyGroup, focusMutableDraft), focusDiffEditor (a diff's text editors without a view column), workInActiveTextEditor (the learner's key press), Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), createRepositoryWikiReader, openFromAgent, the command log, keyboardOnBody, focusedPanel and the information messages
+  test(`an agent's cold Wiki open while the learner types in a diff editor in front of the second group borrows nothing and gives the Wiki the keyboard with the typed-file sentence once (${host})`, async () => {
+    // Arrange: the learner types in the diff of auth.ts in front of the second group; no Wiki is open.
+    const harness =
+      host === 'Cursor'
+        ? (await cursorBesideChatPart()).harness
+        : await workspaceHarness(false)
+    if (host === 'VS Code')
+      harness.useNativeLayout({
+        orientation: 0,
+        groups: [{ size: 490 }, { size: 490 }],
+      })
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusDiffEditor('auth.ts', 2)
+    harness.workInActiveTextEditor('keyboard')
+    const { selection, books } = await publishTwoCitationWiki(harness)
+    const wiki = harness.createRepositoryWikiReader()
+    const commandsBefore = harness.commands.length
+    try {
+      // Act
+      await wiki.openFromAgent({
+        instanceId: harness.service.instanceId,
+        ...selection,
+      })
+
+      // Assert: no group focus ran; the Wiki in front of the diff has the keyboard, and the typed-file sentence was told once.
+      assert.deepEqual(
+        {
+          focusCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) =>
+              /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+            ),
+          keyboardOnBody: harness.keyboardOnBody(),
+          keyboard: harness.focusedPanel(),
+          secondGroup: harness.groups[1]!.tabs.map(
+            (tab) =>
+              `${tab === harness.groups[1]!.activeTab ? '*' : ''}${tab.label}`,
+          ),
+          notices: harness.informationMessages.map((notice) => notice.message),
+        },
+        {
+          focusCommands: [],
+          keyboardOnBody: false,
+          keyboard: 'codebook.repositoryWiki',
+          secondGroup: [
+            'auth.ts (Working Tree)',
+            '*codebook · Repository Wiki',
+          ],
+          notices: [
+            'Codebook opened the Repository Wiki an agent asked for in front of the file you were typing in, and the Wiki has the keyboard now. To type in that file again, click its tab in the same editor group.',
+          ],
+        },
+      )
+    } finally {
+      await books.dispose()
+      await harness.close()
+    }
+  })
+
 for (const situation of [
   { host: 'VS Code', keyboard: 'the chat view' },
   { host: 'Cursor', keyboard: 'a view' },

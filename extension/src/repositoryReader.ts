@@ -44,6 +44,7 @@ import { isLearnersSelectionIn } from './utils/isLearnersSelectionIn'
 import { isStaleGroupNameOfCitation } from './utils/isStaleGroupNameOfCitation'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { showPlainNotice } from './utils/showPlainNotice'
+import { textEditorColumn } from './utils/textEditorColumn'
 
 /** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
 export interface RepositoryFocusTarget {
@@ -703,7 +704,7 @@ export class RepositoryReader {
   }
 
   /**
-   * Notes the text editor the editor reports as active when an agent's cold Wiki entry begins, and whether the learner is known to type in it ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}), for {@link settleCoveredEditorKeyboard}; called first by {@link open}, before any effect (Cycle 0046 row 694).
+   * Notes the text editor the editor reports as active when an agent's cold Wiki entry begins, and whether the learner is known to type in it ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}), for {@link settleCoveredEditorKeyboard}; called first by {@link open}, before any effect (Cycle 0046 row 694). A side of a diff editor, which both editors report with no view column, is noted in its diff's group ({@link textEditorColumn}, row 709).
    * @param coldAgentEntry - Whether the entry is an agent's into a window without the Wiki.
    * @returns The editor's column and the learner's sign; `undefined` for any other entry and without an active text editor.
    * @example this.noteAgentEntryKeyboardEditor(true) // => { column: 2, learnerTypesThere: true } a second after the learner typed in auth.ts in front of the second group
@@ -711,7 +712,12 @@ export class RepositoryReader {
   private noteAgentEntryKeyboardEditor(
     coldAgentEntry: boolean,
   ): AgentEntryKeyboardEditor | undefined {
-    const column = vscode.window.activeTextEditor?.viewColumn
+    // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
+    const column = textEditorColumn(
+      vscode.window.activeTextEditor,
+      vscode.window.tabGroups.all,
+      Reflect.get(vscode, 'TabInputTextDiff'),
+    )
     if (!coldAgentEntry || column === undefined) return undefined
     return {
       column,

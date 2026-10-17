@@ -264,6 +264,7 @@ import { showPlainNotice } from './utils/showPlainNotice'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
+import { textEditorColumn } from './utils/textEditorColumn'
 import { textEditorFocusState } from './utils/textEditorFocusState'
 import { thrownMessage } from './utils/thrownMessage'
 import {
@@ -17279,9 +17280,10 @@ export class StudyWorkspace {
       // A column beyond the first proves the main editor only while no other part holds editors (row 689).
       (column === vscode.ViewColumn.One ||
         this.holdsOnlyChatsBeyond(groupCount)) &&
+      // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
       Boolean(
-        vscode.window.activeTextEditor?.viewColumn === column ||
-        ownedPanelFocused,
+        this.textEditorColumnOf(vscode.window.activeTextEditor, groupCount) ===
+          column || ownedPanelFocused,
       )
     )
   }
@@ -17315,7 +17317,8 @@ export class StudyWorkspace {
    */
   private isActiveTextEditorInFrontOfGroup(groupCount: number): boolean {
     const editor = vscode.window.activeTextEditor,
-      column = editor?.viewColumn
+      // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
+      column = this.textEditorColumnOf(editor, groupCount)
     if (!editor || column === undefined || column > groupCount) return false
     // A column beyond the first proves the main editor only while no other part holds editors (row 689).
     if (
@@ -17336,31 +17339,30 @@ export class StudyWorkspace {
 
   /**
    * Gives the keyboard back to the text editor that had it before a layout read borrowed the main editor's first group ({@link readMainEditorGrid}): a text editor in front of its group is shown again, and a side of a diff editor gets it through its group's numbered focus command ({@link focusEditorGroupCommand}), which keeps the diff in front; `showTextDocument` of a diff's document opens a plain text tab of it in front of the diff in both editors (Cycle 0046 row 688). The group's focus gives its active editor, the diff, the keyboard (the group view's `focus()`, VS Code 1.140.0 `workbench.desktop.main.js` 1106:74902; Cursor 3.23.12 17501:37250), and the extension host reports the side that has it as the active text editor.
-   * @param editor - The text editor that had the keyboard, in a column the read after the borrow measured as the main editor's.
+   * @param editor - The text editor that had the keyboard.
+   * @param column - That editor's column, which the read after the borrow measured as the main editor's: its own, or for a side of a diff, which both editors report without one, its diff's group's ({@link textEditorColumnOf}, row 709).
    * @param preview - Whether that editor's tab was a preview tab, which its display keeps.
    * @param signal - The measurement's cancellation.
    * @returns The text editor that has the keyboard again, for the caller's checks of its document, column and selections.
    * @throws When the diff's group focus does not report that editor within {@link PRESENTATION_READY_TIMEOUT_MS}.
-   * @example const restored = await this.showBorrowedTextEditorAgain(editor, false, signal) // the diff of auth.ts in front of column 2 has the keyboard again
+   * @example const restored = await this.showBorrowedTextEditorAgain(editor, 2, false, signal) // the diff of auth.ts in front of column 2 has the keyboard again
    */
   private async showBorrowedTextEditorAgain(
     editor: vscode.TextEditor,
+    column: number,
     preview: boolean,
     signal: AbortSignal | undefined,
   ): Promise<vscode.TextEditor> {
-    const column = editor.viewColumn,
-      front = vscode.window.tabGroups.all.find(
+    const front = vscode.window.tabGroups.all.find(
         (group) => group.viewColumn === column,
       )?.activeTab?.input,
-      command =
-        column !== undefined &&
-        isDiffTabOfDocument(
-          front,
-          editor.document.uri.toString(),
-          Reflect.get(vscode, 'TabInputTextDiff'),
-        )
-          ? focusEditorGroupCommand(column)
-          : undefined
+      command = isDiffTabOfDocument(
+        front,
+        editor.document.uri.toString(),
+        Reflect.get(vscode, 'TabInputTextDiff'),
+      )
+        ? focusEditorGroupCommand(column)
+        : undefined
     // A text editor in front of its group is shown again as before.
     if (!command)
       return vscode.window.showTextDocument(editor.document, {
@@ -17374,7 +17376,9 @@ export class StudyWorkspace {
         editorShowsDocument(
           vscode.window.activeTextEditor,
           editor.document.uri,
-        ) && vscode.window.activeTextEditor?.viewColumn === column,
+        ) &&
+        this.textEditorColumnOf(vscode.window.activeTextEditor, column) ===
+          column,
       "the diff editor's focus",
       PRESENTATION_READY_TIMEOUT_MS,
       signal,
@@ -17383,6 +17387,25 @@ export class StudyWorkspace {
     if (!focused)
       throw new Error('The diff editor did not report the keyboard focus.')
     return focused
+  }
+
+  /**
+   * Names the view column of a text editor among the first `groupCount` columns, also of a side of a diff editor, which both editors report with no view column ({@link textEditorColumn}, Cycle 0046 row 709); asked by {@link hasMainEditorFocus}, {@link isActiveTextEditorInFrontOfGroup}, {@link readMainEditorGrid}'s give-back and {@link showBorrowedTextEditorAgain}.
+   * @param editor - The text editor, if any.
+   * @param groupCount - The number of groups a layout read counted, which bounds the diff's group.
+   * @returns The editor's own column, the column of the one counted group that shows it in a diff in front, or `undefined`.
+   * @example this.textEditorColumnOf(vscode.window.activeTextEditor, 2) // => 2 while the learner's diff of auth.ts in front of the second group has the keyboard
+   */
+  private textEditorColumnOf(
+    editor: vscode.TextEditor | undefined,
+    groupCount: number,
+  ): number | undefined {
+    return textEditorColumn(
+      editor,
+      vscode.window.tabGroups.all,
+      Reflect.get(vscode, 'TabInputTextDiff'),
+      groupCount,
+    )
   }
 
   /**
@@ -17731,6 +17754,8 @@ export class StudyWorkspace {
       count = editorLayoutGroupCount(layout)
       if (count === undefined || count > vscode.window.tabGroups.all.length)
         throw new Error('The primary editor grid could not be measured safely.')
+      // The column the borrowed editor is given back in: its own, or its diff's group's (row 709).
+      const editorColumn = this.textEditorColumnOf(editor, count)
       // Return only to a captured editor now proven to belong to this part; never guess a foreign chat/floating focus.
       if (
         !useCitation &&
@@ -17767,8 +17792,9 @@ export class StudyWorkspace {
         assertGroups()
       } else if (
         !useCitation &&
-        editor?.viewColumn !== undefined &&
-        editor.viewColumn <= count
+        editor &&
+        editorColumn !== undefined &&
+        editorColumn <= count
       ) {
         if (editor.document.version !== documentVersion)
           throw new Error(
@@ -17788,16 +17814,24 @@ export class StudyWorkspace {
           },
           matchesGroup: () => {
             const group = vscode.window.tabGroups.activeTabGroup,
-              input = group.activeTab?.input
+              input = group.activeTab?.input,
+              uri = editor.document.uri.toString()
+            // A side of a diff is back in front of its group as the diff (row 709).
             return (
-              group.viewColumn === editor.viewColumn &&
-              input instanceof vscode.TabInputText &&
-              input.uri.toString() === editor.document.uri.toString()
+              group.viewColumn === editorColumn &&
+              ((input instanceof vscode.TabInputText &&
+                input.uri.toString() === uri) ||
+                isDiffTabOfDocument(
+                  input,
+                  uri,
+                  Reflect.get(vscode, 'TabInputTextDiff'),
+                ))
             )
           },
         })
         const restored = await this.showBorrowedTextEditorAgain(
           editor,
+          editorColumn,
           preview,
           signal,
         )

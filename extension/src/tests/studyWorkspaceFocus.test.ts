@@ -3424,7 +3424,48 @@ test("a passive layout read while a text editor of VS Code's floating window wit
   }
 })
 
-// Value: protects=a learner's diff editor beside Cursor's chat part: the diff of auth.ts in front of the second group has the keyboard, and its modified side is the active text editor, which proves the main editor the active part as the learner's file does (row 663), so a layout read borrows nothing and shows nothing; fails_when=the proof asks for a plain text tab in front of the editor's column, so the read borrows the first group and gives the keyboard back with showTextDocument of auth.ts, which opens a plain text tab of it in front of the learner's diff; why_new=Cycle 0046 row 688; seam=the workspace harness's Cursor model (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), focusDiffEditor, readerSeams' measureMainEditorGrid, textDocumentShows and the native commands
+// Value: protects=reader tests of a learner's diff editor meeting what both editors report for it (C61 c61-688-diffprobe, VS Code 1.140.0 and Cursor 3.23.12, a diff focused in column 2): the active text editor is the diff's modified side with no view column, the visible text editors list both of the diff's sides with no view column beside a plain text editor's column, and the diff's group is the active tab group; fails_when=the fake gives a diff's text editors their group's column, so a reader test proves or gives back by a column neither editor reports (row 688's fix passed in the fake and not natively: c61-cu-688 borrowed the first group and could not give the keyboard back); why_new=Cycle 0046 row 709; seam=the workspace harness's focusDiffEditor, activeTextEditor, visibleTextEditors and tabGroups
+test('the fake editor reports a learner diff editor’s text editors without a view column, as both editors do', async () => {
+  // Arrange: login-form.tsx in the first group; the learner's diff of auth.ts is opened in front of the second group and has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.focusMutableDraft('login-form.tsx', 1)
+  try {
+    // Act
+    harness.focusDiffEditor('auth.ts', 2)
+
+    // Assert
+    const window = harness.editor.window
+    assert.deepEqual(
+      {
+        active: {
+          file: window.activeTextEditor?.document.uri.path.split('/').at(-1),
+          scheme: window.activeTextEditor?.document.uri.scheme,
+          viewColumn: window.activeTextEditor?.viewColumn,
+        },
+        visible: window.visibleTextEditors.map((editor) => ({
+          file: editor.document.uri.path.split('/').at(-1),
+          scheme: editor.document.uri.scheme,
+          viewColumn: editor.viewColumn,
+        })),
+        activeTabGroup: window.tabGroups.activeTabGroup.viewColumn,
+      },
+      {
+        active: { file: 'auth.ts', scheme: 'file', viewColumn: undefined },
+        visible: [
+          { file: 'login-form.tsx', scheme: 'file', viewColumn: 1 },
+          { file: 'auth.ts', scheme: 'file', viewColumn: undefined },
+          { file: 'auth.ts', scheme: 'git', viewColumn: undefined },
+        ],
+        activeTabGroup: 2,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's diff editor beside Cursor's chat part: the diff of auth.ts in front of the second group has the keyboard, and its modified side is the active text editor, reported with no view column as both editors do (row 709), which proves the main editor the active part as the learner's file does (row 663), so a layout read borrows nothing and shows nothing; fails_when=the proof asks for a plain text tab in front of the editor's column, or for the editor's own view column, which a diff's side does not have, so the read borrows the first group and cannot give the keyboard back (C61 c61-cu-688); why_new=Cycle 0046 rows 688 and 709; seam=the workspace harness's Cursor model (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), focusDiffEditor, readerSeams' measureMainEditorGrid, textDocumentShows and the native commands
 test("a layout read beside Cursor's chat part while a learner's diff editor in front of the second group has the keyboard borrows nothing and leaves the diff in front", async () => {
   // Arrange: login-form.tsx in the first group; the learner's diff of auth.ts in front of the second group has the keyboard.
   const harness = await workspaceHarness(false)
@@ -3465,7 +3506,7 @@ test("a layout read beside Cursor's chat part while a learner's diff editor in f
   }
 })
 
-// Value: protects=a learner's diff editor when a layout read has to borrow the main editor's first group (VS Code with a floating window of text editors beside the main editor, where no text editor of a measured column beyond the first proves the main editor, row 689): the borrow gives the keyboard back to the diff through its group's focus, so the diff stays in front of its group with the keyboard; fails_when=the give-back shows auth.ts with showTextDocument, which opens a plain text tab of it in front of the learner's diff; why_new=Cycle 0046 row 688; seam=useNativeLayout with two main groups, focusDiffEditor, addFloatingEditorWindow (not focused), readerSeams' measureMainEditorGrid, textDocumentShows and the native commands
+// Value: protects=a learner's diff editor when a layout read has to borrow the main editor's first group (VS Code with a floating window of text editors beside the main editor, where no text editor of a measured column beyond the first proves the main editor, row 689): the borrow gives the keyboard back to the diff through its group's focus, the diff's side placed in its diff's group since both editors report it with no view column (row 709), so the diff stays in front of its group with the keyboard; fails_when=the give-back shows auth.ts with showTextDocument, which opens a plain text tab of it in front of the learner's diff, or asks for the side's own view column and gives nothing back; why_new=Cycle 0046 rows 688 and 709; seam=useNativeLayout with two main groups, focusDiffEditor, addFloatingEditorWindow (not focused), readerSeams' measureMainEditorGrid, textDocumentShows and the native commands
 test("a layout read that borrows the first group while a learner's diff editor in front of the second group has the keyboard gives the keyboard back to the diff through its group's focus", async () => {
   // Arrange: VS Code's floating window shows notes.ts; in the main editor the learner's diff of auth.ts in front of the second group has the keyboard.
   const harness = await workspaceHarness(false)

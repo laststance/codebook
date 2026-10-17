@@ -390,7 +390,8 @@ export async function workspaceHarness(
   type SourceEditor = {
     group?: (typeof groups)[number]
     document: { uri: Uri; getText(): string }
-    readonly viewColumn: number
+    /** The group's column; none for a side of a diff editor, as both editors report it (row 709). */
+    readonly viewColumn: number | undefined
     setDecorations(decoration?: unknown, ranges?: readonly unknown[]): void
     selections: { active: Position; anchor: Position }[]
     visibleRanges: Range[]
@@ -437,7 +438,7 @@ export async function workspaceHarness(
   const visibleSourceEditors: (SourceEditor & {
       group: (typeof groups)[number]
     })[] = [],
-    decoratedColumns: number[] = [],
+    decoratedColumns: (number | undefined)[] = [],
     /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
     decoratedRangeCounts: number[] = []
   const sourceIdentityCalls: { uri: string; ranges: readonly unknown[] }[] = []
@@ -460,6 +461,25 @@ export async function workspaceHarness(
       )
     }
   }
+  /**
+   * Says whether a group shows a document as a side of the diff editor in front of it; asked by the fake text editors, which then report no view column, and by `visibleTextEditors` and `textEditorHasKeyboardIn` (Cycle 0046 row 709).
+   * @param group - The group.
+   * @param uri - The document's URI.
+   * @returns `true` while the group's front tab is a `TabInputTextDiff` whose original or modified document is that document.
+   * @example showsAsDiffSide(groups[1], authUri) // => true after focusDiffEditor('auth.ts', 2)
+   */
+  const showsAsDiffSide = (
+    group: (typeof groups)[number] | undefined,
+    uri: Uri,
+  ): boolean => {
+    const input = group?.activeTab?.input
+    return (
+      input instanceof TabInputTextDiff &&
+      [input.original, input.modified].some(
+        (side) => side.toString() === uri.toString(),
+      )
+    )
+  }
   /** Models native surrounding-line padding so workspace transfers expose lost reading positions. @example const editor = sourceEditor(document, group) */
   const sourceEditor = (
     document: SourceEditor['document'],
@@ -468,7 +488,10 @@ export async function workspaceHarness(
   ): SourceEditor => ({
     document,
     get viewColumn() {
-      return reportedColumn ?? this.group?.viewColumn ?? group.viewColumn
+      const shownIn = this.group ?? group
+      // Both editors report a diff editor's text editors with no view column (C61 c61-688-diffprobe, row 709).
+      if (showsAsDiffSide(shownIn, document.uri)) return undefined
+      return reportedColumn ?? shownIn.viewColumn
     },
     setDecorations(
       decoration?: unknown,
@@ -1960,8 +1983,10 @@ export async function workspaceHarness(
     return Boolean(
       editor &&
       group === activeTabGroup &&
-      front instanceof TabInputText &&
-      front.uri.toString() === editor.document.uri.toString() &&
+      // A side of the diff in front hides with the diff as a plain text editor does (row 709, the mechanism of row 694).
+      ((front instanceof TabInputText &&
+        front.uri.toString() === editor.document.uri.toString()) ||
+        showsAsDiffSide(group, editor.document.uri)) &&
       windowState.focused &&
       !keyboardInView &&
       !keyboardInSideBar &&
@@ -3806,9 +3831,11 @@ export async function workspaceHarness(
         get visibleTextEditors() {
           return visibleSourceEditors.filter(
             (editor) =>
-              editor.group.activeTab?.input instanceof TabInputText &&
-              editor.group.activeTab.input.uri.toString() ===
-                editor.document.uri.toString(),
+              (editor.group.activeTab?.input instanceof TabInputText &&
+                editor.group.activeTab.input.uri.toString() ===
+                  editor.document.uri.toString()) ||
+              // Both sides of a diff in front of its group are visible text editors (row 709).
+              showsAsDiffSide(editor.group, editor.document.uri),
           )
         },
         showTextDocument: async (
@@ -5629,7 +5656,7 @@ export async function workspaceHarness(
       }
     },
     /**
-     * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's, in the group's column; `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (Cycle 0046 row 688).
+     * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's; both sides are visible text editors, and both editors report them with no view column (C61 c61-688-diffprobe, Cycle 0046 row 709). `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (row 688).
      * @param filename - The learner's file.
      * @param column - The group's view column.
      * @returns The modified document, the diff tab and the modified side's text editor.
@@ -5637,15 +5664,17 @@ export async function workspaceHarness(
      */
     focusDiffEditor(filename: string, column: number) {
       const opened = openDraftTab(filename, column)
+      const originalDocument = {
+        uri: Uri.from({
+          scheme: 'git',
+          authority: '',
+          path: opened.document.uri.path,
+        }),
+        version: 1,
+        getText: () => 'Committed learner file.\n',
+      }
       const diffTab: Tab = {
-        input: new TabInputTextDiff(
-          Uri.from({
-            scheme: 'git',
-            authority: '',
-            path: opened.document.uri.path,
-          }),
-          opened.document.uri,
-        ),
+        input: new TabInputTextDiff(originalDocument.uri, opened.document.uri),
         label: `${filename} (Working Tree)`,
         isPreview: false,
       }
@@ -5655,6 +5684,12 @@ export async function workspaceHarness(
         diffTab,
       )
       opened.group.activeTab = diffTab
+      // The diff's original side is a visible text editor too (row 709).
+      visibleSourceEditors.push(
+        Object.assign(sourceEditor(originalDocument, opened.group), {
+          group: opened.group,
+        }),
+      )
       activeTabGroup = opened.group
       leaveChatForMainEditor()
       keyboardOnBody = false
