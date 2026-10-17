@@ -7,111 +7,111 @@ import {
   workspaceHarness,
   configuredWorkspaceHarness,
 } from './studyWorkspaceHarness'
-for (const origin of ['chat', 'secondary text'] as const)
-  for (const boundary of ['primary response', 'main measurement'] as const)
-    for (const interaction of [
-      'tab roundtrip',
-      'selection roundtrip',
-      'none',
-    ] as const)
-      test(`cold Wiki from ${origin} ${interaction === 'none' ? 'keeps its intentional focus handoff' : `remembers learner ${interaction}`} during ${boundary}`, async () => {
-        // Arrange
-        const harness = await workspaceHarness(false)
-        harness.useNativeLayout({
-          orientation: 0,
-          groups: [{ size: 490 }, { size: 490 }],
-        })
-        const chat = harness.addSeparateEditorPart(),
-          alternate = harness.focusMutableDraft('alternate.txt', 1),
-          primary = harness.focusMutableDraft('primary.txt', 1),
-          original = harness.focusMutableDraft('original.txt', 2)
-        if (origin === 'chat') chat.focus()
-        const listenerCount = harness.focusListenerCount(),
-          receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
-        const focus = {
-          begin(): void {},
-          retainCurrentFocus(
-            acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
-          ) {
-            const receipt = harness.retainRepositoryFocus(acquire)
-            receipts.push(receipt)
-            return receipt
-          },
-        }
-        const held =
-          boundary === 'primary response'
-            ? harness.holdNextPrimaryFocusResponse()
-            : harness.holdNextCommand('vscode.getEditorLayout')
-        let measured: ReturnType<typeof harness.holdNextCommand> | undefined
-        const opening = harness.reader.arrangeRepository(
-          new AbortController().signal,
-          undefined,
-          focus,
-        )
-        const outcome =
-          interaction === 'none'
-            ? opening
-            : assert.rejects(opening, /focus changed/)
-        try {
-          await held.started
-          if (boundary === 'main measurement') {
-            measured = harness.holdNextCommand('vscode.getEditorLayout')
-            held.release()
-            await measured.started
-          }
-          assert.equal(
-            harness.focusedSource()?.document.uri.toString(),
-            primary.document.uri.toString(),
-          )
-          // Act
-          if (interaction === 'tab roundtrip') {
-            alternate.focus()
-            primary.focus()
-          }
-          if (interaction === 'selection roundtrip') {
-            const selections = primary.editor.selections
-            primary.editor.selections = [
-              {
-                anchor: selections[0]!.anchor.with(7, 0),
-                active: selections[0]!.active.with(7, 0),
-              },
-            ]
-            primary.editor.selections = selections
-          }
-          measured?.release()
-          held.release()
-          await outcome
-          // Assert
-          assert.equal(
-            harness.focusedSource()?.document.uri.toString(),
-            interaction === 'none' && origin === 'secondary text'
-              ? original.document.uri.toString()
-              : primary.document.uri.toString(),
-          )
-          assert.equal(
-            harness.commands.includes('vscode.setEditorLayout'),
-            false,
-          )
-          assert.equal(harness.runtimes.length, 0)
-          assert.equal(primary.document.getText(), 'Original learner draft.\n')
-          assert.equal(original.document.getText(), 'Original learner draft.\n')
-          assert.deepEqual(chat.layout(), {
-            orientation: 1,
-            groups: [{ size: 743 }],
-          })
-        } finally {
-          measured?.release()
-          held.release()
-          await opening.catch(() => undefined)
-          for (const receipt of receipts) receipt.dispose()
-          assert.equal(harness.focusListenerCount(), listenerCount)
-          await harness.close()
-        }
+// The chat part has the keyboard, so no text editor proves the main editor the active part and the measurement borrows the first group; a learner's file in front of the second group proves it, and the tests after these show that it borrows nothing then (Cycle 0046 row 663).
+for (const boundary of ['primary response', 'main measurement'] as const)
+  for (const interaction of [
+    'tab roundtrip',
+    'selection roundtrip',
+    'none',
+  ] as const)
+    test(`cold Wiki from chat ${interaction === 'none' ? 'keeps its intentional focus handoff' : `remembers learner ${interaction}`} during ${boundary}`, async () => {
+      // Arrange
+      const harness = await workspaceHarness(false)
+      harness.useNativeLayout({
+        orientation: 0,
+        groups: [{ size: 490 }, { size: 490 }],
       })
+      const chat = harness.addSeparateEditorPart(),
+        alternate = harness.focusMutableDraft('alternate.txt', 1),
+        primary = harness.focusMutableDraft('primary.txt', 1),
+        original = harness.focusMutableDraft('original.txt', 2)
+      chat.focus()
+      const listenerCount = harness.focusListenerCount(),
+        receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+      const focus = {
+        begin(): void {},
+        retainCurrentFocus(
+          acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+        ) {
+          const receipt = harness.retainRepositoryFocus(acquire)
+          receipts.push(receipt)
+          return receipt
+        },
+      }
+      const held =
+        boundary === 'primary response'
+          ? harness.holdNextPrimaryFocusResponse()
+          : harness.holdNextCommand('vscode.getEditorLayout')
+      let measured: ReturnType<typeof harness.holdNextCommand> | undefined
+      const opening = harness.reader.arrangeRepository(
+        new AbortController().signal,
+        undefined,
+        focus,
+      )
+      const outcome =
+        interaction === 'none'
+          ? opening
+          : assert.rejects(opening, /focus changed/)
+      try {
+        await held.started
+        if (boundary === 'main measurement') {
+          measured = harness.holdNextCommand('vscode.getEditorLayout')
+          held.release()
+          await measured.started
+        }
+        assert.equal(
+          harness.focusedSource()?.document.uri.toString(),
+          primary.document.uri.toString(),
+        )
+        // Act
+        if (interaction === 'tab roundtrip') {
+          alternate.focus()
+          primary.focus()
+        }
+        if (interaction === 'selection roundtrip') {
+          const selections = primary.editor.selections
+          primary.editor.selections = [
+            {
+              anchor: selections[0]!.anchor.with(7, 0),
+              active: selections[0]!.active.with(7, 0),
+            },
+          ]
+          primary.editor.selections = selections
+        }
+        measured?.release()
+        held.release()
+        await outcome
+        // Assert
+        assert.equal(
+          harness.focusedSource()?.document.uri.toString(),
+          primary.document.uri.toString(),
+        )
+        assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
+        assert.equal(harness.runtimes.length, 0)
+        assert.equal(primary.document.getText(), 'Original learner draft.\n')
+        assert.equal(original.document.getText(), 'Original learner draft.\n')
+        assert.deepEqual(chat.layout(), {
+          orientation: 1,
+          groups: [{ size: 743 }],
+        })
+      } finally {
+        measured?.release()
+        held.release()
+        await opening.catch(() => undefined)
+        for (const receipt of receipts) receipt.dispose()
+        assert.equal(harness.focusListenerCount(), listenerCount)
+        await harness.close()
+      }
+    })
 
-for (const order of ['editor first', 'group first'] as const)
-  test(`cold Wiki accepts the intended primary transition when native notifications arrive ${order}`, async () => {
-    // Arrange
+// Value: protects=the learner's file in front of the second group, which has the keyboard, at a cold Wiki layout beside another editor part (Cursor's chat part): that file as the active text editor proves the main editor the active part, so the layout is measured without borrowing the first group, the file keeps the keyboard and is not shown again, and a learner's move away during the measurement is still refused; fails_when=the measurement borrows the first group (workbench.action.focusFirstEditorGroup), which gives primary.txt the keyboard, and then shows original.txt again with the keyboard (showTextDocument, preserveFocus false); why_new=Cycle 0046 row 663 (rework of the six "cold Wiki from secondary text" tests, which encoded that borrow: their "primary response" boundary no longer exists, their "main measurement" is the only measurement now, a tab roundtrip through primary.txt and a selection roundtrip in original.txt are still refused, the first by the measurement's own watch and the second by the reader's focus receipt, and the handoff keeps original.txt's keyboard without the borrow's give-back); seam=workspaceHarness with addSeparateEditorPart (not focused), focusMutableDraft in columns 1 and 2, holdNextCommand on the layout read, the reader's own focus receipts, the native commands and textDocumentShows
+for (const interaction of [
+  'tab roundtrip',
+  'selection roundtrip',
+  'none',
+] as const)
+  test(`cold Wiki from the learner's file in the second group beside another editor part ${interaction === 'none' ? 'measures without borrowing the first group' : `remembers a learner ${interaction} during its only measurement`}, and that file keeps the keyboard without being shown again`, async () => {
+    // Arrange: original.txt, in front of the second group, is the active text editor; Cursor's chat part stands beside the main editor without the keyboard.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({
       orientation: 0,
@@ -120,6 +120,102 @@ for (const order of ['editor first', 'group first'] as const)
     const chat = harness.addSeparateEditorPart(),
       primary = harness.focusMutableDraft('primary.txt', 1),
       original = harness.focusMutableDraft('original.txt', 2)
+    const listenerCount = harness.focusListenerCount(),
+      receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+    const focus = {
+      begin(): void {},
+      retainCurrentFocus(
+        acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+      ) {
+        const receipt = harness.retainRepositoryFocus(acquire)
+        receipts.push(receipt)
+        return receipt
+      },
+    }
+    const showsBefore = harness.textDocumentShows().length,
+      commandsBefore = harness.commands.length
+    const measured = harness.holdNextCommand('vscode.getEditorLayout')
+    const opening = harness.reader.arrangeRepository(
+      new AbortController().signal,
+      undefined,
+      focus,
+    )
+    const outcome =
+      interaction === 'none'
+        ? opening
+        : assert.rejects(opening, /focus changed/)
+    try {
+      await measured.started
+      // Act
+      if (interaction === 'tab roundtrip') {
+        primary.focus()
+        original.focus()
+      }
+      if (interaction === 'selection roundtrip') {
+        const selections = original.editor.selections
+        original.editor.selections = [
+          {
+            anchor: selections[0]!.anchor.with(7, 0),
+            active: selections[0]!.active.with(7, 0),
+          },
+        ]
+        original.editor.selections = selections
+      }
+      measured.release()
+      await outcome
+
+      // Assert: original.txt has the keyboard; no focus command ran and no file was shown with the keyboard.
+      assert.deepEqual(
+        {
+          focusedFile: harness.focusedSource()?.document.uri.toString(),
+          focusCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) =>
+              /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+            ),
+          showsWithKeyboard: harness
+            .textDocumentShows()
+            .slice(showsBefore)
+            .filter((shown) => !shown.preserveFocus)
+            .map((shown) => shown.name),
+          layoutApplied: harness.commands.includes('vscode.setEditorLayout'),
+        },
+        {
+          focusedFile: original.document.uri.toString(),
+          focusCommands: [],
+          showsWithKeyboard: [],
+          layoutApplied: false,
+        },
+      )
+      assert.equal(harness.runtimes.length, 0)
+      assert.equal(primary.document.getText(), 'Original learner draft.\n')
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
+      assert.deepEqual(chat.layout(), {
+        orientation: 1,
+        groups: [{ size: 743 }],
+      })
+    } finally {
+      measured.release()
+      await opening.catch(() => undefined)
+      for (const receipt of receipts) receipt.dispose()
+      assert.equal(harness.focusListenerCount(), listenerCount)
+      await harness.close()
+    }
+  })
+
+// Value: protects=a cold Wiki layout whose measurement borrows the first group beside another editor part taking its own primary transition for no learner's change, in either order of the editor's notifications; fails_when=the group's activation reported before its text editor, or after it, is read as the learner's move and the layout is refused; why_new=Cycle 0046 row 663 (rework: the chat part has the keyboard now, so the measurement still borrows the first group and leaves primary.txt the keyboard, which the reader gives back to the chat later; from original.txt in the second group, as before, the measurement borrows nothing, see the tests above); seam=workspaceHarness with addSeparateEditorPart and its focus, usePrimaryFocusNotificationOrder, the reader's own focus receipts, the native commands
+for (const order of ['editor first', 'group first'] as const)
+  test(`cold Wiki accepts the intended primary transition when native notifications arrive ${order}`, async () => {
+    // Arrange: the chat part has the keyboard; primary.txt is in front of the first group and original.txt of the second.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 490 }, { size: 490 }],
+    })
+    const chat = harness.addSeparateEditorPart(),
+      primary = harness.focusMutableDraft('primary.txt', 1),
+      original = harness.focusMutableDraft('original.txt', 2)
+    chat.focus()
     harness.usePrimaryFocusNotificationOrder(order)
     const listenerCount = harness.focusListenerCount(),
       receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
@@ -140,10 +236,10 @@ for (const order of ['editor first', 'group first'] as const)
         undefined,
         focus,
       )
-      // Assert
+      // Assert: the measurement borrowed the first group once and left primary.txt the keyboard.
       assert.equal(
         harness.focusedSource()?.document.uri.toString(),
-        original.document.uri.toString(),
+        primary.document.uri.toString(),
       )
       assert.equal(
         harness.commands.filter(
@@ -153,6 +249,7 @@ for (const order of ['editor first', 'group first'] as const)
       )
       assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
       assert.equal(primary.document.getText(), 'Original learner draft.\n')
+      assert.equal(original.document.getText(), 'Original learner draft.\n')
       assert.deepEqual(chat.layout(), {
         orientation: 1,
         groups: [{ size: 743 }],
@@ -488,14 +585,10 @@ test("a cold Wiki layout beside VS Code's chat view borrows no keyboard and its 
   }
 })
 
-for (const interaction of [
-  'chat',
-  'chat roundtrip',
-  'selection roundtrip',
-  'none',
-] as const)
-  test(`cold Wiki ${interaction === 'none' ? 'accepts unchanged source' : `remembers learner ${interaction}`} before primary native focus arrives`, async () => {
-    // Arrange
+// Value: protects=the learner's choice of the chat during a cold Wiki layout from their file in front of the second group beside Cursor's chat part: a click into the chat while the layout read waits, and a click there and back into the file, are the learner's changes, which refuse the layout and leave the keyboard where the learner put it; fails_when=the measurement that borrows nothing takes a later return to the same file for no change, or gives the file the keyboard back over the chat; why_new=Cycle 0046 row 663 (rework of "cold Wiki remembers learner chat / chat roundtrip before primary native focus arrives": that boundary, the borrow's focus command, no longer exists from this origin, so the layout read is the boundary now; the tests' selection roundtrip and unchanged cases are the tests from the learner's file in the second group above, and their restoration of original.txt after a borrow cannot happen, since original.txt never loses the keyboard); seam=workspaceHarness with addSeparateEditorPart and its focus, focusMutableDraft in columns 1 and 2, holdNextCommand on the layout read, the reader's own focus receipts
+for (const interaction of ['chat', 'chat roundtrip'] as const)
+  test(`cold Wiki from the learner's file in the second group remembers learner ${interaction} during its only measurement`, async () => {
+    // Arrange: original.txt, in front of the second group, is the active text editor; Cursor's chat part stands beside the main editor.
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({
       orientation: 0,
@@ -516,132 +609,50 @@ for (const interaction of [
         return receipt
       },
     }
-    const held = harness.holdNextCommand(
-      'workbench.action.focusFirstEditorGroup',
-    )
-    let restored = false
-    harness.changeAfterNextSourceDisplay(() => {
-      restored = true
-    })
+    const measured = harness.holdNextCommand('vscode.getEditorLayout')
     const opening = harness.reader.arrangeRepository(
       new AbortController().signal,
       undefined,
       focus,
     )
-    const outcome =
-      interaction === 'none'
-        ? opening
-        : assert.rejects(opening, /focus changed/)
+    const outcome = assert.rejects(opening, /focus changed/)
     try {
-      await held.started
+      await measured.started
       // Act
-      if (interaction === 'chat' || interaction === 'chat roundtrip')
-        chat.focus()
+      chat.focus()
       if (interaction === 'chat roundtrip') original.focus()
-      if (interaction === 'selection roundtrip') {
-        const selections = original.editor.selections
-        original.editor.selections = [
-          {
-            anchor: selections[0]!.anchor.with(9, 0),
-            active: selections[0]!.active.with(9, 0),
-          },
-        ]
-        original.editor.selections = selections
-      }
-      held.release()
+      measured.release()
       await outcome
-      // Assert: an already issued native command may drain, but no later restoration or allocation may proceed.
-      assert.equal(restored, interaction === 'none')
-      assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
-      assert.equal(
-        harness.focusedSource()?.document.uri.toString(),
-        interaction === 'none'
-          ? original.document.uri.toString()
-          : primary.document.uri.toString(),
-      )
-      assert.equal(original.document.getText(), 'Original learner draft.\n')
-      assert.deepEqual(chat.layout(), {
-        orientation: 1,
-        groups: [{ size: 743 }],
-      })
-    } finally {
-      held.release()
-      await opening.catch(() => undefined)
-      for (const receipt of receipts) receipt.dispose()
-      assert.equal(harness.focusListenerCount(), listenerCount)
-      await harness.close()
-    }
-  })
 
-for (const interaction of [
-  'tab roundtrip',
-  'selection roundtrip',
-  'none',
-] as const)
-  test(`cold Wiki restoration ${interaction === 'none' ? 'keeps its captured secondary editor' : `remembers learner ${interaction}`} before the native display response`, async () => {
-    // Arrange
-    const harness = await workspaceHarness(false)
-    harness.useNativeLayout({
-      orientation: 0,
-      groups: [{ size: 490 }, { size: 490 }],
-    })
-    const chat = harness.addSeparateEditorPart(),
-      primary = harness.focusMutableDraft('primary.txt', 1),
-      original = harness.focusMutableDraft('original.txt', 2)
-    const listenerCount = harness.focusListenerCount(),
-      receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
-    const focus = {
-      begin(): void {},
-      retainCurrentFocus(
-        acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
-      ) {
-        const receipt = harness.retainRepositoryFocus(acquire)
-        receipts.push(receipt)
-        return receipt
-      },
-    }
-    let displayed = false
-    harness.changeAfterNextSourceDisplay(() => {
-      displayed = true
-      if (interaction === 'tab roundtrip') {
-        primary.focus()
-        original.focus()
-      }
-      if (interaction === 'selection roundtrip') {
-        const editor = harness.focusedSource()!,
-          selections = editor.selections
-        editor.selections = [
-          {
-            anchor: selections[0]!.anchor.with(8, 0),
-            active: selections[0]!.active.with(8, 0),
-          },
-        ]
-        editor.selections = selections
-      }
-    })
-    try {
-      // Act
-      const opening = harness.reader.arrangeRepository(
-        new AbortController().signal,
-        undefined,
-        focus,
+      // Assert: the keyboard is where the learner put it, and no focus command ran.
+      assert.deepEqual(
+        {
+          chatHasKeyboard: chat.focused(),
+          focusedFile: harness.focusedSource()?.document.uri.toString(),
+          focusCommand: harness.commands.includes(
+            'workbench.action.focusFirstEditorGroup',
+          ),
+          layoutApplied: harness.commands.includes('vscode.setEditorLayout'),
+        },
+        {
+          chatHasKeyboard: interaction === 'chat',
+          focusedFile:
+            interaction === 'chat'
+              ? undefined
+              : original.document.uri.toString(),
+          focusCommand: false,
+          layoutApplied: false,
+        },
       )
-      if (interaction === 'none') await opening
-      else await assert.rejects(opening, /focus changed/)
-      // Assert
-      assert.equal(displayed, true)
-      assert.equal(
-        harness.focusedSource()?.document.uri.toString(),
-        original.document.uri.toString(),
-      )
-      assert.equal(harness.focusedSource()?.selections[0]!.active.line, 22)
-      assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
+      assert.equal(primary.document.getText(), 'Original learner draft.\n')
       assert.equal(original.document.getText(), 'Original learner draft.\n')
       assert.deepEqual(chat.layout(), {
         orientation: 1,
         groups: [{ size: 743 }],
       })
     } finally {
+      measured.release()
+      await opening.catch(() => undefined)
       for (const receipt of receipts) receipt.dispose()
       assert.equal(harness.focusListenerCount(), listenerCount)
       await harness.close()

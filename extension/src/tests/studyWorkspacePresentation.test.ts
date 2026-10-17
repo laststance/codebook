@@ -4782,7 +4782,7 @@ test('in Cursor beside its chat part, an agent’s Study selection made while a 
       action: 'select',
     })
 
-    // Assert: the Study layout is confirmed; the measurement gave actions.ts back the keyboard it borrowed (twice), the captured source took it at its placement and no file got it after that, the source is the active text editor, and the sentence says so once.
+    // Assert: the Study layout is confirmed; actions.ts, the active text editor in front of the second group, proves the main editor the active part, so no measurement borrowed the first group or showed actions.ts again with the keyboard (Cycle 0046 row 663: twice before), the captured source took the keyboard at its placement and no file got it after that, the source is the active text editor, and the sentence says so once.
     assert.deepEqual(
       {
         layoutConfirmed: answer.layoutConfirmed,
@@ -4791,6 +4791,9 @@ test('in Cursor beside its chat part, an agent’s Study selection made while a 
           .slice(showsBefore)
           .filter((shown) => !shown.preserveFocus)
           .map((shown) => `${shown.name}@${shown.viewColumn}`),
+        focusFirstGroupCommands: harness.commands.filter(
+          (command) => command === 'workbench.action.focusFirstEditorGroup',
+        ).length,
         activeTextEditor: harness.editor.window.activeTextEditor?.document.uri
           .toString()
           .split('/')
@@ -4799,11 +4802,8 @@ test('in Cursor beside its chat part, an agent’s Study selection made while a 
       },
       {
         layoutConfirmed: true,
-        showsWithKeyboard: [
-          'actions.ts@2',
-          'actions.ts@2',
-          'Captured-overview.mts@2',
-        ],
+        showsWithKeyboard: ['Captured-overview.mts@2'],
+        focusFirstGroupCommands: 0,
         activeTextEditor: 'Captured-overview.mts',
         messages: [
           'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',

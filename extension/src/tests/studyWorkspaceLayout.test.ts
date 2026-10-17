@@ -5439,12 +5439,12 @@ test('Restore in Recording is confirmed when Cursor reports another active group
 
     // Assert
     assert.equal(focusedBefore, 2)
-    // The measurement focused the first group, where the Application pane is, and gave the focus back to the source.
+    // The recorded source, in front of the second group with the keyboard, proves the main editor the active part, so the measurement borrows no group and the source keeps the keyboard (Cycle 0046 row 663: the measurement focused the first group, where the Application pane is, and gave the focus back to the source).
     assert.equal(
       harness.commands
         .slice(commandsBefore)
         .includes('workbench.action.focusFirstEditorGroup'),
-      true,
+      false,
     )
     assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 2)
     assert.equal(restored.layoutConfirmed, true)

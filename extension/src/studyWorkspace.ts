@@ -16878,7 +16878,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the active text editor is the one in front of a group among the first `groupCount` columns, which proves that the editor part answering a layout read is the main editor; asked by {@link readMainEditorGrid} before it borrows the main editor's focus (row 655).
+   * Says whether the active text editor is the one in front of a group among the first `groupCount` columns, which proves that the editor part answering a layout read is the main editor; asked by {@link readMainEditorGrid} before it borrows the main editor's focus, for every column the read measured (rows 655 and 663: a learner's file in front of the second group with the keyboard proves the main part as the first group's does, and a borrow gave the first group's file the keyboard and then showed the learner's file again with `preserveFocus` false).
    * Beside Cursor's chat part no text editor is active while the chat part is the active part (Cursor 3.23.12 `workbench.desktop.main.js` 17264:2840, 17264:3411), and the layout read answers for the active part (17501:90249). After a measurement's own borrow Cursor reports the first group's file as the active text editor while it goes on naming the chat's group ({@link hasMainEditorFocus} then reads no main focus), so without this proof every later measurement borrowed the first group again and gave its file the keyboard back with `showTextDocument(preserveFocus: false)` (C58 c58-5-cu-cold, +408 ms).
    * @param groupCount - The number of groups the layout read counted.
    * @returns `true` when the active text editor's column is among those groups and that column's group shows the editor's document in front; `false` without an active text editor, beyond them, or for a document its group does not show in front.
@@ -16964,12 +16964,12 @@ export class StudyWorkspace {
       this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
       this.hasMainEditorFocus(count),
     )
-    // A single part accounts for every group. With multiple parts, TabGroups.activeTabGroup alone can be stale; the first group's file as the active text editor proves the main editor the active part, and a borrow would only focus that same file again (row 655).
+    // A single part accounts for every group. With multiple parts, TabGroups.activeTabGroup alone can be stale; the file in front of any measured main column as the active text editor proves the main editor the active part, so a borrow would only take that file's keyboard to the first group and show it again (rows 655 and 663).
     if (
       count < vscode.window.tabGroups.all.length &&
       !firstFocused() &&
       !retainedMainFocus &&
-      !this.isActiveTextEditorInFrontOfGroup(vscode.ViewColumn.One)
+      !this.isActiveTextEditorInFrontOfGroup(count)
     ) {
       const panel = this.app?.active
         ? this.app

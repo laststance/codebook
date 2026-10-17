@@ -767,6 +767,7 @@ test('cold Wiki entry reserves a second main pane without treating the separate 
   }
 })
 
+// Value: protects=the learner's file in front of the first group while a cold Wiki layout borrows that group's focus beside another editor part to measure the main editor: a newer selection or edit there during the borrow refuses the layout through the reader's focus receipt and stays as the learner made it, with the keyboard, and an unchanged borrow leaves that file the keyboard; fails_when=the borrow takes the learner's newer selection or edit for its own and restores the old reading position over it; why_new=Cycle 0046 row 663 (rework: the chat part has the keyboard now, so the measurement still borrows the first group; from original-notes.txt in front of the second group, the origin these tests had, the measurement borrows nothing, so their unchanged case no longer gives that file its keyboard back after a borrow: it never left it, see studyWorkspaceFocus's tests from the learner's file in the second group); seam=workspaceHarness with addSeparateEditorPart and its focus, focusMutableDraft in columns 1 and 2, holdNextPrimaryFocusResponse and holdNextCommand on the layout read
 for (const boundary of [
   'layout measurement',
   'primary focus response',
@@ -774,10 +775,10 @@ for (const boundary of [
   for (const interaction of ['selection', 'edit', 'none'] as const)
     test(
       interaction === 'none'
-        ? `cold Wiki scope restores prior text focus after unchanged ${boundary}`
+        ? `cold Wiki scope from the chat leaves the borrowed first group's file the keyboard after unchanged ${boundary}`
         : `cold Wiki scope preserves a newer primary ${interaction} during ${boundary}`,
       async () => {
-        // Arrange
+        // Arrange: the chat part has the keyboard; primary-notes.txt is in front of the first group and original-notes.txt of the second.
         const harness = await workspaceHarness(false)
         harness.useNativeLayout({
           orientation: 0,
@@ -786,12 +787,27 @@ for (const boundary of [
         const chat = harness.addSeparateEditorPart()
         const primary = harness.focusMutableDraft('primary-notes.txt', 1),
           original = harness.focusMutableDraft('original-notes.txt', 2)
+        chat.focus()
+        // The reader's own focus receipts, as RepositoryReader.open hands them over: a refusal they show as the learner's change leaves the keyboard where the learner has it.
+        const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+        const focus = {
+          begin(): void {},
+          retainCurrentFocus(
+            acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+          ) {
+            const receipt = harness.retainRepositoryFocus(acquire)
+            receipts.push(receipt)
+            return receipt
+          },
+        }
         const firstRead =
           boundary === 'primary focus response'
             ? harness.holdNextPrimaryFocusResponse()
             : harness.holdNextCommand('vscode.getEditorLayout')
         const opening = harness.reader.arrangeRepository(
           new AbortController().signal,
+          undefined,
+          focus,
         )
         void opening.catch(() => undefined)
         let releaseMeasured = (): void => {}
@@ -828,13 +844,14 @@ for (const boundary of [
             await opening
             assert.equal(
               harness.focusedSource()?.document.uri.toString(),
-              original.document.uri.toString(),
+              primary.document.uri.toString(),
             )
           } else {
-            await assert.rejects(
-              opening,
-              /primary editor.*changed during scope measurement/i,
-            )
+            // The reader's receipt sees the learner's newer selection or edit first, as in RepositoryReader.open.
+            await assert.rejects(opening, {
+              message:
+                'Native focus changed during repository navigation; the newer learner focus was preserved.',
+            })
             assert.equal(
               harness.focusedSource()?.document.uri.toString(),
               primary.document.uri.toString(),
@@ -864,78 +881,11 @@ for (const boundary of [
           firstRead.release()
           releaseMeasured()
           await opening.catch(() => undefined)
+          for (const receipt of receipts) receipt.dispose()
           await harness.close()
         }
       },
     )
-
-for (const interaction of ['selection', 'other focus', 'none'] as const)
-  test(`cold Wiki focus restoration ${interaction === 'none' ? 'keeps the unchanged learner reading position' : `preserves newer ${interaction} before its response arrives`}`, async () => {
-    // Arrange
-    const harness = await workspaceHarness(false)
-    harness.useNativeLayout({
-      orientation: 0,
-      groups: [{ size: 490 }, { size: 490 }],
-    })
-    const chat = harness.addSeparateEditorPart()
-    const primary = harness.focusMutableDraft('primary-notes.txt', 1),
-      original = harness.focusMutableDraft('original-notes.txt', 2)
-    harness.retainReadingRange(84, 96)
-    let restored: Pick<typeof original.editor, 'selections'> | undefined
-    harness.changeAfterNextSourceDisplay((editor) => {
-      restored = editor
-      // Native display is already applied; learner input can precede the extension-host response and later selection RPC.
-      if (interaction === 'selection') {
-        editor.selections = [
-          {
-            anchor: editor.selections[0]!.active.with(99, 0),
-            active: editor.selections[0]!.active.with(99, 0),
-          },
-        ]
-        original.editor.selections = editor.selections
-        harness.retainReadingRange(98, 110)
-      }
-      if (interaction === 'other focus') primary.focus()
-    })
-    try {
-      // Act
-      const opening = harness.reader.arrangeRepository(
-        new AbortController().signal,
-      )
-      if (interaction === 'none') await opening
-      else
-        await assert.rejects(
-          opening,
-          /focus or selection changed while.*restored/i,
-        )
-
-      // Assert
-      assert.equal(
-        harness.focusedSource()?.document.uri.toString(),
-        interaction === 'other focus'
-          ? primary.document.uri.toString()
-          : original.document.uri.toString(),
-      )
-      assert.equal(
-        restored?.selections[0]!.active.line,
-        interaction === 'selection' ? 99 : 22,
-      )
-      assert.equal(
-        harness.isReadingLineVisible(interaction === 'selection' ? 104 : 90),
-        true,
-      )
-      assert.equal(original.document.getText(), 'Original learner draft.\n')
-      assert.equal(original.tab.isDirty, true)
-      assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
-      assert.deepEqual(chat.layout(), {
-        orientation: 1,
-        groups: [{ size: 743 }],
-      })
-      assert.equal(harness.runtimes.length, 0)
-    } finally {
-      await harness.close()
-    }
-  })
 
 test('first Study entry reserves all three main panes when a separate chat part already occupies a global column', async () => {
   // Arrange
