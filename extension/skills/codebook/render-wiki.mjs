@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { contentIdsOf, escapeHtml, hasEndlessComment, renderWikiDiagrams, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
+import { contentIdsOf, escapeHtml, hasEndlessComment, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -74,6 +74,9 @@ function validatePages(manifest) {
     // The content is one balanced piece of the page: what it opens it closes, so nothing of it reaches the reader's own form, rail and layout around it.
     const unbalanced = unbalancedClauseOf(page.contentHtml);
     if (unbalanced !== undefined) throw new Error(`Wiki page ${page.path} ${unbalanced}`);
+    // The content runs no script of its own, on the reader's origin or opened from disk: no event attribute, and no address of a scheme a browser runs (`javascript:`) or that leads elsewhere than a page, the web, mail or the editor.
+    const scripting = scriptingClauseOf(page.contentHtml);
+    if (scripting !== undefined) throw new Error(`Wiki page ${page.path} ${scripting}`);
     if (!Array.isArray(page.sources) || !page.sources.length || !Array.isArray(page.outline)) throw new Error(`Wiki page ${page.path} needs source references and an outline.`);
     // An outline entry names an anchor of its page: an id an element of the content really carries, not one a code example or a comment only shows.
     const anchors = new Set(), contentIds = contentIdsOf(page.contentHtml);

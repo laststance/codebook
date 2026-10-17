@@ -66,6 +66,11 @@ const PACKAGE_MANIFEST_PAGES = {
   describedByItsShownTarget:
     'pages/package-manifest-described-by-its-shown-target.html',
 }
+/** The chapter whose content is given script after the publish, as a Wiki published before the publisher refused event attributes and `javascript:` addresses carries it. */
+const PAGE_WITH_CONTENT_SCRIPT = 'pages/chapter-1.html'
+/** The content script of {@link PAGE_WITH_CONTENT_SCRIPT}: an image that fails to load with an event attribute, and a `javascript:` link; each one that runs notes itself in `window.contentScriptRuns`. */
+const CONTENT_SCRIPT =
+  '<p>Explained from source.</p><p><img src="missing-image.png" alt="A missing image" onerror="(window.contentScriptRuns = window.contentScriptRuns || []).push(\'onerror\')"></p><p><a id="content-script-link" href="javascript:void (window.contentScriptRuns = window.contentScriptRuns || []).push(\'link\')">Run</a></p>'
 /** The rail entry of a page after its link, as this publisher prints it and as the earlier builds printed it: what {@link withEntryAfterItsLink} replaces. */
 const ENTRY_AFTER_ITS_LINK =
   / aria-describedby="codebook-open-target">Open in VS Code<\/a> .*?<\/p>/
@@ -454,6 +459,15 @@ async function publishSampleWiki() {
       withEntryAfterItsLink(
         await readFile(describedByItsShownTarget, 'utf8'),
         ' aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">package.json<wbr>:31</span></p>',
+      ),
+    )
+    // One chapter gets script in its content, as a Wiki published before the publisher refused it carries it.
+    const withContentScript = join(outputDirectory, PAGE_WITH_CONTENT_SCRIPT)
+    await writeFile(
+      withContentScript,
+      (await readFile(withContentScript, 'utf8')).replace(
+        '<p>Explained from source.</p>',
+        CONTENT_SCRIPT,
       ),
     )
     await appendFile(
@@ -1863,6 +1877,39 @@ async function check(page, options, collected) {
       },
     )
   }
+  const usePageWithContentScript = async () => {
+    // Arrange: a chapter whose content carries an image with an event attribute and a javascript: link, as a Wiki published before the publisher refused them; the image fails to load.
+    await page.setViewportSize({ width: 1200, height: 720 })
+    await page.goto(`${options.url}${options.pageWithContentScript}`)
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-codebook-freshness]').textContent ===
+          'Source changed · Update available' &&
+        document.querySelector('.wiki-article img').complete,
+    )
+    // Act: the link is followed and the theme button pressed, as a learner does.
+    await page.click('#content-script-link')
+    await page.click('button#theme-toggle')
+    const used = await page.evaluate(() => ({
+      contentScriptRuns: window.contentScriptRuns ?? [],
+      theme: document.documentElement.dataset.theme ?? null,
+      status: document.querySelector('[data-codebook-status]').textContent,
+      address: location.pathname.split('/').at(-1),
+    }))
+    await page.click('button#theme-toggle')
+    // Assert
+    record(
+      'a page whose content carries an event attribute and a javascript: link, as a Wiki published before the publisher refused them, runs neither under the reader, while the shell’s theme button and the reader’s own script work',
+      used,
+      {
+        doesNoContentScriptRun: used.contentScriptRuns.length === 0,
+        doesThemeButtonSwitchTheTheme: used.theme === 'dark',
+        isReaderScriptConnected:
+          used.status === '● Connected to Codebook reader',
+        doesPageStay: used.address === 'chapter-1.html',
+      },
+    )
+  }
   // Each step leaves the page as the next one needs it: the three 1200 px steps of the rail share one load, and so do the two steps after the conflict at 960 px; a step of the reading column loads the page itself, because it asks a question.
   const stepsOfAPage = [
     measureEntryInRow,
@@ -1897,6 +1944,7 @@ async function check(page, options, collected) {
     measureMissingPage,
     usePageWithReaderIds,
     usePagePublishedWithReaderIdsTwice,
+    usePageWithContentScript,
   ])
     await step()
 }
@@ -1994,6 +2042,7 @@ try {
       readerIds: READER_IDS,
       readerIdsPage: READER_IDS_PAGE,
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
+      pageWithContentScript: PAGE_WITH_CONTENT_SCRIPT,
     }),
   )
   await command(['open', 'about:blank'], 'open')

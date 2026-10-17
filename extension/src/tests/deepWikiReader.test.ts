@@ -687,3 +687,76 @@ test('the reader refuses a Wiki whose `.codebook` folder in the project is a lin
     `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it. Replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project.`,
   )
 })
+
+// Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them) and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or gives its nonce to a script it did not write or the publisher's shell did not print; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; seam=none (the reader's real responses)
+test('every page the reader serves forbids script without its nonce, and only the shell’s script and the reader’s own carry it, never a script of an asset that is an HTML file', async (context) => {
+  // Arrange: an overview as the publisher renders it (content with an event attribute and a javascript: link, then the shell's script), and an asset that ends in .html with a script of its own.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-policy-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(join(outputDirectory, 'assets'), { recursive: true })
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script>\nthemeButton()\n</script></body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'assets/notes.html'),
+    '<!doctype html><body><article></article><script>run()</script></body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['assets/notes.html'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const clientAddress = `${new URL(reader.url).pathname.replace('index.html', '')}codebook-qa.js`
+  /** The policy and the page with this response's nonce written as NONCE, so two responses compare as text. */
+  const servedWithoutItsNonce = async (path: string) => {
+    const response = await fetch(new URL(path, reader.url))
+    const policy = response.headers.get('content-security-policy') ?? ''
+    const nonce = /'nonce-([^']+)'/.exec(policy)?.[1] ?? 'none'
+    return {
+      nonce,
+      policy: policy.replaceAll(nonce, 'NONCE'),
+      page: (await response.text())
+        .replaceAll(nonce, 'NONCE')
+        .replaceAll(clientAddress, 'CLIENT'),
+    }
+  }
+
+  // Act
+  const overview = await servedWithoutItsNonce('index.html')
+  const asset = await servedWithoutItsNonce('assets/notes.html')
+
+  // Assert
+  assert.deepEqual(
+    {
+      overview: { policy: overview.policy, page: overview.page },
+      asset: { policy: asset.policy, page: asset.page },
+      isNonceOfEachResponse: overview.nonce !== asset.nonce,
+    },
+    {
+      overview: {
+        policy: "script-src 'nonce-NONCE'; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script nonce="NONCE">\nthemeButton()\n</script><script nonce="NONCE" src="CLIENT"></script></body>',
+      },
+      asset: {
+        policy: "script-src 'nonce-NONCE'; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article></article><script>run()</script><script nonce="NONCE" src="CLIENT"></script></body>',
+      },
+      isNonceOfEachResponse: true,
+    },
+  )
+})

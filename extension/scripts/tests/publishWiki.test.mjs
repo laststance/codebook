@@ -2876,6 +2876,115 @@ for (const [place, content, sentence] of [
     }
   })
 
+// Value: protects=the reader's origin, whose page may ask the editor's model, against markup an agent writes into a page's content when a repository's text steers it; fails_when=the publisher refuses script elements but accepts an event attribute or an address a browser runs as script (or one that a character reference, a tab or a number without its semicolon turns into one), so the published page runs script on the reader's origin or when opened from disk; why_new=Cycle 0046 /ship finding F2 (security, verified): render-wiki.mjs refused `<script>` and the like but no event attribute and no `javascript:` address; seam=none
+for (const [form, content, sentence] of [
+  [
+    'an event attribute on an image',
+    '<h2 id="flow">Source flow</h2><p><img src="flow.png" alt="Flow" onerror="fetch(\'api/ask\')"></p>',
+    'Wiki page index.html must contain article sections, not a document, form or script: its <img> holds the event attribute onerror.',
+  ],
+  [
+    'an event attribute in capitals without quotes',
+    '<h2 id="flow" ONCLICK=run()>Source flow</h2>',
+    'Wiki page index.html must contain article sections, not a document, form or script: its <h2> holds the event attribute onclick.',
+  ],
+  [
+    'a javascript: link',
+    '<h2 id="flow">Source flow</h2><p><a href="javascript:run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href="javascript:run()".',
+  ],
+  [
+    'a javascript: link in capitals with a tab and a space before it',
+    '<h2 id="flow">Source flow</h2><p><a href=" JAVA&#9;SCRIPT:run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href=" JAVA&#9;SCRIPT:run()".',
+  ],
+  [
+    'a link whose colon is a named character reference',
+    '<h2 id="flow">Source flow</h2><p><a href="javascript&colon;run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href="javascript&colon;run()".',
+  ],
+  [
+    'a link whose colon is a number without its semicolon',
+    '<h2 id="flow">Source flow</h2><p><a href="javascript&#58run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds href="javascript&#58run()".',
+  ],
+  [
+    'a data: address among the candidates of a srcset',
+    '<h2 id="flow">Source flow</h2><p><img src="flow.png" srcset="flow.png 1x, data:image/svg+xml,x 2x" alt="Flow"></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <img> holds srcset="flow.png 1x, data:image/svg+xml,x 2x".',
+  ],
+  [
+    'a button that submits the reader’s form to a javascript: address',
+    '<h2 id="flow">Source flow</h2><p><button form="qa-form" formaction="javascript:run()">Ask</button></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <button> holds formaction="javascript:run()".',
+  ],
+  [
+    'an xlink:href to a data: address',
+    '<h2 id="flow">Source flow</h2><p><a xlink:href="data:text/html,x">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <a> holds xlink:href="data:text/html,x".',
+  ],
+  [
+    'an image from a file: address',
+    '<h2 id="flow">Source flow</h2><p><img src="file:///etc/hosts" alt="Hosts"></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <img> holds src="file:///etc/hosts".',
+  ],
+])
+  test(`a page with ${form} is refused with the sentence that names the element and its attribute`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-scripting-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; seam=none
+test('a page that links to a relative path, a fragment, a web, mail or editor address, and shows an event attribute and a javascript: link only as escaped text or in a comment, is published as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-addresses-')),
+  )
+  const content =
+    '<h2 id="flow">Source flow</h2>' +
+    '<p><a href="pages/a&amp;b.html#start">A page</a> <a href="#flow">Up</a> <a href="../outside.html">Out</a> ' +
+    '<a href="https://example.com/?a=1&amp;b=2#c">Web</a> <a href="mailto:team@example.com">Mail</a> ' +
+    '<a href="vscode://laststance.codebook/source?root=%2Frepo">VS Code</a> <a href="cursor://laststance.codebook/source?root=%2Frepo">Cursor</a> ' +
+    '<img src="flow.png" srcset="flow.png 1x, flow@2x.png 2x" alt="Flow"></p>' +
+    '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
+    '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert
+    assert.equal(
+      /<\/details>(.*)<\/article>/.exec(pages.get('index.html'))?.[1],
+      content,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=a page that uses a custom element whose name starts with the name of an element a page must not hold; fails_when=the check takes the hyphen for the end of the name again, so `<link-card>`, `<main-nav>`, `<template-part>` or `<svg-icon>` is refused as a link, a main, a template or authored SVG; why_new=Cycle 0046 row 207 (the names ended at a word boundary, and a hyphen is one); seam=none
 test('a page with custom elements whose names start with the name of an element a page must not hold is published: a name is matched whole', async () => {
   // Arrange

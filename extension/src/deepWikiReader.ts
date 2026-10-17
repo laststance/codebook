@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import {
   createServer,
@@ -51,7 +51,7 @@ import { labelQuestionField } from './utils/labelQuestionField'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
-import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
+import { servedWikiPageHtml } from './utils/servedWikiPageHtml'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
 /** A started Wiki reader: where the browser opens it, how it is told where the editor forwards it and that a project file changed, and how it is closed. */
@@ -150,6 +150,8 @@ export async function readDeepWikiManifest(
   projectRoot: string,
 ): Promise<{
   files: Set<string>
+  /** The entry page and the manifest's pages: the files the publisher rendered from its shell, among {@link files}. */
+  pages: Set<string>
   sources: WikiIncludedSource[]
   revision?: string
   excludedPaths: string[]
@@ -237,7 +239,14 @@ export async function readDeepWikiManifest(
           (path: unknown): path is string => typeof path === 'string',
         )
       : []
-  return { files: new Set(paths), sources, revision, excludedPaths }
+  return {
+    files: new Set(paths),
+    // The entry page and the pages stand first in the list, before the assets.
+    pages: new Set(paths.slice(0, pages.length + 1)),
+    sources,
+    revision,
+    excludedPaths,
+  }
 }
 
 /** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for the forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
@@ -372,7 +381,7 @@ export async function startDeepWikiReader(
       return
     }
     // An agent may publish a new owned directory while this reader stays open.
-    const { files, sources } = await readManifest()
+    const { files, pages, sources } = await readManifest()
     if (relativePath === WIKI_QUESTION_ROUTE) {
       const askedFrom = request.headers.origin
       // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
@@ -467,14 +476,21 @@ export async function startDeepWikiReader(
       : undefined
     const content = await readFile(filePath)
     if (relativePath.endsWith('.html')) {
-      const html = content.toString('utf8')
+      // A script runs only with this response's nonce: the reader's own and the shell's, never one the page's content carries.
+      const nonce = randomUUID()
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
+      response.setHeader(
+        'Content-Security-Policy',
+        `script-src 'nonce-${nonce}'; object-src 'none'; base-uri 'none'`,
+      )
       response.end(
-        rebindDeepWikiEditorLinks(html, editorScheme).replace(
-          '</body>',
-          // The page carries the publication it was served from, so it can tell when newer pages are on disk.
-          `<script src="${prefix}codebook-qa.js"${publication ? ` data-codebook-publication="${publication}"` : ''}></script></body>`,
-        ),
+        servedWikiPageHtml(content.toString('utf8'), {
+          editorScheme,
+          nonce,
+          isShellPage: pages.has(relativePath),
+          clientAddress: `${prefix}codebook-qa.js`,
+          publication,
+        }),
       )
       return
     }

@@ -381,6 +381,33 @@ export const unbalancedClauseOf = html => {
   closeOnTop(open, CLOSED_BY_THEMSELVES);
   return open.length ? neverCloses(open.at(-1)) : undefined;
 };
+/** The schemes an address in a page's content may name: the web's, mail's, and the two editors' whose Codebook addresses the reader binds to the editor that serves the page. Any other (`javascript:`, `data:`, `file:` …) is refused by {@link scriptingClauseOf}. */
+const ADDRESS_SCHEMES = new Set(['http', 'https', 'mailto', 'vscode', 'cursor']);
+/** The attributes whose value a browser follows, loads or submits to as an address, SVG's `xlink:href` among them; `srcset` holds a list of them. */
+const ADDRESS_ATTRIBUTES = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'srcset']);
+/** Whether {@link scriptingClauseOf} accepts one address, its character references read by {@link attributeText}, as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Without a colon before its first slash, question mark or number sign it is a relative path or a fragment, unless a reference this publisher does not read stands there, which a browser may read as a colon or a tab: a named one with its semicolon (`&colon;`, `&Tab;`). A number without its semicolon (`&#58`) a browser reads too, wherever it stands, and its `#` would end the part the colon is looked for in, so an address that holds `&#` after its references were read is refused. A name without a semicolon a browser reads only from its short table of old names, none of which is a colon, a letter or a space, so `a&b.html` is a path. @example isAcceptedAddress('pages/flow.html#start') // => true; isAcceptedAddress('a&b.html') // => true; isAcceptedAddress('java\tscript:run()') // => false; isAcceptedAddress('javascript&colon;run()') // => false; isAcceptedAddress('javascript&#58run()') // => false */
+const isAcceptedAddress = address => {
+  const read = address.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '').replace(/[\t\n\r]/g, '');
+  const [head] = read.split(/[/?#]/), schemeEnd = head.indexOf(':');
+  if (read.includes('&#')) return false;
+  return schemeEnd === -1 ? !/&[A-Za-z][A-Za-z0-9]*;/.test(head) : ADDRESS_SCHEMES.has(head.slice(0, schemeEnd).toLowerCase());
+};
+/** The addresses one attribute value holds: for `srcset` the address of each candidate, split at every comma, so a comma inside an address can only add a refusal; the whole value otherwise. Called by {@link scriptingClauseOf}. @example addressesOf('srcset', 'small.png 1x, large.png 2x') // => ['small.png', 'large.png'] */
+const addressesOf = (name, text) => name === 'srcset' ? text.split(',').map(candidate => candidate.trim().split(/[\t\n\f\r ]/)[0]) : [text];
+/** Says where a page's content would run script of its own or lead elsewhere than a page, the web, mail or the editor: an attribute whose name starts with `on` (an event attribute, with or without a value), and an address in {@link ADDRESS_ATTRIBUTES} that names another scheme than {@link ADDRESS_SCHEMES}. Without this, markup an agent writes when a repository's text steers it would run script on the reader's origin, which may ask the editor's model. Start tags alone are read, with their character references, as {@link withAttributeValues} reads them; a comment and the text, an escaped code example included, are passed over. Called by the page renderer after {@link unbalancedClauseOf} let the content through. @returns The clause the refusal ends with, naming the element and its attribute, or undefined for content that runs no script. @example scriptingClauseOf('<img src="flow.png" onerror="run()">') // => 'must contain article sections, not a document, form or script: its <img> holds the event attribute onerror.' */
+export const scriptingClauseOf = html => {
+  for (const [markup] of html.matchAll(COMMENT_OR_START_TAG)) {
+    // A comment opens no element.
+    if (markup.startsWith('<!--')) continue;
+    const tag = markup.slice(1, markup.search(/[\t\n\f\r />]/)).toLowerCase();
+    for (const [name, written] of attributesOf(markup)) {
+      if (name.startsWith('on')) return `must contain article sections, not a document, form or script: its <${tag}> holds the event attribute ${name}.`;
+      if (ADDRESS_ATTRIBUTES.has(name) && !addressesOf(name, attributeText(written)).every(isAcceptedAddress))
+        return `must link only to a relative path, a #fragment or an http, https, mailto, vscode or cursor address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`;
+    }
+  }
+  return undefined;
+};
 /** The quote a changed attribute value is printed in: the author's single quotes, and double quotes otherwise, also where the author wrote the value bare, because the changed text may hold a space, which would end a bare value. Called by {@link withAttributeValues}. @example quoteOf('a') // => "'"; quoteOf(undefined) // => '"' */
 const quoteOf = single => single === undefined ? '"' : "'";
 /** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped and in quotes: the author's, or double quotes where the author used none. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
