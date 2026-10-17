@@ -18,7 +18,7 @@ function libraryRoomSentence(usage: { count: number; limit?: number }): string {
 /**
  * Words every learner-facing text of a saved study's removal with the host's word for the system Trash, so the dialog, the status line and the failures agree; called by {@link StudyWorkspace} when it confirms a removal and reports its outcome.
  * @param trashName - The host's word for the system Trash.
- * @returns The dialog's title, button and detail, the in-progress line, builders for the three outcomes, the answer to a request for a study's files that could not be listed, and the storage line for a lock that could not be released.
+ * @returns The dialog's title, button and detail, the in-progress line, the dialog of a recording that may still run on another computer, builders for the three outcomes, the answer to a request for a study's files that could not be listed, and the storage line for a lock that could not be released.
  * @example
  * studyRemovalMessages('Trash').confirmTitle // => 'Move this saved study to the Trash?'
  * studyRemovalMessages('Recycle Bin').confirmButton // => 'Move to Recycle Bin'
@@ -46,6 +46,12 @@ export function studyRemovalMessages(
           ? " The run's raw evidence was left in place because its Codebook window may still be open."
           : ''
       }`,
+    /** The dialog after a removal was refused only because a recording of the study names another host whose run may still write it: the learner decides, and Cancel keeps everything as it is. */
+    recordedOnAnotherHostTitle: `This study's recording may still be running on another computer. Move the study to the ${trashName} anyway?`,
+    recordedOnAnotherHostButton: 'Remove Anyway',
+    /** The dialog's detail: the host the recording names, when it started, and what each answer does. */
+    recordedOnAnotherHostDetail: (host: string, startedAt: string): string =>
+      `Its recording was started on ${host} at ${startedAt}, and Codebook cannot tell from this computer whether that run still records. If it still runs there, it loses its recording. If ${host} is this computer under an earlier name, or that editor has closed, nothing is lost. Cancel keeps the study and its recording as they are.`,
     nothingMoved: (cause: string): string =>
       `The saved study could not be moved to the ${trashName}. Nothing was deleted. ${cause}`,
     partlyMoved: (cause: string): string =>

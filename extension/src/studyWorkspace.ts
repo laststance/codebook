@@ -93,7 +93,12 @@ import {
   repositorySelectionSchema,
   type RepositorySelection,
 } from './learnerSchemas'
-import { LearningLibrary, type StudyRemoval } from './learningLibrary'
+import {
+  LearningLibrary,
+  type RecordingOfAnotherHostRule,
+  type RecordingOnAnotherHost,
+  type StudyRemoval,
+} from './learningLibrary'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
@@ -21610,7 +21615,12 @@ export class StudyWorkspace {
     await this.settleStudyWrites(studyId)
     const neighbours = this.removalNeighbours(studyId)
     const evidence = await this.studyEvidenceToMove(studyId)
-    const removal = await this.moveStudyFiles(studyId, evidence.directory)
+    const removal = await this.moveStudyFilesWithLearnersChoice(
+      studyId,
+      evidence.directory,
+    )
+    // The learner kept a study whose recording may still run on another computer: nothing changed.
+    if (!removal) return
     if (removal.outcome === 'nothing-moved') {
       // No file of the study moved, so the run stays a checkpoint candidate and its pending entry is kept. The list may have changed meanwhile, and a failed write-back leaves the ledger without its two references to the study, so both are read again.
       await this.rereadLibraryAfterUnmovedRemoval()
@@ -21713,16 +21723,67 @@ export class StudyWorkspace {
   }
 
   /**
-   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover, and tells the service once whether the study left the library; called by {@link moveSavedStudy}.
+   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because a recording of the study names another host whose run may still write it, asks the learner whether to move it anyway ({@link askRemovalOfRecordingOnAnotherHost}); called by {@link moveSavedStudy}.
+   * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link RecordingOfAnotherHostRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
+   * @param studyId - The confirmed entry.
+   * @param evidenceDirectory - The run's raw evidence when it moves with the study.
+   * @returns What the removal changed on disk; `undefined` when the learner chose Cancel, and nothing changed.
+   * @example await this.moveStudyFilesWithLearnersChoice(studyId, evidenceDirectory) // => { outcome: 'moved' } after "Remove Anyway"
+   */
+  private async moveStudyFilesWithLearnersChoice(
+    studyId: string,
+    evidenceDirectory?: string,
+  ): Promise<StudyRemoval | undefined> {
+    const removal = await this.moveStudyFiles(studyId, evidenceDirectory)
+    if (removal.outcome !== 'nothing-moved' || !removal.recordedOnAnotherHost)
+      return removal
+    if (
+      !(await this.askRemovalOfRecordingOnAnotherHost(
+        removal.recordedOnAnotherHost,
+      ))
+    )
+      return undefined
+    return this.moveStudyFiles(studyId, evidenceDirectory, 'move')
+  }
+
+  /**
+   * Asks the learner, in a modal dialog, whether to move a study whose recording may still be written on another computer: the dialog names the host the recording gives and the time it started, and offers "Remove Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
+   * @param recording - The host the recording names and its start.
+   * @returns `true` for "Remove Anyway"; `false` for Cancel or a dismissed dialog.
+   * @example await this.askRemovalOfRecordingOnAnotherHost({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z' }) // => true after "Remove Anyway"
+   */
+  private async askRemovalOfRecordingOnAnotherHost({
+    host,
+    startedAt,
+  }: RecordingOnAnotherHost): Promise<boolean> {
+    const messages = studyRemovalMessages()
+    const answer = await vscode.window.showWarningMessage(
+      messages.recordedOnAnotherHostTitle,
+      {
+        modal: true,
+        detail: messages.recordedOnAnotherHostDetail(
+          host,
+          new Date(startedAt).toLocaleString(),
+        ),
+      },
+      messages.recordedOnAnotherHostButton,
+    )
+    return answer === messages.recordedOnAnotherHostButton
+  }
+
+  /**
+   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover, and tells the service whether the study left the library; called by {@link moveStudyFilesWithLearnersChoice}.
    * For a run of this window the removal runs inside {@link StudyService.withEvidenceHeld}, so no explanation is written into the evidence directory while it moves.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
+   * @param recordingOfAnotherHost - `move` only after the learner chose "Remove Anyway" ({@link askRemovalOfRecordingOnAnotherHost}).
    * @returns What the removal changed on disk.
    * @example await this.moveStudyFiles(studyId, evidenceDirectory) // => { outcome: 'moved' }
    */
   private async moveStudyFiles(
     studyId: string,
     evidenceDirectory?: string,
+    recordingOfAnotherHost: RecordingOfAnotherHostRule = 'refuse',
   ): Promise<StudyRemoval> {
     const remove = (): Promise<StudyRemoval> =>
       this.library!.removeStudy(
@@ -21735,14 +21796,16 @@ export class StudyWorkspace {
             }),
           ),
         evidenceDirectory,
+        recordingOfAnotherHost,
       )
     const service = this.service,
       record = this.recordOfStudy(studyId)
     const removal = await (service && record
       ? service.withEvidenceHeld(record, remove)
       : remove())
-    // The removal's outcome decides, not each path: a path the Trash rejected after it was already gone still left the library.
-    service?.recordStudyRemoval(removal.outcome === 'moved')
+    // A refusal that waits for the learner's choice is no answer of the Trash; any other outcome decides, not each path: a path the Trash rejected after it was already gone still left the library.
+    if (!(removal.outcome === 'nothing-moved' && removal.recordedOnAnotherHost))
+      service?.recordStudyRemoval(removal.outcome === 'moved')
     return removal
   }
 

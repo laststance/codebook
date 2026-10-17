@@ -22,7 +22,10 @@ import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { readProcessStart } from '../utils/readProcessStart'
-import { recordingMayStillBeWritten } from '../utils/recordingMayStillBeWritten'
+import {
+  recordingMayStillBeWritten,
+  recordingWriterOf,
+} from '../utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import type * as lockModule from '../utils/withStorageLock'
 
@@ -1670,6 +1673,19 @@ test('a removal judges the writers of the study’s recordings before it takes t
   >(resolve(__dirname, '../utils/withStorageLock.js'), {}, { Error })
   const whileJudging: { isLockHeld: boolean; writeOfTheOtherWindow: string }[] =
     []
+  // Each judgement first notes whether the lock is held and lets the other window write.
+  const noteTheLockAndWriteMeanwhile = async (): Promise<void> => {
+    whileJudging.push({
+      isLockHeld: await lstat(join(storage.directory, 'writer.lock')).then(
+        () => true,
+        () => false,
+      ),
+      writeOfTheOtherWindow: await lockOfTheOtherWindow(
+        storage.directory,
+        async () => 'written',
+      ).catch((error: Error) => error.message),
+    })
+  }
   const { LearningLibrary: ObservedLibrary } = await loadModule<
     typeof libraryModule
   >(
@@ -1678,20 +1694,15 @@ test('a removal judges the writers of the study’s recordings before it takes t
       './utils/recordingMayStillBeWritten': {
         recordingMayStillBeWritten: async (
           ...judging: Parameters<typeof recordingMayStillBeWritten>
-        ): Promise<boolean> => {
-          whileJudging.push({
-            isLockHeld: await lstat(
-              join(storage.directory, 'writer.lock'),
-            ).then(
-              () => true,
-              () => false,
-            ),
-            writeOfTheOtherWindow: await lockOfTheOtherWindow(
-              storage.directory,
-              async () => 'written',
-            ).catch((error: Error) => error.message),
-          })
+        ): ReturnType<typeof recordingMayStillBeWritten> => {
+          await noteTheLockAndWriteMeanwhile()
           return recordingMayStillBeWritten(...judging)
+        },
+        recordingWriterOf: async (
+          ...judging: Parameters<typeof recordingWriterOf>
+        ): ReturnType<typeof recordingWriterOf> => {
+          await noteTheLockAndWriteMeanwhile()
+          return recordingWriterOf(...judging)
         },
       },
     },

@@ -11,6 +11,7 @@ import fsPromises, {
   utimes,
   writeFile,
 } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -22,6 +23,8 @@ import { RecordingStore } from '../recordingStore'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { readProcessStart } from '../utils/readProcessStart'
+import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
 
 import {
@@ -31,6 +34,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -7861,6 +7865,204 @@ test('a saved study chosen during Recording is not answered by a playback change
     assert.deepEqual(harness.openRequestReplies(), [
       { webview: 'summary', openRequest: 8 },
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Leaves an unsealed recording of a saved study, started on 2026-10-01 at 08:00 UTC, as an editor that crashed left it, and names its writer.
+ * `header-only` makes it a recording of 0.2.29.0 (no record of its writer beside the recordings); `with-record` keeps the record this build writes and names the writer there too, with the writer's own process start.
+ * @param harness - The reader whose library holds the study.
+ * @param study - The saved study.
+ * @param owner - The writer: its process id and its host name.
+ * @param record - Whether the recording has the record of its writer.
+ * @returns The recording's directory.
+ * @example await crashedRecordingOf(harness, study, { pid: 2 ** 22 + 1, hostname: 'old-laptop.local' }, 'header-only')
+ */
+async function crashedRecordingOf(
+  harness: Harness,
+  study: Awaited<ReturnType<typeof saveEarlierStudy>>,
+  owner: { pid: number; hostname: string },
+  record: 'header-only' | 'with-record',
+): Promise<string> {
+  const directory = harness.reader.inspect().libraryDirectory!
+  await new RecordingStore(directory, study.workspaceKey).start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId: study.runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  const folder = join(directory, 'recordings.v2', study.id)
+  const header: { owner: Record<string, unknown> } = JSON.parse(
+    await readFile(join(folder, 'header.json'), 'utf8'),
+  )
+  await writeFile(
+    join(folder, 'header.json'),
+    JSON.stringify({
+      ...header,
+      owner: { ...header.owner, ...owner },
+      createdAt: '2026-10-01T08:00:00.000Z',
+    }),
+  )
+  const recordPath = recordingOwnerRecordPath(directory, study.id)
+  if (record === 'header-only') await rm(recordPath)
+  else
+    await writeFile(
+      recordPath,
+      JSON.stringify({
+        ...JSON.parse(await readFile(recordPath, 'utf8')),
+        ...owner,
+        processStart: await readProcessStart(owner.pid),
+      }),
+    )
+  return folder
+}
+
+/** The dialog that offers "Remove Anyway" for a recording of old-laptop.local started on 2026-10-01 at 08:00 UTC, as the reader opens it. */
+const DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST = {
+  title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+  options: {
+    modal: true,
+    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}, and Codebook cannot tell from this computer whether that run still records. If it still runs there, it loses its recording. If old-laptop.local is this computer under an earlier name, or that editor has closed, nothing is lost. Cancel keeps the study and its recording as they are.`,
+  },
+  items: ['Remove Anyway'],
+}
+
+// Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window is still recording this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose crashed recording names another host is moved with its recording after the learner chooses Remove Anyway in a dialog that names that host and the recording’s start', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [
+          study.id,
+          `${study.id}.study.meta.v3.json`,
+          `${study.id}.study.v3.json`,
+        ],
+        studyRemoval: {
+          status: 'moved',
+          studyId: study.id,
+          text: `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's Cancel in the dialog about a recording that may still run on another computer; fails_when=Cancel moves the study or its recording anyway, or leaves the removal shown as failed or still moving; why_new=Cycle 0046 OCR review OC1; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('Cancel in the dialog about a recording that names another host moves nothing and leaves the study as it was', async () => {
+  // Arrange: the learner confirms the removal, then cancels the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const recording = await crashedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) =>
+      button === 'Remove Anyway' ? undefined : button,
+    )
+    const library = await harness.reader.learningStorage()
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves,
+        studyRemoval: harness.reader.inspect().view!.studyRemoval,
+        listed: (await library.list()).map((entry) => entry.id),
+        recordingLeft: await readdir(recording),
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [],
+        studyRemoval: undefined,
+        listed: [study.id],
+        recordingLeft: ['frames.jsonl', 'header.json'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study whose recording another editor window of this machine is still writing, which the learner gets no way to remove; fails_when=a writer this machine can prove alive (its record names this machine, and the live process has the recorded start) is offered "Remove Anyway", so the learner removes a recording while it is written; why_new=Cycle 0046 OCR review OC1: only a writer this machine cannot probe gets the learner's choice; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording a live window of this machine is still writing is refused, and no Remove Anyway is offered', async (context: TestContext) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const otherWindow = await idleChild(context)
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves,
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`]],
+        moved: [],
+        studyRemoval: {
+          status: 'failed',
+          studyId: study.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+        },
+      },
+    )
   } finally {
     await harness.close()
   }

@@ -56,7 +56,11 @@ import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
-import { recordingMayStillBeWritten } from './utils/recordingMayStillBeWritten'
+import {
+  recordingMayStillBeWritten,
+  recordingWriterOf,
+  type RecordingWriterOfDirectory,
+} from './utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { savedStudyLimit } from './utils/savedStudyLimit'
@@ -75,20 +79,58 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
 /**
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
- * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back.
+ * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `recordedOnAnotherHost` when a recording of the study names another host whose run may still write it.
  * - `partly-moved`: a step failed after at least one path went to the Trash; the study is still listed and a second removal finishes it.
  */
 export type StudyRemoval =
   | { outcome: 'moved'; unreleasedLock?: string }
-  | { outcome: 'nothing-moved' | 'partly-moved'; cause: string }
+  | {
+      outcome: 'nothing-moved' | 'partly-moved'
+      cause: string
+      /** Only for `nothing-moved` refused because a recording names another host whose run may still write it ({@link RecordingOnAnotherHost}); the caller asks the learner whether to move it anyway. */
+      recordedOnAnotherHost?: RecordingOnAnotherHost
+    }
 
 /** Judges whether a run may still write one recording directory ({@link recordingMayStillBeWritten}), as the caller's list or removal judges it. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
-/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): whether any writer may still write it, and whether a run of another window may. */
+/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): whether any writer may still write it, and the writer of another window that may ({@link recordingWriterOf}). */
 type RemovalWriterVerdict = {
   mayStillBeWritten: boolean
-  byAnotherWindow: boolean
+  ofAnotherWindow: RecordingWriterOfDirectory
+}
+
+/** Whether {@link LearningLibrary.removeStudy} keeps a study one of whose recordings a run on another host may still write (`refuse`, the default), or moves it (`move`): the learner's choice after that refusal, made in a dialog that names the host and the recording's start. */
+export type RecordingOfAnotherHostRule = 'refuse' | 'move'
+
+/** The host a recording names and the time it was started, for a recording whose writer this machine cannot probe; what {@link LearningLibrary.removeStudy} answers with its refusal, so the caller can ask the learner. */
+export type RecordingOnAnotherHost = { host: string; startedAt: string }
+
+/**
+ * Words why a removal moved nothing of a study one of whose recordings a run on another host may still write, for {@link StudyRecordedOnAnotherHostError}; the outcome line puts it after "Nothing was deleted."
+ * @param recording - The host the recording names and its start (an ISO time).
+ * @returns The sentence, with the start in this editor's local time.
+ * @example recordedOnAnotherHostCause({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z' }) // => "This study's recording was started on laptop.home-network at 10/5/2026, 9:00:00 AM, and Codebook cannot tell from this computer whether that run still records."
+ */
+function recordedOnAnotherHostCause({
+  host,
+  startedAt,
+}: RecordingOnAnotherHost): string {
+  return `This study's recording was started on ${host} at ${new Date(startedAt).toLocaleString()}, and Codebook cannot tell from this computer whether that run still records.`
+}
+
+/**
+ * The refusal of a removal whose study has a recording that a run on another host may still write: its header names another host (a recording of 0.2.29.0, or one whose record of its writer could not be written), or its record names another machine. This machine cannot probe that writer, and a host name may also be this computer's earlier one (macOS takes it from the network), so the learner decides; thrown by {@link LearningLibrary.refuseUnlessRemovable} and answered by {@link LearningLibrary.removeStudy} with the host and the start.
+ * @example throw new StudyRecordedOnAnotherHostError({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z' })
+ */
+class StudyRecordedOnAnotherHostError extends Error {
+  /** The host the recording names and its start. */
+  readonly recording: RecordingOnAnotherHost
+
+  constructor(recording: RecordingOnAnotherHost) {
+    super(recordedOnAnotherHostCause(recording))
+    this.recording = recording
+  }
 }
 
 /** The {@link RemovalWriterVerdict} of each recording directory of a study. */
@@ -329,22 +371,37 @@ export class LearningLibrary {
     return false
   }
 
-  /** Says whether a run of another editor window may still write one of a study's recording directories, as the removal judged its writers ({@link verdictUnderLock}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link refuseUnlessRemovable} before the first move. @example await this.isRecordedByAnotherWindow(['/…/recordings.v2/<id>'], judge) // => true while another window records that run */
-  private async isRecordedByAnotherWindow(
+  /**
+   * Finds the writer of another editor window that may still write one of a study's recording directories, as the removal judged them ({@link writerOfAnotherWindowUnderLock}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link refuseUnlessRemovable} before the first move.
+   * @param recordings - The study's recording directories.
+   * @param verdicts - What {@link writerVerdictsOf} found before the lock.
+   * @returns
+   * - a writer of this machine that may still run (`may-run`), before any writer this machine cannot probe, so that the plain refusal wins
+   * - else the first writer that may still run only because its recording names another host (`on-another-host`)
+   * - `undefined` when no other window may write any of them
+   * @example await this.writerOfAnotherWindow(['/…/recordings.v2/<id>'], verdicts) // => { kind: 'may-run', createdAt } while another window of this machine records that run
+   */
+  private async writerOfAnotherWindow(
     recordings: string[],
-    byAnotherWindow: RecordingJudge,
-  ): Promise<boolean> {
-    for (const recording of recordings)
-      if (await byAnotherWindow(recording)) return true
-    return false
+    verdicts: RemovalWriterVerdicts,
+  ): Promise<RecordingWriterOfDirectory | undefined> {
+    const writers = await Promise.all(
+      recordings.map((recording) =>
+        this.writerOfAnotherWindowUnderLock(recording, verdicts),
+      ),
+    )
+    return (
+      writers.find((writer) => writer.kind === 'may-run') ??
+      writers.find((writer) => writer.kind === 'on-another-host')
+    )
   }
 
   /**
    * Judges the writers of a study's recordings before its removal takes the storage lock; called by {@link removeStudy}.
    * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}).
    * @param identity - The validated study id.
-   * @returns For each recording directory of the study: whether it may still be written by any writer, and whether a run of another window may still write it ({@link recordingMayStillBeWritten} with `ignored`).
-   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { mayStillBeWritten: true, byAnotherWindow: true } } while another window records that run
+   * @returns For each recording directory of the study: whether it may still be written by any writer, and the writer of another window that may still write it ({@link recordingWriterOf} with `ignored`).
+   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { mayStillBeWritten: true, ofAnotherWindow: { kind: 'may-run', createdAt } } } while another window records that run
    */
   private async writerVerdictsOf(
     identity: string,
@@ -358,63 +415,110 @@ export class LearningLibrary {
           'counts',
           starts,
         ),
-        byAnotherWindow: await recordingMayStillBeWritten(
-          recording,
-          'ignored',
-          starts,
-        ),
+        ofAnotherWindow: await recordingWriterOf(recording, 'ignored', starts),
       })
     return verdicts
   }
 
-  /**
-   * Judges one recording again under the storage lock, with one look and no question to the system: a recording sealed since the removal judged it is no longer written, and one the removal did not judge (it appeared since) counts as written, so nothing of the study moves; called by {@link refuseUnlessRemovable}.
-   * @param recording - The recording directory.
-   * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @param question - Which verdict is asked for.
-   * @returns The verdict, or `false` for a recording that is sealed now.
-   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts, 'byAnotherWindow') // => false once that recording is sealed
-   */
-  private async verdictUnderLock(
-    recording: string,
-    verdicts: RemovalWriterVerdicts,
-    question: keyof RemovalWriterVerdict,
-  ): Promise<boolean> {
-    const isSealed = await lstat(join(recording, RECORDING_SEAL_FILE)).then(
+  /** Says whether a recording directory holds its seal, with one look; for {@link mayStillBeWrittenUnderLock} and {@link writerOfAnotherWindowUnderLock}, which take a recording sealed since the removal judged it for one nobody writes any more. @example await this.isSealedNow('/…/recordings.v2/<id>') // => true once that run sealed its recording */
+  private isSealedNow(recording: string): Promise<boolean> {
+    return lstat(join(recording, RECORDING_SEAL_FILE)).then(
       () => true,
       () => false,
     )
-    if (isSealed) return false
-    return verdicts.get(recording)?.[question] ?? true
+  }
+
+  /**
+   * Answers under the storage lock whether one recording may still be written, from the verdict found before the lock and one look ({@link isSealedNow}); called by {@link refuseUnlessRemovable} for a study without an archive.
+   * @param recording - The recording directory.
+   * @param verdicts - What {@link writerVerdictsOf} found before the lock.
+   * @returns `false` for a recording sealed since; the verdict for any other; `true` for one the removal did not judge (it appeared since), so nothing of the study moves.
+   * @example await this.mayStillBeWrittenUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed
+   */
+  private async mayStillBeWrittenUnderLock(
+    recording: string,
+    verdicts: RemovalWriterVerdicts,
+  ): Promise<boolean> {
+    if (await this.isSealedNow(recording)) return false
+    return verdicts.get(recording)?.mayStillBeWritten ?? true
+  }
+
+  /**
+   * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock and one look ({@link isSealedNow}); called by {@link writerOfAnotherWindow}.
+   * @param recording - The recording directory.
+   * @param verdicts - What {@link writerVerdictsOf} found before the lock.
+   * @returns `finished` for a recording sealed since; the verdict for any other; `may-run` for one the removal did not judge (it appeared since), so nothing of the study moves.
+   * @example await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'finished' } once that recording is sealed
+   */
+  private async writerOfAnotherWindowUnderLock(
+    recording: string,
+    verdicts: RemovalWriterVerdicts,
+  ): Promise<RecordingWriterOfDirectory> {
+    if (await this.isSealedNow(recording)) return { kind: 'finished' }
+    return (
+      verdicts.get(recording)?.ofAnotherWindow ?? {
+        kind: 'may-run',
+        createdAt: new Date().toISOString(),
+      }
+    )
   }
 
   /**
    * Refuses the removal of a study before its first move; called by {@link removeStudy} under the storage lock, with the writers it judged before it ({@link writerVerdictsOf}).
    * @param paths - The study's paths as {@link studyPaths} found them.
    * @param verdicts - The writers of the study's recordings, as judged before the lock.
+   * @param recordingOfAnotherHost - Whether a recording that a run on another host may still write keeps the study (`refuse`) or moves with it (`move`, the learner's choice after the refusal).
    * @throws
    * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
-   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window may still write one of its recordings ({@link isRecordedByAnotherWindow}): that window would fail its next append and save the archive again
-   * @example await this.refuseUnlessRemovable(paths, verdicts) // returns for a saved study whose recordings nobody else writes
+   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings ({@link writerOfAnotherWindow}): that window would fail its next append and save the archive again
+   * - {@link StudyRecordedOnAnotherHostError} with `refuse` while one of its recordings may still be written only because it names another host, which this machine cannot probe
+   * @example await this.refuseUnlessRemovable(paths, verdicts, 'refuse') // returns for a saved study whose recordings nobody else writes
    */
   private async refuseUnlessRemovable(
     paths: StudyPaths,
     verdicts: RemovalWriterVerdicts,
+    recordingOfAnotherHost: RecordingOfAnotherHostRule,
   ): Promise<void> {
     // What is left of a study without its archive is removed like a study.
     if (
       !paths.archives.length &&
       !(await this.isLeftWithoutArchive(paths, (recording) =>
-        this.verdictUnderLock(recording, verdicts, 'mayStillBeWritten'),
+        this.mayStillBeWrittenUnderLock(recording, verdicts),
       ))
     )
       throw new StudyArchiveUnavailableError()
-    if (
-      await this.isRecordedByAnotherWindow(paths.recordings, (recording) =>
-        this.verdictUnderLock(recording, verdicts, 'byAnotherWindow'),
-      )
-    )
+    const writer = await this.writerOfAnotherWindow(paths.recordings, verdicts)
+    if (writer?.kind === 'may-run')
       throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
+    // A writer this machine cannot probe is the learner's to judge: the removal waits for their choice.
+    if (
+      writer?.kind === 'on-another-host' &&
+      recordingOfAnotherHost === 'refuse'
+    )
+      throw new StudyRecordedOnAnotherHostError({
+        host: writer.host,
+        startedAt: writer.createdAt,
+      })
+  }
+
+  /**
+   * Gives the outcome of a removal that threw, for {@link removeStudy}: a recording that a run on another host may still write is answered with its host and its start, so the caller can ask the learner ({@link StudyRecordedOnAnotherHostError}); any other failure as {@link removalAfterLockFailure} words it.
+   * @param error - What the removal threw.
+   * @param settled - What the removal's steps settled before it threw, if they ran.
+   * @returns `nothing-moved` with `recordedOnAnotherHost` for a recording of another host; else the outcome {@link removalAfterLockFailure} gives.
+   * @example this.outcomeOfFailedRemoval(new Error('Study archive is unavailable.'), undefined) // => { outcome: 'nothing-moved', cause: 'Study archive is unavailable.' }
+   */
+  private outcomeOfFailedRemoval(
+    error: unknown,
+    settled: StudyRemoval | undefined,
+  ): StudyRemoval {
+    if (error instanceof StudyRecordedOnAnotherHostError)
+      return {
+        outcome: 'nothing-moved',
+        cause: error.message,
+        recordedOnAnotherHost: error.recording,
+      }
+    return removalAfterLockFailure(settled, thrownMessage(error))
   }
 
   /**
@@ -875,10 +979,11 @@ export class LearningLibrary {
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
    * What is left of a study whose archive is gone, as {@link list} shows it, is moved in the same order ({@link isLeftWithoutArchive}); the recording of a run that has not saved its study yet is not.
-   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link isRecordedByAnotherWindow}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}.
+   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link writerOfAnotherWindow}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `recordedOnAnotherHost` for one this machine cannot probe because the recording names another host, unless `recordingOfAnotherHost` is `move`.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
+   * @param recordingOfAnotherHost - `refuse` (the default) keeps a study one of whose recordings a run on another host may still write, and answers with that host and the recording's start; `move` moves it, after the learner chose so in the dialog that names them. No agent or tool path passes `move`.
    * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, an id of which no file is left and a study in a newer format (`nothing-moved` with the sentence of {@link NewerStudyFormatError}), is a result and not a rejection.
    * @throws When `id` is not a study identity.
    * @example
@@ -889,6 +994,7 @@ export class LearningLibrary {
     id: string,
     moveToTrash: StudyMover,
     evidenceDirectory?: string,
+    recordingOfAnotherHost: RecordingOfAnotherHostRule = 'refuse',
   ): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
     // The lock call also rejects when its release fails after the steps ran; what they settled then decides the outcome.
@@ -901,7 +1007,11 @@ export class LearningLibrary {
             identity,
             await this.newerFormatOf(identity),
           )
-          await this.refuseUnlessRemovable(paths, verdicts)
+          await this.refuseUnlessRemovable(
+            paths,
+            verdicts,
+            recordingOfAnotherHost,
+          )
           // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
           const progress = await this.readProgress().catch(() => undefined),
             ledger = progress && withoutStudyReferences(progress, identity)
@@ -942,7 +1052,7 @@ export class LearningLibrary {
         }),
       )
       .catch((error): StudyRemoval =>
-        removalAfterLockFailure(settled, thrownMessage(error)),
+        this.outcomeOfFailedRemoval(error, settled),
       )
   }
 
