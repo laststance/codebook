@@ -13894,14 +13894,7 @@ export class StudyWorkspace {
         editorBefore = editorNow
       changed ||=
         editorNow !== editorBefore ||
-        vscode.window.tabGroups.all.some((group) => {
-          const now = this.learnerViewOfGroup(group),
-            before = groupsBefore.get(this.editorGroupIdentities.get(group))
-          return (
-            (before?.tabs ?? '') !== now.tabs ||
-            (before?.front !== undefined && before.front !== now.front)
-          )
-        })
+        this.hasLearnerGroupChangedSince(groupsBefore)
     }
     const subscriptions = [
       vscode.window.tabGroups.onDidChangeTabs(check),
@@ -13920,6 +13913,31 @@ export class StudyWorkspace {
         for (const subscription of subscriptions) subscription.dispose()
       },
     }
+  }
+
+  /**
+   * Says whether a group's learner tabs, or the learner's tab in front of it, changed since {@link watchLearnerViewDuringApplicationMove} began; asked by that watch at every reported change (row 670).
+   * @param groupsBefore - Each group's {@link learnerViewOfGroup} when the watch began, by the group's identity.
+   * @returns `true` once a group holds other learner tabs than it held (also a group that had none), or shows another learner's tab in front than the one it showed; `false` otherwise.
+   * @example this.hasLearnerGroupChangedSince(groupsBefore) // => true after the learner brought Release notes to the front of auth.ts's group
+   */
+  private hasLearnerGroupChangedSince(
+    groupsBefore: ReadonlyMap<
+      symbol | undefined,
+      ReturnType<StudyWorkspace['learnerViewOfGroup']>
+    >,
+  ): boolean {
+    for (const group of vscode.window.tabGroups.all) {
+      const now = this.learnerViewOfGroup(group),
+        before = groupsBefore.get(this.editorGroupIdentities.get(group))
+      // A group whose front was a Codebook tab or none is compared by its learner tabs alone: the move can uncover a learner's tab there.
+      if (
+        (before?.tabs ?? '') !== now.tabs ||
+        (before?.front !== undefined && before.front !== now.front)
+      )
+        return true
+    }
+    return false
   }
 
   /**
