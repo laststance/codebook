@@ -5758,6 +5758,27 @@ export async function workspaceHarness(
       reportFrameOf(session.id)
     },
     /**
+     * Lets a debug adapter tell the editor that the stacks of a session whose stop the editor keeps in the background are no longer valid: the session's trackers see the `invalidated` event, and the editor drops the stale stack and asks for it again (`answerStackTraceOf`). The editor handles the stop again from what it stored of the adapter's `stopped` event (both editors keep its details per thread, with its `preserveFocusHint`), so a stop it did not bring to the front stays in the background: no file opens and no frame is reported (Cycle 0046 R5).
+     * @param sessionId - The session whose stacks are declared invalid.
+     * @param top - The top frame the adapter answers again: its file and whether it is deemphasized.
+     * @example
+     * harness.pauseDebugger({ session: 'learner-node', staysInBackground: true, keepsFocus: true, pausedFile: 'actions.ts' })
+     * harness.invalidateStacksOfStopInBackground('learner-node', { filename: 'actions.ts', deemphasized: false })
+     */
+    invalidateStacksOfStopInBackground(
+      sessionId: string,
+      top: { filename: string; deemphasized: boolean },
+    ): void {
+      const session = { id: sessionId }
+      for (const tracker of trackersOf(session))
+        tracker?.onDidSendMessage?.({
+          type: 'event',
+          event: 'invalidated',
+          body: { areas: ['stacks'] },
+        })
+      answerStackTraceOf(session, top)
+    },
+    /**
      * Shows a stop for which the editor's stop handling finds no frame to focus, so it focuses the stopped thread alone and opens no file: `getTopStackFrame` of both editors skips every frame whose source is deemphasized when the stop's reason is none of `breakpoint`, `step` and `function breakpoint`, as at js-debug's pause of a Node process in Node's own code (`skipFiles` `<node_internals>/**`) or an uncaught exception thrown there. A test sends the adapter's `stopped` event and the frames first (`pauseDebugger` with `staysInBackground` and `framesDeemphasized`).
      * @param sessionId - The stopped session.
      * @example

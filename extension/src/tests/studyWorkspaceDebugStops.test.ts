@@ -3939,6 +3939,87 @@ test('a breakpoint in a skipped file that the editor shows hands its paused file
   }
 })
 
+// Value: protects=the keyboard of a learner in the Call Stack view after their own debug session stopped with the adapter's preserveFocusHint and the adapter then declared its stacks invalid: the editor handles the stop again from the stopped event it stored, hint included, so it still focuses nothing, and the editor's later pass of the focus to that stop opens its file preserving the focus; Codebook arms no hand-over for it, so the view keeps the keyboard; fails_when=the reader notes the invalidated event as a fresh stop without the stored hint (keepsFocus false), which arms a keyboard hand-over the editor never wanted, and the focus pass then hands the paused file the keyboard; why_new=Cycle 0046 R5 (the red team review of /ship); seam=pauseDebugger with keepsFocus, staysInBackground and pausedFile, invalidateStacksOfStopInBackground (the new seam: the invalidated event and the editor's new stackTrace request), focusView, passFocusToStoppedSession; no_claim=a native round of an invalidation at such a stop
+test("an invalidated stack of a learner's stop whose adapter asked to keep the focus arms no keyboard hand-over, so the editor's later focus pass leaves the keyboard in the Call Stack view", async () => {
+  // Arrange: the reader is open under Codebook's contributed default; the learner had a file in front of column 2 and clicked into the Call Stack view; their own session stopped with the adapter's preserveFocusHint, and the editor left the stop in the background.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.focusView()
+    harness.pauseDebugger({
+      session: 'learner-node',
+      staysInBackground: true,
+      keepsFocus: true,
+      pausedFile: 'actions.ts',
+    })
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the adapter declares the session's stacks invalid; then the editor passes the focus to the stop, opening actions.ts preserving the focus and reporting its frame.
+    harness.invalidateStacksOfStopInBackground('learner-node', {
+      filename: 'actions.ts',
+      deemphasized: false,
+    })
+    harness.passFocusToStoppedSession('learner-node', 'actions.ts', 2)
+
+    // Assert: the Call Stack view keeps the keyboard, and no file is shown with it.
+    assert.deepEqual(
+      {
+        keyboardInView: harness.keyboardInView(),
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus),
+      },
+      { keyboardInView: true, shownWithKeyboard: [] },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard at a breakpoint of a learner's own debug session in a file of skipFiles when the adapter declares the stacks invalid before the editor shows the stop: the editor handles the stop again with the reason it stored, breakpoint, so it still focuses the deemphasized top frame and opens its file preserving the focus, and that file gets the keyboard as at a breakpoint without the invalidation; fails_when=the reader notes the invalidated event as a stop without a reason, the hand-over's record loses the reason breakpoint, the deemphasized frame no longer qualifies as the editor's paused frame, and the file that covers the learner's file keeps no keyboard; why_new=Cycle 0046 R5 (the red team review of /ship: an armed stop lost its reason and threadId at an invalidation); seam=pauseDebugger with staysInBackground, framesDeemphasized and pausedFile, invalidateStacksOfStopInBackground with the deemphasized frame, showStopKeepingFocus; no_claim=the threadId the record keeps too, which the harness's one thread does not tell apart
+test('a breakpoint in a skipped file whose stacks the adapter declared invalid before the editor showed it still hands its paused file the keyboard', async () => {
+  // Arrange: the reader is open under Codebook's contributed default, the learner works in a file in column 2, and their own session stopped at a breakpoint in a file of skipFiles that the editor has not shown yet.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.contributeFocusEditorOnBreakDefault(false)
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('page.tsx', 2)
+    harness.pauseDebugger({
+      session: 'learner-node',
+      staysInBackground: true,
+      framesDeemphasized: true,
+      pausedFile: 'vendor.js',
+    })
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act: the adapter declares the stacks invalid and answers the deemphasized frame again; then the editor's own handling opens vendor.js preserving the focus and reports its frame.
+    harness.invalidateStacksOfStopInBackground('learner-node', {
+      filename: 'vendor.js',
+      deemphasized: true,
+    })
+    harness.showStopKeepingFocus('learner-node', 'vendor.js', 2)
+
+    // Assert: the paused file is shown with the keyboard once, and the window body has none.
+    assert.deepEqual(
+      {
+        shows: harness.textDocumentShows().slice(showsBefore),
+        keyboardOnBody: harness.keyboardOnBody(),
+      },
+      {
+        shows: [{ name: 'vendor.js', viewColumn: 2, preserveFocus: false }],
+        keyboardOnBody: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner whose own debug session stops while they work in a file, within the R7 bound that counts from the paused file's activation (40 ms in Cursor, 300 ms in VS Code): the paused file gets the keyboard when the editor opens it, not only when the stop's frame is reported up to 105 ms later; fails_when=the hand-over waits for the frame report, so the window body keeps the keyboard between the paused file's activation and the frame (about 10 ms more in Cursor, 9 to 12 ms of C54 and C55's frame-minus-file); why_new=Cycle 0046, the latency of finding 603's frame-report resolution (C55: a BODY sample 24 ms after the activation in Cursor); seam=pauseDebugger with staysInBackground and pausedFile (the editor's stackTrace request and the adapter's answer), openPausedFileKeepingFocus, reportStopFrame
 test("the paused file of a learner's stop gets the keyboard when the editor opens it, before the stop's frame is reported", async () => {
   // Arrange: the reader is open under Codebook's contributed default; the learner works in a file in column 2, and their own debug session stops at a breakpoint in actions.ts.
