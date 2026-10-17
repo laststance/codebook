@@ -1929,6 +1929,28 @@ export async function workspaceHarness(
     // A pane in front takes the keyboard into its document; a text editor in front has it as the active text editor already.
     if (pane && !suppressNativeInnerFocus) innerFocusedPanel = pane.kind
   }
+  /**
+   * Says whether the text editor in front of a group has the keyboard: the group is the active one, its front tab is the active text editor's, and neither a view, a side bar, the page body nor another part's chat has the keyboard; asked by `panel` when a pane is created without the keyboard in that group.
+   * Both editors give a webview created in front of that editor no keyboard, and the hidden editor loses it to the page body (C60, Cycle 0046 row 694: Cursor 3.23.12 `auth.ts` in column 2 with its TEXTAREA, then BODY once the Repository Wiki was created there with `preserveFocus`; VS Code 1.140.0 the same).
+   * @param group - The group the pane is created in.
+   * @returns `true` for such a group; `false` otherwise.
+   * @example textEditorHasKeyboardIn(groups[1]) // => true while auth.ts in front of the second group has the keyboard
+   */
+  function textEditorHasKeyboardIn(group: (typeof groups)[number]): boolean {
+    const editor = focusedSourceEditor(),
+      front = group.activeTab?.input
+    return Boolean(
+      editor &&
+      group === activeTabGroup &&
+      front instanceof TabInputText &&
+      front.uri.toString() === editor.document.uri.toString() &&
+      windowState.focused &&
+      !keyboardInView &&
+      !keyboardInSideBar &&
+      !keyboardOnBody &&
+      !separateEditorPart?.focused,
+    )
+  }
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
     if (partialFocusEditor) return partialFocusEditor.value
@@ -2559,6 +2581,9 @@ export async function workspaceHarness(
     const register = (): void => {
       registered = true
       const group = nativeGroup(value.viewColumn ?? 1)
+      // A pane created without the keyboard in front of the text editor that has it hides that editor: the keyboard falls to the page body (row 694).
+      if (options?.preserveFocus && textEditorHasKeyboardIn(group))
+        keyboardOnBody = true
       if (!group.tabs.includes(nativeTab)) {
         group.tabs.push(nativeTab)
         // Cursor reports the opened tab before it reports it as the tab its group shows (obs15 P1: "opened", then "changed").
@@ -4212,7 +4237,7 @@ export async function workspaceHarness(
     typeof repositoryBoundary.RepositoryReader
   >[] = []
   /**
-   * Makes a real Repository Wiki reader over this fake editor, wired to the harness's Study workspace as the extension wires it (`extension.ts`: the workspace's learning storage, its `arrangeRepository` and its `openRepositoryEvidence`), so the reader's own focus receipts and the workspace's layout meet the fake editor's models, Cursor's chat part among them (Cycle 0046 row 674).
+   * Makes a real Repository Wiki reader over this fake editor, wired to the harness's Study workspace as the extension wires it (`extension.ts`: the workspace's learning storage, its `arrangeRepository`, its `openRepositoryEvidence` and its `knowsLearnerTypesInActiveEditor`), so the reader's own focus receipts and the workspace's layout meet the fake editor's models, Cursor's chat part among them (Cycle 0046 rows 674 and 694).
    * @returns The reader; a book published into the workspace's learning storage is what its `open` shows.
    * @example const wiki = harness.createRepositoryWikiReader(); await wiki.open(selection)
    */
@@ -4224,6 +4249,8 @@ export async function workspaceHarness(
         reader.arrangeRepository(signal, returnSelection, focus),
       evidence: (binding, recording, signal, origin) =>
         reader.openRepositoryEvidence(binding, recording, signal, origin),
+      knowsLearnerTypesInActiveEditor: () =>
+        reader.knowsLearnerTypesInActiveEditor(),
     })
     repositoryWikiReaders.push(wiki)
     return wiki

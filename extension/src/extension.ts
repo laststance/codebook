@@ -315,6 +315,8 @@ export function activate(
         workspace().arrangeRepository(signal, returnSelection, focus),
       evidence: (binding, recording, signal, origin) =>
         workspace().openRepositoryEvidence(binding, recording, signal, origin),
+      knowsLearnerTypesInActiveEditor: () =>
+        workspace().knowsLearnerTypesInActiveEditor(),
     }))
   /**
    * Waits for a start until the handling of changed workspace folders has replaced the readers, and ends the start when the server was asked to stop meanwhile; called by {@link start} only while such a handling is under way.

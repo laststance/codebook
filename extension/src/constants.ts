@@ -364,6 +364,18 @@ export const AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES = {
 export const REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE =
   'Codebook opened the Repository Wiki an agent asked for, and the Wiki has the keyboard now: arranging the Wiki beside its cited source needed the focus of the first editor group, and Codebook could not give the keyboard back to where you were typing. Click where you want to type.'
 /**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki was created in front of the file the learner was known to type in: the Wiki goes to the second editor group without the keyboard, a webview created in front of the text editor that has the keyboard hides that editor, and the keyboard falls to the page body, where nothing types (C60 in both hosts, Cycle 0046 row 694). Codebook then gives the Wiki the keyboard, and the sentence says so and how to type in the file again: its tab is in the same group, behind the Wiki. "Known" is a fresh sign of the learner's own hand in that file (a click or a key within {@link LEARNER_SIGN_FRESH_MS}); without one, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE} is told instead.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE)
+ */
+export const REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for in front of the file you were typing in, and the Wiki has the keyboard now. To type in that file again, click its tab in the same editor group.'
+/**
+ * What the Repository Wiki reader tells the learner, once in an editor session, when a Wiki an agent opened through codebook_open_book in a window without a Wiki was created in front of the file the editor reported as the active text editor while no sign of the learner's own hand in it was fresh: both editors report the learner's last file so also while a view, the terminal or VS Code's chat view has the keyboard (Cycle 0046 rows 612 and 656), where the Wiki leaves it, so Codebook focuses nothing; but if the learner was typing in that file, the Wiki hid it and the keyboard fell to the page body (row 694), and the sentence says where to click.
+ * @example void showPlainNotice(vscode.window, 'information', REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE)
+ */
+export const REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE =
+  'Codebook opened the Repository Wiki an agent asked for in front of the file you had open in its editor group. If you were typing in that file, click its tab in that group to type in it again.'
+/**
  * What the reader tells the learner, once in an editor session, when a Study arrangement an agent asked for (codebook_presentation, a live request) ended the learner's Read and showed the side bars the Read had hidden again. Both editors show a side bar only with a command that gives it the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1113:32927 `workbench.action.focusSideBar`, 859:17722 `workbench.action.focusAuxiliaryBar`, whose chat view puts it into its input at 3507:67487; Cursor 3.23.12 18340:22765, 17376:10844), and the active editor group, the pane being read, gets it after them. A Read hides the side bars but not the bottom panel (990:15233), so the learner may have been typing to the agent in the terminal, in another view or in a chat; the editor does not tell Codebook, and nothing can give it back there, so the sentence says where it is now (Cycle 0046 row 622). Not told when the Study pane reported having the keyboard, nor for the learner's own Restore.
  * @example void showPlainNotice(vscode.window, 'information', READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE)
  */

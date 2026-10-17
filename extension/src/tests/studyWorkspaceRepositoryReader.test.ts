@@ -388,3 +388,172 @@ test('the fake editor answers showTextDocument with the text editor it then repo
     await harness.close()
   }
 })
+
+/**
+ * Opens the workspace harness with the learner's two columns and no Repository Wiki: login-form.tsx in front of the first group, auth.ts in front of the second, the column a cold Wiki is created in, with the keyboard; in Cursor beside its Agent chat part as {@link cursorBesideChatPart} opens it (Cycle 0046 row 694).
+ * @param host - The editor whose model the harness runs.
+ * @returns The harness, and the chat part in Cursor.
+ * @example const { harness } = await learnerTypingInWikiColumn('VS Code')
+ */
+async function learnerTypingInWikiColumn(host: 'VS Code' | 'Cursor') {
+  const { harness, chat } =
+    host === 'Cursor'
+      ? await cursorBesideChatPart()
+      : { harness: await workspaceHarness(false), chat: undefined }
+  if (!chat)
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 490 }, { size: 490 }],
+    })
+  // The fixture's Wiki tab without a panel goes: no Wiki is open.
+  harness.leaveEmptyGroup(2)
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.focusMutableDraft('auth.ts', 2)
+  return { harness, chat }
+}
+
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the learner's keyboard when an agent opens an article through codebook_open_book while no Wiki is open and the learner types in a file in front of the second group, the column the Wiki is created in: the Wiki covers that file without the keyboard and the hidden editor's keyboard falls to the page body, so Codebook gives the Wiki the keyboard and says once what happened and how to type in the file again; fails_when=RepositoryReader.settleAgentEntryKeyboard takes the arrangement's "nothing borrowed" for a keyboard where the learner had it, so the keyboard stays on the page body and nothing is told (C60 in both hosts: auth.ts in front of column 2 with the keyboard, then BODY to the end); why_new=Cycle 0046 row 694; seam=workspaceHarness's two columns (leaveEmptyGroup, focusMutableDraft), workInActiveTextEditor (the learner's key press), Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), createRepositoryWikiReader with the workspace's knowsLearnerTypesInActiveEditor, openFromAgent, Close Repository Wiki, keyboardOnBody, focusedPanel, panelReveals, textDocumentShows and the information messages
+  test(`an agent's cold Wiki open created in front of the file the learner was typing in gives the Wiki the keyboard and says so once (${host})`, async () => {
+    // Arrange: the learner types in auth.ts in front of the second group; no Wiki is open.
+    const { harness } = await learnerTypingInWikiColumn(host)
+    harness.workInActiveTextEditor('keyboard')
+    const { selection, books } = await publishTwoCitationWiki(harness)
+    const wiki = harness.createRepositoryWikiReader()
+    const article = { instanceId: harness.service.instanceId, ...selection }
+    try {
+      // Act: the agent opens the article; after Close Repository Wiki the learner types in auth.ts again, and the agent opens it once more.
+      await wiki.openFromAgent(article)
+      const afterFirstOpen = {
+        keyboardOnBody: harness.keyboardOnBody(),
+        keyboard: harness.focusedPanel(),
+        secondGroup: harness.groups[1]!.tabs.map(
+          (tab) =>
+            `${tab === harness.groups[1]!.activeTab ? '*' : ''}${tab.label}`,
+        ),
+      }
+      wiki.close()
+      harness.focusMutableDraft('auth.ts', 2)
+      harness.workInActiveTextEditor('keyboard')
+      await wiki.openFromAgent(article)
+
+      // Assert: each open gave the Wiki the keyboard with one reveal; the cited source was shown without the keyboard, no file was shown with it, and the sentence was told for the first open only.
+      assert.deepEqual(
+        {
+          afterFirstOpen,
+          keyboardOnBody: harness.keyboardOnBody(),
+          wikiRevealsWithKeyboard: harness
+            .panelReveals()
+            .filter(
+              (reveal) =>
+                reveal.kind === 'codebook.repositoryWiki' &&
+                reveal.preserveFocus === false,
+            ).length,
+          shownWithKeyboard: harness
+            .textDocumentShows()
+            .filter((shown) => !shown.preserveFocus),
+          notices: harness.informationMessages.map((notice) => notice.message),
+        },
+        {
+          afterFirstOpen: {
+            keyboardOnBody: false,
+            keyboard: 'codebook.repositoryWiki',
+            secondGroup: ['auth.ts', '*codebook · Repository Wiki'],
+          },
+          keyboardOnBody: false,
+          wikiRevealsWithKeyboard: 2,
+          shownWithKeyboard: [],
+          notices: [
+            'Codebook opened the Repository Wiki an agent asked for in front of the file you were typing in, and the Wiki has the keyboard now. To type in that file again, click its tab in the same editor group.',
+          ],
+        },
+      )
+    } finally {
+      await books.dispose()
+      await harness.close()
+    }
+  })
+
+for (const situation of [
+  { host: 'VS Code', keyboard: 'the chat view' },
+  { host: 'Cursor', keyboard: 'a view' },
+] as const)
+  // Value: protects=the keyboard of a view the learner typed in when an agent's cold Wiki open is created in front of the file the editor reports as the active text editor (VS Code reports the learner's last file so while its chat view types, rows 612 and 620; Cursor while the terminal or a view does, row 656): with no fresh sign of the learner's hand in that file, Codebook focuses nothing, so the view keeps its keyboard, and says once that the Wiki opened in front of that file and where to click if the learner was typing there; fails_when=the Wiki takes the keyboard whenever it covers the reported active text editor, so the chat view loses the keyboard the learner typed the agent's request with, or nothing is told when the keyboard did fall to the page body; why_new=Cycle 0046 row 694 (the bound of the keyboard rule); seam=workspaceHarness's two columns, focusChatInSecondarySideBar or focusView (the view's keyboard, which the editor does not report), createRepositoryWikiReader, openFromAgent, keyboardInView, panelReveals and the information messages
+  test(`an agent's cold Wiki open created in front of the file the editor reports active while ${situation.keyboard} has the keyboard leaves the keyboard there and says once where to click (${situation.host})`, async () => {
+    // Arrange: auth.ts in front of the second group is the active text editor; the learner typed into the view since, which the editor does not report.
+    const { harness } = await learnerTypingInWikiColumn(situation.host)
+    if (situation.host === 'VS Code') harness.focusChatInSecondarySideBar()
+    else harness.focusView()
+    const { selection, books } = await publishTwoCitationWiki(harness)
+    const wiki = harness.createRepositoryWikiReader()
+    try {
+      // Act
+      await wiki.openFromAgent({
+        instanceId: harness.service.instanceId,
+        ...selection,
+      })
+
+      // Assert: the view keeps the keyboard, the Wiki was not revealed with it, and the learner was told once where to click.
+      assert.deepEqual(
+        {
+          keyboardInView: harness.keyboardInView(),
+          wikiRevealsWithKeyboard: harness
+            .panelReveals()
+            .filter(
+              (reveal) =>
+                reveal.kind === 'codebook.repositoryWiki' &&
+                reveal.preserveFocus === false,
+            ).length,
+          notices: harness.informationMessages.map((notice) => notice.message),
+        },
+        {
+          keyboardInView: true,
+          wikiRevealsWithKeyboard: 0,
+          notices: [
+            'Codebook opened the Repository Wiki an agent asked for in front of the file you had open in its editor group. If you were typing in that file, click its tab in that group to type in it again.',
+          ],
+        },
+      )
+    } finally {
+      await books.dispose()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the fidelity of the workspace harness's panes, on which row 694's verdicts rest: a pane created without the keyboard in front of the text editor that has the keyboard hides that editor and leaves the keyboard on the page body, as both editors did natively; fails_when=the fake keeps the hidden editor's keyboard, so a test passes on a keyboard no editor has; why_new=Cycle 0046 row 694 (C60, Cursor 3.23.12 c60-663-cu2 and VS Code 1.140.0 c60-663-vs-probe: auth.ts in column 2 with the keyboard, then BODY once the Wiki was created there with preserveFocus); seam=workspaceHarness's two columns, focusMutableDraft, the fake editor's createWebviewPanel with preserveFocus, keyboardOnBody and the active text editor
+test('the fake editor leaves the keyboard on the page body when a pane is created without the keyboard in front of the text editor that has it, as both editors do', async () => {
+  // Arrange: auth.ts in front of the second group has the keyboard.
+  const { harness } = await learnerTypingInWikiColumn('VS Code')
+  try {
+    const keyboardBefore = {
+      keyboardOnBody: harness.keyboardOnBody(),
+      activeTextEditor:
+        harness.editor.window.activeTextEditor?.document.uri.path
+          .split('/')
+          .at(-1),
+    }
+
+    // Act
+    harness.editor.window.createWebviewPanel(
+      'codebook.repositoryWiki',
+      'codebook · Repository Wiki',
+      { viewColumn: 2, preserveFocus: true },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        keyboardBefore,
+        keyboardOnBody: harness.keyboardOnBody(),
+        activeTextEditor: harness.editor.window.activeTextEditor,
+      },
+      {
+        keyboardBefore: { keyboardOnBody: false, activeTextEditor: 'auth.ts' },
+        keyboardOnBody: true,
+        activeTextEditor: undefined,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})

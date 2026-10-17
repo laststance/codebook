@@ -10,6 +10,8 @@ import {
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_READER_READY_TIMEOUT_MS,
   REPOSITORY_SOURCE_SCHEME,
+  REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE,
+  REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE,
   REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE,
 } from './constants'
 import { requireWorkspace } from './environment'
@@ -72,8 +74,27 @@ export interface RepositoryLayoutFocus {
  */
 export type RepositoryKeyboardReturn = () => Promise<boolean>
 
-/** Whether {@link RepositoryReader} told {@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE} in this editor session: kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells it no second time. */
-let agentWikiKeyboardTold = false
+/** The keyboard sentences of an agent's Wiki entry that {@link RepositoryReader} told in this editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}): kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells none of them a second time. */
+const toldAgentWikiKeyboardSentences = new Set<string>()
+
+/**
+ * Tells the learner one keyboard sentence of an agent's Wiki entry, at most once in the editor session ({@link toldAgentWikiKeyboardSentences}); called by {@link RepositoryReader}'s keyboard settling after an agent's cold Wiki entry.
+ * @param sentence - One of the entry's keyboard sentences.
+ * @example tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE) // told now; a second call tells nothing
+ */
+function tellAgentWikiKeyboardOnce(sentence: string): void {
+  if (toldAgentWikiKeyboardSentences.has(sentence)) return
+  toldAgentWikiKeyboardSentences.add(sentence)
+  void showPlainNotice(vscode.window, 'information', sentence)
+}
+
+/** The text editor the editor reported as active when an agent's cold Wiki entry began ({@link RepositoryReader.noteAgentEntryKeyboardEditor}): the place the keyboard was in, or may have been in, before the Wiki was shown (Cycle 0046 row 694). */
+interface AgentEntryKeyboardEditor {
+  /** The view column of its group. */
+  column: vscode.ViewColumn
+  /** Whether the learner was known to type in it then ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}). */
+  learnerTypesThere: boolean
+}
 
 interface RepositoryControls {
   storage(): Promise<LearningLibrary>
@@ -89,6 +110,8 @@ interface RepositoryControls {
     signal: AbortSignal,
     origin: RepositorySelection,
   ): Promise<void>
+  /** Says whether the learner is known to type in the active text editor now, by a fresh sign of the learner's own hand there ({@link StudyWorkspace.knowsLearnerTypesInActiveEditor}); asked when an agent's cold Wiki entry begins (row 694). Without it nothing is known. */
+  knowsLearnerTypesInActiveEditor?(): boolean
 }
 
 /** Owns repository reading/navigation while {@link RepositoryBookStore} seals content and {@link LearningLibrary} owns shared choices. @example await reader.open() */
@@ -248,7 +271,9 @@ export class RepositoryReader {
     this.openingGeneration = generation
     const background = preserveNativeInput && Boolean(this.panel),
       coldAgentEntry = forAgent && !this.panel,
-      initiatingEditor = vscode.window.activeTextEditor
+      initiatingEditor = vscode.window.activeTextEditor,
+      agentEntryKeyboardEditor =
+        this.noteAgentEntryKeyboardEditor(coldAgentEntry)
     this.sourceDeferred = false
     this.deferredReturn = undefined
     this.sourcePreviewRequest++
@@ -445,7 +470,11 @@ export class RepositoryReader {
           !coldAgentEntry,
         )
         if (coldAgentEntry)
-          await this.settleAgentEntryKeyboard(keyboardReturn, this.panel)
+          await this.settleAgentEntryKeyboard(
+            keyboardReturn,
+            this.panel,
+            agentEntryKeyboardEditor,
+          )
       } else {
         await this.completeDeferredReturn(signal, initialFocus)
       }
@@ -612,35 +641,110 @@ export class RepositoryReader {
   }
 
   /**
-   * Settles the keyboard once an agent's cold Wiki is shown ({@link open} with `forAgent`, codebook_open_book, row 620): the arrangement's {@link RepositoryKeyboardReturn} gives back what its measurement borrowed (Cursor's chat tab); a keyboard it cannot give back goes to the Wiki, no file, and the learner is told once in the editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}).
+   * Settles the keyboard once an agent's cold Wiki is shown ({@link open} with `forAgent`, codebook_open_book, row 620): the arrangement's {@link RepositoryKeyboardReturn} gives back what its measurement borrowed (Cursor's chat tab); a keyboard it cannot give back goes to the Wiki, no file, and the learner is told once in the editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}). A keyboard that stayed where the learner had it is settled by {@link settleCoveredEditorKeyboard}: the Wiki may stand in front of that file now (row 694).
    * @param keyboardReturn - The arrangement's return, `undefined` when the entry arranged nothing.
    * @param panel - The Wiki the entry showed.
-   * @example await this.settleAgentEntryKeyboard(keyboardReturn, this.panel) // Cursor: the chat tab has its keyboard again
+   * @param keyboardEditor - The text editor the editor reported as active when the entry began ({@link noteAgentEntryKeyboardEditor}).
+   * @example await this.settleAgentEntryKeyboard(keyboardReturn, this.panel, keyboardEditor) // Cursor: the chat tab has its keyboard again
    */
   private async settleAgentEntryKeyboard(
     keyboardReturn: RepositoryKeyboardReturn | undefined,
     panel: vscode.WebviewPanel | undefined,
+    keyboardEditor: AgentEntryKeyboardEditor | undefined,
   ): Promise<void> {
-    if (!keyboardReturn || !panel) return
+    if (!panel) return
+    const answer = await this.returnAgentEntryKeyboard(keyboardReturn)
+    // A newer choice of the learner keeps its keyboard and is told nothing.
+    if (answer === 'newer' || this.panel !== panel) return
+    if (answer === 'returned') {
+      this.settleCoveredEditorKeyboard(panel, keyboardEditor)
+      return
+    }
+    this.revealPanel(panel, false)
+    tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE)
+  }
+
+  /**
+   * Asks the arrangement to give back the keyboard its measurement borrowed, for {@link settleAgentEntryKeyboard}.
+   * @param keyboardReturn - The arrangement's return, `undefined` when the entry arranged nothing.
+   * @returns
+   * - `'returned'` when the keyboard is where the learner had it, or back there, and when nothing was arranged
+   * - `'kept'` when it stays where the measurement left it, with no newer choice of the learner's since
+   * - `'newer'` when the learner chose another place meanwhile, or the return failed
+   * @example await this.returnAgentEntryKeyboard(keyboardReturn) // => 'returned' after Cursor's chat tab got its keyboard back
+   */
+  private async returnAgentEntryKeyboard(
+    keyboardReturn: RepositoryKeyboardReturn | undefined,
+  ): Promise<'returned' | 'kept' | 'newer'> {
+    if (!keyboardReturn) return 'returned'
     const unchanged = this.retainNativeFocus()
     try {
-      // The keyboard is where the learner had it, or back there.
-      if (await keyboardReturn()) return
+      if (await keyboardReturn()) return 'returned'
       unchanged.assertRetained()
+      return 'kept'
     } catch {
-      // A newer choice of the learner keeps its keyboard and is told nothing.
-      return
+      return 'newer'
     } finally {
       unchanged.dispose()
     }
-    if (this.panel !== panel) return
-    this.revealPanel(panel, false)
-    if (agentWikiKeyboardTold) return
-    agentWikiKeyboardTold = true
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE,
+  }
+
+  /**
+   * Notes the text editor the editor reports as active when an agent's cold Wiki entry begins, and whether the learner is known to type in it ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}), for {@link settleCoveredEditorKeyboard}; called first by {@link open}, before any effect (Cycle 0046 row 694).
+   * @param coldAgentEntry - Whether the entry is an agent's into a window without the Wiki.
+   * @returns The editor's column and the learner's sign; `undefined` for any other entry and without an active text editor.
+   * @example this.noteAgentEntryKeyboardEditor(true) // => { column: 2, learnerTypesThere: true } a second after the learner typed in auth.ts in front of the second group
+   */
+  private noteAgentEntryKeyboardEditor(
+    coldAgentEntry: boolean,
+  ): AgentEntryKeyboardEditor | undefined {
+    const column = vscode.window.activeTextEditor?.viewColumn
+    if (!coldAgentEntry || column === undefined) return undefined
+    return {
+      column,
+      learnerTypesThere: Boolean(
+        this.controls.knowsLearnerTypesInActiveEditor?.(),
+      ),
+    }
+  }
+
+  /**
+   * Settles the keyboard of the file an agent's cold Wiki was created in front of, for {@link settleAgentEntryKeyboard} once that keyboard stayed where the learner had it (Cycle 0046 row 694).
+   * The Wiki is created in the second group without the keyboard ({@link ensurePanel}); a webview created in front of the text editor that has the keyboard hides that editor, and the keyboard falls to the page body, where nothing types (C60, both hosts: `auth.ts` in front of column 2 with the keyboard, then BODY to the end). Both editors report the learner's last file as the active text editor also while a view, the terminal or VS Code's chat view has the keyboard (rows 612 and 656), which the Wiki leaves where it is, so only a known sign of the learner's own hand in that file decides: then the Wiki gets the keyboard and the learner is told so ({@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}); otherwise nothing is focused and the learner is told what may have happened ({@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}). Each sentence is told once in the editor session.
+   * @param panel - The Wiki the entry showed.
+   * @param keyboardEditor - The text editor the editor reported as active when the entry began.
+   * @example this.settleCoveredEditorKeyboard(panel, { column: 2, learnerTypesThere: true }) // the Wiki has the keyboard, and the learner is told once
+   */
+  private settleCoveredEditorKeyboard(
+    panel: vscode.WebviewPanel,
+    keyboardEditor: AgentEntryKeyboardEditor | undefined,
+  ): void {
+    if (!keyboardEditor || !this.coversEditorColumn(panel, keyboardEditor))
+      return
+    if (keyboardEditor.learnerTypesThere) {
+      this.revealPanel(panel, false)
+      tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE)
+    } else tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE)
+  }
+
+  /**
+   * Says whether the Wiki now stands in front of the group of the text editor that was active when an agent's entry began, with no text editor active since; asked by {@link settleCoveredEditorKeyboard}.
+   * @param panel - The Wiki the entry showed.
+   * @param keyboardEditor - That text editor's column.
+   * @returns `true` while the Wiki is that group's front tab and no text editor is active; `false` once the learner brought a text editor to the front, there or elsewhere, and for the Wiki in another group.
+   * @example this.coversEditorColumn(panel, { column: 2, learnerTypesThere: false }) // => true right after the Wiki was created in front of auth.ts
+   */
+  private coversEditorColumn(
+    panel: vscode.WebviewPanel,
+    keyboardEditor: AgentEntryKeyboardEditor,
+  ): boolean {
+    const front = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === keyboardEditor.column,
+    )?.activeTab
+    return (
+      panel.viewColumn === keyboardEditor.column &&
+      this.isWikiTab(front) &&
+      !vscode.window.activeTextEditor
     )
   }
 

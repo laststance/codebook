@@ -13561,6 +13561,15 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the learner is known to type in the active text editor now, by the sign {@link knowsLearnersPlace} reads without a Study pane: a click or a key press there a moment ago, or the learner's own move onto the captured source; asked through the Repository Wiki reader's `knowsLearnerTypesInActiveEditor` control when an agent's cold Wiki entry begins ({@link RepositoryReader.open}, codebook_open_book, Cycle 0046 row 694), so that a Wiki created in front of that file gives the keyboard only to a learner known to have typed there.
+   * @returns `true` within {@link LEARNER_SIGN_FRESH_MS} of such a sign in the active text editor; `false` otherwise and without an active text editor.
+   * @example workspace.knowsLearnerTypesInActiveEditor() // => true one second after the learner typed in auth.ts
+   */
+  knowsLearnerTypesInActiveEditor(): boolean {
+    return this.knowsLearnersPlace(undefined)
+  }
+
+  /**
    * Says whether the learner is known to work where the keyboard is; asked by {@link captureApplicationPreparationReturn} and {@link performPresentation} before any native effect of an agent's request.
    * Beside a chat view the active text editor stays the active one and a pane stays `active`, so only the learner's own sign tells: a click or a key press in the active text editor a moment ago ({@link learnerWorksInActiveEditor}), the learner's own reported move onto the captured source that is still the active text editor ({@link endSourceKeyboardPlacementAtLearnersMove}, row 654), or the Study pane's own report that it has the keyboard ({@link reportsKeyboard}).
    * @param focusedPanel - The Codebook pane that is the active editor, if any.
