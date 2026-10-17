@@ -2,7 +2,7 @@
 name: codebook
 description: Explain live code paths, save or replay learning, or generate and update a DeepWiki for the current editor workspace.
 metadata:
-  version: "1.0.42"
+  version: "1.0.43"
 ---
 
 # Codebook
