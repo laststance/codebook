@@ -456,7 +456,7 @@ export function describeWikiUpdate(
       return (
         'the Wiki folder itself (' +
         named +
-        ') is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.'
+        ') is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), then press Update LLM Wiki again.'
       )
     if (cause === 'linked-parent')
       return (
