@@ -1181,6 +1181,8 @@ export const MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS = 100
 export const PROCESS_LISTING_TIMEOUT_MS = 10_000
 /** The most bytes that listing may print before it is ended and counts as failed. Node.js gives a child 1 MiB unless told otherwise, which some hundred long command lines pass; 64 MiB hold thirty thousand processes with command lines of two thousand bytes each. */
 export const PROCESS_LISTING_MAX_BYTES = 64 * 1024 * 1024
+/** The pause between two looks for a managed profile's processes on Windows, where each look starts a PowerShell scan of every process (`Get-CimInstance Win32_Process`, hundreds of milliseconds or more): one scan runs at a time and they never follow each other back to back. Other systems keep the runtime's {@link POLL_INTERVAL_MS}, since `ps` answers in milliseconds. */
+export const PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS = 500
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */

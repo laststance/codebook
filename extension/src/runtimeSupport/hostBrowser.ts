@@ -18,6 +18,7 @@ import {
   MANAGED_PROFILE_REMOVAL_RETRIES,
   MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
   MANAGED_PROFILE_ROOT,
+  PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
@@ -28,6 +29,7 @@ import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
   INTERFERENCE_DELAY_MS,
+  POLL_INTERVAL_MS,
   type Scenario,
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
@@ -59,6 +61,22 @@ interface CursorTabs {
 type RecordEvent = (type: string, detail?: unknown) => unknown
 /** A managed run's own profile folder that its close could not remove, with the removal's error as text; the run shows it in its cleanup record. */
 export type ProfileLeft = { profile: string; reason: string }
+
+/**
+ * Names the pause between two looks for a managed profile's processes ({@link profileProcesses}), each of which lists every process of the machine ({@link listProcesses}); called by {@link HostBrowser.attachViewport} for the owned Chrome's start and by {@link HostBrowser.close} for its exit.
+ * @param platform - The system the editor runs on.
+ * @returns
+ * - On Windows, where each look starts a PowerShell scan of every process: {@link PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS}, so the scans do not follow each other back to back
+ * - On every other system, where `ps` answers in milliseconds: {@link POLL_INTERVAL_MS}
+ * @example
+ * profileProcessPollIntervalMs('win32') // => 500
+ * profileProcessPollIntervalMs('linux') // => 50
+ */
+function profileProcessPollIntervalMs(platform: NodeJS.Platform): number {
+  return platform === 'win32'
+    ? PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS
+    : POLL_INTERVAL_MS
+}
 
 /** Owns host-specific browser acquisition/reveal/cleanup for {@link ConfiguredBrowserRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
 export class HostBrowser {
@@ -398,6 +416,7 @@ export class HostBrowser {
       'owned Chrome process',
       ACTIVE_TIMEOUT_MS,
       signal,
+      profileProcessPollIntervalMs(process.platform),
     )
     if (
       !processes.some((process) =>
@@ -609,9 +628,13 @@ export class HostBrowser {
           // A folder an earlier close removed has no processes to look for, and looking would fail on the missing path.
           if (!this.managedProfile || this.managedProfileRemoved) return
           const profile = this.managedProfile
+          // Each look lists every process of the machine; on Windows the looks are spaced out (profileProcessPollIntervalMs).
           await waitUntil(
             async () => (await profileProcesses(profile)).length === 0,
             'owned Chrome profile processes exited',
+            ACTIVE_TIMEOUT_MS,
+            undefined,
+            profileProcessPollIntervalMs(process.platform),
           )
           this.record('browser.managed-exit-verified', {
             profile,

@@ -76,7 +76,9 @@ async function loadHostBrowser(
  * @param options.removeAbandonedProfiles - Stands in for the sweep of the profile folders a killed editor left; the real one by default.
  * @param options.currentStorageOwner - Stands in for the read of this process's machine, boot and start, for a test that holds it; the real one by default.
  * @param options.createViewport - Holds or rejects the real factory boundary while the test observes launch and cleanup ordering.
- * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and no process is found.
+ * @param options.platform - The system the adapter reads from `process.platform`; this machine's by default.
+ * @param options.processesOfProfile - The processes a look for the profile finds, by the look's number (1 for the first); none by default.
+ * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
  * const managed = await managedBrowser(context)
  * await managed.browser.launch(configuration, signal); await managed.browser.close() // managed.events names browser.managed-profile-removed
@@ -90,6 +92,8 @@ async function managedBrowser(
     removeAbandonedProfiles?: (root: string) => Promise<string[]>
     currentStorageOwner?: () => Promise<{ hostname: string }>
     createViewport?: BrowserViewportFactory
+    platform?: NodeJS.Platform
+    processesOfProfile?: (look: number) => { pid: number; command: string }[]
   } = {},
 ) {
   const root = await realpath(
@@ -117,8 +121,9 @@ async function managedBrowser(
       './utils/profileProcesses': {
         profileProcesses: async (profile: string) => {
           processProbes.push(profile)
+          const look = processProbes.length
           await realpath(profile)
-          return []
+          return options.processesOfProfile?.(look) ?? []
         },
       },
       ...(options.removeAbandonedProfiles && {
@@ -132,8 +137,17 @@ async function managedBrowser(
         },
       }),
     },
-    // The owner marker names this process.
-    { process },
+    // The owner marker names this process; a test may name another system, which the adapter reads as `process.platform`.
+    {
+      process: options.platform
+        ? new Proxy(process, {
+            get: (target, key) =>
+              key === 'platform'
+                ? options.platform
+                : Reflect.get(target, key, target),
+          })
+        : process,
+    },
   )
   const browser = new HostBrowser(
     {
@@ -762,6 +776,63 @@ test('closing a managed browser again after its profile folder was removed succe
 })
 
 // Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
+for (const { system, platform, intervalMs } of [
+  { system: 'Windows', platform: 'win32', intervalMs: 500 },
+  { system: 'Linux', platform: 'linux', intervalMs: 50 },
+] as const)
+  // Value: protects=the close of a managed run on Windows, where each look for the browser's processes starts a PowerShell scan of every process (Get-CimInstance Win32_Process, hundreds of milliseconds or more): the looks are spaced 500 ms apart, while Linux and macOS, whose `ps` answers in milliseconds, keep 50 ms (F7, Cycle 0046 /ship review); fails_when=the wait looks again 50 ms after each scan on Windows too, so the scans run nearly back to back for as long as the browser takes to exit; why_new=the wait's interval had no test; seam=the system the adapter reads (`process.platform` of its loaded context), the stand-in for the profile's processes, which counts the looks, and the faked setTimeout of the wait's pause; no_claim=the same interval of attachViewport's wait for the browser's start, which this harness does not reach
+  test(`on ${system}, the close of a managed browser looks for its profile’s processes again only ${intervalMs} ms after a look that found them`, async (context) => {
+    // Arrange: a managed browser whose processes are still there at the first two looks and gone at the third; no sweep of abandoned folders runs. The answer of each look is noted, since the wait's pause starts only once the look has answered.
+    let answeredLooks = 0
+    const managed = await managedBrowser(context, {
+      platform,
+      removeAbandonedProfiles: async () => [],
+      processesOfProfile: (look) => {
+        answeredLooks = look
+        return look <= 2
+          ? [{ pid: 4242, command: 'chrome --user-data-dir=x' }]
+          : []
+      },
+    })
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    /** Lets real work run (the look's resolve of the folder) until a condition holds, for at most 1,000 real turns, and then one turn more, in which the wait starts its pause after a look's answer. */
+    const afterRealTurnsUntil = async (
+      reached: () => boolean,
+    ): Promise<void> => {
+      for (let turn = 0; turn < 1_000 && !reached(); turn += 1)
+        await nextEventLoopTurn()
+      await nextEventLoopTurn()
+    }
+    // Act: the close looks once; once that look has answered, the faked clock moves to 1 ms before the interval and then to the interval itself.
+    const closing = managed.browser.close()
+    await afterRealTurnsUntil(() => answeredLooks >= 1)
+    const looksAtFirst = managed.processProbes.length
+    context.mock.timers.tick(intervalMs - 1)
+    await afterRealTurnsUntil(() => managed.processProbes.length >= 2)
+    const looksJustBeforeInterval = managed.processProbes.length
+    context.mock.timers.tick(1)
+    await afterRealTurnsUntil(() => answeredLooks >= 2)
+    const looksAtInterval = managed.processProbes.length
+    context.mock.timers.tick(intervalMs)
+    await afterRealTurnsUntil(() => answeredLooks >= 3)
+    await closing
+    // Assert
+    assert.deepEqual(
+      { looksAtFirst, looksJustBeforeInterval, looksAtInterval },
+      { looksAtFirst: 1, looksJustBeforeInterval: 1, looksAtInterval: 2 },
+    )
+    assert.equal(
+      managed.events.some(
+        (event) => event.type === 'browser.managed-exit-verified',
+      ),
+      true,
+    )
+  })
+
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
   // Arrange: three folders lie in the profile root when the next run starts. The killed editor's marker names an id no process can have: the id of a child that just exited could be given to another process before the sweep judges it.
   const cancellation = new AbortController()
