@@ -8947,6 +8947,7 @@ export class StudyWorkspace {
   /**
    * Gives the keyboard back to the chat that had it when {@link close} began, after that close showed a side bar a Read hid; the last step of {@link endEnlargementAtClose}.
    * The return is made as at a pause ({@link retainForeignTabFocus}, called with `true`): the reader knows that the bar's command took the keyboard and does not ask the editor where it is, and only a tab that is known to lie outside the main editor gets it, through {@link CURSOR_FOCUS_AGENT_COMMAND}. A tab of the main editor that is no text editor (the editor's Settings) gets nothing back: the editor reads the same for it whether the keyboard was in that page or in a chat beside it.
+   * A chat that gets the keyboard back is told once with {@link CHAT_KEYBOARD_RETURNED_MESSAGES}' `close` sentence (row 649): Cursor keeps its chat part the active editor part after a click into the terminal or a side-bar view (Cursor 3.23.12 `workbench.desktop.main.js` 17501:84373, 17501:88693), so the learner may have run Close from the terminal, and the group focus that follows the bars already gives the chat part's group, the active part's active group, the keyboard (17388:4895). VS Code's chat editor tab in a floating window, whose group gets its numbered focus command, is told the same.
    * @param giveKeyboardBackToChat - What {@link retainForeignTabFocus} answered when the close began.
    * @returns `true` when the chat's focus command ran; `false` without a remembered tab, for a tab that is not known to be the chat's, in a window without the focus, in a host without a command for its chat, and when the editor refused the layout read or the command.
    * @example return !(await this.returnsKeyboardToChatAfterSideBars(giveKeyboardBackToChat))
@@ -8955,8 +8956,8 @@ export class StudyWorkspace {
     giveKeyboardBackToChat: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
   ): Promise<boolean> {
     if (!giveKeyboardBackToChat) return false
-    // A return the editor refuses leaves the keyboard to the active editor group, and the learner is told.
-    return giveKeyboardBackToChat(true).catch(() => false)
+    // A return the editor refuses leaves the keyboard to the active editor group, and the learner is told; a return to the chat is told with the Close's own sentence, since the editor reads the same whether that chat or the terminal or a view had the keyboard (row 649).
+    return giveKeyboardBackToChat(true, undefined, 'close').catch(() => false)
   }
 
   /**

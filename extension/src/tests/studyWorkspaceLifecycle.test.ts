@@ -3497,8 +3497,8 @@ test("Close Study Workspace made while Cursor's chat tab has the keyboard leaves
   }
 })
 
-// Value: protects=the keyboard of a learner who types in Cursor's Agent chat (a tab of another editor part) when "Codebook: Close Study Workspace" ends a Read: the side bars the Read hid are shown again, the chat has the keyboard again and nothing is told; fails_when=the close shows the bars with the editor's focus commands, which give a bar the keyboard, then focuses the active editor group twice and gives nothing back, so the learner's typing leaves the chat without a word, against the README's "moves nothing and shows nothing"; why_new=Cycle 0046 row 317 (a), read in the source by the last documents pass; seam=the workspace harness's addSeparateEditorPart, side bar model, the reader's Read, command log and information messages
-test("Close Study Workspace that ends a Read while Cursor's chat tab has the keyboard shows the side bars the Read hid again, gives the keyboard back to the chat and tells nothing", async () => {
+// Value: protects=the keyboard of a learner who types in Cursor's Agent chat (a tab of another editor part) when "Codebook: Close Study Workspace" ends a Read: the side bars the Read hid are shown again, the chat has the keyboard again, and the learner is told once that it was given back to the chat, since Cursor reads the same whether the chat input or the terminal or a side-bar view had it (Cursor 3.23.12 17501:84373, 17501:88693), as VS Code's same Close tells its sentence; fails_when=the close shows the bars with the editor's focus commands, which give a bar the keyboard, then focuses the active editor group twice and gives nothing back, so the learner's typing leaves the chat without a word, or the return to the chat is made without a word although a learner who ran Close from the terminal loses the keyboard to the chat; why_new=Cycle 0046 row 317 (a), read in the source by the last documents pass, and row 649 (the sentence); seam=the workspace harness's addSeparateEditorPart, side bar model, the reader's Read, command log and information messages
+test("Close Study Workspace that ends a Read while Cursor's chat tab has the keyboard shows the side bars the Read hid again, gives the keyboard back to the chat and says so once", async () => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part and both side bars open; the learner reads the explanation enlarged, which hides both bars, then shows the secondary bar again and types in the chat.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
@@ -3516,7 +3516,7 @@ test("Close Study Workspace that ends a Read while Cursor's chat tab has the key
     // Act
     await harness.reader.close()
 
-    // Assert: both bars are open, the last command that moved the keyboard is Cursor's Focus Agent, and no notice is shown.
+    // Assert: both bars are open, the last command that moved the keyboard is Cursor's Focus Agent, and the Close's chat sentence is told once.
     assert.deepEqual(duringRead, {
       primary: false,
       auxiliary: false,
@@ -3545,7 +3545,59 @@ test("Close Study Workspace that ends a Read while Cursor's chat tab has the key
           'composer.focusComposer',
         ],
         chatHasKeyboard: true,
-        sentences: [],
+        sentences: [
+          'Study workspace closed, and Codebook gave the keyboard back to the chat: showing the side bars your Read had hidden took it. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+        state: 'closed',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's knowledge of why VS Code's chat editor tab in a floating window has the keyboard after "Codebook: Close Study Workspace" ended a Read: the side bars the Read hid are shown again, which takes the keyboard, the chat's group gets it back through its numbered focus command (row 636), and the sentence told once names the Close and no pause; fails_when=the Close's give-back tells row 632's pause sentence, "(at a pause, to the paused file the debugger opened)", for a pause that did not happen; why_new=Cycle 0046 rows 648 and 649 (each give-back tells its own cause); seam=the workspace harness's addSeparateEditorPart('vscode-floating-chat') and its focusTab, side bar model, the reader's Read, command log and information messages
+test("Close Study Workspace that ends a Read while VS Code's chat editor tab in a floating window has the keyboard gives that chat the keyboard back and says once that the Close's side bars took it, naming no pause", async () => {
+  // Arrange: VS Code with the chat editor tab moved into a floating window and both side bars open; the learner reads the explanation enlarged, which hides both bars, then shows the secondary bar again and types in the floating chat.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  const chat = harness.addSeparateEditorPart('vscode-floating-chat')
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.modelSideBars({ primary: false, auxiliary: true })
+    chat.focusTab()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert: both bars are open, the floating chat's group got the keyboard back by its number, and the Close's chat sentence is told once.
+    assert.deepEqual(
+      {
+        sideBars: harness.sideBars(),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        chatHasKeyboard: chat.focused(),
+        sentences: harness.informationMessages.map(
+          (message) => message.message,
+        ),
+        state: harness.reader.presentationState().state,
+      },
+      {
+        sideBars: { primary: true, auxiliary: true, hasKeyboard: false },
+        keyboardCommands: [
+          'workbench.action.focusAuxiliaryBar',
+          'workbench.action.focusSideBar',
+          'workbench.action.focusActiveEditorGroup',
+          'workbench.action.focusFourthEditorGroup',
+        ],
+        chatHasKeyboard: true,
+        sentences: [
+          'Study workspace closed, and Codebook gave the keyboard back to the chat: showing the side bars your Read had hidden took it. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
         state: 'closed',
       },
     )
