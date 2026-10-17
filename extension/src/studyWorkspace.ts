@@ -17390,6 +17390,49 @@ export class StudyWorkspace {
   }
 
   /**
+   * Gives the keyboard back to a text editor of another editor part that holds editors, VS Code's floating window of text editors, after a layout read borrowed the main editor's first group because no text editor of that window proves the main editor ({@link readMainEditorGrid}, Cycle 0046 rows 689 and 708). VS Code's numbered focus command of a group's column counts the groups of every editor part, raises the floating window and focuses that group (1.140.0 `workbench.desktop.main.js` 987:4284), and the group's focus gives its active editor, the learner's file, the keyboard with its selection and scroll as they were. Nothing is run for a column within the measured ones, for a column with no numbered command (beyond the eighth), and while no group beyond the measured columns holds an editor: Cursor's chat part holds none, and its column's numbered command would open a new empty group in the main editor.
+   * @param editor - The text editor that had the keyboard before the borrow.
+   * @param column - That editor's column.
+   * @param groupCount - The number of groups the read after the borrow measured as the main editor's.
+   * @param beforeScopeFocus - The caller's notice of the focus this return gives, so the Repository Wiki's navigation takes it for the reader's own.
+   * @param signal - The measurement's cancellation.
+   * @throws When the group's focus does not report that editor within {@link PRESENTATION_READY_TIMEOUT_MS}.
+   * @example await this.giveKeyboardBackBeyondMainEditor(editor, 3, 1, undefined, signal) // readme.md in the floating window's second group has the keyboard again
+   */
+  private async giveKeyboardBackBeyondMainEditor(
+    editor: vscode.TextEditor,
+    column: number,
+    groupCount: number,
+    beforeScopeFocus: ((acquire?: RepositoryFocusTarget) => void) | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const command = focusEditorGroupCommand(column)
+    if (
+      column <= groupCount ||
+      !command ||
+      this.holdsOnlyChatsBeyond(groupCount)
+    )
+      return
+    const uri = editor.document.uri.toString()
+    /** Tells that the editor that had the keyboard is the active text editor in its column again. */
+    const editorFocused = (): boolean =>
+      vscode.window.activeTextEditor?.document.uri.toString() === uri &&
+      vscode.window.activeTextEditor.viewColumn === column
+    beforeScopeFocus?.({
+      matchesEditor: editorFocused,
+      matchesGroup: () =>
+        vscode.window.tabGroups.activeTabGroup.viewColumn === column,
+    })
+    await vscode.commands.executeCommand(command)
+    await waitUntil(
+      editorFocused,
+      "the floating window's editor focus",
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    )
+  }
+
+  /**
    * Names the view column of a text editor among the first `groupCount` columns, also of a side of a diff editor, which both editors report with no view column ({@link textEditorColumn}, Cycle 0046 row 709); asked by {@link hasMainEditorFocus}, {@link isActiveTextEditorInFrontOfGroup}, {@link readMainEditorGrid}'s give-back and {@link showBorrowedTextEditorAgain}.
    * @param editor - The text editor, if any.
    * @param groupCount - The number of groups a layout read counted, which bounds the diff's group.
@@ -17857,6 +17900,21 @@ export class StudyWorkspace {
         }
         if (selections) restored.selections = selections
         await restoreReading(restored, signal)
+        assertCurrent()
+        assertGroups()
+      } else if (!useCitation && editor && editorColumn !== undefined) {
+        // A text editor beyond the measured columns is another part's, VS Code's floating window's (row 708).
+        if (editor.document.version !== documentVersion)
+          throw new Error(
+            'The focused document changed during native scope measurement.',
+          )
+        await this.giveKeyboardBackBeyondMainEditor(
+          editor,
+          editorColumn,
+          count,
+          beforeScopeFocus,
+          signal,
+        )
         assertCurrent()
         assertGroups()
       }

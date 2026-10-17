@@ -542,6 +542,62 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
+// Value: protects=the learner's keyboard in VS Code's floating window of text editors when an agent opens an article through codebook_open_book while no Wiki is open: the layout read borrows the main editor's first group (row 689), measures the main editor, and gives the keyboard back to the floating window's file through its group's numbered focus (row 708), so the open answers, the Wiki stands in the main editor and the learner types on in the floating window with nothing told; fails_when=the borrow gives nothing back, so the keyboard stays in the main editor's first group, or the Repository Wiki's navigation takes the return for a learner's move and refuses the open; why_new=Cycle 0046 row 708; seam=useNativeLayout with two main groups, leaveEmptyGroup, addFloatingEditorWindow (two groups) and its focus, createRepositoryWikiReader, openFromAgent, the native commands, focusedSource and the information messages
+test("an agent's cold Wiki open while a text editor of VS Code's floating window has the keyboard gives that editor the keyboard back after the borrow and opens the Wiki in the main editor", async () => {
+  // Arrange: the main editor's first group shows login-form.tsx; the learner works in notes.ts, in the first group of a floating window of two groups; no Wiki is open.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 490 }, { size: 490 }],
+  })
+  harness.leaveEmptyGroup(2)
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const floating = harness.addFloatingEditorWindow(['notes.ts', 'readme.md'])
+  floating.focus(0)
+  const { selection, books } = await publishTwoCitationWiki(harness)
+  const wiki = harness.createRepositoryWikiReader()
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({ instanceId: harness.service.instanceId, ...selection })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: one borrow and the floating group's focus; the Wiki is in the main editor's second group; notes.ts has the keyboard; nothing was told.
+    assert.deepEqual(
+      {
+        refusal,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        wikiGroup: harness.groups.find((group) =>
+          group.tabs.some((tab) => tab.label === 'codebook · Repository Wiki'),
+        )?.viewColumn,
+        keyboard: harness.focusedSource()?.document.uri.path.split('/').at(-1),
+        notices: harness.informationMessages.map((notice) => notice.message),
+      },
+      {
+        refusal: undefined,
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusThirdEditorGroup',
+        ],
+        wikiGroup: 2,
+        keyboard: 'notes.ts',
+        notices: [],
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
 for (const situation of [
   { host: 'VS Code', keyboard: 'the chat view' },
   { host: 'Cursor', keyboard: 'a view' },

@@ -3378,7 +3378,7 @@ test("a layout read while a text editor of VS Code's floating window with two gr
     // Act
     const measured = await readerSeams(harness).measureMainEditorGrid()
 
-    // Assert: the main editor's one group was measured after the borrow; the borrowed keyboard stays in the main editor, since no command gives a floating window's text editor its focus back in both editors.
+    // Assert: the main editor's one group was measured after the borrow, and the floating window's notes.ts got the keyboard back through its group's focus (row 708).
     assert.deepEqual(
       {
         keyboardBefore,
@@ -3396,8 +3396,60 @@ test("a layout read while a text editor of VS Code's floating window with two gr
       {
         keyboardBefore: 'notes.ts',
         measured: [1],
-        focusCommands: ['workbench.action.focusFirstEditorGroup'],
-        keyboardAfter: 'login-form.tsx',
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusSecondEditorGroup',
+        ],
+        keyboardAfter: 'notes.ts',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's keyboard in VS Code's floating window of text editors when a layout read borrows the main editor's first group (row 689: no text editor of that window proves the main editor): VS Code's numbered focus command of the floating group's column raises that window and focuses that group (1.140.0 `workbench.desktop.main.js` 987:4284), so the read gives the borrowed keyboard back to the floating window's text editor that had it, and the floating window is the focused one again; fails_when=the read gives nothing back to an editor beyond the measured columns, so the learner who typed in the floating window finds the keyboard in the main editor's first group with nothing told; why_new=Cycle 0046 row 708; seam=useNativeLayout with one main group, addFloatingEditorWindow (two groups) and its focus of the second group, readerSeams' measureMainEditorGrid, the native commands, focusedSource and a layout read after the measurement
+test("a layout read that borrows the main editor's first group gives the keyboard back to the text editor of VS Code's floating window that had it", async () => {
+  // Arrange: the main editor shows login-form.tsx; the learner works in readme.md, in the second group of a floating window of two groups (columns 2 and 3).
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const floating = harness.addFloatingEditorWindow(['notes.ts', 'readme.md'])
+  floating.focus(1)
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const measured = await readerSeams(harness).measureMainEditorGrid()
+    const layoutAfter = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Assert: the borrow measured the main editor; the third group's focus gave readme.md the keyboard back, and a layout read answers the floating window again.
+    assert.deepEqual(
+      {
+        measured,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        keyboardAfter: harness
+          .focusedSource()
+          ?.document.uri.path.split('/')
+          .at(-1),
+        activeTabGroup:
+          harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        layoutAfter,
+      },
+      {
+        measured: [1],
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusThirdEditorGroup',
+        ],
+        keyboardAfter: 'readme.md',
+        activeTabGroup: 3,
+        layoutAfter: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
       },
     )
   } finally {
