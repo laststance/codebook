@@ -4686,6 +4686,67 @@ test('an agent’s cold Study selection made while Cursor’s chat tab has the k
   }
 })
 
+// Value: protects=the learner's newer place when, during an agent's cold Study selection made from Cursor's chat tab, the learner clicks into login-form.tsx, the first group's file the measurement's borrow focused, while the editor inserts the Application's group above it (the click moves no caret): the selection is confirmed, the keyboard stays in that file, the chat gets nothing back and nothing is told; fails_when=the chat return (the function retainForeignTabFocus answers) asks only where the measurement left the keyboard and not whether the learner clicked or typed there since, so performPresentation's last step runs Focus Agent and tells the arrangement's sentence; why_new=Cycle 0046 row 741 (performPresentation is one of the entries that share the return); seam=workspace harness with the controlled runtime, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, holdNextCommand on workbench.action.newGroupAbove, workInActiveTextEditor('mouse'), the service's selectPresentation, the command log and the information messages
+test('in Cursor beside its chat part, an agent’s cold Study selection from the chat tab after the learner’s click into the first group’s file after its borrow is confirmed, keeps the keyboard there, gives the chat nothing and tells nothing', async () => {
+  // Arrange: as in row 655's test; while the editor inserts the Application's group above the first group after the measurement's borrow, the learner clicks into login-form.tsx there.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.focusMutableDraft('login-form.tsx', 1)
+    await pauseLiveRun(harness)
+    chat.focusTab()
+    const selection = harness.reader.presentationState()
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const insertion = harness.holdNextCommand('workbench.action.newGroupAbove')
+    void insertion.started.then(() => {
+      harness.workInActiveTextEditor('mouse')
+      insertion.release()
+    })
+
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: confirmed; only the measurement's focus commands ran, the chat has no keyboard, and nothing was told.
+    assert.deepEqual(
+      {
+        layoutConfirmed: answer.layoutConfirmed,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        layoutConfirmed: true,
+        keyboardCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusFirstEditorGroup',
+        ],
+        chatHasKeyboard: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const host of ['Cursor', 'VS Code'] as const)
   // Value: protects=an agent's cold Study selection after Developer: Reload Window whose learner had the keyboard in a file of the group behind the earlier window's empty locked Application group: the selection retires that proven leftover, the learner's group moves one column to the left, and the selection still finds that group by its identity, so it confirms the Study layout; fails_when=the leftover's close is no issued removal, Cursor gives every group a new object with the new tab model (Cursor 3.23.12 workbench.desktop.main.js 17269:26248), the moved group gets a new identity, and the selection's focus return refuses with "The previously focused source group changed; focus was not guessed." (C57 c57-cursor-1a, 1b and 1b-probe; VS Code keeps its group objects); why_new=Cycle 0046 row 643; seam=applicationGroupMarkers (a record that proves the leftover), leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges (Cursor's group objects), focusMutableDraft, the service's selectPresentation and harness.groups
   test(`in ${host}, an agent’s cold Study selection after a reload whose learner had the keyboard in the group behind the earlier window’s leftover retires the leftover and confirms the Study layout`, async () => {
@@ -5667,6 +5728,63 @@ test('in Cursor beside its chat part, an agent’s restore of the live arrangeme
       layoutConfirmed: undefined,
       refusal:
         'Error: The captured source content or selection changed during scope measurement; the newer learner focus was preserved.',
+      shownWithKeyboard: ['Captured-theme.ts@2'],
+      keyboardCommands: [],
+      chatHasKeyboard: false,
+      messages: [],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's newer place when an agent's restore of the live arrangement made from Cursor's chat tab fails after its layout read: the learner clicked into the captured source that the measurement's borrow left with the keyboard while the editor held the layout's commands, and those commands then failed; the keyboard stays in the source, the chat gets nothing back and nothing is told; fails_when=the chat return (the function retainForeignTabFocus answers) asks only where the arrangement or its measurement left the keyboard and not whether the learner clicked or typed there since, so the arrangement's failure path (returnForeignFocusAfterFailure) runs Focus Agent and tells that nothing was arranged; why_new=Cycle 0046 row 741 (CodeRabbit and the OCR delegate on row 740's delta); seam=cursorConfirmedLiveArrangementFromChat, holdNextCommand on the layout's runCommands with failNextCommand on that runCommands, workInActiveTextEditor('mouse'), restoredLiveArrangementOutcome
+test('in Cursor beside its chat part, an agent’s restore of the live arrangement from the chat tab that fails after the learner clicked into the captured source after its layout read keeps the keyboard there, gives the chat nothing and tells nothing', async () => {
+  // Arrange: as in row 739's test; after the layout read that follows the borrow, while the editor holds the layout's commands, the learner clicks into the captured source, and those commands then fail.
+  const { harness, chat } = await cursorConfirmedLiveArrangementFromChat()
+  try {
+    const layoutCommands = harness.holdNextCommand('runCommands')
+    void layoutCommands.started.then(() => {
+      harness.workInActiveTextEditor('mouse')
+      harness.failNextCommand('runCommands')
+      layoutCommands.release()
+    })
+
+    // Act
+    const outcome = await restoredLiveArrangementOutcome(harness, chat)
+
+    // Assert: refused for the failed layout commands; no Focus Agent ran, the chat has no keyboard, and nothing was told.
+    assert.deepEqual(outcome, {
+      layoutConfirmed: undefined,
+      refusal: 'Error: Native layout command failed',
+      shownWithKeyboard: ['Captured-theme.ts@2'],
+      keyboardCommands: [],
+      chatHasKeyboard: false,
+      messages: [],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's newer place when an agent's restore of the live arrangement made from Cursor's chat tab is confirmed: the learner clicked into the captured source that the measurement's borrow left with the keyboard while the editor applied the layout, after the layout read; the restore is confirmed, the keyboard stays in the source, the chat gets nothing back and nothing is told; fails_when=the chat return (the function retainForeignTabFocus answers) asks only where the arrangement or its measurement left the keyboard and not whether the learner clicked or typed there since, so the arrangement's success path runs Focus Agent and takes the keyboard from the place the learner chose; why_new=Cycle 0046 row 741 (CodeRabbit and the OCR delegate on row 740's delta); seam=cursorConfirmedLiveArrangementFromChat, holdNextCommand on vscode.setEditorLayout, workInActiveTextEditor('mouse'), restoredLiveArrangementOutcome
+test('in Cursor beside its chat part, an agent’s restore of the live arrangement from the chat tab confirmed after the learner clicked into the captured source after its layout read keeps the keyboard there, gives the chat nothing and tells nothing', async () => {
+  // Arrange: as in row 739's test; while the editor applies the layout after the layout read that follows the borrow, the learner clicks into the captured source.
+  const { harness, chat } = await cursorConfirmedLiveArrangementFromChat()
+  try {
+    const layout = harness.holdNextCommand('vscode.setEditorLayout')
+    void layout.started.then(() => {
+      harness.workInActiveTextEditor('mouse')
+      layout.release()
+    })
+
+    // Act
+    const outcome = await restoredLiveArrangementOutcome(harness, chat)
+
+    // Assert: confirmed; no Focus Agent ran, the chat has no keyboard, and nothing was told.
+    assert.deepEqual(outcome, {
+      layoutConfirmed: true,
+      refusal: undefined,
       shownWithKeyboard: ['Captured-theme.ts@2'],
       keyboardCommands: [],
       chatHasKeyboard: false,
