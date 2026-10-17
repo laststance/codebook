@@ -57,7 +57,6 @@ import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStu
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
 import {
-  recordingMayStillBeWritten,
   recordingWriterOf,
   type RecordingWriterOfDirectory,
 } from './utils/recordingMayStillBeWritten'
@@ -72,7 +71,7 @@ import { withStorageLock } from './utils/withStorageLock'
 /** Moves one file or directory of a saved study to the system Trash; injected into {@link LearningLibrary.removeStudy} so the library stays free of the editor API. @example const moveToTrash: StudyMover = (path) => workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true }) */
 export type StudyMover = (path: string) => Promise<void>
 
-/** Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write ({@link recordingMayStillBeWritten}): moving it would make that window's next append fail and its next save write the archive again. The removal's outcome line puts it after "Nothing was deleted." */
+/** Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write ({@link recordingWriterOf}): moving it would make that window's next append fail and its next save write the archive again. The removal's outcome line puts it after "Nothing was deleted." */
 const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
   'Another editor window is still recording this study. Stop its run in that window, then delete the study again.'
 
@@ -94,12 +93,12 @@ export type StudyRemoval =
       trashRefused?: true
     }
 
-/** Judges whether a run may still write one recording directory ({@link recordingMayStillBeWritten}), as the caller's list or removal judges it. */
+/** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording a run on another host may still write is no such reservation: this machine cannot probe it, and the learner decides about it when they delete the study. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
-/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): whether any writer may still write it, and the writer of another window that may ({@link recordingWriterOf}). */
+/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): whether a run of this machine, this window's own included, may still write it ({@link RecordingJudge}), and the writer of another window that may ({@link recordingWriterOf}). */
 type RemovalWriterVerdict = {
-  mayStillBeWritten: boolean
+  isReservedHere: boolean
   ofAnotherWindow: RecordingWriterOfDirectory
 }
 
@@ -329,8 +328,12 @@ export class LearningLibrary {
     starts: ProcessStartsOfList,
   ): Promise<StudyCatalogEntry | undefined> {
     const paths = await this.studyPaths(id, undefined)
-    const isLeft = await this.isLeftWithoutArchive(paths, (recording) =>
-      recordingMayStillBeWritten(recording, 'counts', starts),
+    // A recording that a run on another host may still write is listed: the learner reaches the dialog about it with Delete.
+    const isLeft = await this.isLeftWithoutArchive(
+      paths,
+      async (recording) =>
+        (await recordingWriterOf(recording, 'counts', starts)).kind ===
+        'may-run',
     )
     if (!isLeft) return undefined
     const modified = await Promise.all(
@@ -349,30 +352,31 @@ export class LearningLibrary {
 
   /**
    * Says whether the paths of a study are what is left of a saved study without its archive, which is listed ({@link entriesWithoutArchive}) and may be removed ({@link removeStudy}).
-   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one only when no editor may still be writing it ({@link recordingMayStillBeWritten}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run.
+   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it ({@link RecordingJudge}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run. A recording that a run on another host may still write is such a rest too: this machine cannot probe that run, and Delete asks the learner about it ({@link removeStudy}).
+   * The list and the removal ask the same question: the list with {@link recordingWriterOf} for every candidate, the removal with what it judged before its lock ({@link isReservedHereUnderLock}).
    * @param paths - The study's paths as {@link studyPaths} found them.
-   * @param mayStillBeWritten - Judges one recording directory ({@link recordingMayStillBeWritten}), with the process starts of the caller's list.
-   * @returns `true` when no archive is left and a sidecar, or a recording that nobody writes, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only a recording that may still be written.
+   * @param isReservedHere - Says whether a run of this machine may still write one recording directory ({@link RecordingJudge}).
+   * @returns `true` when no archive is left and a sidecar, or a recording no run of this machine may still write, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only recordings a run of this machine may still write.
    * @example await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => true once that recording is sealed
    */
   private async isLeftWithoutArchive(
     paths: StudyPaths,
-    mayStillBeWritten: RecordingJudge,
+    isReservedHere: RecordingJudge,
   ): Promise<boolean> {
     if (paths.archives.length) return false
     return (
       paths.sidecars.length > 0 ||
-      this.hasRecordingNobodyWrites(paths.recordings, mayStillBeWritten)
+      this.hasRecordingNoRunHereHolds(paths.recordings, isReservedHere)
     )
   }
 
-  /** Says whether one of a study's recording directories is finished or abandoned, so that it is no reservation of a run that still writes it; asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNobodyWrites(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
-  private async hasRecordingNobodyWrites(
+  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed, abandoned, or written on another host this machine cannot probe; asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
+  private async hasRecordingNoRunHereHolds(
     recordings: string[],
-    mayStillBeWritten: RecordingJudge,
+    isReservedHere: RecordingJudge,
   ): Promise<boolean> {
     for (const recording of recordings)
-      if (!(await mayStillBeWritten(recording))) return true
+      if (!(await isReservedHere(recording))) return true
     return false
   }
 
@@ -405,8 +409,8 @@ export class LearningLibrary {
    * Judges the writers of a study's recordings before its removal takes the storage lock; called by {@link removeStudy}.
    * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}).
    * @param identity - The validated study id.
-   * @returns For each recording directory of the study: whether it may still be written by any writer, and the writer of another window that may still write it ({@link recordingWriterOf} with `ignored`).
-   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { mayStillBeWritten: true, ofAnotherWindow: { kind: 'may-run', createdAt } } } while another window records that run
+   * @returns For each recording directory of the study: whether a run of this machine, this window's own included, may still write it, and the writer of another window that may still write it ({@link recordingWriterOf} with `ignored`).
+   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { isReservedHere: true, ofAnotherWindow: { kind: 'may-run', createdAt } } } while another window records that run
    */
   private async writerVerdictsOf(
     identity: string,
@@ -415,17 +419,15 @@ export class LearningLibrary {
     const verdicts: RemovalWriterVerdicts = new Map()
     for (const recording of await this.recordingPaths(identity))
       verdicts.set(recording, {
-        mayStillBeWritten: await recordingMayStillBeWritten(
-          recording,
-          'counts',
-          starts,
-        ),
+        isReservedHere:
+          (await recordingWriterOf(recording, 'counts', starts)).kind ===
+          'may-run',
         ofAnotherWindow: await recordingWriterOf(recording, 'ignored', starts),
       })
     return verdicts
   }
 
-  /** Says whether a recording directory holds its seal, with one look; for {@link mayStillBeWrittenUnderLock} and {@link writerOfAnotherWindowUnderLock}, which take a recording sealed since the removal judged it for one nobody writes any more. @example await this.isSealedNow('/…/recordings.v2/<id>') // => true once that run sealed its recording */
+  /** Says whether a recording directory holds its seal, with one look; for {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}, which take a recording sealed since the removal judged it for one nobody writes any more. @example await this.isSealedNow('/…/recordings.v2/<id>') // => true once that run sealed its recording */
   private isSealedNow(recording: string): Promise<boolean> {
     return lstat(join(recording, RECORDING_SEAL_FILE)).then(
       () => true,
@@ -434,18 +436,18 @@ export class LearningLibrary {
   }
 
   /**
-   * Answers under the storage lock whether one recording may still be written, from the verdict found before the lock and one look ({@link isSealedNow}); called by {@link refuseUnlessRemovable} for a study without an archive.
+   * Answers under the storage lock whether a run of this machine may still write one recording ({@link RecordingJudge}), from the verdict found before the lock and one look ({@link isSealedNow}); called by {@link refuseUnlessRemovable} for a study without an archive, with the question the list asks ({@link isLeftWithoutArchive}).
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `false` for a recording sealed since; the verdict for any other; `true` for one the removal did not judge (it appeared since), so nothing of the study moves.
-   * @example await this.mayStillBeWrittenUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed
+   * @example await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed
    */
-  private async mayStillBeWrittenUnderLock(
+  private async isReservedHereUnderLock(
     recording: string,
     verdicts: RemovalWriterVerdicts,
   ): Promise<boolean> {
     if (await this.isSealedNow(recording)) return false
-    return verdicts.get(recording)?.mayStillBeWritten ?? true
+    return verdicts.get(recording)?.isReservedHere ?? true
   }
 
   /**
@@ -488,7 +490,7 @@ export class LearningLibrary {
     if (
       !paths.archives.length &&
       !(await this.isLeftWithoutArchive(paths, (recording) =>
-        this.mayStillBeWrittenUnderLock(recording, verdicts),
+        this.isReservedHereUnderLock(recording, verdicts),
       ))
     )
       throw new StudyArchiveUnavailableError()

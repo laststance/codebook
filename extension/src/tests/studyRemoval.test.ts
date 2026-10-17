@@ -1472,8 +1472,8 @@ test('a recording that is still being written for a study that is not saved yet 
   )
 })
 
-// Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so the recording is listed as what is left of a removed study and a removal of its id moves it away while the other editor writes it; why_new=Cycle 0046 /ship review T1: the "another machine" half of recordingMayStillBeWritten had no test, and dropping it survived every test; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
-test('a recording whose header names an editor of another machine is neither listed nor moved, although no process of its id runs on this machine', async (context) => {
+// Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so a removal of its id moves it away while the other editor writes it, without the learner's choice; why_new=Cycle 0046 /ship review T1: the "another machine" half of recordingMayStillBeWritten had no test, and dropping it survived every test. Since AF2 such a recording is listed, so the learner can reach the dialog about it, and the removal waits for their choice; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
+test('a recording whose header names an editor of another machine is listed but not moved without the learner’s choice, although no process of its id runs on this machine', async (context) => {
   // Arrange: one reserved recording without a saved study, as a window of 0.2.29.0 makes it (a header, and no record of its writer beside the recordings); its header names an editor on another machine, with a process id no process here has.
   const storage = await removalStorage(context, 4)
   const instanceId = randomUUID(),
@@ -1501,9 +1501,10 @@ test('a recording whose header names an editor of another machine is neither lis
     ofAnotherMachine,
     'header.json',
   )
-  const header: { owner: { pid: number; hostname: string } } = JSON.parse(
-    await readFile(headerPath, 'utf8'),
-  )
+  const header: {
+    owner: { pid: number; hostname: string }
+    createdAt: string
+  } = JSON.parse(await readFile(headerPath, 'utf8'))
   await writeFile(
     headerPath,
     JSON.stringify({
@@ -1518,7 +1519,10 @@ test('a recording whose header names an editor of another machine is neither lis
   await rm(recordingOwnerRecordPath(storage.directory, ofAnotherMachine))
 
   // Act
-  const listed = await storage.library.list()
+  const listed = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
   const removal = await storage.library.removeStudy(
     ofAnotherMachine,
     storage.moveToTrash,
@@ -1538,10 +1542,14 @@ test('a recording whose header names an editor of another machine is neither lis
       ),
     },
     {
-      listed: [],
+      listed: [{ id: ofAnotherMachine, format: 'archive-missing' }],
       removal: {
         outcome: 'nothing-moved',
-        cause: 'Study archive is unavailable.',
+        cause: `This study's recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}, and Codebook cannot tell from this computer whether that run still records.`,
+        recordedOnAnotherHost: {
+          host: 'another-machine',
+          startedAt: header.createdAt,
+        },
       },
       moved: [],
       isRecordingInPlace: true,

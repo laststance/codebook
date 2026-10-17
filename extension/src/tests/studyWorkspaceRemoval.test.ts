@@ -7945,10 +7945,10 @@ test('a saved study chosen during Recording is not answered by a playback change
 })
 
 /**
- * Leaves an unsealed recording of a saved study, started on 2026-10-01 at 08:00 UTC, as an editor that crashed left it, and names its writer.
+ * Leaves an unsealed recording of a run, started on 2026-10-01 at 08:00 UTC, as an editor that crashed left it, and names its writer.
  * `header-only` makes it a recording of 0.2.29.0 (no record of its writer beside the recordings); `with-record` keeps the record this build writes and names the writer there too, with the writer's own process start.
  * @param harness - The reader whose library holds the study.
- * @param study - The saved study.
+ * @param study - The run: a saved study, or a run that saved none ({@link unsavedRunOf}).
  * @param owner - The writer: its process id and its host name.
  * @param record - Whether the recording has the record of its writer.
  * @returns The recording's directory.
@@ -7956,7 +7956,10 @@ test('a saved study chosen during Recording is not answered by a playback change
  */
 async function crashedRecordingOf(
   harness: Harness,
-  study: Awaited<ReturnType<typeof saveEarlierStudy>>,
+  study: Pick<
+    Awaited<ReturnType<typeof saveEarlierStudy>>,
+    'workspaceKey' | 'id' | 'instanceId' | 'runId' | 'profile'
+  >,
   owner: { pid: number; hostname: string },
   record: 'header-only' | 'with-record',
 ): Promise<string> {
@@ -8132,6 +8135,151 @@ test('a saved study whose recording a live window of this machine is still writi
           text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
         },
       },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Names a run of the reader's workspace that never saved its study, so a test can leave only its recording.
+ * @param harness - The reader whose library the run belongs to.
+ * @returns The run's study id, its instance and run ids, the workspace key and the profile, as a recording names them.
+ * @example const run = await unsavedRunOf(harness)
+ */
+async function unsavedRunOf(
+  harness: Harness,
+): Promise<
+  Pick<
+    Awaited<ReturnType<typeof saveEarlierStudy>>,
+    'workspaceKey' | 'id' | 'instanceId' | 'runId' | 'profile'
+  >
+> {
+  const library = await harness.reader.learningStorage()
+  const instanceId = randomUUID(),
+    runId = randomUUID()
+  return {
+    workspaceKey: library.workspaceKey,
+    id: `${instanceId}_${runId}`,
+    instanceId,
+    runId,
+    profile: 'repository-browser',
+  }
+}
+
+// Value: protects=a learner whose library holds only the recording an editor left when it crashed on this Mac under an earlier host name, or on another computer, for a run that never saved its study; fails_when=such a recording is hidden from Saved studies for good, so its files stay and no Delete reaches the dialog that names its host; why_new=Cycle 0046 review AF2: a study without an archive was listed only when no writer of any host may still write its recording; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a run’s crashed recording that names another host is listed in Saved studies, and Delete moves it after the learner chooses Remove Anyway', async () => {
+  // Arrange: only a recording is left of the run, made under another host name.
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    await crashedRecordingOf(
+      harness,
+      run,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    await harness.reader.action('retry')
+    const listed = harness.reader
+      .inspect()
+      .view!.studies.map((entry) => [entry.id, entry.format])
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, run.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        listed: structuredClone(listed),
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        listed: [[run.id, 'archive-missing']],
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [run.id],
+        studyRemoval: {
+          status: 'moved',
+          studyId: run.id,
+          text: `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's Cancel for a listed run's recording that may still run on another computer; fails_when=Cancel moves the recording anyway, or the entry leaves Saved studies; why_new=Cycle 0046 review AF2; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('Cancel in the dialog about a listed run’s recording that names another host moves nothing, and the entry stays listed', async () => {
+  // Arrange: the learner confirms the removal, then cancels the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    const recording = await crashedRecordingOf(
+      harness,
+      run,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    await harness.reader.action('retry')
+    harness.answerWarningDialogs(async ([button]) =>
+      button === 'Remove Anyway' ? undefined : button,
+    )
+
+    // Act
+    await requestRemoval(harness, run.id)
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves,
+        listed: structuredClone(
+          harness.reader.inspect().view!.studies.map((entry) => entry.id),
+        ),
+        recordingLeft: await readdir(recording),
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [],
+        listed: [run.id],
+        recordingLeft: ['frames.jsonl', 'header.json'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the recording a live run of another window of this machine reserved before it saves its study; fails_when=that reservation is listed as what is left of a removed study, so the learner deletes a recording that is being written; why_new=Cycle 0046 review AF2: a recording of another host is listed now, and one of a live writer of this machine must not be; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start
+test('a run’s recording that a live window of this machine still writes is not listed in Saved studies', async (context: TestContext) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    const otherWindow = await idleChild(context)
+    await crashedRecordingOf(
+      harness,
+      run,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      structuredClone(
+        harness.reader.inspect().view!.studies.map((entry) => entry.id),
+      ),
+      [],
     )
   } finally {
     await harness.close()
