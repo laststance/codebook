@@ -120,6 +120,19 @@ async function readerHarness(context: TestContext) {
   /** The tabs the reader asked the editor to close, as their URIs. */
   const closedTabs: string[] = []
   const otherGroup: typeof sourceGroup = { viewColumn: 2, tabs: [] }
+  /** Names a group's tabs in their order as `scheme:file name` (a text tab) or view type (a pane), and its front tab, for {@link firstGroupTabs} and {@link wikiGroupTabs}. @example namedGroupTabs(sourceGroup) // => { tabs: ['file:login-form.tsx'], front: 'file:login-form.tsx' } */
+  const namedGroupTabs = (
+    group: typeof sourceGroup,
+  ): { tabs: string[]; front: string | undefined } => {
+    const name = (tab: NativeTab): string =>
+      tab.input instanceof TabInputText
+        ? `${tab.input.uri.scheme}:${basename(tab.input.uri.path)}`
+        : tab.input.viewType
+    return {
+      tabs: group.tabs.map(name),
+      front: group.activeTab && name(group.activeTab),
+    }
+  }
   let activeGroup = sourceGroup
   let windowFocused = true
   let activateWikiPanel = (): void => {}
@@ -924,20 +937,38 @@ async function readerHarness(context: TestContext) {
       return editor
     },
     /** Names the first group's tabs in their order as `scheme:file name`, and its front tab, as the learner sees them. @example harness.firstGroupTabs() // => { tabs: ['file:login-form.tsx'], front: 'file:login-form.tsx' } */
-    firstGroupTabs(): { tabs: string[]; front: string | undefined } {
-      const name = (tab: NativeTab): string =>
-        tab.input instanceof TabInputText
-          ? `${tab.input.uri.scheme}:${basename(tab.input.uri.path)}`
-          : tab.input.viewType
-      return {
-        tabs: sourceGroup.tabs.map(name),
-        front: sourceGroup.activeTab && name(sourceGroup.activeTab),
-      }
-    },
+    firstGroupTabs: () => namedGroupTabs(sourceGroup),
+    /** Names the Wiki group's tabs in their order as `scheme:file name` or view type, and its front tab, as the learner sees them. @example harness.wikiGroupTabs() // => { tabs: ['mainThreadWebview-codebook.repositoryWiki'], front: 'mainThreadWebview-codebook.repositoryWiki' } */
+    wikiGroupTabs: () => namedGroupTabs(otherGroup),
     /** Pins the cited-source tab in front of the first group, as the learner's Pin Editor does. @example harness.pinFrontSourceTab() */
     pinFrontSourceTab(): void {
       assert.ok(sourceGroup.activeTab)
       sourceGroup.activeTab.isPinned = true
+    },
+    /**
+     * Drags the cited-source tab in front of the first group into the Wiki's group and clicks into its text, as the learner does to read that citation beside the Wiki: the copy is the Wiki group's front tab and has the keyboard, and the first group shows its tab before.
+     * @example harness.moveFrontSourceTabToWikiGroup() // the module.ts copy is in front of the Wiki's group with the keyboard
+     */
+    moveFrontSourceTabToWikiGroup(): void {
+      const copy = sourceGroup.activeTab
+      assert.ok(copy && copy.input instanceof TabInputText)
+      sourceGroup.tabs = sourceGroup.tabs.filter((tab) => tab !== copy)
+      sourceGroup.activeTab = sourceGroup.tabs.at(-1)
+      otherGroup.tabs.push(copy)
+      otherGroup.activeTab = copy
+      activeGroup = otherGroup
+      blurWikiPanel()
+      const text = 'export const price = 24;\n'
+      activeEditor = {
+        document: { uri: copy.input.uri, version: 1, getText: () => text },
+        viewColumn: 2,
+        selections: [
+          { anchor: new Position(0, 0), active: new Position(0, 0) },
+        ],
+      }
+      for (const listener of tabListeners) listener()
+      for (const listener of groupListeners) listener()
+      for (const listener of focusListeners) listener()
     },
     /** Closes the Wiki's tab by hand, as the learner's click on its close button does: the editor disposes the panel. @example harness.closeWikiTabByHand() */
     closeWikiTabByHand(): void {
@@ -1241,6 +1272,179 @@ test('a cited-source tab that is the only tab of its group stays when the Wiki c
         front: 'codebook-repository-source:module.ts',
       },
       closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=the learner's first group while the Wiki stays open and the learner follows one citation after another: the copy of the citation before leaves when the next one is shown, so one read-only copy stands in front of the learner's file; fails_when=every citation followed adds another `codebook-repository-source` tab to the first group and none ever leaves while the Wiki is open; why_new=Cycle 0046 row 652; seam=readerHarness, focusUnrelatedDraft (the learner's login-form.tsx in the first group), open of the module article's first and second citations, firstGroupTabs and the fake tabGroups.close's record
+test('following a second citation in the open Wiki leaves one cited-source copy in front of the learner’s file in the first group', async (context) => {
+  // Arrange: the learner works in login-form.tsx and opens the Repository Wiki on the module article's first citation, module.ts.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  const whileFirstCitation = harness.firstGroupTabs()
+
+  // Act: the learner follows the article's second citation, order.ts.
+  await harness.reader.open({ ...harness.selection, anchorIndex: 1 })
+
+  // Assert: the module.ts copy left; the order.ts copy is the only one, in front of the learner's file.
+  assert.deepEqual(
+    {
+      whileFirstCitation,
+      afterSecondCitation: harness.firstGroupTabs(),
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      whileFirstCitation: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      afterSecondCitation: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:order.ts'],
+        front: 'codebook-repository-source:order.ts',
+      },
+      closedTabs: ['module.ts'],
+    },
+  )
+})
+
+// Value: protects=the learner's first group when an agent's quiet article change waited for the learner's selection of the Wiki (the learner's file had the keyboard): the copy of the citation before leaves once the waiting citation is shown; fails_when=the deferred citation's display adds its copy beside the earlier one and the earlier copy stays; why_new=Cycle 0046 row 652 (the deferred citation's display is the other place a copy is shown); seam=readerHarness, open, focusUnrelatedDraft, openFromAgent (deferred preview), focusWiki, the reader's listener count as the end of the handoff, firstGroupTabs
+test('the citation an agent’s article change shows once the learner selects the Wiki replaces the copy of the citation before in the first group', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts; the learner then types in login-form.tsx, and an agent opens the order article, whose citation waits for the Wiki's selection.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+  const whileWaiting = harness.firstGroupTabs(),
+    shownBefore = harness.shown.length
+
+  // Act: the learner selects the Wiki.
+  harness.focusWiki()
+  await waitUntil(
+    () =>
+      harness.shown.length === shownBefore + 1 &&
+      harness.focusListenerCount() === 0,
+    'the deferred citation shown and its handoff completed',
+  )
+
+  // Assert: the order.ts copy is in front of the learner's file, and the module.ts copy left.
+  assert.deepEqual(
+    { whileWaiting, afterSelection: harness.firstGroupTabs() },
+    {
+      whileWaiting: {
+        tabs: ['codebook-repository-source:module.ts', 'file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
+      afterSelection: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:order.ts'],
+        front: 'codebook-repository-source:order.ts',
+      },
+    },
+  )
+})
+
+// Value: protects=a cited-source copy the learner pinned while following citations: the learner chose to keep it, so the next citation's copy comes beside it and nothing is closed; fails_when=row 652's retirement of the citation before also closes a pinned copy; why_new=Cycle 0046 row 652 guard; seam=readerHarness, focusUnrelatedDraft, open, pinFrontSourceTab, open of the second citation, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy the learner pinned stays when the learner follows the next citation', async (context) => {
+  // Arrange: the learner pinned the module.ts copy of the Wiki's first citation.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.pinFrontSourceTab()
+
+  // Act
+  await harness.reader.open({ ...harness.selection, anchorIndex: 1 })
+
+  // Assert: both copies stand, and nothing was closed.
+  assert.deepEqual(
+    {
+      afterSecondCitation: harness.firstGroupTabs(),
+      closedTabs: harness.closedTabs,
+    },
+    {
+      afterSecondCitation: {
+        tabs: [
+          'file:login-form.tsx',
+          'codebook-repository-source:module.ts',
+          'codebook-repository-source:order.ts',
+        ],
+        front: 'codebook-repository-source:order.ts',
+      },
+      closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=the learner's keyboard in a cited-source copy the learner moved beside the Wiki and reads in: an agent's next article shows its citation in the first group, and the copy the learner works in stays with the keyboard; fails_when=row 652's retirement of the citation before closes the copy that has the keyboard, so the editor moves the learner's keyboard; why_new=Cycle 0046 row 652 guard; seam=readerHarness, open, moveFrontSourceTabToWikiGroup (the learner's drag and click), openFromAgent, wikiGroupTabs, focusedSource and the fake tabGroups.close's record
+test('a cited-source copy the learner moved beside the Wiki and types in keeps its tab and the keyboard when an agent opens another article', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts; the learner drags that copy into the Wiki's group and clicks into it.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.moveFrontSourceTabToWikiGroup()
+
+  // Act: an agent opens the order article.
+  await harness.reader.openFromAgent({
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    ...harness.selection,
+    nodeId: 'order',
+  })
+
+  // Assert: the module.ts copy is still in front of the Wiki's group with the keyboard; the order.ts copy is in the first group.
+  assert.deepEqual(
+    {
+      firstGroup: harness.firstGroupTabs(),
+      wikiGroup: harness.wikiGroupTabs(),
+      keyboard: harness.focusedSource()?.document.uri.path,
+      closedTabs: harness.closedTabs,
+    },
+    {
+      firstGroup: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:order.ts'],
+        front: 'codebook-repository-source:order.ts',
+      },
+      wikiGroup: {
+        tabs: [
+          'mainThreadWebview-codebook.repositoryWiki',
+          'codebook-repository-source:module.ts',
+        ],
+        front: 'codebook-repository-source:module.ts',
+      },
+      keyboard: '/architecture/1/module/0/module.ts',
+      closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=the learner's first group after the workspace's folders change while the Wiki is open: the extension disposes that reader (its Wiki goes) and makes another, and the cited-source copy the reader before showed leaves with it, so no copy that no reader serves covers the learner's file; fails_when=the copy stays in front of the learner's file after the reader that showed it is gone (a dispose leaves the editor's tabs as they are), as it also does when a change of the first folder restarts the extension host; why_new=Cycle 0046 row 652; seam=readerHarness, a reader of its own (createReader), focusUnrelatedDraft, open, dispose (the folder change's), createReader (the reader made in its place), firstGroupTabs
+test('the reader made after the workspace folders change retires the cited-source copy the reader before it left in front of the learner’s file', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx; then the workspace's folders change and the extension disposes that reader.
+  const harness = await readerHarness(context),
+    replaced = harness.createReader()
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await replaced.open(harness.selection)
+  await replaced.dispose()
+  const afterDispose = harness.firstGroupTabs()
+
+  // Act: the extension makes the reader in its place.
+  const fresh = harness.createReader()
+  context.after(() => fresh.dispose())
+
+  // Assert: the copy the disposed reader showed left; the learner's file is in front again.
+  assert.deepEqual(
+    { afterDispose, afterNewReader: harness.firstGroupTabs() },
+    {
+      afterDispose: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      afterNewReader: {
+        tabs: ['file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
     },
   )
 })
