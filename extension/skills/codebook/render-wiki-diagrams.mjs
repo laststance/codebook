@@ -1,4 +1,5 @@
-const LIMITS = { diagrams: 24, nodes: 24, edges: 64, grid: 8, nodeLabel: 80, edgeLabel: 80, condition: 120, references: 8 };
+/** Bounds of the diagram records, and `markupExcerpt`: how many characters of a page's content a refusal quotes from the place it names ({@link unreadMarkupOf}). */
+const LIMITS = { diagrams: 24, nodes: 24, edges: 64, grid: 8, nodeLabel: 80, edgeLabel: 80, condition: 120, references: 8, markupExcerpt: 40 };
 const LAYOUT = { nodeWidth: 168, columnGap: 296, rowGap: 100, margin: 48, fontSize: 13, lineHeight: 17, labelGap: 8, nodePadding: 14, laneGap: 34, loopWidth: 100, labelWidth: 22 };
 const EDGE_KINDS = new Set(['call', 'return', 'data', 'containment', 'branch', 'pending']);
 const IDENTIFIER = /^[A-Za-z][\w-]{0,63}$/;
@@ -214,11 +215,11 @@ const readLengthAt = (html, index) => {
   // The first group is a start tag; a comment, an end tag and a `<` of the text need no second look.
   return read && (read[1] === undefined || isTagReadExactly(read[1])) ? read[0].length : 0;
 };
-/** Finds the first place of authored HTML that the publisher cannot read exactly as a browser does, so the page renderer can refuse the page instead of reading tags and ids there that a browser reads differently. Every `<` is looked at once; what a tag or a comment holds is passed over with it. @returns The first 40 characters of that place with its white space as single spaces; undefined when every `<` is read exactly. @example unreadMarkupOf('<p>1 < 2</p><? <h2 id="a">') // => '<? <h2 id="a">' */
+/** Finds the first place of authored HTML that the publisher cannot read exactly as a browser does, so the page renderer can refuse the page instead of reading tags and ids there that a browser reads differently. Every `<` is looked at once; what a tag or a comment holds is passed over with it. @returns The first {@link LIMITS}.markupExcerpt characters of that place with its white space as single spaces; undefined when every `<` is read exactly. @example unreadMarkupOf('<p>1 < 2</p><? <h2 id="a">') // => '<? <h2 id="a">' */
 export const unreadMarkupOf = html => {
   for (let index = html.indexOf('<'); index !== -1;) {
     const length = readLengthAt(html, index);
-    if (length === 0) return html.slice(index, index + 40).replace(/[\t\n\f\r ]+/g, ' ');
+    if (length === 0) return html.slice(index, index + LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ');
     index = html.indexOf('<', index + length);
   }
   return undefined;
