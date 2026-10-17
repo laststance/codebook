@@ -17,7 +17,7 @@ export type WikiUpdatePlaces = {
 type PathRules = { separator: string; fold: (path: string) => string }
 
 /**
- * Picks the rules by which two paths are compared; called by {@link isUpdateDocument}.
+ * Picks the rules by which two paths are compared; called by {@link isWikiUpdateSign} for {@link isUpdateDocument} and {@link isUpdateCommandLine}.
  *
  * Why: on Windows the editor reports a document's path with a lower-case drive letter (`c:\repo`) while the Wiki's folder is known by the spelling of the file system (`C:\repo`), and the file system does not tell case apart.
  *
@@ -47,22 +47,116 @@ function isInside(path: string, folder: string, separator: string): boolean {
   return path === folder || path.startsWith(folder + separator)
 }
 
+/** A word of a command line as a POSIX shell splits it, or a run of the characters that end a command (`;`, `&`, `|`): a word joins quoted parts (`'…'` literally, `"…"` with its escapes), escaped characters and plain characters until a space or such an operator. */
+const POSIX_WORD = /(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s'"\\;&|])+|[;&|]+/g
+/** The same for the shells of Windows, where a backslash is a character of a path and no escape. */
+const WINDOWS_WORD = /(?:'[^']*'|"[^"]*"|[^\s'";&|])+|[;&|]+/g
+/** The quoted parts and the escaped characters of one word of a POSIX shell, as {@link unquotedWord} reads them. */
+const POSIX_QUOTING = /'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/g
+/** The quoted parts of one word of the shells of Windows. */
+const WINDOWS_QUOTING = /'([^']*)'|"([^"]*)"/g
+/** An operator between two commands. */
+const COMMAND_OPERATOR = /^[;&|]+$/
+/** A program that is Node.js, however it is named: `node`, `node.exe`, or either with its folder. */
+const NODE_PROGRAM = /(?:^|[\\/])node(?:\.exe)?$/i
+
 /**
- * Says whether a command line is a step of an update; called by {@link isWikiUpdateSign} for a command a terminal started.
+ * Reads one word of a command line as its shell passes it on: without its quotes, and on POSIX with an escaped character as that character; called by {@link commandsOf}.
+ * @param word - The word as the command line writes it.
+ * @param platform - The platform whose shells the command line is read for.
+ * @returns The word's text.
+ * @example
+ * unquotedWord('"/ext/skills/codebook/publish-wiki.mjs"', 'linux') // => '/ext/skills/codebook/publish-wiki.mjs'
+ * unquotedWord('a\\ b', 'linux')                                   // => 'a b'
+ */
+function unquotedWord(word: string, platform: string): string {
+  if (platform === 'win32')
+    return word.replace(
+      WINDOWS_QUOTING,
+      (_part, single?: string, double?: string) => single ?? double ?? '',
+    )
+  return word.replace(
+    POSIX_QUOTING,
+    (_part, single?: string, double?: string, escaped?: string) =>
+      single ?? double?.replace(/\\(["\\$`])/g, '$1') ?? escaped ?? '',
+  )
+}
+
+/**
+ * Splits a command line into its commands and each command into the words its shell passes on, by the boundaries of its arguments; called by {@link isUpdateCommandLine}.
+ * Why: a path that merely stands inside another argument, in quoted text or at the start of a longer path (`/repo/.codebook/wiki-backup`) is no argument of its own.
+ * @param commandLine - The command line as the terminal's shell integration reports it.
+ * @param platform - The platform whose shells the command line is read for.
+ * @returns The commands between the operators `;`, `&` and `|` (and `&&`, `||`), each as its words.
+ * @example
+ * commandsOf('cd /repo && node "/ext/publish-wiki.mjs" --output .codebook/wiki', 'linux')
+ * // => [['cd', '/repo'], ['node', '/ext/publish-wiki.mjs', '--output', '.codebook/wiki']]
+ */
+function commandsOf(commandLine: string, platform: string): string[][] {
+  const commands: string[][] = [[]]
+  for (const [word] of commandLine.matchAll(
+    platform === 'win32' ? WINDOWS_WORD : POSIX_WORD,
+  )) {
+    // An operator ends the command before it.
+    if (COMMAND_OPERATOR.test(word)) commands.push([])
+    else commands.at(-1)?.push(unquotedWord(word, platform))
+  }
+  return commands.filter((words) => words.length > 0)
+}
+
+/**
+ * Picks the script a command runs: its program, or the first argument after Node.js that is no option; called by {@link isUpdateCommandLine}.
+ * @param words - The command's words.
+ * @returns The program, or the script when the program is Node.js; `undefined` for Node.js without a script.
+ * @example
+ * scriptOf(['node', '--no-warnings', '/ext/publish-wiki.mjs', '--prepare']) // => '/ext/publish-wiki.mjs'
+ * scriptOf(['ls', '/repo'])                                                 // => 'ls'
+ */
+function scriptOf(words: string[]): string | undefined {
+  const [program = ''] = words
+  if (!NODE_PROGRAM.test(program)) return program
+  return words.slice(1).find((word) => !word.startsWith('-'))
+}
+
+/**
+ * Says whether a word of a command names a path, compared as the platform compares paths: folded, with the platform's separator and without a trailing separator; called by {@link isUpdateCommandLine}.
+ * @param word - The word of the command.
+ * @param path - The absolute path it is compared with.
+ * @param rules - How paths are compared on this platform.
+ * @returns `true` for the same path; `false` for another one, also for a longer path that only starts with it.
+ * @example
+ * namesPath('/repo/.codebook/wiki/', '/repo/.codebook/wiki', pathRulesOf('linux'))       // => true
+ * namesPath('/repo/.codebook/wiki-backup', '/repo/.codebook/wiki', pathRulesOf('linux')) // => false
+ */
+function namesPath(word: string, path: string, rules: PathRules): boolean {
+  const comparable = (written: string): string =>
+    rules.fold(written.replace(/[\\/]+$/, '')).replaceAll('/', rules.separator)
+  return comparable(word) === comparable(path)
+}
+
+/**
+ * Says whether a command line is a step of an update, read by the boundaries of its arguments ({@link commandsOf}); called by {@link isWikiUpdateSign} for a command a terminal started.
  * @param commandLine - The command line as the terminal's shell integration reports it.
  * @param places - The Wiki's output folder and the bundled skill's folder.
- * @returns `true` when it names the publisher's script or the output folder's absolute path.
+ * @param rules - How paths are compared on this platform.
+ * @param platform - The platform whose shells the command line is read for.
+ * @returns `true` when one of its commands runs the bundled publisher (its path as the program, or as the script Node.js runs), or has the Wiki's output folder itself as an argument (the publisher's `--output` value, or a command that lists that folder); `false` when it names either only inside another argument, in quoted text, without its folder or in a longer path.
  * @example
- * isUpdateCommandLine('node /ext/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki', places) // => true
- * isUpdateCommandLine('pnpm test', places)                                                                                           // => false
+ * isUpdateCommandLine('node /ext/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki', places, pathRulesOf('linux'), 'linux') // => true
+ * isUpdateCommandLine('ls /repo/.codebook/wiki-backup', places, pathRulesOf('linux'), 'linux')                                                                    // => false
  */
 function isUpdateCommandLine(
   commandLine: string,
   places: WikiUpdatePlaces,
+  rules: PathRules,
+  platform: string,
 ): boolean {
-  return (
-    commandLine.includes(PUBLISHER_SCRIPT_NAME) ||
-    commandLine.includes(places.outputDirectory)
+  const publisher =
+    places.skillDirectory + rules.separator + PUBLISHER_SCRIPT_NAME
+  return commandsOf(commandLine, platform).some(
+    (words) =>
+      namesPath(scriptOf(words) ?? '', publisher, rules) ||
+      words.some((word) => namesPath(word, places.outputDirectory, rules)),
   )
 }
 
@@ -101,7 +195,7 @@ function isUpdateDocument(
  * @param platform - The platform whose rules compare the paths; the one Codebook runs on when omitted.
  * @returns
  * - A document in the output folder, in a prepared folder beside it or in the skill's folder: `true`
- * - A command line that names the publisher's script or the output folder: `true`
+ * - A command line that runs the bundled publisher or has the output folder itself as an argument, read by the boundaries of its arguments: `true`
  * - Anything else: `false`
  * @example
  * isWikiUpdateSign({ kind: 'document', path: '/repo/.codebook/wiki/codebook-wiki.json' }, places) // => true
@@ -113,7 +207,8 @@ export function isWikiUpdateSign(
   places: WikiUpdatePlaces,
   platform: string = process.platform,
 ): boolean {
+  const rules = pathRulesOf(platform)
   return candidate.kind === 'command'
-    ? isUpdateCommandLine(candidate.commandLine, places)
-    : isUpdateDocument(candidate.path, places, pathRulesOf(platform))
+    ? isUpdateCommandLine(candidate.commandLine, places, rules, platform)
+    : isUpdateDocument(candidate.path, places, rules)
 }
