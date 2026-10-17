@@ -37,6 +37,8 @@ import { adoptLateNameOfAcquiredGroup } from './utils/adoptLateNameOfAcquiredGro
 import { adoptOwnQuietCopyShow } from './utils/adoptOwnQuietCopyShow'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
+import { editorTabInputKinds } from './utils/editorTabInputKinds'
+import { holdsEditorTab } from './utils/holdsEditorTab'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isLearnersSelectionIn } from './utils/isLearnersSelectionIn'
 import { isStaleGroupNameOfCitation } from './utils/isStaleGroupNameOfCitation'
@@ -1466,7 +1468,7 @@ export class RepositoryReader {
   }
 
   /**
-   * Says whether the editor names a group that the reader's own quiet copy show explains while no text editor is active ({@link showQuietCopy}), for {@link adoptOwnQuietCopyShow} in {@link retainNativeFocus}: the first group with the copy in front, or, beside Cursor's chat part, the group of its chat, whose tab has no input that is a text editor or a webview (Cursor gives its composer tab none, 3.23.12 `workbench.desktop.main.js` 17269:27859), which Cursor's rebuild names after Focus Agent (C60 c60-cu-7d2, row 696). The keyboard was already in that chat: no text editor was active before the show, or the receipt would see its loss.
+   * Says whether the editor names a group that the reader's own quiet copy show explains while no text editor is active ({@link showQuietCopy}), for {@link adoptOwnQuietCopyShow} in {@link retainNativeFocus}: the first group with the copy in front, or, beside Cursor's chat part, the group of its chat, whose tab has no input of an editor (Cursor gives its composer tab none, 3.23.12 `workbench.desktop.main.js` 17269:27859), which Cursor's rebuild names after Focus Agent (C60 c60-cu-7d2, row 696). The keyboard was already in that chat: no text editor was active before the show, or the receipt would see its loss. A terminal in the editor area, a notebook, a notebook diff or a custom editor in front of another group has no active text editor either, and is the learner's own choice (row 714): {@link holdsEditorTab} with {@link editorTabInputKinds} tells it from the chat's tab, as row 689's proof does.
    * @returns `true` during such a show for those groups; `false` without one, while a text editor is active, and for any other group.
    * @example this.isOwnQuietCopyShowPlace() // => true right after Cursor's rebuild named its chat part's group for the order.ts copy
    */
@@ -1481,10 +1483,10 @@ export class RepositoryReader {
         input instanceof vscode.TabInputText &&
         input.uri.toString() === show.uri
       )
+    // Only the chat's tab, which has no editor's input, is that place; any editor in front of another group is the learner's (row 714).
     return (
       group.activeTab !== undefined &&
-      !(input instanceof vscode.TabInputText) &&
-      !(input instanceof vscode.TabInputWebview)
+      !holdsEditorTab({ tabs: [group.activeTab] }, editorTabInputKinds(vscode))
     )
   }
 

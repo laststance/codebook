@@ -68,7 +68,6 @@ import {
   STUDY_CLOSE_KEYBOARD_MESSAGE,
   STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
   STUDY_EDITOR_GROUP_COUNT,
-  EDITOR_TAB_INPUT_KINDS,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
   STUDY_REFRESH_INTERVAL_MS,
@@ -206,6 +205,7 @@ import { editorInputState } from './utils/editorInputState'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { editorSelectionState } from './utils/editorSelectionState'
 import { editorShowsDocument } from './utils/editorShowsDocument'
+import { editorTabInputKinds } from './utils/editorTabInputKinds'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
@@ -17393,11 +17393,7 @@ export class StudyWorkspace {
    * @example this.holdsOnlyChatsBeyond(2) // => false beside VS Code's floating window that shows readme.md in column 3
    */
   private holdsOnlyChatsBeyond(groupCount: number): boolean {
-    const editorInputKinds = [
-      vscode.TabInputText,
-      vscode.TabInputWebview,
-      ...EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)),
-    ]
+    const editorInputKinds = editorTabInputKinds(vscode)
     return !vscode.window.tabGroups.all.some(
       (group) =>
         group.viewColumn > groupCount &&

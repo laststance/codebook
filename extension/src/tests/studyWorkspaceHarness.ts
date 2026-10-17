@@ -294,6 +294,8 @@ export async function workspaceHarness(
   class TabInputUnknown {}
   /** VS Code's input of a chat editor tab (Chat: Open Chat in Editor): a class without properties, which the extension host exports as `vscode.TabInputChat` while the API's typings do not name it (1.140.0 `extensionHostProcess.js` 173:38462, 163:116170, 295:178349). */
   class TabInputChat {}
+  /** The input of a terminal in the editor area (Terminal: Create Terminal in Editor Area), which both editors type as `TabInputTerminal`. */
+  class TabInputTerminal {}
   /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
   class Position {
     constructor(
@@ -3053,6 +3055,7 @@ export async function workspaceHarness(
       TabInputTextDiff,
       TabInputWebview,
       TabInputChat,
+      TabInputTerminal,
       TreeItem: class {},
       TreeItemCollapsibleState: { None: 0 },
       TreeItemCheckboxState: { Unchecked: 0, Checked: 1 },
@@ -6005,6 +6008,35 @@ export async function workspaceHarness(
       keyboardInView = false
       innerFocusedPanel = undefined
       for (const listener of tabChangeListeners) listener()
+      activeTextEditorChanged(undefined)
+      return tab
+    },
+    /**
+     * Opens a terminal in the editor area of a group and gives it the keyboard, as the learner's Terminal: Create Terminal in Editor Area or a click on such a tab does: its tab (`TabInputTerminal`) is the one its group shows, the group is the active one and named by the group event both editors send (Cursor's rebuild names it, as the main editor is the active part again), and no text editor is active (Cycle 0046 row 714).
+     * @param column - The view column of the group.
+     * @returns The terminal's tab.
+     * @example harness.focusEditorTerminal(2) // the terminal in front of group 2 has the keyboard, and group 2 is named
+     */
+    focusEditorTerminal(column: number): Tab {
+      const group = groups.find((candidate) => candidate.viewColumn === column)!
+      const tab = {
+        input: new TabInputTerminal(),
+        label: 'bash',
+        isPreview: false,
+        isDirty: false,
+      }
+      group.tabs.push(tab)
+      group.activeTab = tab
+      const previous = activeTabGroup
+      activeTabGroup = group
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      innerFocusedPanel = undefined
+      for (const listener of tabChangeListeners)
+        listener({ opened: [tab], closed: [], changed: [] })
+      if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
+      else changedGroups({ opened: [], closed: [], changed: [previous, group] })
       activeTextEditorChanged(undefined)
       return tab
     },
