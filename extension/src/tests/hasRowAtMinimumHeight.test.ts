@@ -30,27 +30,56 @@ test('stacked rows with one row at the editor’s minimum height are told apart 
   assert.deepEqual(found, [true, false, true])
 })
 
-// Value: protects=the learner's arrangement outside row 691's case: a hidden editor area (every stacked row at the minimum, which the collapsed-layout check handles), columns, nested groups and anything that is no layout are never stacked again; fails_when=the Study replaces columns, a split column or a hidden area's rows with rows of one height; why_new=Cycle 0046 row 691 (its bound); seam=none
-test('a hidden editor area’s rows, columns, nested groups and no layout at all have no row to stack again', () => {
-  // Arrange
-  const hiddenArea = { orientation: 1, groups: [{ size: 70 }, { size: 70 }] }
-  const columns = { orientation: 0, groups: [{ size: 70 }, { size: 1030 }] }
-  const nested = {
+// Value: protects=a learner's nested grid through the Application's new group: a row at the minimum height is found also where it is split into columns, and also in the stack of rows a column is split into, so the Study stacks that stack at one height before the Wiki's group is activated and expanded along its row and its column; fails_when=only a root stack of single groups is read, so the nested row at the minimum goes unnoticed (row 691's bound, which row 704 found); why_new=Cycle 0046 row 704; seam=none
+test('a row at the editor’s minimum height is found also where it is split into columns or stands in a column split into rows', () => {
+  // Arrange: newGroupAbove over a learner's rows whose second row is split into columns, and over a learner's columns whose first is split into rows.
+  const rowSplitIntoColumns = {
     orientation: 1,
     groups: [
-      { size: 617, groups: [{ size: 550 }, { size: 550 }] },
-      { size: 70 },
+      { size: 262 },
+      { size: 355 },
+      { size: 70, groups: [{ size: 550 }, { size: 550 }] },
+    ],
+  }
+  const columnSplitIntoRows = {
+    orientation: 0,
+    groups: [
+      { size: 550, groups: [{ size: 262 }, { size: 355 }, { size: 70 }] },
+      { size: 550 },
+    ],
+  }
+  const evenColumnOfRows = {
+    orientation: 0,
+    groups: [
+      { size: 550, groups: [{ size: 229 }, { size: 229 }, { size: 229 }] },
+      { size: 550 },
     ],
   }
 
   // Act
   const found = [
+    hasRowAtMinimumHeight(rowSplitIntoColumns),
+    hasRowAtMinimumHeight(columnSplitIntoRows),
+    hasRowAtMinimumHeight(evenColumnOfRows),
+  ]
+
+  // Assert
+  assert.deepEqual(found, [true, true, false])
+})
+
+// Value: protects=the learner's arrangement outside the case of rows 691 and 704: a hidden editor area (every stacked row at the minimum, which the collapsed-layout check handles), columns and anything that is no layout are never stacked again; fails_when=the Study replaces columns or a hidden area's rows with rows of one height; why_new=Cycle 0046 row 691 (its bound; row 704 moved nested rows inside it); seam=none
+test('a hidden editor area’s rows, columns and no layout at all have no row to stack again', () => {
+  // Arrange
+  const hiddenArea = { orientation: 1, groups: [{ size: 70 }, { size: 70 }] }
+  const columns = { orientation: 0, groups: [{ size: 70 }, { size: 1030 }] }
+
+  // Act
+  const found = [
     hasRowAtMinimumHeight(hiddenArea),
     hasRowAtMinimumHeight(columns),
-    hasRowAtMinimumHeight(nested),
     hasRowAtMinimumHeight(undefined),
   ]
 
   // Assert
-  assert.deepEqual(found, [false, false, false, false])
+  assert.deepEqual(found, [false, false, false])
 })

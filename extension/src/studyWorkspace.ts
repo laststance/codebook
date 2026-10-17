@@ -261,6 +261,7 @@ import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice } from './utils/showPlainNotice'
+import { stackRowsAtOneHeight } from './utils/stackRowsAtOneHeight'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
@@ -14260,8 +14261,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Stacks the rows of the main editor at one height when the Application's new group left one of them at the editor's minimum height ({@link hasRowAtMinimumHeight}), before anything activates that row; called by {@link reserveApplicationGroup} once the Application stands in its group, before the layout it remembers is read (Cycle 0046 row 691).
-   * Over a learner's uneven stack `workbench.action.newGroupAbove` takes the new row's height from the last row down to the minimum (VS Code 1.140.0 `workbench.desktop.main.js` 540:73732; 524/163 gives 262/355/70), and VS Code expands a minimized group it activates (1106:114938 `doRestoreGroup`): the focus return to the Wiki's row gave 70/70/547, so the arrangement was no longer confirmed and the article Return gave nothing back (c59-vs-567, c59-vs-691probe4). Rows of one height are what the editor gives an even stack itself (343/344 gives 229/229/229, c59-vs-691probe3) and what {@link stackGroupsAfterLeftoverRemoval} gives; the Return gives the learner's own sizes back from the noted layout.
+   * Stacks the rows of the main editor at one height when the Application's new group left one of them at the editor's minimum height ({@link hasRowAtMinimumHeight}), before anything activates that row; called by {@link reserveApplicationGroup} once the Application stands in its group, before the layout it remembers is read (Cycle 0046 rows 691 and 704).
+   * Over a learner's uneven stack `workbench.action.newGroupAbove` takes the new row's height from the last row down to the minimum (VS Code 1.140.0 `workbench.desktop.main.js` 540:73732; 524/163 gives 262/355/70), and VS Code expands a minimized group it activates (1106:114938 `doRestoreGroup`): the focus return to the Wiki's row gave 70/70/547, so the arrangement was no longer confirmed and the article Return gave nothing back (c59-vs-567, c59-vs-691probe4). Rows of one height are what the editor gives an even stack itself (343/344 gives 229/229/229, c59-vs-691probe3) and what {@link stackGroupsAfterLeftoverRemoval} gives; the Return gives the learner's own sizes back from the noted layout. The stack may be nested: a learner's row split into columns stands at the minimum as a whole, and a learner's column split into rows has its own stack; only such a stack is changed, and a row keeps its columns ({@link stackRowsAtOneHeight}, row 704).
    * @param layout - The layout the editor answered after the placement.
    * @param lifetime - The reader lifetime of the preparation; a closed reader refuses after each command.
    * @param assertPlaced - Refuses when the placement changed, after the layout command and after its read.
@@ -14274,15 +14275,8 @@ export class StudyWorkspace {
     lifetime: number,
     assertPlaced: () => void,
   ): Promise<unknown> {
-    const count = editorLayoutGroupCount(layout)
-    if (count === undefined || !hasRowAtMinimumHeight(layout)) return layout
-    const rows = toPixelEditorLayout(
-      {
-        orientation: VERTICAL_EDITOR_ORIENTATION,
-        groups: Array.from({ length: count }, () => ({ size: 1 })),
-      },
-      layout,
-    )
+    if (!hasRowAtMinimumHeight(layout)) return layout
+    const rows = stackRowsAtOneHeight(layout)
     await vscode.commands.executeCommand('vscode.setEditorLayout', rows)
     this.assertLifetime(lifetime)
     assertPlaced()

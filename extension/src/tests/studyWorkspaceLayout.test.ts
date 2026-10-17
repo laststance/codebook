@@ -1389,6 +1389,185 @@ test('in VS Code, a Wiki recording visit in the learner’s uneven stack of two 
   }
 })
 
+// Value: protects=the fidelity of the workspace harness's VS Code model of a learner's nested grid, on which row 704's verdict rests: newGroupAbove sizes the stack of rows the first group stands in, also the rows of a first column, as VS Code 1.140.0's split view does (its addView and relayout, workbench.desktop.main.js 540:72177, 540:73529, 540:73732), keeping the other splits as they are; and a numbered focus command that activates a group at its minimum height expands it along every split on its path (doRestoreGroup 1106:114938, the grid's expandView 981:39660, resizeChild to infinity), its row and its column alike; fails_when=the fake editor halves the first group of a nested grid and never expands a nested group, so a test of a learner's nested grid passes on sizes VS Code never gives; why_new=Cycle 0046 row 704 (no native probe of a nested grid; the sizes follow the cited code as row 691's probes confirmed it for stacked rows); seam=workspaceHarness, useNativeLayout with nested pixel layouts, modelVsCodeStackedRowSizing, the fake editor's newGroupAbove and numbered focus commands, editorLayout
+test('the fake editor sizes and expands a learner’s nested grid as VS Code 1.140.0’s split view and grid do', async () => {
+  // Arrange: a learner's rows of 524 and 163 px whose second row is split into two columns, and a learner's two columns whose first is split into rows of 524 and 163 px; the first group is the active one.
+  const rowOfColumns = await workspaceHarness(),
+    columnOfRows = await workspaceHarness()
+  try {
+    rowOfColumns.useNativeLayout({
+      orientation: 1,
+      groups: [
+        { size: 524 },
+        { size: 163, groups: [{ size: 550 }, { size: 550 }] },
+      ],
+    })
+    rowOfColumns.modelVsCodeStackedRowSizing()
+    columnOfRows.useNativeLayout({
+      orientation: 0,
+      groups: [
+        { size: 550, groups: [{ size: 524 }, { size: 163 }] },
+        { size: 550 },
+      ],
+    })
+    columnOfRows.modelVsCodeStackedRowSizing()
+
+    // Act: a group above the first group in each; then the group at the minimum height activated: the second column of the last row, and the last row of the first column.
+    await rowOfColumns.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    const rowOfColumnsAfterInsertion = rowOfColumns.editorLayout()
+    await rowOfColumns.editor.commands.executeCommand(
+      'workbench.action.focusFourthEditorGroup',
+    )
+    await columnOfRows.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    const columnOfRowsAfterInsertion = columnOfRows.editorLayout()
+    await columnOfRows.editor.commands.executeCommand(
+      'workbench.action.focusThirdEditorGroup',
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        rowOfColumnsAfterInsertion,
+        rowOfColumnsAfterActivation: rowOfColumns.editorLayout(),
+        columnOfRowsAfterInsertion,
+        columnOfRowsAfterActivation: columnOfRows.editorLayout(),
+      },
+      {
+        rowOfColumnsAfterInsertion: {
+          orientation: 1,
+          groups: [
+            { size: 262 },
+            { size: 355 },
+            { size: 70, groups: [{ size: 550 }, { size: 550 }] },
+          ],
+        },
+        rowOfColumnsAfterActivation: {
+          orientation: 1,
+          groups: [
+            { size: 70 },
+            { size: 70 },
+            { size: 547, groups: [{ size: 220 }, { size: 880 }] },
+          ],
+        },
+        columnOfRowsAfterInsertion: {
+          orientation: 0,
+          groups: [
+            {
+              size: 550,
+              groups: [{ size: 262 }, { size: 355 }, { size: 70 }],
+            },
+            { size: 550 },
+          ],
+        },
+        columnOfRowsAfterActivation: {
+          orientation: 0,
+          groups: [
+            {
+              size: 880,
+              groups: [{ size: 70 }, { size: 70 }, { size: 547 }],
+            },
+            { size: 220 },
+          ],
+        },
+      },
+    )
+  } finally {
+    await rowOfColumns.close()
+    await columnOfRows.close()
+  }
+})
+
+for (const grid of [
+  'a row split into columns',
+  'a column split into rows',
+] as const)
+  // Value: protects=the learner's nested grid through a Repository Wiki recording visit and its article Return in VS Code: the Wiki's group stands in a stack of rows that the visit's newGroupAbove leaves with a row at the minimum height, the learner's second row split into columns or the learner's first column split into rows, so the visit stacks that stack's rows at one height, keeping the other split as the learner has it, before the focus return activates the Wiki's group; its arrangement stays confirmed and the Return gives the learner's grid back at its sizes; fails_when=the visit leaves the nested row at the minimum height because row 691's stacking takes only a root stack of single groups, the focus return expands the Wiki's group along its row and its column, and the Study reports "The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout…" while the Return gives nothing back; why_new=Cycle 0046 row 704; seam=articleRecordingLayoutHarness, useNativeLayout with a nested grid, focusMutableDraft (the learner's file in the third group), modelVsCodeStackedRowSizing, focusWebviewTabKeepingTextEditorReport (View recording pressed in the Wiki), openRepositoryEvidence with the recording, the presentation state, the return-wiki action and editorLayout
+  test(`in VS Code, a Wiki recording visit in the learner’s grid with ${grid} stays confirmed, and the article Return gives the grid back at its sizes`, async () => {
+    // Arrange: article-source.ts in the first group, the Repository Wiki in the second, where the learner pressed View recording, and the learner's notes.md in the third.
+    const learnerGrid =
+      grid === 'a row split into columns'
+        ? {
+            orientation: 1,
+            groups: [
+              { size: 524 },
+              { size: 163, groups: [{ size: 550 }, { size: 550 }] },
+            ],
+          }
+        : {
+            orientation: 0,
+            groups: [
+              { size: 550, groups: [{ size: 524 }, { size: 163 }] },
+              { size: 550 },
+            ],
+          }
+    const harness = await articleRecordingLayoutHarness()
+    try {
+      harness.useNativeLayout(learnerGrid)
+      harness.focusMutableDraft('notes.md', 3)
+      harness.modelVsCodeStackedRowSizing()
+      const wiki = harness.groups[1]!.tabs.find(
+        (tab) =>
+          Reflect.get(tab.input, 'viewType') === 'codebook.repositoryWiki',
+      )!
+      harness.focusWebviewTabKeepingTextEditorReport(wiki)
+
+      // Act: the visit, then the article Return from the recording.
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      // The arrangement as an agent's codebook_status reads it, from the editor's grid now.
+      const presentation = await harness.reader.readPresentationState()
+      const visit = {
+        layout: harness.editorLayout(),
+        layoutConfirmed: presentation.layoutConfirmed,
+        reason: presentation.reason,
+      }
+      await harness.reader.action('return-wiki')
+
+      // Assert: the stack with the Wiki's group at one height during the visit, confirmed; the learner's grid at its own sizes after the Return.
+      assert.deepEqual(
+        { visit, layoutAfterReturn: harness.editorLayout() },
+        {
+          visit: {
+            layout:
+              grid === 'a row split into columns'
+                ? {
+                    orientation: 1,
+                    groups: [
+                      { size: 229 },
+                      { size: 229 },
+                      { size: 229, groups: [{ size: 550 }, { size: 550 }] },
+                    ],
+                  }
+                : {
+                    orientation: 0,
+                    groups: [
+                      {
+                        size: 550,
+                        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+                      },
+                      { size: 550 },
+                    ],
+                  },
+            layoutConfirmed: true,
+            reason: undefined,
+          },
+          layoutAfterReturn: learnerGrid,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=row 695's reason after the article Return in the learner's uneven stack in VS Code: View recording pressed again in the Wiki (the learner's second visit, with the Study set aside behind the article, row 681's retained Application parked in the Wiki's group and the captured source behind the learner's front tab, as c61-cu-695c's 5-after-return.json reads) brings the Study back: the parked Application moves into its new group, the rows stand at one height before the Wiki's row at the minimum height is activated, the layout is confirmed with no reason, and the second Return gives the learner's 524 and 163 px back; fails_when=the move's watch reads the end of the editor's report of the text editor that was active before the new group (the report the new empty group keeps until the pane stands in front of it) as the learner leaving that file, so the visit is refused with "The recording is not shown: it could not be loaded (Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.)…", before its rows are stacked, and the focus return expands the Wiki's row to 70/70/547 with the Application's re-created group at column 1 (C61 c61-vs-695); why_new=Cycle 0046 row 710; seam=articleRecordingLayoutHarness, useNativeLayout with the uneven stack, modelVsCodeStackedRowSizing, keepTextEditorReportAfterNewGroup, focusWebviewTabKeepingTextEditorReport (View recording pressed in the Wiki), focusExistingSource (the replay's stop in the captured source before Return to Wiki), focusMutableDraft (the learner's front tab of the first group after the Return), openRepositoryEvidence with the recording twice, the return-wiki action, presentationState, editorLayout and the groups' tabs
 test('in VS Code, View recording pressed again in the Wiki after the article Return in the learner’s uneven stack brings the set-aside Study back confirmed, and its Return gives both rows back', async () => {
   // Arrange: the learner's rows are 524 and 163 px high; the first visit and its article Return left the Study set aside behind the article, with the Application parked behind the Wiki.

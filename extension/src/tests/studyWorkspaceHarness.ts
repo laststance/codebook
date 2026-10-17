@@ -1148,15 +1148,24 @@ export async function workspaceHarness(
       'orientation' in editorLayout
         ? Number(editorLayout.orientation)
         : 0
-    const pixelRows = modelsVsCodeStackedRowSizing
-      ? stackedPixelRows(editorLayout)
-      : undefined
-    editorLayout = pixelRows
-      ? {
-          orientation: 1,
-          groups: rowsAfterNewGroupAbove(pixelRows).map((size) => ({ size })),
-        }
-      : aboveFirstLeaf(editorLayout, orientation)
+    const sizedLayout = structuredClone(editorLayout),
+      pixelRows = modelsVsCodeStackedRowSizing
+        ? stackOfRowsAtFirstLeaf(sizedLayout)
+        : undefined
+    // VS Code's split view sizes the stack of rows the first group stands in, at the root or in a column (rows 691 and 704).
+    if (pixelRows) {
+      const [added, ...kept] = rowsAfterNewGroupAbove(pixelRows.map(layoutSize))
+      pixelRows.splice(
+        0,
+        pixelRows.length,
+        { size: added },
+        ...pixelRows.map((row, index) => ({
+          ...Object(row),
+          size: kept[index],
+        })),
+      )
+      editorLayout = sizedLayout
+    } else editorLayout = aboveFirstLeaf(editorLayout, orientation)
     const rootChildren = layoutChildren(editorLayout),
       soleChildren =
         rootChildren?.length === 1 ? layoutChildren(rootChildren[0]) : undefined
@@ -1413,21 +1422,30 @@ export async function workspaceHarness(
     ).node
   }
   /**
-   * Reads the heights of a layout of stacked rows given in pixels, the only grid `modelVsCodeStackedRowSizing` sizes as VS Code does; called by the fake `workbench.action.newGroupAbove` and by `expandMinimizedRow`.
-   * @param layout - The fake editor's layout.
-   * @returns The rows' heights, top to bottom, for stacked rows that are all single groups with a size above one pixel; `undefined` for any other layout (columns, nested groups, proportions).
-   * @example stackedPixelRows({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] }) // => [524, 163]
+   * Finds the stack of rows that the first group of a layout given in pixels stands in, the stack `modelVsCodeStackedRowSizing` sizes as VS Code's split view does when `workbench.action.newGroupAbove` adds a row above that group: the root's rows, or the rows of the first column when the root stands in columns and its first column is split into rows (a nested split lies across its parent's, `getEditorLayout` alternating the orientation by depth); called by the fake `workbench.action.newGroupAbove` (Cycle 0046 rows 691 and 704).
+   * @param layout - The fake editor's layout, or a copy of it that the caller sizes in place.
+   * @returns The stack's rows, the very objects of the given layout, when the first group's own split stacks two or more rows that are all given in pixels; `undefined` for a first group whose split is a row of columns, and for proportions.
+   * @example
+   * stackOfRowsAtFirstLeaf({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] }) // => [{ size: 524 }, { size: 163 }]
+   * stackOfRowsAtFirstLeaf({ orientation: 0, groups: [{ size: 550, groups: [{ size: 524 }, { size: 163 }] }, { size: 550 }] }) // => [{ size: 524 }, { size: 163 }]
    */
-  function stackedPixelRows(layout: unknown): number[] | undefined {
-    const rows = layoutChildren(layout)
-    if (
-      Reflect.get(Object(layout), 'orientation') !== 1 ||
-      !rows ||
-      rows.length < 2 ||
-      rows.some((row) => layoutChildren(row) || layoutSize(row) <= 1)
-    )
-      return undefined
-    return rows.map(layoutSize)
+  function stackOfRowsAtFirstLeaf(layout: unknown): unknown[] | undefined {
+    let split = layout,
+      stacksRows = Reflect.get(Object(layout), 'orientation') === 1
+    // Down the first child of every split to the first group; each level lies across the one above it.
+    for (;;) {
+      const children = layoutChildren(split)
+      if (!children?.length) return undefined
+      const first = children[0]
+      if (!layoutChildren(first))
+        return stacksRows &&
+          children.length > 1 &&
+          children.every((child) => layoutSize(child) > 1)
+          ? children
+          : undefined
+      split = first
+      stacksRows = !stacksRows
+    }
   }
   /**
    * Sizes the rows after `workbench.action.newGroupAbove` adds a row above the first one, as VS Code 1.140.0's split view does with its default `workbench.editor.splitSizing` ("auto"): rows within 2 px of each other are distributed evenly (`areViewsDistributed`, `workbench.desktop.main.js` 540:77201; `distributeViewSizes`, 540:71277); otherwise the new row takes half of the row it splits (`addView`, 540:72177) and the height that is now missing is taken from the last row upward, each down to the minimum, the new row last (`relayout` with the new row at low priority, 540:73529 and 540:73732). Called by `insertNativeAppGroup` while `modelVsCodeStackedRowSizing` is on.
@@ -1458,23 +1476,104 @@ export async function workspaceHarness(
     return sized
   }
   /**
-   * Expands a stacked row at the minimum height once a numbered focus command made its group the active one, as VS Code 1.140.0 does for every group it activates: `doSetGroupActive` restores the group (`workbench.desktop.main.js` 1106:114938 `doRestoreGroup`), which expands a group whose width or height is its minimum (`arrangeGroups` with `EXPAND`, 1106:111202, the grid's `expandView`, 981:48778): every other row of the stack goes to the minimum, and the activated one takes the rest. Called by the fake numbered focus commands while `modelVsCodeStackedRowSizing` is on (Cycle 0046 row 691; c59-vs-691probe4: 262/355/70, then 70/70/547 after `workbench.action.focusThirdEditorGroup`).
-   * @param column - The view column of the group the command activated.
-   * @example expandMinimizedRow(3) // [262, 355, 70] => [70, 70, 547]
+   * Expands a group at its minimum height or width once a numbered focus command made it the active one, as VS Code 1.140.0 does for every group it activates: `doSetGroupActive` restores the group (`workbench.desktop.main.js` 1106:114938 `doRestoreGroup`), which expands a group whose width or height is its minimum (`arrangeGroups` with `EXPAND`, 1106:111202, the grid's `expandView`, 981:48778): the grid view resizes the group's place in every split on its path to as much as it can take (981:39660 `resizeChild(…, Number.POSITIVE_INFINITY)`), so each sibling on that path goes to its own minimum along that split and the group's place takes the rest. Called by the fake numbered focus commands while `modelVsCodeStackedRowSizing` is on (Cycle 0046 row 691; c59-vs-691probe4: 262/355/70, then 70/70/547 after `workbench.action.focusThirdEditorGroup`; row 704 for a group in a nested split). A sibling split to its minimum keeps its own children's sizes, which no test of the model reads; a layout given in proportions is left as it is.
+   * @param column - The view column of the group the command activated, its place among the main editor's groups.
+   * @example
+   * expandMinimizedRow(3) // [262, 355, 70] => [70, 70, 547]
+   * expandMinimizedRow(4) // rows [262, 355, 70 split into 550 | 550] => rows [70, 70, 547 split into 220 | 880]
    */
   function expandMinimizedRow(column: number): void {
-    const rows = stackedPixelRows(editorLayout)
-    if (!rows || rows[column - 1] !== GROUP_MINIMUM_PX.height) return
-    const total = rows.reduce((sum, row) => sum + row, 0)
-    editorLayout = {
-      orientation: 1,
-      groups: rows.map((_row, index) => ({
-        size:
-          index === column - 1
-            ? total - GROUP_MINIMUM_PX.height * (rows.length - 1)
-            : GROUP_MINIMUM_PX.height,
-      })),
+    const sized = structuredClone(editorLayout),
+      path = pathToGroup(sized, column - 1)
+    if (
+      !path?.every(({ siblings }) =>
+        siblings.every((node) => layoutSize(node) > 1),
+      )
+    )
+      return
+    /** Gives the size of the group's place along the nearest split on its path that lies along the given axis; the editor area's for none. */
+    const extent = (alongRows: boolean): number => {
+      const nearest = path.findLast((step) => step.stacksRows === alongRows)
+      if (!nearest)
+        return alongRows ? EDITOR_AREA_PX.height : EDITOR_AREA_PX.width
+      return layoutSize(nearest.siblings[nearest.index])
     }
+    if (
+      extent(true) !== GROUP_MINIMUM_PX.height &&
+      extent(false) !== GROUP_MINIMUM_PX.width
+    )
+      return
+    // In every split on the path the siblings go to their minimum and the group's place takes the rest.
+    for (const { siblings, index, stacksRows } of path) {
+      const total = siblings.reduce<number>(
+        (sum, node) => sum + layoutSize(node),
+        0,
+      )
+      let others = 0
+      siblings.forEach((node, position) => {
+        if (position === index) return
+        const minimum = minimumAlong(node, stacksRows, !stacksRows)
+        Reflect.set(Object(node), 'size', minimum)
+        others += minimum
+      })
+      Reflect.set(Object(siblings[index]), 'size', total - others)
+    }
+    editorLayout = sized
+  }
+  /**
+   * Lists the splits from the root of a layout down to one of its groups, for `expandMinimizedRow`: in each, its children, the place of the group's branch among them and whether they stand in rows.
+   * @param layout - A layout, or a copy that the caller resizes in place.
+   * @param leafIndex - The zero-based place of the group among the layout's groups, in the order of their view columns.
+   * @returns The splits, from the root down; `undefined` when the layout has fewer groups.
+   * @example pathToGroup({ orientation: 1, groups: [{ size: 262 }, { size: 425, groups: [{ size: 550 }, { size: 550 }] }] }, 2) // => [{ index: 1, stacksRows: true, … }, { index: 1, stacksRows: false, … }]
+   */
+  function pathToGroup(
+    layout: unknown,
+    leafIndex: number,
+  ): { siblings: unknown[]; index: number; stacksRows: boolean }[] | undefined {
+    let seen = 0
+    /** Walks a split's children in order and answers the path below this split to the group, if it lies there. */
+    const walk = (
+      split: unknown,
+      stacksRows: boolean,
+    ):
+      | { siblings: unknown[]; index: number; stacksRows: boolean }[]
+      | undefined => {
+      const siblings = layoutChildren(split) ?? []
+      for (const [index, node] of siblings.entries()) {
+        const below = layoutChildren(node)
+          ? walk(node, !stacksRows)
+          : seen++ === leafIndex
+            ? []
+            : undefined
+        if (below) return [{ siblings, index, stacksRows }, ...below]
+      }
+      return undefined
+    }
+    return walk(layout, Reflect.get(Object(layout), 'orientation') === 1)
+  }
+  /**
+   * Gives the least size a group or a split of groups takes along one axis, as VS Code's grid computes it: a group's minimum height or width ({@link GROUP_MINIMUM_PX}); a split's is the sum of its children's along the axis they stand along, and the largest of theirs across it. Asked by `expandMinimizedRow` for each sibling it shrinks.
+   * @param node - A group or a split of groups.
+   * @param heights - `true` for the least height, `false` for the least width.
+   * @param childrenStackRows - Whether the node's children, if it has any, stand in rows.
+   * @returns The least size in pixels.
+   * @example minimumAlong({ size: 425, groups: [{ size: 550 }, { size: 550 }] }, true, false) // => 70
+   */
+  function minimumAlong(
+    node: unknown,
+    heights: boolean,
+    childrenStackRows: boolean,
+  ): number {
+    const children = layoutChildren(node)
+    if (!children)
+      return heights ? GROUP_MINIMUM_PX.height : GROUP_MINIMUM_PX.width
+    const minimums = children.map((child) =>
+      minimumAlong(child, heights, !childrenStackRows),
+    )
+    return childrenStackRows === heights
+      ? minimums.reduce((sum, minimum) => sum + minimum, 0)
+      : Math.max(...minimums)
   }
   /**
    * Models what VS Code 1.140 does when an editor is opened or revealed while the bottom panel is maximized.
