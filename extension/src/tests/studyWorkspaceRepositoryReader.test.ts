@@ -188,11 +188,10 @@ test("an agent's cold Wiki open beside Cursor's chat part shows the Wiki with it
   }
 })
 
-// Value: protects=an agent's cold Wiki open beside Cursor's chat part in the state where Cursor's first-group focus moves no keyboard out of the chat (row 690's probe, steps 4 and 5: Focus Agent from the first group's file left that group named and the file reported, and focusFirstEditorGroup then left the chat its keyboard): the layout read borrows nothing, since the file in front of the first group as the active text editor proves the main editor the active part (StudyWorkspace.readMainEditorGrid's firstFocused, rows 655 and 663), so the open answers and the chat keeps its keyboard; fails_when=readMainEditorGrid borrows the first group in that state, a borrow Cursor does not carry out, so the wait for the main editor's focus ends after five seconds and the agent's open is refused; why_new=Cycle 0046 row 690 (the probe's last fact checked against the product's borrow); seam=workspaceHarness's Cursor model (cursorBesideChatPart), keepMainPartActiveAtFocusAgent, Focus Agent (composer.focusComposer), createRepositoryWikiReader's openFromAgent and the native commands
-test("an agent's cold Wiki open beside Cursor's chat part, after Focus Agent left the first group named with its file reported, borrows nothing and leaves the chat its keyboard", async () => {
-  // Arrange: the learner's login-form.tsx in front of the first group had the keyboard; Focus Agent gave the chat input the keyboard, and Cursor goes on naming the first group with login-form.tsx reported.
+// Value: protects=an agent's cold Wiki open beside Cursor's chat part after Focus Agent from the learner's file in the first group (row 690's state, read again on C61: c61-702-probe step 2 left no active text editor, the first group named and layout reads answering the chat part's grid; row 702): nothing proves the main editor the active part, so the layout read borrows the first group, and the open answers and gives the chat its keyboard back with Focus Agent (row 620's path, as C60's c60-cu-2c saw natively); fails_when=the open borrows nothing and measures the chat part's grid as the main editor's, or leaves the keyboard in the first group's file; why_new=Cycle 0046 rows 690 and 702 (the C61 probe replaced c59's reading of Focus Agent, which had the file still reported and no borrow); seam=workspaceHarness's Cursor model (cursorBesideChatPart), Focus Agent (composer.focusComposer), createRepositoryWikiReader's openFromAgent and the native commands
+test("an agent's cold Wiki open beside Cursor's chat part, after Focus Agent from the first group's file, borrows the first group and gives the chat its keyboard back", async () => {
+  // Arrange: the learner's login-form.tsx in front of the first group had the keyboard; Focus Agent gave the chat input the keyboard, and Cursor goes on naming the first group with no active text editor.
   const { harness, chat } = await cursorBesideChatPart()
-  harness.keepMainPartActiveAtFocusAgent()
   harness.focusMutableDraft('login-form.tsx', 1)
   await harness.editor.commands.executeCommand('composer.focusComposer')
   const commandsBefore = harness.commands.length
@@ -207,7 +206,7 @@ test("an agent's cold Wiki open beside Cursor's chat part, after Focus Agent lef
         (error: unknown) => String(error),
       )
 
-    // Assert: the open answered; no focus command ran, and the chat input has the keyboard.
+    // Assert: the open answered; the borrow of the first group and Focus Agent ran, and the chat input has the keyboard.
     assert.deepEqual(
       {
         refusal,
@@ -220,7 +219,14 @@ test("an agent's cold Wiki open beside Cursor's chat part, after Focus Agent lef
           ),
         chatHasKeyboard: chat.focused(),
       },
-      { refusal: undefined, focusCommands: [], chatHasKeyboard: true },
+      {
+        refusal: undefined,
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'composer.focusComposer',
+        ],
+        chatHasKeyboard: true,
+      },
     )
   } finally {
     await books.dispose()

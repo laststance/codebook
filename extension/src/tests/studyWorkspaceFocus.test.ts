@@ -3132,7 +3132,7 @@ test("the fake editor goes on naming Cursor's chat group after the first group t
   }
 })
 
-// Value: protects=reader tests beside Cursor's chat part meeting Cursor's group names as the native probe of row 690 read them step by step (private c59-cu-690probe, Cursor 3.23.12 beside the Agent chat part, groups G1 login-form.tsx and G2 auth.ts): with the chat input focused the editor names the main group it named last (G2), not the chat's; the first-group focus gives G1's file the keyboard and leaves that earlier name (stale); a lock of the focused group names the locked group, as row 673's rebuild does, and the unlock keeps it; Focus Agent from G1's file keeps G1 named and that file reported; the first-group focus then moves no keyboard out of the chat while G1 is the named group; a new group of the main editor is named and takes the chat's keyboard; fails_when=the fake follows another rule at one of these steps: the lock keeps the stale name as row 674's new-tab rebuild does, the first-group focus takes the chat's keyboard while the first group is named, or a new group leaves the chat its keyboard or the old name; why_new=Cycle 0046 row 690; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, keepMainPartActiveAtFocusAgent (the probe's step 4), chat.focus (step 0), the first-group focus, lock, unlock, Focus Agent and newGroupAbove commands (step 6 used splitEditorDown; the reader's own new group is newGroupAbove's)
+// Value: protects=reader tests beside Cursor's chat part meeting Cursor's group names as the native probe of row 690 read them step by step (private c59-cu-690probe, Cursor 3.23.12 beside the Agent chat part, groups G1 login-form.tsx and G2 auth.ts), with its Focus Agent read again on C61 (c61-702-probe step 2, row 702): with the chat input focused the editor names the main group it named last (G2), not the chat's; the first-group focus gives G1's file the keyboard and leaves that earlier name (stale); a lock of the focused group names the locked group, as row 673's rebuild does, and the unlock keeps it; Focus Agent from G1's file keeps G1 named and leaves no active text editor (C61; c59's step 4 had read the file still reported, which C61 does not show); the first-group focus then gives G1's file the keyboard again, as Cycle 0045 obs15 P1 saw in the same state the extension API reads (G1 named, no active text editor, the chat input focused; c59's step 5 read no move after its step 4, which is not observed on C61); a new group of the main editor is named; fails_when=the fake follows another rule at one of these steps: the lock keeps the stale name as row 674's new-tab rebuild does, Focus Agent keeps the file reported, or a new group leaves the old name; why_new=Cycle 0046 rows 690 and 702; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, chat.focus (step 0), the first-group focus, lock, unlock, Focus Agent and newGroupAbove commands (step 6 used splitEditorDown; the reader's own new group is newGroupAbove's)
 test("the fake editor names Cursor's groups beside its chat part as the native probe read them through a borrow, a lock, Focus Agent, a first-group focus and a new group", async () => {
   // Arrange: G1 shows login-form.tsx and G2 auth.ts, which the learner focused last; then the learner clicked into Cursor's chat input.
   const harness = await workspaceHarness(false)
@@ -3141,7 +3141,6 @@ test("the fake editor names Cursor's groups beside its chat part as the native p
   harness.focusMutableDraft('login-form.tsx', 1)
   harness.focusMutableDraft('auth.ts', 2)
   harness.leavePaneFocusUnreportedBesideChat()
-  harness.keepMainPartActiveAtFocusAgent()
   chat.focus()
   const tabGroups = harness.editor.window.tabGroups
   /** Reads what the probe read at each step: the named group's column, the active text editor's file and whether the chat input has the keyboard. */
@@ -3198,13 +3197,13 @@ test("the fake editor names Cursor's groups beside its chat part as the native p
       },
       focusAgent: {
         named: 1,
-        activeTextEditor: 'login-form.tsx',
+        activeTextEditor: undefined,
         chatHasKeyboard: true,
       },
       borrowAgain: {
         named: 1,
         activeTextEditor: 'login-form.tsx',
-        chatHasKeyboard: true,
+        chatHasKeyboard: false,
       },
       newGroup: {
         named: 1,
@@ -3213,6 +3212,85 @@ test("the fake editor names Cursor's groups beside its chat part as the native p
       },
     })
     assert.equal(tabGroups.activeTabGroup.tabs.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests beside Cursor's chat part meeting what Cursor 3.23.12 answered on C61 after Focus Agent and after a tab close (private c61-702-probe, groups 1 login-form.tsx, 2 auth.ts behind next.config.js, 3 the chat part): after a click into login-form.tsx the file is the active text editor in column 1, group 1 is named and a layout read answers the main editor's rows; Focus Agent from that file leaves no active text editor, keeps group 1 named (a stale name) and makes layout reads answer the chat part's grid; a click into the chat input and Focus Agent from the chat rename no group; a tab of group 2 closed while the chat input has the keyboard makes Cursor name the chat part's group; fails_when=the fake answers another way at one of these steps: Focus Agent keeps the file reported or the main editor's layout, a click into the chat or Focus Agent renames a group, or the close's rebuild names a main group; why_new=Cycle 0046 row 702; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, reportSeparatePartLayout (the probe's chat-part grid), focusMutableDraft (the click into a file), chat.focus (the click into the chat input), composer.focusComposer, vscode.getEditorLayout and tabGroups.close
+test("the fake editor answers Focus Agent from a file and from the chat and a tab close beside Cursor's chat part as Cursor did on C61", async () => {
+  // Arrange: group 1 shows login-form.tsx, group 2 next.config.js in front of auth.ts; the learner clicked into login-form.tsx last.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 328 }, { size: 329 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.reportSeparatePartLayout({ orientation: 1, groups: [{ size: 963 }] })
+  harness.focusMutableDraft('auth.ts', 2)
+  const nextConfig = harness.focusMutableDraft('next.config.js', 2)
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.leavePaneFocusUnreportedBesideChat()
+  const tabGroups = harness.editor.window.tabGroups
+  /** Reads what the probe read at each step: the named group's column, the active text editor's file, whether the chat input has the keyboard and the layout a read answers. */
+  const read = async () => ({
+    named: tabGroups.activeTabGroup.viewColumn,
+    activeTextEditor: harness.editor.window.activeTextEditor?.document.uri.path
+      .split('/')
+      .at(-1),
+    chatHasKeyboard: chat.focused(),
+    layout: await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    ),
+  })
+  const steps: Record<string, Awaited<ReturnType<typeof read>>> = {
+    file: await read(),
+  }
+  try {
+    // Act: the probe's steps 2, 4, 5 and 6.
+    await harness.editor.commands.executeCommand('composer.focusComposer')
+    steps.focusAgentFromFile = await read()
+    chat.focus()
+    steps.chatClick = await read()
+    await harness.editor.commands.executeCommand('composer.focusComposer')
+    steps.focusAgentFromChat = await read()
+    await tabGroups.close([nextConfig.tab], true)
+    steps.tabClosed = await read()
+
+    // Assert
+    const chatPartGrid = { orientation: 1, groups: [{ size: 963 }] }
+    assert.deepEqual(steps, {
+      file: {
+        named: 1,
+        activeTextEditor: 'login-form.tsx',
+        chatHasKeyboard: false,
+        layout: { orientation: 1, groups: [{ size: 328 }, { size: 329 }] },
+      },
+      focusAgentFromFile: {
+        named: 1,
+        activeTextEditor: undefined,
+        chatHasKeyboard: true,
+        layout: chatPartGrid,
+      },
+      chatClick: {
+        named: 1,
+        activeTextEditor: undefined,
+        chatHasKeyboard: true,
+        layout: chatPartGrid,
+      },
+      focusAgentFromChat: {
+        named: 1,
+        activeTextEditor: undefined,
+        chatHasKeyboard: true,
+        layout: chatPartGrid,
+      },
+      tabClosed: {
+        named: 3,
+        activeTextEditor: undefined,
+        chatHasKeyboard: true,
+        layout: chatPartGrid,
+      },
+    })
   } finally {
     await harness.close()
   }
