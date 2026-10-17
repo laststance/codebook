@@ -83,19 +83,23 @@ test('macOS and Linux list the processes with one bounded ps and read each line 
   assert.deepEqual(listedOnLinux, processes)
 })
 
-// Value: protects=a profile sweep and a profile probe on Windows, which has no `ps`; fails_when=the listing runs `ps` there (ENOENT), the PowerShell command loses -NoProfile, -NonInteractive, its error action or its bounds, opens a console window, or a command line is read wrongly (a path outside ASCII, a process without a readable command line) (Cycle 0046 row 96); why_new=the listing had no form for Windows; seam=the injected platform and runner. The real query runs in the Windows job.
-test('Windows lists the processes with one bounded PowerShell query and reads each line as a process id and its command line', async () => {
+// Value: protects=a profile sweep and a profile probe on Windows, which has no `ps`, and the program it starts there; fails_when=the listing runs `ps` there (ENOENT), the PowerShell command loses -NoProfile, -NonInteractive, its error action or its bounds, opens a console window, a command line is read wrongly (a path outside ASCII, a process without a readable command line) (Cycle 0046 row 96), or PowerShell is started by its bare name, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (F4, Cycle 0046 /ship review; row 107 for the start query); why_new=the listing had no form for Windows, and its program was named by its bare name alone; seam=the injected platform, environment and runner. The real query runs in the Windows job.
+test('Windows lists the processes with one bounded PowerShell query, started from the system root, and reads each line as a process id and its command line', async () => {
   // Arrange: an answer as the query prints it, a process id and the Base64 of the command line's UTF-8 bytes on each line, with Windows line ends. Process 4 shows no command line to this user; the last command line holds a folder with a name outside ASCII ("C:\Users\学習者", "learner" in Japanese).
   const listing = answeringListing({
     stdout:
       '0 \r\n4 \r\n4242 ImM6XG5vZGUuZXhlIiAtZSAic2V0SW50ZXJ2YWwoKCkgPT4ge30sIDEwMDApIg==\r\n5150 ImM6XGNocm9tZS5leGUiIC0tdXNlci1kYXRhLWRpcj1DOlxVc2Vyc1zlrabnv5LogIVcQXBwRGF0YVxMb2NhbFxUZW1wXGNvZGVib29rLWJyb3dzZXItYTFiMmMz\r\n',
   })
   // Act
-  const listed = await listProcesses({ platform: 'win32', run: listing.run })
+  const listed = await listProcesses({
+    platform: 'win32',
+    run: listing.run,
+    environment: { SystemRoot: 'C:\\Windows' },
+  })
   // Assert
   assert.deepEqual(listing.calls, [
     {
-      file: 'powershell.exe',
+      file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       listingArguments: [
         '-NoProfile',
         '-NonInteractive',
@@ -121,6 +125,33 @@ test('Windows lists the processes with one bounded PowerShell query and reads ea
         '"c:\\chrome.exe" --user-data-dir=C:\\Users\\学習者\\AppData\\Local\\Temp\\codebook-browser-a1b2c3',
     },
   ])
+})
+
+// Value: protects=the Windows listing still runs where the system root is not known, and never from a path that is looked up from the current directory; fails_when=a missing, empty or relative SystemRoot makes the listing fail or builds a relative path to PowerShell (F4, Cycle 0046 /ship review; the same lookup as the start query's, row 107); why_new=the listing named its program by its bare name alone; seam=the injected platform, environment and runner
+test('the Windows listing starts PowerShell by its bare name only where the system root is missing, empty or no absolute path', async () => {
+  // Arrange
+  const programStartedWith = async (environment: {
+    SystemRoot?: string
+  }): Promise<string | undefined> => {
+    const listing = answeringListing({ stdout: '' })
+    await listProcesses({ platform: 'win32', run: listing.run, environment })
+    return listing.calls[0]?.file
+  }
+  // Act
+  const programs = {
+    noSystemRoot: await programStartedWith({}),
+    emptySystemRoot: await programStartedWith({ SystemRoot: '' }),
+    relativeSystemRoot: await programStartedWith({ SystemRoot: 'Windows' }),
+    rootOfAnotherDrive: await programStartedWith({ SystemRoot: 'D:\\WINNT\\' }),
+  }
+  // Assert
+  assert.deepEqual(programs, {
+    noSystemRoot: 'powershell.exe',
+    emptySystemRoot: 'powershell.exe',
+    relativeSystemRoot: 'powershell.exe',
+    rootOfAnotherDrive:
+      'D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  })
 })
 
 // Value: protects=the real listing of the system the suite runs on names a running process with every argument, which is what a profile is matched by; fails_when=the real command fails, prints in a form its reader does not read, or cuts the command line (on Windows: PowerShell or its query is refused, or the answer is not what the reader expects) (Cycle 0046 rows 87 and 96); why_new=only a real listing shows it, and on Windows nothing ran the listing; seam=none (a real child process of this test)

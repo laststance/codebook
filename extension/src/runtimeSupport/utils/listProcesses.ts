@@ -1,35 +1,31 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
 import {
   PROCESS_LISTING_MAX_BYTES,
   PROCESS_LISTING_TIMEOUT_MS,
 } from '../../constants'
+import {
+  runBoundedQuery,
+  type BoundedQueryOptions,
+  type BoundedQueryRunner,
+} from '../../utils/runBoundedQuery'
 import { systemErrorCode } from '../../utils/systemErrorCode'
+import {
+  windowsPowerShellPath,
+  type SystemRootEnvironment,
+} from '../../utils/windowsPowerShellPath'
 
 /** One running process as the system's listing names it: its id and its whole command line with every argument. */
 export type ListedProcess = { pid: number; command: string }
-
-/** What a process listing is run with: its two bounds, a signal no process can ignore, and no console window on Windows. */
-type ProcessListingOptions = {
-  timeout: number
-  maxBuffer: number
-  killSignal: 'SIGKILL'
-  windowsHide: true
-}
 
 /** What {@link listProcesses} lists with; each is the real one unless a test names its own. */
 export type ProcessListingInputs = {
   /** The system whose listing is used: PowerShell on `win32`, `ps` on every other system. */
   platform?: NodeJS.Platform
-  /** Runs the listing without a shell and answers what it printed; it rejects when the listing fails, runs too long or prints too much. */
-  run?: (
-    file: string,
-    listingArguments: string[],
-    options: ProcessListingOptions,
-  ) => Promise<{ stdout: string }>
+  /** Runs the listing without a shell and answers what it printed; it rejects when the listing fails, runs too long or prints too much. {@link runBoundedQuery} unless a test names its own. */
+  run?: BoundedQueryRunner
   /** How long the listing may run, in milliseconds; {@link PROCESS_LISTING_TIMEOUT_MS} unless a test shortens it. */
   timeoutMs?: number
+  /** The environment the Windows system root is read from (`SystemRoot`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
+  environment?: SystemRootEnvironment
 }
 
 /** The listing of one system: the command that prints every process on a line of its own, and the reader of such a line. */
@@ -59,9 +55,8 @@ const UNIX_LISTING: ProcessListingForm = {
 const WINDOWS_LISTING_COMMAND =
   "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { '{0} {1}' -f $_.ProcessId, [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.CommandLine)) }"
 
-/** PowerShell on Windows, which has no `ps`: {@link WINDOWS_LISTING_COMMAND}, without a profile and without a prompt. */
-const WINDOWS_LISTING: ProcessListingForm = {
-  file: 'powershell.exe',
+/** PowerShell on Windows, which has no `ps`: {@link WINDOWS_LISTING_COMMAND}, without a profile and without a prompt. Its program is named by {@link listingFormOf}, by its full path under the system root. */
+const WINDOWS_LISTING: Omit<ProcessListingForm, 'file'> = {
   listingArguments: [
     '-NoProfile',
     '-NonInteractive',
@@ -79,20 +74,22 @@ const WINDOWS_LISTING: ProcessListingForm = {
   },
 }
 
-/** Chooses the listing of a system: PowerShell on Windows, `ps` on every other system; called by {@link listProcesses}. @example listingFormOf('darwin').file // => 'ps' */
-function listingFormOf(platform: NodeJS.Platform): ProcessListingForm {
-  return platform === 'win32' ? WINDOWS_LISTING : UNIX_LISTING
-}
-
-/** Runs one process listing without a shell and closes its input, which neither listing reads and which, left open, can keep PowerShell waiting. @example await runListing('ps', ['-axww', '-o', 'pid=,command='], bounds) // => { stdout: '    1 /sbin/launchd\n…', stderr: '' } */
-const runListing: NonNullable<ProcessListingInputs['run']> = (
-  file,
-  listingArguments,
-  options,
-) => {
-  const listing = promisify(execFile)(file, listingArguments, options)
-  listing.child.stdin?.end()
-  return listing
+/**
+ * Chooses the listing of a system; called by {@link listProcesses}.
+ * @param platform - The system whose listing is used.
+ * @param environment - Where the Windows system root is read from.
+ * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` in the current directory or earlier in the search path is started in its place; `ps` on every other system.
+ * @example
+ * listingFormOf('darwin', {}).file                         // => 'ps'
+ * listingFormOf('win32', { SystemRoot: 'C:\\Windows' }).file // => 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+ */
+function listingFormOf(
+  platform: NodeJS.Platform,
+  environment: SystemRootEnvironment | undefined,
+): ProcessListingForm {
+  return platform === 'win32'
+    ? { ...WINDOWS_LISTING, file: windowsPowerShellPath(environment) }
+    : UNIX_LISTING
 }
 
 /** Says whether a failed listing was ended because it ran longer than its time bound: Node.js marks the error of a child it ended itself. @example isEndedAtTimeBound(Object.assign(new Error('Command failed: ps'), { killed: true, signal: 'SIGKILL' })) // => true */
@@ -117,7 +114,7 @@ function isEndedAtTimeBound(failure: unknown): boolean {
 function listingFailure(
   failure: unknown,
   file: string,
-  bounds: ProcessListingOptions,
+  bounds: BoundedQueryOptions,
 ): unknown {
   // A child that printed too much is ended by Node.js too, so the output limit is asked first.
   if (systemErrorCode(failure) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
@@ -141,12 +138,12 @@ function listingFailure(
  * @returns Every process the listing printed with a command line, in its order.
  * @throws What the runner rejects with, worded by {@link listingFailure} for a listing that was ended at a bound.
  * @example
- * await printedListing(UNIX_LISTING, runListing, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
+ * await printedListing(UNIX_LISTING, runBoundedQuery, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
  */
 async function printedListing(
   listing: ProcessListingForm,
-  run: NonNullable<ProcessListingInputs['run']>,
-  bounds: ProcessListingOptions,
+  run: BoundedQueryRunner,
+  bounds: BoundedQueryOptions,
 ): Promise<ListedProcess[]> {
   try {
     const { stdout } = await run(listing.file, listing.listingArguments, bounds)
@@ -159,9 +156,9 @@ async function printedListing(
 }
 
 /**
- * Lists every process of this machine with its whole command line, by one `ps -axww` on macOS and Linux and one PowerShell query on Windows; called by {@link profileProcesses} for one profile and once per sweep by {@link removeAbandonedProfiles}, which matches every candidate folder against the same listing.
- * The listing is bounded: it is ended with a signal it cannot ignore after {@link PROCESS_LISTING_TIMEOUT_MS}, and when it prints more than {@link PROCESS_LISTING_MAX_BYTES}. Its input is closed.
- * @param inputs - The platform, the runner and the time bound of {@link ProcessListingInputs}; the real ones when left out.
+ * Lists every process of this machine with its whole command line, by one `ps -axww` on macOS and Linux and one PowerShell query on Windows, PowerShell started by its full path under the system root ({@link windowsPowerShellPath}); called by {@link profileProcesses} for one profile and once per sweep by {@link removeAbandonedProfiles}, which matches every candidate folder against the same listing.
+ * The listing is bounded: it is ended with a signal it cannot ignore after {@link PROCESS_LISTING_TIMEOUT_MS}, and when it prints more than {@link PROCESS_LISTING_MAX_BYTES}. Its input is closed ({@link runBoundedQuery}).
+ * @param inputs - The platform, the runner, the time bound and the environment that names the Windows system root of {@link ProcessListingInputs}; the real ones when left out.
  * @returns Every process the listing printed with a command line, in its order; a line that names no process id or no command line is left out.
  * @throws What running the listing throws, for example on a machine without the command; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}). A caller that removes by the listing removes nothing then.
  * @example
@@ -172,8 +169,8 @@ export async function listProcesses(
   inputs: ProcessListingInputs = {},
 ): Promise<ListedProcess[]> {
   return printedListing(
-    listingFormOf(inputs.platform ?? process.platform),
-    inputs.run ?? runListing,
+    listingFormOf(inputs.platform ?? process.platform, inputs.environment),
+    inputs.run ?? runBoundedQuery,
     {
       timeout: inputs.timeoutMs ?? PROCESS_LISTING_TIMEOUT_MS,
       maxBuffer: PROCESS_LISTING_MAX_BYTES,

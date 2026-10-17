@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { win32 } from 'node:path'
-import { promisify } from 'node:util'
 
 import {
   LINUX_STAT_START_TIME_INDEX,
@@ -16,15 +13,15 @@ import {
   processStartFormHere,
   type ProcessStartFormInputs,
 } from './processStartFormHere'
-
-/** What a start query is run with: its bounds, no console window on Windows, and for `ps` the locale and time zone its answer is printed in. */
-type ProcessStartQueryOptions = {
-  timeout: number
-  maxBuffer: number
-  killSignal: 'SIGKILL'
-  windowsHide: true
-  env?: Record<string, string>
-}
+import {
+  runBoundedQuery,
+  type BoundedQueryOptions,
+  type BoundedQueryRunner,
+} from './runBoundedQuery'
+import {
+  windowsPowerShellPath,
+  type SystemRootEnvironment,
+} from './windowsPowerShellPath'
 
 /** This process's own start as {@link readProcessStart} keeps it: the read that is under way, and the last one that ended with the clock's time at its end. */
 type OwnProcessStart = {
@@ -36,12 +33,8 @@ type OwnProcessStart = {
 export type ProcessStartInputs = ProcessStartFormInputs & {
   /** Reads `/proc/<pid>/stat` as text (Linux). */
   readFile?: (path: string) => Promise<string>
-  /** Runs `ps` (macOS) or PowerShell (Windows) without a shell and answers what it printed; it rejects when the query fails, runs too long or prints too much. */
-  run?: (
-    file: string,
-    queryArguments: string[],
-    options: ProcessStartQueryOptions,
-  ) => Promise<{ stdout: string }>
+  /** Runs `ps` (macOS) or PowerShell (Windows) without a shell and answers what it printed; it rejects when the query fails, runs too long or prints too much. {@link runBoundedQuery} unless a test names its own. */
+  run?: BoundedQueryRunner
   /** The starts one sweep has read so far, by process id; the caller owns it and drops it with its sweep. A kept start is answered only when it equals `expectedStart`. */
   cache?: Map<number, Promise<string | undefined>>
   /** The start a record names for this process id, which a start kept in `cache` may confirm. */
@@ -52,18 +45,13 @@ export type ProcessStartInputs = ProcessStartFormInputs & {
   now?: () => number
   /** How long one start query may run before it is ended (milliseconds); {@link PROCESS_START_QUERY_TIMEOUT_MS} unless a caller names its own, as a test does that waits for a real PowerShell that starts cold. */
   queryTimeoutMs?: number
-  /** The environment the Windows system root is read from (`SystemRoot`), under which PowerShell is started by its full path; `process.env` unless a test names its own. */
-  environment?: { SystemRoot?: string }
+  /** The environment the Windows system root is read from (`SystemRoot`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
+  environment?: SystemRootEnvironment
 }
 
 /** A reader of a process's start as the storage judgements take one: {@link readProcessStart}, one that adds its caller's cache, or a test's own. */
 export type ProcessStartReader = typeof readProcessStart
 
-/** Where Windows PowerShell lies under the Windows system root, and its bare name, by which it is started only where that root is unknown. */
-const WINDOWS_POWERSHELL = {
-  underSystemRoot: ['System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'],
-  bareName: 'powershell.exe',
-}
 /** One line of printable ASCII of at most {@link PROCESS_START_PS_TEXT_MAX_LENGTH} characters, as `ps -o lstart=` prints a start in the C locale. */
 const PS_START_LINE = new RegExp(
   `^[\\x20-\\x7e]{1,${PROCESS_START_PS_TEXT_MAX_LENGTH}}$`,
@@ -86,42 +74,13 @@ const ownProcessStart: OwnProcessStart = {}
  */
 function queryBoundsOf(
   inputs: Pick<ProcessStartInputs, 'queryTimeoutMs'>,
-): ProcessStartQueryOptions {
+): BoundedQueryOptions {
   return {
     timeout: inputs.queryTimeoutMs ?? PROCESS_START_QUERY_TIMEOUT_MS,
     maxBuffer: PROCESS_START_QUERY_MAX_BYTES,
     killSignal: 'SIGKILL',
     windowsHide: true,
   }
-}
-
-/**
- * Names the program the Windows query starts, by its full path, so that no `powershell.exe` in the process's current directory or earlier in the search path is started in its place; called by {@link windowsStartOf}.
- * Windows PowerShell lies at `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`. A bare name is looked up in the current directory first and then in the search path.
- * @param environment - Where the system root is read from; `process.env`, whose names Windows reads without regard to case, unless a test names its own.
- * @returns The full path under `SystemRoot`; the bare name `powershell.exe` where that variable is absent, empty or no absolute Windows path, since a path that is not absolute would again be looked up from the current directory.
- * @example
- * windowsPowerShellPath({ SystemRoot: 'C:\\Windows' }) // => 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
- * windowsPowerShellPath({})                            // => 'powershell.exe'
- */
-function windowsPowerShellPath(
-  environment: NonNullable<ProcessStartInputs['environment']> = process.env,
-): string {
-  const systemRoot = environment.SystemRoot
-  return systemRoot !== undefined && win32.isAbsolute(systemRoot)
-    ? win32.join(systemRoot, ...WINDOWS_POWERSHELL.underSystemRoot)
-    : WINDOWS_POWERSHELL.bareName
-}
-
-/** Runs one start query without a shell and closes its input, which neither query reads and which, left open, can keep PowerShell waiting. @example await runQuery('/bin/ps', ['-o', 'lstart=', '-p', '4242'], queryBoundsOf({})) // => { stdout: 'Mon Oct  5 09:12:33 2026\n', stderr: '' } */
-const runQuery: NonNullable<ProcessStartInputs['run']> = (
-  file,
-  queryArguments,
-  options,
-) => {
-  const query = promisify(execFile)(file, queryArguments, options)
-  query.child.stdin?.end()
-  return query
 }
 
 /** Reads a file as text; the file read of {@link linuxStartOf} unless a test names its own. @example await readText('/proc/4242/stat') // => '4242 (node) S 1 …' */
@@ -192,7 +151,7 @@ async function macStartOf(
   pid: number,
   inputs: ProcessStartInputs,
 ): Promise<string | undefined> {
-  const { stdout } = await (inputs.run ?? runQuery)(
+  const { stdout } = await (inputs.run ?? runBoundedQuery)(
     '/bin/ps',
     ['-o', 'lstart=', '-p', `${pid}`],
     { ...queryBoundsOf(inputs), env: { LC_ALL: 'C', TZ: 'UTC' } },
@@ -217,7 +176,7 @@ async function windowsStartOf(
   pid: number,
   inputs: ProcessStartInputs,
 ): Promise<string | undefined> {
-  const { stdout } = await (inputs.run ?? runQuery)(
+  const { stdout } = await (inputs.run ?? runBoundedQuery)(
     windowsPowerShellPath(inputs.environment),
     [
       '-NoProfile',
