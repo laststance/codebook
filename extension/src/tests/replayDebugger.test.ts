@@ -16,6 +16,12 @@ import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { POLL_INTERVAL_MS } from '../runtimeSupport/constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import {
+  REPLAY_MODEL_SELECTION_SCENARIO,
+  selectionsThroughScenario,
+  type ReplayModelSelectionDriver,
+} from './utils/replayModelSelectionScenario'
+
 const firstSnapshot: ReplayDebugSnapshot = {
   version: 1,
   frames: [{ name: 'LoginButton', line: 90, column: 5, scopes: [] }],
@@ -425,6 +431,54 @@ test('the frames of one recorded stop ask the host for its commands once and sel
           'workbench.action.debug.focusProcess',
         ],
       },
+    )
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the one rule of the native model selection that the real historical debugger and the workspace harness's fake share (F6): the real owner is driven through the scenario table the fake is held to (REPLAY_MODEL_SELECTION_SCENARIO: the same selection again, another label, another snapshot, an invalidation), so a change of the real rule fails this table, and the workspace tests that rest on the fake's reveal of the captured source (row 721) cannot pass on a rule the real owner no longer has; fails_when=the real owner selects the model again for the same selection, or not for a new label, a new snapshot or after an invalidation; why_new=TR8, Cycle 0046 repeat testing review (N8's fidelity test checked only the fake); seam=the editor's command port, which counts selections and lets the client load the values, and the native client's threads and stackTrace requests after each presentation
+test('the real historical debugger follows the model-selection scenario the workspace harness’s fake is held to', async () => {
+  // Arrange: a client that fetches the stack after each presentation and loads the values when the model is selected; two recorded stops.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  let selections = 0
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async () => {
+      selections += 1
+      fixture.inspect()
+      return undefined
+    },
+  }
+  const snapshots = {
+    first: inspectedSnapshot,
+    second: structuredClone(inspectedSnapshot),
+  }
+  const driver: ReplayModelSelectionDriver = {
+    present: async (stop, label) => {
+      const presenting = fixture.owner.present(
+        snapshots[stop],
+        label,
+        new AbortController().signal,
+      )
+      // The owned session starts with the first presentation; later ones find it started.
+      await fixture.started
+      await flushNative()
+      const thread = fixture.request('threads').body.threads[0]
+      fixture.request('stackTrace', { threadId: thread.id })
+      await presenting
+    },
+    invalidate: () => fixture.owner.invalidate(),
+    selections: () => selections,
+  }
+  try {
+    // Act
+    const counted = await selectionsThroughScenario(driver)
+
+    // Assert
+    assert.deepEqual(
+      counted,
+      REPLAY_MODEL_SELECTION_SCENARIO.map((row) => row.selectionsAfter),
     )
   } finally {
     await fixture.owner.dispose()

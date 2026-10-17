@@ -31,6 +31,11 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import {
+  REPLAY_MODEL_SELECTION_SCENARIO,
+  selectionsThroughScenario,
+  type ReplayModelSelectionDriver,
+} from './utils/replayModelSelectionScenario'
 
 // Regression: 558 — replacing the historical source cannot orphan its native keyboard.
 // Found by /qa on 2026-10-15.
@@ -885,9 +890,9 @@ test('the Run and Debug hint stays while Play advances through the same recorded
   }
 })
 
-// Value: protects=the fidelity of the workspace harness's historical debugger to the real owner's model selection (F6, ReplayDebugger.selectNativeInspectionModel): a stop presented again with the same snapshot, label and source runs no second focusProcess, while the next stop, and the same stop after an invalidation emptied the session, run it again, so the workspace tests that rest on focusProcess's reveal of the captured source (row 721) see what the real owner does; fails_when=the fake runs focusProcess at every presentation with values, so a workspace test passes on a reveal the real owner no longer makes; why_new=N8, Cycle 0046 (the harness kept the rule from before F6); seam=recordedReaderHarness, the reader's openRecording and a seek to the recorded stop (its first presentation), the fake owner's present and invalidate with that presentation's arguments, and the fake editor's command log
-test('the workspace harness’s historical debugger selects a recorded stop’s native model once per selection, as the real owner does', async () => {
-  // Arrange: the learner opened a saved recording and sought its stop, which has recorded values; that stop's presentation selected the native model.
+// Value: protects=the fidelity of the workspace harness's historical debugger to the real owner's model selection (F6): the fake is driven through the scenario table the real owner is held to in replayDebugger.test (REPLAY_MODEL_SELECTION_SCENARIO: the same selection again, another label, another snapshot, an invalidation), so the workspace tests that rest on focusProcess's reveal of the captured source (row 721) see what the real owner does; fails_when=the fake runs focusProcess at every presentation with values, or departs from the table in another step; why_new=N8, Cycle 0046 (the harness kept the rule from before F6); TR8 (the expectations are one table for the fake and the real owner); seam=recordedReaderHarness, the reader's openRecording and a seek to the recorded stop, the fake owner's present and invalidate, and the fake editor's command log
+test('the workspace harness’s historical debugger follows the model-selection scenario the real owner is held to', async () => {
+  // Arrange: the learner opened a saved recording and sought its stop, which has recorded values; that stop is the first of the scenario's two, and a copy of it the second.
   const harness = await recordedReaderHarness(true, true)
   try {
     await harness.reader.openRecording(harness.studyId)
@@ -903,46 +908,36 @@ test('the workspace harness’s historical debugger selects a recorded stop’s 
     const shown = harness.historicalDebugPresentations.findLast(
       (presentation) => presentation.snapshot,
     )!
+    const snapshots = {
+      first: shown.snapshot,
+      second: structuredClone(shown.snapshot),
+    }
     /** Counts the model selections the fake editor ran so far. */
     const modelSelections = (): number =>
       harness.commands.filter(
         (command) => command === 'workbench.action.debug.focusProcess',
       ).length
-    const atTheStop = modelSelections()
+    const selectionsBefore = modelSelections()
+    const driver: ReplayModelSelectionDriver = {
+      present: async (stop, label) => {
+        await debuggerView.present(
+          snapshots[stop],
+          label,
+          new AbortController().signal,
+          shown.sourceDocument,
+        )
+      },
+      invalidate: () => debuggerView.invalidate(),
+      selections: () => modelSelections() - selectionsBefore,
+    }
 
-    // Act: the same stop again, the next stop, and the next stop again after an invalidation.
-    await debuggerView.present(
-      shown.snapshot,
-      shown.label,
-      new AbortController().signal,
-      shown.sourceDocument,
-    )
-    const afterTheSameStop = modelSelections()
-    await debuggerView.present(
-      shown.snapshot,
-      'Recorded pause · 2.50 s',
-      new AbortController().signal,
-      shown.sourceDocument,
-    )
-    const afterTheNextStop = modelSelections()
-    debuggerView.invalidate()
-    await debuggerView.present(
-      shown.snapshot,
-      'Recorded pause · 2.50 s',
-      new AbortController().signal,
-      shown.sourceDocument,
-    )
-    const afterAnInvalidation = modelSelections()
+    // Act
+    const counted = await selectionsThroughScenario(driver)
 
     // Assert
     assert.deepEqual(
-      { atTheStop, afterTheSameStop, afterTheNextStop, afterAnInvalidation },
-      {
-        atTheStop: 1,
-        afterTheSameStop: 1,
-        afterTheNextStop: 2,
-        afterAnInvalidation: 3,
-      },
+      counted,
+      REPLAY_MODEL_SELECTION_SCENARIO.map((row) => row.selectionsAfter),
     )
   } finally {
     await harness.close()
