@@ -2075,6 +2075,24 @@ test('a served page of any age draws the focus ring of a chapter link and of an 
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
 })
 
+// Value: protects=the learner who moves through the "On this page" outline of a served page of any age with the keyboard; fails_when=the page script stops giving an older site's outline links room at their sides, so the focus ring inside the link covers the first letter of a title (0.2.29.0 printed the links without side padding), or gives the room without taking the left side back, so the titles move, or gives the outline that scrolls where the rail is a row no room at its left; why_new=Cycle 0046 /ship finding F5 (the measured case runs on a page in the shell of 0.2.29.0 too); seam=none
+test('a served page of any age gives an outline link 5 px of room at each side for its focus ring and takes the room at the left back, and gives the outline that scrolls where the rail is a row the same room', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.outline a{padding-left:5px;padding-right:5px;margin-left:-5px}',
+    '@media(min-width:701px) and (max-width:1000px){.right-rail nav{flex-basis:calc(10rem + 5px);min-width:calc(10rem + 5px);padding-left:5px;margin-left:-5px}}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
 // Value: protects=keyboard focus in the article and the composer of a served page of any age, which scroll and cut whatever lies outside them; fails_when=the page script stops giving an older site's article and composer their room for the focus ring, so the ring of the question field or of Ask Codebook is cut at the side, or gives the room without taking it back, so the reading column of an older site moves, or leaves the composer of the single column with the wide layout's height limit and margin; why_new=Cycle 0046 row 67; seam=none
 test('a served page of any age keeps room for the focus ring at the sides of the article and around the composer and takes the room back, and leaves the composer of the single column its own bottom padding', async () => {
   // Arrange

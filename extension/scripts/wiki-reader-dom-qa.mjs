@@ -1463,6 +1463,72 @@ async function check(page, options, collected) {
       },
     )
   }
+  /** Reads where the focus ring of a link lies against its text: the room between the ring's inner edge and the text on the left and on the right (the ring of an outline offset inwards lies inside the link's box), and where the text starts against the list the link stands in, so a ring that clears the text by moving it shows. @example await ringAgainstText('.outline a') // => { leftRoomPx: 3, rightRoomPx: 120.4, textFromListPx: 0, … } */
+  const ringAgainstText = (selector) =>
+    page.evaluate((focused) => {
+      const tenths = (pixels) => Math.round(pixels * 10) / 10
+      const element = document.querySelector(focused)
+      const offsetPx = Number.parseFloat(
+        getComputedStyle(element).outlineOffset,
+      )
+      const box = element.getBoundingClientRect()
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      const text = range.getBoundingClientRect()
+      return {
+        label: element.textContent,
+        leftRoomPx: tenths(text.left - (box.left - offsetPx)),
+        rightRoomPx: tenths(box.right + offsetPx - text.right),
+        textFromListPx: tenths(
+          text.left - element.closest('ul').getBoundingClientRect().left,
+        ),
+      }
+    }, selector)
+  const measureRingsAgainstTheirText = async () => {
+    // Arrange: the page of the pass at the two sizes of the design review, 1440 x 900 (three columns) and 960 x 800 (the rail a row, the outline its own scroller). Act: the keyboard focuses an outline link, the outline link whose title cannot break, a chapter link and the chapter link whose title cannot break.
+    const measured = {}
+    for (const [width, height] of [
+      [1440, 900],
+      [960, 800],
+    ]) {
+      await openWiki(width, height)
+      for (const [name, selector, listStartPx] of [
+        ['outline', '.outline li:nth-child(1) a', 0],
+        ['unbreakableOutline', '.outline li:nth-child(2) a', 0],
+        ['chapter', '.chapters a[href$="chapter-1.html"]', 8],
+        ['unbreakableChapter', '.chapters a[href$="chapter-6.html"]', 8],
+      ]) {
+        await focusWithKeyboard(selector)
+        measured[`${name}At${width}`] = {
+          listStartPx,
+          ...(await focusRing(selector)),
+          ...(await ringAgainstText(selector)),
+        }
+      }
+      await page.screenshot({
+        path: `${options.output}/wiki-ring-against-text-${width}.png`,
+      })
+    }
+    // Assert
+    record(
+      'in the Wiki reader at 1440 x 900 and 960 x 800 the keyboard focus ring of an outline link and of a chapter link, also of one whose title cannot break, leaves at least 2 px between the ring and the text on both sides, the text starts where it starts without the ring, and the ring lies inside the part that scrolls',
+      measured,
+      Object.fromEntries(
+        Object.entries(measured).flatMap(([name, link]) => [
+          [`${name}IsFocusedByKeyboard`, link.isFocusedByKeyboard],
+          [`${name}RingClearsTheTextAtTheLeft`, link.leftRoomPx >= 2],
+          [`${name}RingClearsTheTextAtTheRight`, link.rightRoomPx >= 2],
+          // Half a pixel of rounding between the list and the text.
+          [
+            `${name}TextStartsWhereItStarts`,
+            Math.abs(link.textFromListPx - link.listStartPx) <= 0.5,
+          ],
+          [`${name}RingLeftIsInside`, link.leftInsideClipPx >= 0],
+          [`${name}RingRightIsInside`, link.rightInsideClipPx >= 0],
+        ]),
+      ),
+    )
+  }
   const measureLongTargetInRow = async () => {
     // Arrange: a page whose rail entry names a path of about 200 characters, at 960 x 600, with no update result in the panel.
     await openWiki(960, 600, options.longSourcePage)
@@ -1928,6 +1994,7 @@ async function check(page, options, collected) {
     measureOutlineRingInRow,
     measureSingleColumn,
     readEntryFromAccessibilityTree,
+    measureRingsAgainstTheirText,
   ]
   for (const step of stepsOfAPage) await step()
   // The same steps once more on the same content in the shell of 0.2.29.0: there the article, the composer, the rail and the entry get their rules from the sheet the reader injects, laid over the stylesheet of that build.

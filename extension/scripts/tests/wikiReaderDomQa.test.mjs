@@ -35,6 +35,7 @@ test('the Wiki reader DOM check measures the open control and its states, the ro
     'in the Wiki reader at 960 x 600 the page of a conflict of twelve files shows its whole sentence and its output line in a rail of at most 45vh, and the list of the files, opened by a press, scrolls inside 84 px (14vh) and adds no more than that to the rail',
     'in the Wiki reader at 960 px the keyboard focus ring of the summary of an open update detail lies inside the detail that scrolls',
     'in the Wiki reader at 960 px the keyboard focus ring of an outline link lies inside the outline that scrolls',
+    'in the Wiki reader at 1440 x 900 and 960 x 800 the keyboard focus ring of an outline link and of a chapter link, also of one whose title cannot break, leaves at least 2 px between the ring and the text on both sides, the text starts where it starts without the ring, and the ring lies inside the part that scrolls',
     'in the Wiki reader at 960 x 600 the rail entry of a source whose path is about 200 characters long shows eight lines of the path at rest, so the rail stays at most 45vh high, describes its link by the whole path, and shows the whole path while the pointer rests on it or its link has the keyboard focus',
     'Chrome’s accessibility tree gives the open control of the right rail as a link named Open in VS Code and described by the file and line it opens as written, extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts:95, with no space where the shown path may wrap, and the entry gives assistive technology no other text than the label and that file and line',
     'Chrome’s accessibility tree gives the open control of a page whose first source is package.json line 31, as this publisher prints it, as a link named Open in VS Code and described by package.json:31 with no space before the colon, and the entry gives assistive technology no other text than the label and that file and line',
@@ -114,6 +115,7 @@ test('the Wiki reader DOM check runs the steps of a page a second time on the sa
     'measureOutlineRingInRow',
     'measureSingleColumn',
     'readEntryFromAccessibilityTree',
+    'measureRingsAgainstTheirText',
   ])
   assert.equal(runs?.length, 2)
   assert.equal(namedInTheSecondRun, ' (on a page in the shell of 0.2.29.0)')

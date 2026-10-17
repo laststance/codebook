@@ -681,6 +681,30 @@ test('the published page draws the focus ring of a chapter link and of an outlin
     assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
 })
 
+// Value: protects=the learner who moves through the "On this page" outline with the keyboard; fails_when=an outline link has no room at its sides again, so its focus ring, drawn inside the link in the link colour, covers the first letter of its title and the last letter of a long one, or the room moves the titles, or the outline where it scrolls by itself (701 to 1000 px) has no room for the ring at its left or narrows its titles; why_new=Cycle 0046 /ship finding F5 (design review at 1440 x 900 and 960 x 800; the measured case is in the Wiki reader DOM check); seam=none
+test('the published page gives an outline link 5 px of room at each side for its focus ring and takes the room at the left back, and the outline that scrolls where the rail is a row keeps 5 px of room at its left and its width', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const rowRules =
+    /@media\(max-width:1000px\)\{(.*)\}\n@media\(max-width:700px\)/.exec(
+      shell,
+    )?.[1]
+
+  // Assert
+  assert.ok(
+    shell.includes(
+      '.outline a{display:block;padding:.3rem 0;text-decoration:none;overflow-wrap:anywhere}.outline a{padding-inline:5px;margin-left:-5px}',
+    ),
+    'the outline link lacks its room for the focus ring',
+  )
+  assert.ok(
+    rowRules?.includes(
+      '.right-rail nav{flex-basis:calc(10rem + 5px);min-width:calc(10rem + 5px);padding-left:5px;margin-left:-5px}',
+    ),
+    'the outline that scrolls lacks its room for the focus ring',
+  )
+})
+
 // Value: protects=the chapter list and the outline of the Wiki reader where they are columns that scroll; fails_when=a chapter title or an outline entry that cannot break (an identifier) is wider than its column again, so the column gets a sideways scrollbar; why_new=Cycle 0046 package SPB, found while measuring row 28 at 1200 px (the measured case is in the Wiki reader DOM check); seam=none
 test('a chapter title and an outline entry that cannot break wrap inside their column', async () => {
   // Arrange / Act
