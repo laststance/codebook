@@ -523,14 +523,8 @@ const selectionOwnsForeignReturn = (): void => {}
 /** Why the reader gave a chat its keyboard back, which names the sentence the learner is told once ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}, row 648). */
 type ChatKeyboardReturnCause = keyof typeof CHAT_KEYBOARD_RETURNED_MESSAGES
 
-/**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, the `chatReturned:` keys are one key per entry of {@link CHAT_KEYBOARD_RETURNED_MESSAGES}, named by its cause (its `pause` entry is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}), the `agentSelectionFailed:` keys are one key per entry of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}, named by its place, `'agentSelectionApplication'` is either sentence of {@link AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES}, whichever came first.
- * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
- * @example
- * if (keyboardNoticesTold.has('close')) return
- * keyboardNoticesTold.add('close')
- */
-const keyboardNoticesTold = new Set<
+/** The key of one keyboard notice in {@link keyboardNoticesTold}. */
+type KeyboardNotice =
   | 'close'
   | 'pause'
   | 'chosen'
@@ -543,7 +537,35 @@ const keyboardNoticesTold = new Set<
   | `chatReturned:${ChatKeyboardReturnCause}`
   | 'agentSelectionApplication'
   | `agentSelectionFailed:${keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}`
->()
+
+/**
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}, `'preparation'` is {@link APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE} or {@link APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE}, whichever came first, `'agentSelection'` is {@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, `'summaryBehindChat'` is {@link LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE}, `'learnerReturn'` is {@link LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE}, `'readEnded'` is {@link READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE}, the `chatReturned:` keys are one key per entry of {@link CHAT_KEYBOARD_RETURNED_MESSAGES}, named by its cause (its `pause` entry is {@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}), the `agentSelectionFailed:` keys are one key per entry of {@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}, named by its place, `'agentSelectionApplication'` is either sentence of {@link AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES}, whichever came first.
+ * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
+ * @example
+ * tellKeyboardNoticeOnce('close', STUDY_CLOSE_KEYBOARD_MESSAGE) // told now; a second call tells nothing
+ */
+const keyboardNoticesTold = new Set<KeyboardNotice>()
+
+/**
+ * Tells the learner one keyboard notice at most once in the editor session ({@link keyboardNoticesTold}); the one body of every tell-once keyboard notice of {@link StudyWorkspace}, called by its `tell…` methods and by {@link StudyWorkspace.endReadForAdmission} (Cycle 0046 S1).
+ * @param notice - The notice's key.
+ * @param sentence - The sentence shown when the notice was not told yet in this session.
+ * @returns
+ * - `true` when the notice was told now.
+ * - `false` when it was told earlier in the session; nothing is shown then.
+ * @example
+ * tellKeyboardNoticeOnce('close', STUDY_CLOSE_KEYBOARD_MESSAGE) // => true, and the sentence is shown
+ * tellKeyboardNoticeOnce('close', STUDY_CLOSE_KEYBOARD_MESSAGE) // => false, and nothing is shown
+ */
+function tellKeyboardNoticeOnce(
+  notice: KeyboardNotice,
+  sentence: string,
+): boolean {
+  if (keyboardNoticesTold.has(notice)) return false
+  keyboardNoticesTold.add(notice)
+  void showPlainNotice(vscode.window, 'information', sentence)
+  return true
+}
 
 /**
  * A study archive a Study reader captured and could not save, with the run it was captured from and the checkpoint it answers.
@@ -3210,12 +3232,8 @@ export class StudyWorkspace {
    * @example this.tellChatKeyboardReturned('leftoverProof') // "Codebook gave the keyboard back to the chat after it closed the editor groups an earlier window had left, …"
    */
   private tellChatKeyboardReturned(cause: ChatKeyboardReturnCause): void {
-    const notice: `chatReturned:${ChatKeyboardReturnCause}` = `chatReturned:${cause}`
-    if (keyboardNoticesTold.has(notice)) return
-    keyboardNoticesTold.add(notice)
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    tellKeyboardNoticeOnce(
+      `chatReturned:${cause}`,
       CHAT_KEYBOARD_RETURNED_MESSAGES[cause],
     )
   }
@@ -4732,13 +4750,7 @@ export class StudyWorkspace {
     const shownBars = await this.showSideBarsHiddenByRead()
     // The learner's own request comes from the pane being read, which gets the keyboard back.
     if (!shownBars || requester !== 'agent' || knowsKeyboardPlace) return
-    if (keyboardNoticesTold.has('readEnded')) return
-    keyboardNoticesTold.add('readEnded')
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
-    )
+    tellKeyboardNoticeOnce('readEnded', READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE)
   }
 
   /**
@@ -8616,11 +8628,8 @@ export class StudyWorkspace {
    * @example this.tellLearnersReturnKeyboard()
    */
   private tellLearnersReturnKeyboard(): void {
-    if (keyboardNoticesTold.has('learnerReturn')) return
-    keyboardNoticesTold.add('learnerReturn')
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    tellKeyboardNoticeOnce(
+      'learnerReturn',
       LEARNER_RETURN_CLOSED_STUDY_PANE_MESSAGE,
     )
   }
@@ -9245,13 +9254,7 @@ export class StudyWorkspace {
    * @example this.tellKeyboardAfterRunClosedPane()
    */
   private tellKeyboardAfterRunClosedPane(): void {
-    if (keyboardNoticesTold.has('runEnd')) return
-    keyboardNoticesTold.add('runEnd')
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      RUN_CLOSED_PANE_KEYBOARD_MESSAGE,
-    )
+    tellKeyboardNoticeOnce('runEnd', RUN_CLOSED_PANE_KEYBOARD_MESSAGE)
   }
 
   /**
@@ -9725,13 +9728,7 @@ export class StudyWorkspace {
    * @example this.tellKeyboardAfterClose()
    */
   private tellKeyboardAfterClose(): void {
-    if (keyboardNoticesTold.has('close')) return
-    keyboardNoticesTold.add('close')
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      STUDY_CLOSE_KEYBOARD_MESSAGE,
-    )
+    tellKeyboardNoticeOnce('close', STUDY_CLOSE_KEYBOARD_MESSAGE)
   }
 
   /**
@@ -12954,13 +12951,7 @@ export class StudyWorkspace {
    * @example this.tellPaneTookChosenEditor()
    */
   private tellPaneTookChosenEditor(): void {
-    if (keyboardNoticesTold.has('chosen')) return
-    keyboardNoticesTold.add('chosen')
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
-    )
+    tellKeyboardNoticeOnce('chosen', PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE)
   }
 
   /**
@@ -12970,13 +12961,7 @@ export class StudyWorkspace {
    * @example if (this.debuggerGaveEditorKeyboard()) this.tellPaneTookPausedFocus()
    */
   private tellPaneTookPausedFocus(): void {
-    if (keyboardNoticesTold.has('pause')) return
-    keyboardNoticesTold.add('pause')
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
-    )
+    tellKeyboardNoticeOnce('pause', SOURCE_TOOK_PAUSED_FOCUS_MESSAGE)
   }
 
   /**
@@ -13774,19 +13759,14 @@ export class StudyWorkspace {
    * @example this.tellPreparedApplicationKeyboard(true) // VS Code, the learner's file was the active editor of the second group
    */
   private tellPreparedApplicationKeyboard(tookKeyboard: boolean): void {
-    // Told once already: an agent's selection that made this preparation says it in its own words (row 640).
-    if (keyboardNoticesTold.has('preparation')) {
-      this.untoldPreparationKeyboard = tookKeyboard
-      return
-    }
-    keyboardNoticesTold.add('preparation')
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    const told = tellKeyboardNoticeOnce(
+      'preparation',
       tookKeyboard
         ? APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE
         : APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE,
     )
+    // Told once already: an agent's selection that made this preparation says it in its own words (row 640).
+    if (!told) this.untoldPreparationKeyboard = tookKeyboard
   }
 
   /**
@@ -13797,16 +13777,9 @@ export class StudyWorkspace {
   private tellUntoldSelectionKeyboard(requester: PresentationRequester): void {
     const untold = this.untoldPreparationKeyboard
     this.untoldPreparationKeyboard = undefined
-    if (
-      requester !== 'agent' ||
-      untold === undefined ||
-      keyboardNoticesTold.has('agentSelectionApplication')
-    )
-      return
-    keyboardNoticesTold.add('agentSelectionApplication')
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    if (requester !== 'agent' || untold === undefined) return
+    tellKeyboardNoticeOnce(
+      'agentSelectionApplication',
       AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES[
         untold ? 'took' : 'mayHave'
       ],
@@ -14107,12 +14080,8 @@ export class StudyWorkspace {
   private tellFailedSelectionPaneKeyboard(
     pane: keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
   ): void {
-    const notice: `agentSelectionFailed:${typeof pane}` = `agentSelectionFailed:${pane}`
-    if (keyboardNoticesTold.has(notice)) return
-    keyboardNoticesTold.add(notice)
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    tellKeyboardNoticeOnce(
+      `agentSelectionFailed:${pane}`,
       AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES[pane],
     )
   }
@@ -14139,11 +14108,8 @@ export class StudyWorkspace {
    * @example this.tellAgentSelectionKeyboard()
    */
   private tellAgentSelectionKeyboard(): void {
-    if (keyboardNoticesTold.has('agentSelection')) return
-    keyboardNoticesTold.add('agentSelection')
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    tellKeyboardNoticeOnce(
+      'agentSelection',
       AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
     )
   }
@@ -17110,11 +17076,8 @@ export class StudyWorkspace {
    * @example this.tellSummaryKeptBehindChat() // after an agent's codebook_playback open in VS Code
    */
   private tellSummaryKeptBehindChat(): void {
-    if (keyboardNoticesTold.has('summaryBehindChat')) return
-    keyboardNoticesTold.add('summaryBehindChat')
-    void showPlainNotice(
-      vscode.window,
-      'information',
+    tellKeyboardNoticeOnce(
+      'summaryBehindChat',
       LEARNING_SUMMARY_KEPT_BEHIND_CHAT_MESSAGE,
     )
   }
