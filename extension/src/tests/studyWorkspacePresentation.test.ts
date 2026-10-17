@@ -5645,6 +5645,38 @@ test('in Cursor beside its chat part, an agent’s restore of the live arrangeme
   }
 })
 
+// Value: protects=the learner's newer choice when, during an agent's restore of the live arrangement made from Cursor's chat tab, the learner clicks into the captured source that the measurement's borrow showed with the keyboard: the click moves the caret during the layout read right after the borrow, the restore is refused with "The captured source content or selection changed during scope measurement; the newer learner focus was preserved.", the keyboard stays in the source and the chat gets nothing back, as for the first group's file (the primary branch's latch); fails_when=the borrow through the captured source latches neither the source's selections nor its document version, so the restore is confirmed and Focus Agent takes the keyboard from the place the learner chose; why_new=Cycle 0046 row 740 (found beside rows 738 and 739); seam=cursorConfirmedLiveArrangementFromChat, changeAfterNextSourceDisplay with holdNextCommand on the layout read after the borrow, changeFocusedSourceSelection with workInActiveTextEditor, restoredLiveArrangementOutcome
+test('in Cursor beside its chat part, an agent’s restore of the live arrangement from the chat tab refused for the learner’s click in the captured source during its layout read keeps the keyboard there, gives the chat nothing and tells nothing', async () => {
+  // Arrange: as in row 739's test; during the layout read right after the measurement's show of the captured source the learner clicks into that source on line 12.
+  const { harness, chat } = await cursorConfirmedLiveArrangementFromChat()
+  try {
+    harness.changeAfterNextSourceDisplay(() => {
+      const readAfterBorrow = harness.holdNextCommand('vscode.getEditorLayout')
+      void readAfterBorrow.started.then(() => {
+        harness.changeFocusedSourceSelection(12)
+        harness.workInActiveTextEditor('mouse')
+        readAfterBorrow.release()
+      })
+    })
+
+    // Act
+    const outcome = await restoredLiveArrangementOutcome(harness, chat)
+
+    // Assert: refused for the learner's click; no Focus Agent ran, the chat has no keyboard, and nothing was told.
+    assert.deepEqual(outcome, {
+      layoutConfirmed: undefined,
+      refusal:
+        'Error: The captured source content or selection changed during scope measurement; the newer learner focus was preserved.',
+      shownWithKeyboard: ['Captured-theme.ts@2'],
+      keyboardCommands: [],
+      chatHasKeyboard: false,
+      messages: [],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application pane's keyboard and the truth of what the learner is told when an agent's Study selection beside VS Code's floating window is refused right after its measurement borrowed the main editor's first group, while the Application pane had the keyboard (the learner clicked its tab after typing in the floating window's file, which VS Code goes on reporting as the active text editor; the pane's document took the keyboard with its frame): the Application pane gets its keyboard back and the sentence names the Application pane, whose page reports no keyboard, so an agent's selection always tells it; fails_when=the refusal's record does not ask the Application pane's active flag first and counts the reported text editor as a file with the keyboard, so "the file you had open has the keyboard again" is told while the Application pane has it; why_new=Cycle 0046 row 726's gap (root, 2026-10-17: the `application` branch had no test); seam=useNativeLayout, the learner's Living book (the saved layout that puts the Application pane in the second group), addFloatingEditorWindow, focusWebviewTabKeepingTextEditorReport on the Application pane's tab with its document taking the keyboard, holdNextCommand on workbench.action.focusFirstEditorGroup with failNextCommand on the layout read after it, the service's selectPresentation, the command log, focusedPanel, keyboardOnBody and the information messages
 test('beside VS Code’s floating window, an agent’s Study selection refused right after its borrow while the Application pane had the keyboard gives the Application pane its keyboard back and names that pane, not a file', async () => {
   // Arrange: the learner reads in the Living book, whose Application pane stands in the second group; the learner typed in notes.ts of the floating window, then clicked the Application pane's tab; VS Code still reports notes.ts. The layout read after the borrow will fail.

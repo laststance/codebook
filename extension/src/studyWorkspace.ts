@@ -17980,8 +17980,6 @@ export class StudyWorkspace {
         throw new Error(
           'The primary text editor could not be retained safely before scope measurement. Focus it explicitly and try again.',
         )
-      const primaryVersion = primaryEditor?.document.version,
-        primarySelections = JSON.stringify(primaryEditor?.selections)
       const useCitation = Boolean(acquireSourceFocus && !identifiableFirst),
         mainGroupCount = count
       const sourceUri = this.sourceUri?.toString(),
@@ -18013,6 +18011,10 @@ export class StudyWorkspace {
                 value.document.uri.toString() === sourceUri,
             )
           : undefined
+      // Latch the text editor the borrow focuses, the first group's file or the captured source (row 740), before its command; the learner's edit or selection in it meanwhile is newer intent.
+      const borrowedEditor = primaryEditor ?? sourceBorrow,
+        borrowedVersion = borrowedEditor?.document.version,
+        borrowedSelections = JSON.stringify(borrowedEditor?.selections)
       /** Tells that the captured source's text editor, which the measurement focused, is the active text editor. */
       const sourceEditorReported = (): boolean => {
         const focused = vscode.window.activeTextEditor
@@ -18089,8 +18091,9 @@ export class StudyWorkspace {
                     ? focused?.document.uri.toString() ===
                         primaryEditor.document.uri.toString() &&
                         focused.viewColumn === vscode.ViewColumn.One &&
-                        focused.document.version === primaryVersion &&
-                        JSON.stringify(focused.selections) === primarySelections
+                        focused.document.version === borrowedVersion &&
+                        JSON.stringify(focused.selections) ===
+                          borrowedSelections
                     : firstFocused()
                 },
                 // Cursor reports the first group's text editor and still names the group it named before (the chat's) until its tab model is rebuilt: that is this measurement's focus too, as for the wait below (row 660).
@@ -18198,16 +18201,16 @@ export class StudyWorkspace {
       assertCurrent()
       assertFocused()
       assertAcquiredFocus()
-      // Same-file interaction is newer learner intent too; borrowed focus cannot outlive an edit or cursor selection.
+      // Same-file interaction is newer learner intent too; borrowed focus cannot outlive an edit or cursor selection, in the first group's file or in the captured source (row 740).
       if (
-        primaryEditor &&
-        (primaryEditor.document.version !== primaryVersion ||
+        borrowedEditor &&
+        (borrowedEditor.document.version !== borrowedVersion ||
           JSON.stringify(vscode.window.activeTextEditor?.selections) !==
-            primarySelections)
+            borrowedSelections)
       ) {
         this.yieldFocusToLearner()
         throw new Error(
-          'The primary editor content or selection changed during scope measurement; the newer learner focus was preserved.',
+          `${primaryEditor ? 'The primary editor' : 'The captured source'} content or selection changed during scope measurement; the newer learner focus was preserved.`,
         )
       }
       count = editorLayoutGroupCount(layout)
