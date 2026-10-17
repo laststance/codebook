@@ -38,7 +38,6 @@ import { adoptLateNameOfAcquiredGroup } from './utils/adoptLateNameOfAcquiredGro
 import { adoptOwnQuietCopyShow } from './utils/adoptOwnQuietCopyShow'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
-import { editorInputState } from './utils/editorInputState'
 import { editorTabInputKinds } from './utils/editorTabInputKinds'
 import { holdsEditorTab } from './utils/holdsEditorTab'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
@@ -102,8 +101,6 @@ interface AgentEntryKeyboardEditor {
   learnerTypesThere: boolean
   /** `'study pane'` for the Study pane's report ({@link RepositoryControls.studyPaneKeyboardColumn}); `'file'` for the active text editor. */
   place: 'file' | 'study pane'
-  /** For the Study pane: the text editor the editor still reported as active at the entry, by its document, version and selections ({@link editorInputState}), which the editor goes on reporting behind a webview (rows 659 and 671; Cycle 0046 row 729); `undefined` for a file. */
-  reportedEditorState?: string
 }
 
 interface RepositoryControls {
@@ -729,7 +726,6 @@ export class RepositoryReader {
         column: paneColumn,
         learnerTypesThere: true,
         place: 'study pane',
-        reportedEditorState: editorInputState(vscode.window.activeTextEditor),
       }
     // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
     const column = textEditorColumn(
@@ -772,11 +768,10 @@ export class RepositoryReader {
   }
 
   /**
-   * Says whether the Wiki now stands in front of the group of the text editor or the Study pane that had the keyboard when an agent's entry began, with no text editor brought to the front since; asked by {@link settleCoveredEditorKeyboard}.
-   * For the Study pane the text editor the editor still reported behind it at the entry is no such editor: it may stay reported while the Wiki covers the pane (rows 659 and 671), so the pane is decided without it (Cycle 0046 row 729).
+   * Says whether the Wiki now stands in front of the group of the text editor or the Study pane that had the keyboard when an agent's entry began, with no text editor active since; asked by {@link settleCoveredEditorKeyboard}.
    * @param panel - The Wiki the entry showed.
-   * @param keyboardEditor - That text editor's or pane's column, with the text editor reported at the entry for the pane.
-   * @returns `true` while the Wiki is that group's front tab and no text editor is active, or for the Study pane only the one reported at the entry, unchanged; `false` once the learner brought a text editor to the front, there or elsewhere, and for the Wiki in another group.
+   * @param keyboardEditor - That text editor's or pane's column.
+   * @returns `true` while the Wiki is that group's front tab and no text editor is active; `false` once the learner brought a text editor to the front, there or elsewhere, and for the Wiki in another group.
    * @example this.coversEditorColumn(panel, { column: 2, learnerTypesThere: false, place: 'file' }) // => true right after the Wiki was created in front of auth.ts
    */
   private coversEditorColumn(
@@ -784,18 +779,12 @@ export class RepositoryReader {
     keyboardEditor: AgentEntryKeyboardEditor,
   ): boolean {
     const front = vscode.window.tabGroups.all.find(
-        (group) => group.viewColumn === keyboardEditor.column,
-      )?.activeTab,
-      active = vscode.window.activeTextEditor
-    // A text editor reported since the entry is the learner's; for the Study pane the one reported at the entry is not (row 729).
-    const noTextEditorSince =
-      !active ||
-      (keyboardEditor.place === 'study pane' &&
-        editorInputState(active) === keyboardEditor.reportedEditorState)
+      (group) => group.viewColumn === keyboardEditor.column,
+    )?.activeTab
     return (
       panel.viewColumn === keyboardEditor.column &&
       this.isWikiTab(front) &&
-      noTextEditorSince
+      !vscode.window.activeTextEditor
     )
   }
 
