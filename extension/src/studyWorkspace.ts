@@ -2693,7 +2693,7 @@ export class StudyWorkspace {
         await this.focusPresentationPanel(panel, signal)
       }
     }
-    const editor = vscode.window.activeTextEditor
+    const editor = this.activeTextEditorWithKeyboard()
     if (editor) {
       const document = editor.document,
         documentVersion = document.version,
@@ -2771,6 +2771,26 @@ export class StudyWorkspace {
       )
     // Any other tab stays as it is: an agent chat, a settings page, an image the learner keeps, and a learner's own file that the editor names as the active tab while another part (the chat input) holds the keyboard, so that no text editor is active. {@link retainForeignTabFocus} gives its group the focus back after the last layout read.
     return async (): Promise<void> => {}
+  }
+
+  /**
+   * Names the text editor that has the keyboard, which is the editor's active text editor unless the Repository Wiki's tab in another group is the active tab: VS Code goes on reporting the text editor that had the keyboard when the Wiki's group became the active one, because it counts a code editor that still has the text focus at that moment as the active one (VS Code 1.140.0 `workbench.desktop.main.js` 705:2664, in `_updateState`, which `onDidActiveEditorChange` runs) before the webview's own focus reaches its frame, and afterwards updates it only on a code editor's text or widget focus (705:1683). C58 saw that report (`c58-vs-567d`: the cited source's copy in the first group named active while the Wiki's group, the second, was the active one), and the Wiki's "View recording" was refused with "The previously focused source group changed; focus was not guessed." (row 659). Asked by {@link capturePresentationFocus} before it decides where the keyboard is, and by {@link retainForeignTabFocus} for an entry the Wiki asked for.
+   * @returns The active text editor, or `undefined` while the Repository Wiki's tab is the active tab of another group than that editor's.
+   * @example this.activeTextEditorWithKeyboard() // => undefined after the learner pressed View recording in the Wiki beside the cited source's copy
+   */
+  private activeTextEditorWithKeyboard(): vscode.TextEditor | undefined {
+    const editor = vscode.window.activeTextEditor,
+      group = vscode.window.tabGroups.activeTabGroup,
+      input = group.activeTab?.input
+    // The Wiki in front of the active group has the keyboard; a text editor of another group is the editor's stale report.
+    if (
+      editor &&
+      editor.viewColumn !== group.viewColumn &&
+      input instanceof vscode.TabInputWebview &&
+      isCodebookPaneViewType(input.viewType, 'codebook.repositoryWiki')
+    )
+      return undefined
+    return editor
   }
 
   /**
@@ -2861,6 +2881,7 @@ export class StudyWorkspace {
   /**
    * Remembers the tab the editor names as active when no text editor and no Study pane has the focus, so a selection or a restore is admitted without closing or moving that tab; called by {@link admitPresentation} for every arrangement and by {@link confirmPresentationNoop}, by {@link sampleKeyboardOutsideEditors} for the record of a pause, and by {@link close} before it ends a Read. Cursor's Agent chat is such a tab of an editor group while it is shown as a tab of another editor part; and while its chat input holds the keyboard there, Cursor can name a learner's own file of the main editor as the active tab without an active text editor. Nobody can focus anything else while the agent works. While Cursor shows that chat as a pane of the secondary side bar, the editor names an active text editor beside it, as VS Code does beside its chat view, and nothing is remembered.
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
+   * @param fromWiki - `true` for an entry the Repository Wiki asked for ({@link open} with the origin `repository`: a recording or observation visit): the Wiki's tab in front of the active group has the keyboard although VS Code may still report a text editor of another group as the active one ({@link activeTextEditorWithKeyboard}, row 659), so that report does not end the search for the tab to give the keyboard back to.
    * @param withoutPanePress - `true` for an arrangement of the live or recording panes that no control of a Study pane or view asked for (the composition branch of {@link admitPresentation}): an agent's (row 628), and the learner's Arrange Study Workspace run from the command palette or a shortcut (row 638). A Study pane's tab the editor names while no Study pane and no text editor is active is then read as the chat input of another editor part over that tab, as a learner's file is, because Cursor's Focus Agent, with which an agent's Return Current gave the chat its keyboard back, changes no tab or group. A press in a Study pane or view keeps its rule: such a tab is no foreign tab to return to.
    * @returns
    * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's (outside `withoutPanePress`), or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
@@ -2875,6 +2896,7 @@ export class StudyWorkspace {
   private retainForeignTabFocus(
     activatedByClose: vscode.Tab | undefined,
     withoutPanePress = false,
+    fromWiki = false,
   ):
     | ((
         takenByEditor?: boolean,
@@ -2882,8 +2904,11 @@ export class StudyWorkspace {
         toldCause?: ChatKeyboardReturnCause,
       ) => Promise<boolean>)
     | undefined {
-    if (this.hasActiveStudyPane() || vscode.window.activeTextEditor)
-      return undefined
+    // The Wiki that asked for this entry has the keyboard even while VS Code still reports the text editor of another group (row 659).
+    const focusedTextEditor = fromWiki
+      ? this.activeTextEditorWithKeyboard()
+      : vscode.window.activeTextEditor
+    if (this.hasActiveStudyPane() || focusedTextEditor) return undefined
     const group = vscode.window.tabGroups.activeTabGroup,
       activeTab = group.activeTab
     const heldUri = this.textTabUriHeldByAnotherPart(activeTab, group)
@@ -7256,7 +7281,7 @@ export class StudyWorkspace {
     let returnForeignFocus =
       origin === 'presentation'
         ? undefined
-        : this.retainForeignTabFocus(undefined)
+        : this.retainForeignTabFocus(undefined, false, origin === 'repository')
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.reserveSourceEntry(signal)
     const cancel = (): void => {
@@ -12773,6 +12798,7 @@ export class StudyWorkspace {
         retiredContextGroup,
       )
       if (existing) return existing
+      const appBefore = this.app
       const preparation = await this.withLayout(
         signal,
         async (lifetime, assertCurrent) =>
@@ -12786,7 +12812,16 @@ export class StudyWorkspace {
       )
       if (preparation.restoreFocus) owedChatReturn = undefined
       // Native command discovery remains outside the queue so Close can drain accepted placement.
-      await preparation.restoreFocus?.({ proofKeptKeyboard, forAgentRun })
+      await preparation
+        .restoreFocus?.({ proofKeptKeyboard, forAgentRun })
+        .catch(async (error: unknown) => {
+          // A focus return refused after this preparation placed its own Application leaves no Application group behind, as a refusal inside the layout queue does (row 659).
+          if (preparation.panel !== appBefore)
+            await this.retireRefusedPreparationApplication(
+              preparation.panel,
+            ).catch(() => undefined)
+          throw error
+        })
       return preparation.panel
     } finally {
       await owedChatReturn?.(true, undefined, 'leftoverProof').catch(
@@ -13487,6 +13522,25 @@ export class StudyWorkspace {
       'information',
       AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE,
     )
+  }
+
+  /**
+   * Closes the Application pane a preparation created and the group it allocated for it, when the preparation's focus return refused after the layout queue had placed them; called by {@link prepareApplicationGroup} before the refusal escapes, so a refused entry (a Repository Wiki recording visit, a live run's preparation) leaves the learner's groups at their columns (row 659).
+   * The pane is released before its disposal, as {@link open}'s refusal releases its own: its close handler would otherwise read the disposal as the learner closing the pane and cancel the recording load whose refusal is being answered. The group and its record then go as after a refusal inside the queue ({@link retireFailedApplicationPreparation}).
+   * @param createdPanel - The Application pane this preparation created.
+   * @returns Once the pane's tab is gone and its emptied group closed.
+   * @throws The editor's refusal of the group's close.
+   * @example await this.retireRefusedPreparationApplication(preparation.panel)
+   */
+  private async retireRefusedPreparationApplication(
+    createdPanel: vscode.WebviewPanel,
+  ): Promise<void> {
+    const allocated = this.applicationGroup?.identity
+    // Only the pane this preparation created goes; a pane the reader adopted meanwhile stays.
+    if (this.app === createdPanel) this.app = undefined
+    createdPanel.dispose()
+    await this.closedPanesGone('codebook.scopedBrowser')
+    await this.retireFailedApplicationPreparation(allocated, undefined)
   }
 
   /**

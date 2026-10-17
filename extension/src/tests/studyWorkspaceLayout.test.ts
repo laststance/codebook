@@ -976,6 +976,123 @@ for (const corrupt of [false, true])
     }
   })
 
+// Value: protects=the Repository Wiki's "View recording" in VS Code while the Wiki has the keyboard in the learner's second group and VS Code still names the text editor of the first group as the active one (C58 c58-vs-567d: the cited source's copy reported active while the Wiki's group was the active one; VS Code 1.140.0 workbench.desktop.main.js 705:2664 and 705:1683): the recording opens with its Application in its own group above the learner's groups, the recorded source below it, and the Wiki's group, now the third, gets its keyboard back; fails_when=the preparation takes that stale text editor for the learner's place and pairs it with the Wiki's group, so its focus return refuses with "The previously focused source group changed; focus was not guessed." and the visit fails with an unavailable Application pane left in a new group (3 of 3 natively); why_new=Cycle 0046 row 659; seam=articleRecordingLayoutHarness (the learner's two stacked groups with the Wiki in the second), focusWikiTabKeepingTextEditorReport, openRepositoryEvidence with the recording, the playback state, the groups, the active tab group and the command log
+test('in VS Code, View recording pressed in the Wiki of the second group while VS Code still names the first group’s text editor as active shows the recording in its own group and gives the Wiki its keyboard back', async () => {
+  // Arrange: the learner's two groups are stacked, article-source.ts in front of the first and the Repository Wiki in front of the second; the learner pressed View recording in the Wiki, and VS Code still reports article-source.ts as the active text editor.
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    const wiki = harness.groups[1]!.tabs.find(
+      (tab) => Reflect.get(tab.input, 'viewType') === 'codebook.repositoryWiki',
+    )!
+    harness.focusWikiTabKeepingTextEditorReport(wiki)
+    const before = {
+      activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      activeTextEditor: harness
+        .focusedSource()
+        ?.document.uri.path.split('/')
+        .at(-1),
+    }
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const visit = await harness.reader
+      .openRepositoryEvidence(harness.binding, true, undefined, harness.origin)
+      .then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+    await harness.controller.settle()
+
+    // Assert: the recording is ready with its Application alone at column 1 and the recorded source at column 2, and the Wiki's group, now column 3, was focused again by its number.
+    const state = harness.controller.state()
+    assert.deepEqual(before, {
+      activeColumn: 2,
+      activeTextEditor: 'article-source.ts',
+    })
+    assert.deepEqual(
+      {
+        visit,
+        readiness: state.readiness,
+        reason: state.reason,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+        sourceColumn: harness.sourceColumn(),
+        wikiColumn: harness.groups.find((group) => group.tabs.includes(wiki))
+          ?.viewColumn,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        groupFocusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+      },
+      {
+        visit: 'opened',
+        readiness: 'ready',
+        reason: undefined,
+        applicationColumn: 1,
+        sourceColumn: 2,
+        wikiColumn: 3,
+        activeColumn: 3,
+        groupFocusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusThirdEditorGroup',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's window when a Repository Wiki recording visit is refused by a real change of the learner's, made while its Application was being placed: the learner typed in the file that had the keyboard, so the visit's focus return refuses, and the Application pane and the group the visit created go again, leaving the learner's two groups at their columns; fails_when=the refusal of the preparation's focus return, which comes after the Application stands in its own group, leaves that pane alone in a new group at column 1 with the learner's groups shifted (C58 c58-vs-567: "Recorded playback unavailable. …" in a new group); why_new=Cycle 0046 row 659 (a failed visit leaves no Application group behind); seam=articleRecordingLayoutHarness, focusMutableDraft and its replaceContent, holdNextCommand on workbench.action.lockEditorGroup, openRepositoryEvidence with the recording, the playback state's refusal and the groups
+test('a Repository Wiki recording visit refused because the learner typed in the focused file during its placement leaves no Application group behind', async () => {
+  // Arrange: the learner's two groups are stacked and the learner's notes in the first group have the keyboard; the editor holds its answer to the new Application group's lock.
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    const notes = harness.focusMutableDraft('notes.ts', 1)
+    const lock = harness.holdNextCommand('workbench.action.lockEditorGroup')
+
+    // Act: the visit places its Application; while the lock waits, the learner types in the notes.
+    const visit = harness.reader
+      .openRepositoryEvidence(harness.binding, true, undefined, harness.origin)
+      .then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+    await lock.started
+    notes.replaceContent('The learner typed during the placement.\n')
+    lock.release()
+    await waitUntil(
+      () => harness.controller.state().readiness === 'failed',
+      'the refused recording load',
+    )
+    const refusal = harness.controller.state().reason
+    const answer = await visit
+
+    // Assert: the recording's load was refused for the learner's typing, and the window has the learner's two groups again with no Application pane.
+    assert.deepEqual(
+      {
+        answer,
+        refusal,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+        groupCount: harness.groups.length,
+        notesColumn: harness.groups.find((group) =>
+          group.tabs.includes(notes.tab),
+        )?.viewColumn,
+      },
+      {
+        answer:
+          'Error: The observation is outside the verified recording range.',
+        refusal:
+          'Error: The previously focused document changed during presentation; its current reading position was preserved.',
+        applicationColumn: undefined,
+        groupCount: 2,
+        notesColumn: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('native minimum-width expansion keeps Wiki Return successful and the next observation in three visible panes', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()

@@ -829,6 +829,10 @@ export async function workspaceHarness(
     { kind: string; wait: Promise<void>; observed(): void } | undefined
   let retainedTextFocus:
     { kind: string; editor: SourceEditor; observed(): void } | undefined
+  /** The text editor VS Code goes on reporting as the active one after the Repository Wiki's tab took the keyboard in another group, until the active group changes again; see `focusWikiTabKeepingTextEditorReport`. */
+  let textEditorReportedBehindWiki:
+    | { group: (typeof groups)[number]; tab: Tab; editor: SourceEditor }
+    | undefined
   const windowState = { focused: true, active: true },
     windowListeners = new Set<(state: typeof windowState) => void>()
   const panelReveals: {
@@ -1748,6 +1752,15 @@ export async function workspaceHarness(
     // The active part's active editor is the chat while that part is the active one, whether its input or a view has the keyboard.
     if (separateEditorPart?.lastActive) return undefined
     const input = activeTabGroup.activeTab?.input
+    // VS Code's stale report of the text editor behind the Wiki lasts until another group or tab is the active one.
+    if (textEditorReportedBehindWiki) {
+      if (
+        activeTabGroup === textEditorReportedBehindWiki.group &&
+        activeTabGroup.activeTab === textEditorReportedBehindWiki.tab
+      )
+        return textEditorReportedBehindWiki.editor
+      textEditorReportedBehindWiki = undefined
+    }
     // A newer learner target wins immediately; the delayed clear never steals its focus.
     if (
       retainedTextFocus &&
@@ -4251,6 +4264,26 @@ export async function workspaceHarness(
         })
       nextPanelActivity = { kind, wait, entered }
       return { started, release }
+    },
+    /**
+     * Gives the Repository Wiki's tab the keyboard the way VS Code 1.140.0 reported it in C58 (`c58-vs-567d`, the extension-host observer's baseline before the Wiki's "View recording"): the Wiki's group is the active tab group and the Wiki's tab its active tab, while the active text editor stays the text editor that had the keyboard before, in another group. VS Code updates its active text editor when the active group changes and counts a code editor that still has the text focus then as the active one (`workbench.desktop.main.js` 705:2664 `a.hasTextFocus()`, in `_updateState`, which `onDidActiveEditorChange` runs), before the webview's own focus reaches its frame, and afterwards only a text or widget focus of a code editor updates it again (705:1683 `onDidFocusEditorText`, `onDidFocusEditorWidget`; no blur is listened to), so the report stays until the active group changes again (Cycle 0046 row 659).
+     * @param tab - The Repository Wiki's tab, in a group of the main editor.
+     * @example harness.focusWikiTabKeepingTextEditorReport(wikiTab) // activeTabGroup is the Wiki's, activeTextEditor still the cited source copy of the first group
+     */
+    focusWikiTabKeepingTextEditorReport(tab: Tab): void {
+      assert.equal(separateEditorPart, undefined)
+      const group = groups.find((candidate) => candidate.tabs.includes(tab))
+      assert.ok(group)
+      const editor = focusedSourceEditor()
+      assert.ok(editor, 'No text editor has the keyboard before the Wiki')
+      const previousGroup = activeTabGroup
+      group.activeTab = tab
+      activeTabGroup = group
+      keyboardOnBody = false
+      keyboardInView = false
+      innerFocusedPanel = undefined
+      textEditorReportedBehindWiki = { group, tab, editor }
+      changedGroups({ opened: [], closed: [], changed: [previousGroup, group] })
     },
     /** Delivers Cursor's delayed source deactivation after a handoff reads the stale receipt. @example const held = harness.holdTextFocusClear('codebook.studyContext'); await held.observed; held.release(); */
     holdTextFocusClear(kind: string) {
