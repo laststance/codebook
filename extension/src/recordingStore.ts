@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
-import { lstat, mkdir, open, opendir } from 'node:fs/promises'
+import { lstat, mkdir, open, opendir, readdir, unlink } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { CROSS_RUNTIME_RECORDING_VERSION } from './constants'
@@ -26,6 +26,7 @@ import {
   CONFIGURED_RECORDING_DIRECTORY,
   RECORDING_HEADER_FILE,
   RECORDING_JOURNAL_FILE,
+  RECORDING_OWNERS_DIRECTORY,
   RECORDING_REASON_LIMIT_CHARS,
   RECORDING_SAMPLE_INTERVAL_MS,
   RECORDING_SEAL_FILE,
@@ -59,6 +60,7 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { currentStorageOwner } from './utils/currentStorageOwner'
 import { describeNoStorageFolder } from './utils/describeNoStorageFolder'
 import {
   fullLibraryMessage,
@@ -67,6 +69,7 @@ import {
 import { isProcessGone } from './utils/isProcessGone'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
+import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { recordingPhases } from './utils/recordingPhases'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { validateRecordingContext } from './utils/validateRecordingContext'
@@ -228,6 +231,7 @@ export class RecordingStore {
       withStorageLock(this.learningDirectory, async () => {
         await this.initialize(version)
         const identities = await this.identities()
+        await this.dropOwnerRecordsWithoutRecording(identities)
         const limit = savedStudyLimit(this.capacity())
         if (identities.length >= limit)
           throw new Error(
@@ -259,6 +263,7 @@ export class RecordingStore {
           join(directory, RECORDING_JOURNAL_FILE),
           Buffer.alloc(0),
         )
+        await this.recordWriterIdentity(header.studyId)
         const writer: RecordingWriter = new RecordingWriter(
           directory,
           header,
@@ -273,6 +278,47 @@ export class RecordingStore {
     )
     this.writes = pending.catch(() => undefined)
     return pending
+  }
+
+  /**
+   * Keeps the full identity of this editor process (the storage lock's record: machine, boot and process start) for a recording it starts, outside the recording ({@link recordingOwnerRecordPath}), so {@link recordingMayStillBeWritten} tells this machine after its host name changed and a process id that went to another process; called by {@link start} under the storage lock, after the header.
+   * The record lies where 0.2.29.0 never looks: that version refuses a header or a recording folder that holds anything it does not know. It is a help, not a part of the recording: a record that cannot be written (a link or a file at the folder's path, a full disk) leaves the recording to be judged by its header, as one of 0.2.29.0 is.
+   * @param studyId - The recording's study id.
+   * @example await this.recordWriterIdentity(header.studyId)
+   */
+  private async recordWriterIdentity(studyId: string): Promise<void> {
+    const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
+    try {
+      await mkdir(folder, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
+      // Only a real folder takes the record; nothing is written through a link.
+      if (!(await lstat(folder)).isDirectory()) return
+      await atomicPrivateWrite(
+        recordingOwnerRecordPath(this.learningDirectory, studyId),
+        { pid: process.pid, ...(await currentStorageOwner()) },
+        MAX_RECORDING_HEADER_BYTES,
+      )
+    } catch {
+      // Without the record the recording is judged by its header alone.
+    }
+  }
+
+  /**
+   * Removes the records of writers ({@link recordWriterIdentity}) whose recording is gone: one a removal by hand, a crash between a recording's removal and its record's, or a removal by 0.2.29.0 left behind; called by {@link start} under the storage lock, with the recordings it just listed.
+   * @param identities - The study ids of every recording of every format.
+   * @example await this.dropOwnerRecordsWithoutRecording(['<study id>'])
+   */
+  private async dropOwnerRecordsWithoutRecording(
+    identities: string[],
+  ): Promise<void> {
+    const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
+    // A link or a file at the folder's path is no folder of records and is not listed.
+    if (!(await lstat(folder).catch(() => undefined))?.isDirectory()) return
+    for (const name of await readdir(folder).catch(() => [])) {
+      // A record is `<study id>.json`; its temporary file adds `.<uuid>.tmp`.
+      const studyId = name.slice(0, name.indexOf('.json'))
+      if (name.includes('.json') && identities.includes(studyId)) continue
+      await unlink(join(folder, name)).catch(() => undefined)
+    }
   }
 
   /**
@@ -1197,6 +1243,13 @@ export class RecordingWriter {
           seal,
           MAX_RECORDING_HEADER_BYTES,
         )
+        // A sealed recording has no writer any more; the record of its writer goes, and one that stays is swept at a later start.
+        await unlink(
+          recordingOwnerRecordPath(
+            dirname(dirname(this.directory)),
+            this.header.studyId,
+          ),
+        ).catch(() => undefined)
         this.finalized = true
         this.sealed()
         return seal

@@ -647,6 +647,10 @@ export const RECORDING_STORAGE_FORMATS = [
   },
   { version: RECORDING_VERSION, directory: RECORDING_DIRECTORY },
 ] as const
+/** The folder of the learning directory that keeps, for each recording a run still writes, the full identity of the editor process that writes it (`<study id>.json`, the record of the storage lock: machine, boot and process start); outside every recording folder, because 0.2.29.0 refuses a recording whose header or folder holds anything it does not know, and it reads no other folder of the learning directory ({@link recordingOwnerRecordPath}). */
+export const RECORDING_OWNERS_DIRECTORY = 'recording-owners'
+/** How many clock ticks a second has in the start time Linux writes for a process (`USER_HZ`, field 22 of `/proc/<pid>/stat`): 100 on every architecture this extension runs on. */
+export const LINUX_CLOCK_TICKS_PER_SECOND = 100
 export const RECORDING_HEADER_FILE = 'header.json'
 export const RECORDING_JOURNAL_FILE = 'frames.jsonl'
 export const RECORDING_SEAL_FILE = 'sealed.json'

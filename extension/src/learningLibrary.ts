@@ -55,6 +55,7 @@ import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStu
 import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { recordingMayStillBeWritten } from './utils/recordingMayStillBeWritten'
+import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'
@@ -758,7 +759,7 @@ export class LearningLibrary {
   /**
    * Moves every file of one saved study to the system Trash as one unit under the storage lock; called by {@link StudyWorkspace} after the learner confirmed the removal.
    * Order, each step skipping a path that does not exist:
-   * 1. the recording directories of every recording format whose root is a real directory,
+   * 1. the recording directories of every recording format whose root is a real directory, and then the record of their writer ({@link recordingOwnerRecordPath}), which is deleted,
    * 2. the raw evidence directory of the study's run, when the caller names one and it is a real directory, and its instance directory when that is left empty,
    * 3. the playback position file when it names this study (a file that cannot be parsed is left alone),
    * 4. the ledger, rewritten only when it can be read and its selection or repository return names this study,
@@ -811,6 +812,11 @@ export class LearningLibrary {
       }
       const steps: (() => Promise<void>)[] = [
         ...paths.recordings.map(trash),
+        // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
+        (): Promise<void> =>
+          unlink(recordingOwnerRecordPath(this.directory, identity)).catch(
+            () => undefined,
+          ),
         // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
         ...(evidenceDirectory
           ? [(): Promise<void> => this.trashEvidence(evidenceDirectory, trash)]

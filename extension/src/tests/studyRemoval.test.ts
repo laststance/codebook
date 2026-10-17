@@ -20,6 +20,8 @@ import { isDeepStrictEqual } from 'node:util'
 
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
+import { readProcessStart } from '../utils/readProcessStart'
+import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
@@ -1366,6 +1368,47 @@ test('what is left of a saved study without its archive and its catalog sidecar,
   assert.deepEqual(await storage.recordings.list(), [])
 })
 
+/**
+ * Names another editor process as the writer of a recording this test process started, in both places a window of this build names it: the header, and the record of the writer's full identity beside the recordings ({@link recordingOwnerRecordPath}).
+ * @param storage - The removal storage of the test.
+ * @param studyId - The recording's study id, a recording of the configured format.
+ * @param owner - The editor process: its id and its host name. Its start is read from the system, so a live process is judged by its own start, and an id of no process has none.
+ * @example await nameWriterOfRecording(storage, studyId, { pid: child.pid!, hostname: hostname() })
+ */
+async function nameWriterOfRecording(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  studyId: string,
+  owner: { pid: number; hostname: string },
+): Promise<void> {
+  const headerPath = join(
+    storage.directory,
+    'recordings.v2',
+    studyId,
+    'header.json',
+  )
+  const header: { owner: Record<string, unknown> } = JSON.parse(
+    await readFile(headerPath, 'utf8'),
+  )
+  await writeFile(
+    headerPath,
+    JSON.stringify({ ...header, owner: { ...header.owner, ...owner } }),
+  )
+  const recordPath = recordingOwnerRecordPath(storage.directory, studyId)
+  const record: Record<string, unknown> = JSON.parse(
+    await readFile(recordPath, 'utf8'),
+  )
+  delete record.processStart
+  const processStart = await readProcessStart(owner.pid).catch(() => undefined)
+  await writeFile(
+    recordPath,
+    JSON.stringify({
+      ...record,
+      ...owner,
+      ...(processStart && { processStart }),
+    }),
+  )
+}
+
 // Value: protects=the recording of a run whose study is not saved yet is not taken for what is left of a removed study: it is neither listed as an entry that cannot be opened nor moved by a removal of its id; fails_when=every recording directory without an archive is listed and removable, so a learner (also one in another window) deletes the recording a running editor is writing (0038-T4), or a recording whose writer has ended stays unlisted and keeps its place for good (Cycle 0046 row 86); why_new=the listing of studies without an archive is new; seam=the recording's header, in which the test names an owner process that has ended, and the injected mover
 test('a recording that is still being written for a study that is not saved yet is neither listed nor moved, and one whose writer has ended is listed', async (context) => {
   // Arrange: two reserved recordings without a saved study. This test process writes the first; the header of the second names an editor process that has ended.
@@ -1393,22 +1436,10 @@ test('a recording that is still being written for a study that is not saved yet 
   }
   const beingWritten = await reserve(),
     leftByKilledEditor = await reserve()
-  const headerOfKilledEditor = join(
-    storage.directory,
-    'recordings.v2',
-    leftByKilledEditor,
-    'header.json',
-  )
-  const header: { owner: { pid: number } } = JSON.parse(
-    await readFile(headerOfKilledEditor, 'utf8'),
-  )
-  await writeFile(
-    headerOfKilledEditor,
-    JSON.stringify({
-      ...header,
-      owner: { ...header.owner, pid: ID_OF_NO_PROCESS },
-    }),
-  )
+  await nameWriterOfRecording(storage, leftByKilledEditor, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+  })
   // Act
   const listed = (await storage.library.list()).map((entry) => ({
     id: entry.id,
@@ -1437,7 +1468,7 @@ test('a recording that is still being written for a study that is not saved yet 
 
 // Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so the recording is listed as what is left of a removed study and a removal of its id moves it away while the other editor writes it; why_new=Cycle 0046 /ship review T1: the "another machine" half of recordingMayStillBeWritten had no test, and dropping it survived every test; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
 test('a recording whose header names an editor of another machine is neither listed nor moved, although no process of its id runs on this machine', async (context) => {
-  // Arrange: one reserved recording without a saved study; its header names an editor on another machine, with a process id no process here has.
+  // Arrange: one reserved recording without a saved study, as a window of 0.2.29.0 makes it (a header, and no record of its writer beside the recordings); its header names an editor on another machine, with a process id no process here has.
   const storage = await removalStorage(context, 4)
   const instanceId = randomUUID(),
     runId = randomUUID()
@@ -1478,6 +1509,7 @@ test('a recording whose header names an editor of another machine is neither lis
       },
     }),
   )
+  await rm(recordingOwnerRecordPath(storage.directory, ofAnotherMachine))
 
   // Act
   const listed = await storage.library.list()
@@ -1515,7 +1547,7 @@ test('a recording whose header names an editor of another machine is neither lis
  * Starts the recording of a saved study as a run of the given window does, and leaves it unsealed, as a run that still writes it leaves it.
  * @param storage - The removal storage of the test.
  * @param study - The saved study whose run is recorded.
- * @param owner - The editor process the header names: its id and its host name.
+ * @param owner - The editor process the header and the record of the writer name ({@link nameWriterOfRecording}): its id and its host name.
  * @returns The recording's directory.
  * @example await recordingStillWrittenBy(storage, study, { pid: child.pid!, hostname: hostname() })
  */
@@ -1540,18 +1572,8 @@ async function recordingStillWrittenBy(
     },
     0,
   )
-  const directory = join(storage.directory, 'recordings.v2', study.id)
-  const header: { owner: { sessionId: string } } = JSON.parse(
-    await readFile(join(directory, 'header.json'), 'utf8'),
-  )
-  await writeFile(
-    join(directory, 'header.json'),
-    JSON.stringify({
-      ...header,
-      owner: { ...owner, sessionId: header.owner.sessionId },
-    }),
-  )
-  return directory
+  await nameWriterOfRecording(storage, study.id, owner)
+  return join(storage.directory, 'recordings.v2', study.id)
 }
 
 // Value: protects=a saved study whose run another editor window is still recording; fails_when=a removal in this window moves that window's recording (and the study's other files) while it writes it, so its next journal append fails with ENOENT and its next save writes the archive again: the removed study comes back without its recording; why_new=Cycle 0046 /ship review R9: the guard of a recording that may still be written applied only to a study without an archive; seam=the recording's header, which names a live child process of the test as the other window's editor, and the injected mover
