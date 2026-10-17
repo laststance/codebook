@@ -25,6 +25,7 @@ import { readProcessStart } from '../utils/readProcessStart'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { recordingWriterOf } from '../utils/recordingWriterOf'
 import type * as lockModule from '../utils/withStorageLock'
+import { withStorageLock } from '../utils/withStorageLock'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
@@ -1729,6 +1730,74 @@ test('a removal judges the writers of the study’s recordings before it takes t
         { isLockHeld: false, writeOfTheOtherWindow: 'written' },
         { isLockHeld: false, writeOfTheOtherWindow: 'written' },
       ],
+      moved: [],
+    },
+  )
+})
+
+/**
+ * Loads the study library with a storage lock that runs a step of the test right before the library takes it: after a removal judged the writers of the study's recordings, before its look under the lock, as another window's start can fall between the two.
+ * @param storage - The removal storage of the test.
+ * @param stepBeforeTheLock - What changes on disk between the judgement and the lock.
+ * @returns A library on the test's learning directory.
+ * @example const library = await libraryWithStepBeforeTheLock(storage, () => writeFile(sealPath, '{}'))
+ */
+async function libraryWithStepBeforeTheLock(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  stepBeforeTheLock: () => Promise<void>,
+): Promise<LearningLibrary> {
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    {
+      './utils/withStorageLock': {
+        withStorageLock: async (
+          ...locking: Parameters<typeof withStorageLock>
+        ): ReturnType<typeof withStorageLock> => {
+          await stepBeforeTheLock()
+          return withStorageLock(...locking)
+        },
+      },
+    },
+    { Error },
+  )
+  return new ObservedLibrary(storage.directory, storage.workspaceKey, () => 4)
+}
+
+// Value: protects=a study whose recording another window had only begun (its folder made, its header not yet written) when this window judged the writers before its lock; fails_when=the removal reuses the verdict 'finished' of the folder without a header under the lock, so it moves the recording the other window has just started; why_new=Cycle 0046 Codex review CX12: under the lock only the seal was looked at again; seam=the storage lock of the loaded library, right before which the test writes the header
+test('a header written between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study whose recording folder another window has just made, without its header yet.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const folder = join(storage.directory, 'recordings.v2', study.id)
+  await mkdir(folder, { recursive: true })
+  const library = await libraryWithStepBeforeTheLock(storage, () =>
+    writeFile(
+      join(folder, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: process.pid,
+          hostname: hostname(),
+          sessionId: randomUUID(),
+        },
+        createdAt: new Date().toISOString(),
+      }),
+    ),
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
       moved: [],
     },
   )

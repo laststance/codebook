@@ -17,7 +17,6 @@ import {
   PROGRESS_V3_FILE,
   PROGRESS_V4_FILE,
   PROGRESS_REPOSITORY_FILE,
-  RECORDING_SEAL_FILE,
   RECORDING_STORAGE_FORMATS,
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
@@ -51,6 +50,7 @@ import {
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
 import type { ProcessStartsOfList } from './utils/isRecordingWriterLive'
+import { lookAtRecording, type RecordingLook } from './utils/lookAtRecording'
 import { newerStudyArchive } from './utils/newerStudyArchive'
 import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 import { playbackPreferenceNamesStudy } from './utils/playbackPreferenceNamesStudy'
@@ -96,8 +96,10 @@ export type StudyRemoval =
 /** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another host, or a live process of this computer whose start does not fit the recording's) is no such reservation: the learner decides about it when they delete the study. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
-/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): whether a run of this machine, this window's own included, may still write it ({@link RecordingJudge}), and the writer of another window that may ({@link recordingWriterOf}). */
+/** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): the look it judged from, whether a run of this machine, this window's own included, may still write it ({@link RecordingJudge}), and the writer of another window that may ({@link recordingWriterOf}). */
 type RemovalWriterVerdict = {
+  /** What one cheap look found right before the judgement ({@link lookAtRecording}), which the removal compares under its lock. */
+  look: RecordingLook
   isReservedHere: boolean
   ofAnotherWindow: RecordingWriterOfDirectory
 }
@@ -161,6 +163,25 @@ function unconfirmedWriterRefusal(
     place:
       writer.kind === 'on-another-host' ? 'another-computer' : 'this-computer',
   })
+}
+
+/**
+ * Says whether two looks at one recording ({@link lookAtRecording}) found the same: the seal, the header's writer (its process id) and creation time, and the writer record's presence; for {@link LearningLibrary.verdictUnderLock}, which refuses a removal when another window's start may have changed the recording between them.
+ * @param before - The look before the storage lock.
+ * @param now - The look under it.
+ * @returns `true` when all four agree.
+ * @example isSameRecordingLook({ isSealed: false, hasWriterRecord: false }, { isSealed: false, header, hasWriterRecord: true }) // => false: a start wrote the header and the record meanwhile
+ */
+function isSameRecordingLook(
+  before: RecordingLook,
+  now: RecordingLook,
+): boolean {
+  return (
+    before.isSealed === now.isSealed &&
+    before.hasWriterRecord === now.hasWriterRecord &&
+    before.header?.owner.pid === now.header?.owner.pid &&
+    before.header?.createdAt === now.header?.createdAt
+  )
 }
 
 /** The {@link RemovalWriterVerdict} of each recording directory of a study. */
@@ -448,10 +469,10 @@ export class LearningLibrary {
 
   /**
    * Judges the writers of a study's recordings before its removal takes the storage lock; called by {@link removeStudy}.
-   * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}).
+   * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}). Each verdict keeps the look it was judged from, which the removal compares under its lock ({@link verdictUnderLock}).
    * @param identity - The validated study id.
-   * @returns For each recording directory of the study: whether a run of this machine, this window's own included, may still write it, and the writer of another window that may still write it ({@link recordingWriterOf} with `ignored`).
-   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { isReservedHere: true, ofAnotherWindow: { kind: 'may-run', createdAt } } } while another window records that run
+   * @returns For each recording directory of the study: the look, whether a run of this machine, this window's own included, may still write it, and the writer of another window that may still write it ({@link recordingWriterOf} with `ignored`).
+   * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { look, isReservedHere: true, ofAnotherWindow: { kind: 'may-run', createdAt } } } while another window records that run
    */
   private async writerVerdictsOf(
     identity: string,
@@ -460,6 +481,7 @@ export class LearningLibrary {
     const verdicts: RemovalWriterVerdicts = new Map()
     for (const recording of await this.recordingPaths(identity))
       verdicts.set(recording, {
+        look: await lookAtRecording(recording),
         isReservedHere:
           (await recordingWriterOf(recording, 'counts', starts)).kind ===
           'may-run',
@@ -468,47 +490,57 @@ export class LearningLibrary {
     return verdicts
   }
 
-  /** Says whether a recording directory holds its seal, with one look; for {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}, which take a recording sealed since the removal judged it for one nobody writes any more. @example await this.isSealedNow('/…/recordings.v2/<id>') // => true once that run sealed its recording */
-  private isSealedNow(recording: string): Promise<boolean> {
-    return lstat(join(recording, RECORDING_SEAL_FILE)).then(
-      () => true,
-      () => false,
-    )
+  /**
+   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a recording sealed since the judgement has no writer; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
+   * @param recording - The recording directory.
+   * @param verdicts - What {@link writerVerdictsOf} found before the lock.
+   * @returns `sealed` for a recording sealed since; the verdict found before the lock while the look is the same.
+   * @throws "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
+   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed
+   */
+  private async verdictUnderLock(
+    recording: string,
+    verdicts: RemovalWriterVerdicts,
+  ): Promise<RemovalWriterVerdict | 'sealed'> {
+    const now = await lookAtRecording(recording)
+    if (now.isSealed) return 'sealed'
+    const before = verdicts.get(recording)
+    // A start under way between the two looks gives a recording another window may have just begun to write.
+    if (!before || !isSameRecordingLook(before.look, now))
+      throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
+    return before
   }
 
   /**
-   * Answers under the storage lock whether a run of this machine may still write one recording ({@link RecordingJudge}), from the verdict found before the lock and one look ({@link isSealedNow}); called by {@link refuseUnlessRemovable} for a study without an archive, with the question the list asks ({@link isLeftWithoutArchive}).
+   * Answers under the storage lock whether a run of this machine may still write one recording ({@link RecordingJudge}), from the verdict found before the lock ({@link verdictUnderLock}); called by {@link refuseUnlessRemovable} for a study without an archive, with the question the list asks ({@link isLeftWithoutArchive}).
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `false` for a recording sealed since; the verdict for any other; `true` for one the removal did not judge (it appeared since), so nothing of the study moves.
+   * @returns `false` for a recording sealed since; the verdict for any other.
+   * @throws What {@link verdictUnderLock} throws for a recording that changed or appeared since the judgement.
    * @example await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed
    */
   private async isReservedHereUnderLock(
     recording: string,
     verdicts: RemovalWriterVerdicts,
   ): Promise<boolean> {
-    if (await this.isSealedNow(recording)) return false
-    return verdicts.get(recording)?.isReservedHere ?? true
+    const verdict = await this.verdictUnderLock(recording, verdicts)
+    return verdict !== 'sealed' && verdict.isReservedHere
   }
 
   /**
-   * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock and one look ({@link isSealedNow}); called by {@link writerOfAnotherWindow}.
+   * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock ({@link verdictUnderLock}); called by {@link writerOfAnotherWindow}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `finished` for a recording sealed since; the verdict for any other; `may-run` for one the removal did not judge (it appeared since), so nothing of the study moves.
+   * @returns `finished` for a recording sealed since; the verdict for any other.
+   * @throws What {@link verdictUnderLock} throws for a recording that changed or appeared since the judgement.
    * @example await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'finished' } once that recording is sealed
    */
   private async writerOfAnotherWindowUnderLock(
     recording: string,
     verdicts: RemovalWriterVerdicts,
   ): Promise<RecordingWriterOfDirectory> {
-    if (await this.isSealedNow(recording)) return { kind: 'finished' }
-    return (
-      verdicts.get(recording)?.ofAnotherWindow ?? {
-        kind: 'may-run',
-        createdAt: new Date().toISOString(),
-      }
-    )
+    const verdict = await this.verdictUnderLock(recording, verdicts)
+    return verdict === 'sealed' ? { kind: 'finished' } : verdict.ofAnotherWindow
   }
 
   /**
