@@ -4959,11 +4959,11 @@ export class StudyWorkspace {
             returnsToForeignTab: returnForeignFocus !== undefined,
           }
         : undefined
-    // What a refusal after a borrow of the measurement gives back (row 718): the file that had the keyboard, read before any effect as the focus return captured it.
+    // What a refusal after a borrow of the measurement gives back (row 718): the place that had the keyboard, read before any effect as the focus return captured it (a pane before a file, row 726).
     const refusal = {
       borrowsBefore: this.focusBorrowCount(),
       learnerSignBefore: this.learnerWorkedInEditorAtMs,
-      fileHadKeyboard: this.activeTextEditorWithKeyboard() !== undefined,
+      keyboardHolder: this.keyboardHolderAtChange(),
     }
     const previousMode = this.presentationMode
     let evidenceConfirmed = false,
@@ -5300,7 +5300,7 @@ export class StudyWorkspace {
       // A refusal after the measurement borrowed the main editor and before the placement moved the keyboard gives the file back what the borrow took (row 718).
       if (
         borrowed &&
-        refusal.fileHadKeyboard &&
+        refusal.keyboardHolder !== undefined &&
         !restoreFocusAttempted &&
         !this.presentationMovedFocus &&
         !this.closing &&
@@ -5309,6 +5309,7 @@ export class StudyWorkspace {
         await this.returnBorrowedKeyboardAfterRefusal(
           restoreFocus,
           signal,
+          refusal.keyboardHolder,
           agentSelection?.knowsLearnersPlace ?? true,
           refusal.learnerSignBefore,
         )
@@ -13856,18 +13857,41 @@ export class StudyWorkspace {
   }
 
   /**
-   * Gives the file that had the keyboard back what the measurement's borrow took, when a presentation change was refused after that borrow and before its placement moved the keyboard; called by {@link performPresentation}'s refusal path (Cycle 0046 row 718).
-   * Beside another editor part (Cursor's chat part) the measurement focuses the main editor's first group, and an Application preparation then inserts its group above it, whose own element takes the keyboard; a refusal afterwards closes that group, and the keyboard stays on the page body (C61 c61-cu-692: BODY from the insertion to the end, no focus command and no `showTextDocument` after the cleanup). The focus return the change captured shows the file again with the keyboard in its group ({@link capturePresentationFocus}), only while the keyboard is still where Codebook's effects left it ({@link assertKeyboardWhereBorrowLeftIt}). An agent's selection whose learner was not known to work in that file says so ({@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}'s `file`, rows 613 and 656); a chat that had the keyboard gets it back through the change's foreign-tab return instead.
+   * Names the place that has the keyboard when a presentation change begins, for the give-back of {@link returnBorrowedKeyboardAfterRefusal}: the Application or Study pane by its own `active` flag, which {@link capturePresentationFocus} asks first too, else a text editor that has the keyboard ({@link activeTextEditorWithKeyboard}). VS Code goes on reporting the last text editor while a pane has the keyboard, and {@link activeTextEditorWithKeyboard} reads past the panes' tabs for callers that ask the panes first, so a pane is asked before it (Cycle 0046 row 726).
+   * @returns
+   * - `'application'` or `'study'` while that pane is active.
+   * - `'file'` while no pane is active and a text editor has the keyboard.
+   * - `undefined` otherwise (a chat, a view or another tab has it).
+   * @example this.keyboardHolderAtChange() // => 'study' after a click on the Study pane's tab while VS Code still reports notes.ts as the active text editor
+   */
+  private keyboardHolderAtChange():
+    | Exclude<
+        keyof typeof AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
+        'source'
+      >
+    | undefined {
+    if (this.app?.active) return 'application'
+    if (this.contextPanel?.active) return 'study'
+    return this.activeTextEditorWithKeyboard() !== undefined
+      ? 'file'
+      : undefined
+  }
+
+  /**
+   * Gives the place that had the keyboard back what the measurement's borrow took, when a presentation change was refused after that borrow and before its placement moved the keyboard; called by {@link performPresentation}'s refusal path (Cycle 0046 row 718).
+   * Beside another editor part (Cursor's chat part) the measurement focuses the main editor's first group, and an Application preparation then inserts its group above it, whose own element takes the keyboard; a refusal afterwards closes that group, and the keyboard stays on the page body (C61 c61-cu-692: BODY from the insertion to the end, no focus command and no `showTextDocument` after the cleanup). The focus return the change captured shows the file again with the keyboard in its group, or focuses the pane that had it ({@link capturePresentationFocus}), only while the keyboard is still where Codebook's effects left it ({@link assertKeyboardWhereBorrowLeftIt}). An agent's selection whose learner was not known to work there says which place has the keyboard again ({@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}: the `file`'s sentence, rows 613 and 656, or the pane's own, row 726); a chat that had the keyboard gets it back through the change's foreign-tab return instead.
    * @param restoreFocus - The focus return the change captured at its admission.
    * @param signal - The change's cancellation.
-   * @param knowsLearnersPlace - Whether the learner was known to work in that file: an agent's selection's sign, `true` for the learner's own change.
+   * @param holder - The place that had the keyboard when the change began ({@link keyboardHolderAtChange}), which the sentence names.
+   * @param knowsLearnersPlace - Whether the learner was known to work there: an agent's selection's sign or the Study pane's own report, `true` for the learner's own change.
    * @param learnerSignBefore - The moment of the learner's last click or key in a text editor when the change began.
-   * @example await this.returnBorrowedKeyboardAfterRefusal(restoreFocus, signal, true, learnerSignBefore) // auth.ts has the keyboard again in its group
+   * @example await this.returnBorrowedKeyboardAfterRefusal(restoreFocus, signal, 'file', true, learnerSignBefore) // auth.ts has the keyboard again in its group
    */
   private async returnBorrowedKeyboardAfterRefusal(
     restoreFocus:
       ReturnType<StudyWorkspace['capturePresentationFocus']> | undefined,
     signal: AbortSignal,
+    holder: NonNullable<ReturnType<StudyWorkspace['keyboardHolderAtChange']>>,
     knowsLearnersPlace: boolean,
     learnerSignBefore: number | undefined,
   ): Promise<void> {
@@ -13877,9 +13901,9 @@ export class StudyWorkspace {
       () => true,
       () => false,
     )
-    // Only a file the learner was not known to work in is told about (rows 613 and 656).
+    // Only a place the learner was not known to work in is told about, by its own sentence (rows 613, 656 and 726).
     if (returned && !knowsLearnersPlace)
-      this.tellFailedSelectionPaneKeyboard('file')
+      this.tellFailedSelectionPaneKeyboard(holder)
   }
 
   /**
@@ -13903,8 +13927,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells the learner, once in an editor session for each place, that one of the reader's panes or its captured source has the keyboard after an agent's Study selection failed; called by {@link tellKeyboardPlaceAfterFailedSelection}.
-   * @param pane - `'application'` for the Application pane, `'study'` for the Study pane, `'source'` for the captured source.
+   * Tells the learner, once in an editor session for each place, that one of the reader's panes, its captured source or the learner's file has the keyboard after an agent's Study selection failed; called by {@link tellKeyboardPlaceAfterFailedSelection} and {@link returnBorrowedKeyboardAfterRefusal}.
+   * @param pane - `'application'` for the Application pane, `'study'` for the Study pane, `'source'` for the captured source, `'file'` for the learner's file a refused arrangement gave the keyboard back.
    * @example this.tellFailedSelectionPaneKeyboard('source') // "Codebook could not finish the Study arrangement an agent asked for, and the captured source has the keyboard now. …"
    */
   private tellFailedSelectionPaneKeyboard(

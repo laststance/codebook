@@ -5004,6 +5004,10 @@ export async function workspaceHarness(
       const previousGroup = activeTabGroup
       group.activeTab = tab
       activeTabGroup = group
+      // A click on a tab of the main window makes that window the focused one again after VS Code's floating window had it (Cycle 0046 row 726).
+      if (floatingEditorWindow)
+        floatingEditorWindow.active =
+          floatingEditorWindow.groups.includes(group)
       keyboardOnBody = false
       keyboardInView = false
       innerFocusedPanel = undefined
