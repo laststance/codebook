@@ -986,6 +986,14 @@ export class RepositoryReader {
   panelOpen(): boolean {
     return Boolean(this.panel)
   }
+  /**
+   * Tells the Study workspace whether this reader's Repository Wiki panel is the active editor, so a Wiki tab the editor names while its panel is not active is read as the place of another editor part's chat input, not of the Wiki (Cycle 0046 row 680).
+   * @returns `true` while the panel exists and the editor reports it active; `false` without a panel and while another editor or part is active.
+   * @example reader.panelActive() // => false after Cursor's Focus Agent gave its chat the keyboard while the Wiki's group stays the named one
+   */
+  panelActive(): boolean {
+    return Boolean(this.panel?.active)
+  }
   /** Exposes sanitized model/render receipts for native evidence without claiming pixel verification. @example reader.inspect().rendered */
   inspect() {
     return {

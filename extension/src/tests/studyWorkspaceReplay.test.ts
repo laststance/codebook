@@ -4931,6 +4931,164 @@ test('in Cursor beside its chat part, an agent’s Study selection that reopens 
   }
 })
 
+// Value: protects=the chat's keyboard at an agent's cold Study selection that reopens a replay beside Cursor's Agent chat part while Cursor names the Repository Wiki's group: Cursor's Focus Agent gave the chat input the keyboard and changed no group, so the Wiki's tab stays the named one with its panel not active, and the selection gives the chat its keyboard back with Focus Agent and tells the arrangement's sentence once; fails_when=the Wiki's tab is taken for the place of the keyboard, the selection runs the numbered focus command of the Wiki's group (workbench.action.focusThirdEditorGroup here, the fourth in C59) and the chat gets nothing back, as in C59 c59-5-cu-cold, where the keyboard stayed outside the chat for 34.7 s (the same at the C58 build 465a6834, so no regression of rows 647 to 662: C58's round began with the chat's group named, C59's with the Wiki's); why_new=Cycle 0046 row 680; seam=recordedReaderHarness, the service's playback (codebook_playback open) and the reader's close, useNativeLayout, addSeparateEditorPart and its focus (Focus Agent), leavePaneFocusUnreportedBesideChat, focusExistingWebviewTab (the Wiki's tab named), the service's selectPresentation, the command log and the information messages
+test('in Cursor, an agent’s cold Study selection that reopens a replay while the editor names the Repository Wiki’s group and the chat input has the keyboard gives the chat its keyboard back and says so once', async () => {
+  // Arrange: an agent opened a saved recording and the Study workspace was closed; the learner read the Wiki last, so its group is the named one, and Focus Agent gave the chat input the keyboard without changing a group.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    const wiki = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Repository Wiki')!
+    harness.focusExistingWebviewTab(wiki)
+    chat.focus()
+    const namedBefore =
+        harness.editor.window.tabGroups.activeTabGroup.activeTab?.label,
+      state = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    await harness.controller.settle()
+
+    // Assert: the replay is arranged, Focus Agent gave the chat its keyboard back last, no numbered focus ran for the Wiki's group, and the sentence was told once.
+    assert.deepEqual(
+      {
+        namedBefore,
+        layoutConfirmed: answer.layoutConfirmed,
+        contentTab: answer.reader.contentTab,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        namedBefore: 'codebook · Repository Wiki',
+        layoutConfirmed: true,
+        contentTab: 'recording',
+        keyboardCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusFirstEditorGroup',
+          'composer.focusComposer',
+        ],
+        chatHasKeyboard: true,
+        messages: [
+          'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat's keyboard at an agent's Return Current right after its cold Study selection beside Cursor's Agent chat part (the five-stop flow's cold order): the selection gave the chat its keyboard back with Focus Agent, which changes no group, so the editor names the Application pane's tab with that pane not active, which is the chat's place for a request no pane's control made (row 628's rule for an agent's Restore); the Return gives the chat its keyboard back after its measurement took it through the captured source; fails_when=the agent's Return remembers no chat, its measurement shows the captured source with the keyboard and the chat gets nothing back, so the keyboard stays outside the chat until a pause (C59 c59-5-cu-cold: the captured source shown with preserveFocus false, then a numbered focus of the Wiki's group, 34.7 s outside the chat); why_new=Cycle 0046 row 680; seam=recordedReaderHarness, the service's playback, selectPresentation and returnToCurrent, useNativeLayout, addSeparateEditorPart and its focus (Focus Agent), leavePaneFocusUnreportedBesideChat, focusExistingWebviewTab, the command log, textDocumentShows and the information messages
+test('in Cursor, an agent’s Return Current right after its cold Study selection from the chat gives the chat its keyboard back, also after its measurement showed the captured source with the keyboard', async () => {
+  // Arrange: as above; the agent's cold selection gave the chat its keyboard back.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    const wiki = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Repository Wiki')!
+    harness.focusExistingWebviewTab(wiki)
+    chat.focus()
+    const state = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    await harness.controller.settle()
+    const selected = harness.reader.presentationState(),
+      chatAfterSelection = chat.focused(),
+      commandsBefore = harness.commands.length,
+      showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const returned = await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: selected.presentationId,
+      expectedRevision: selected.reader.contentRevision,
+    })
+    await harness.controller.settle()
+
+    // Assert: the live panes are confirmed; the measurement showed the captured source with the keyboard, and Focus Agent gave the chat its keyboard back last, with no numbered group focus.
+    assert.deepEqual(
+      {
+        chatAfterSelection,
+        layoutConfirmed: returned.layoutConfirmed,
+        contentTab: returned.reader.contentTab,
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus)
+          .map((shown) => `${shown.name}@${shown.viewColumn}`),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+      },
+      {
+        chatAfterSelection: true,
+        layoutConfirmed: true,
+        contentTab: 'live',
+        shownWithKeyboard: ['Captured-theme.ts@2'],
+        keyboardCommands: ['composer.focusComposer'],
+        chatHasKeyboard: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's terminal and its keyboard in the bottom panel when an agent opens a recording through codebook_playback in VS Code: the Observed moments view's focus command opens its container in place of the terminal even with the focus kept (1.140.0 workbench.desktop.main.js 1639:157156 -> openView 1639:152215 -> doOpenComposite 1106:186495, hideActiveComposite 1106:190002), which hides the terminal and drops its keyboard; the agent's entry leaves the panel as it is, and the one sentence told once names both places where the replay's controls wait; fails_when=the agent's replay open still focuses the moments view while it is not shown, or tells nothing about where the controls wait; why_new=Cycle 0046 row 621; seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusTerminalInBottomPanel (the panel's terminal with the keyboard), the service's playback (the codebook_playback handler), viewFocusCommands, keyboardInView, terminalInFrontOfPanel and the information messages
 test('an agent’s replay open in VS Code while the learner types in the bottom panel’s terminal keeps the terminal in front with its keyboard and says where the replay controls wait', async () => {
   // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner types in the terminal of the bottom panel.

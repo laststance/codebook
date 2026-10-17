@@ -3934,6 +3934,16 @@ export async function workspaceHarness(
             !deadPaneTabs.has(tab),
         ),
       ),
+    // The Wiki's panel is active as a pane's is: its tab in front of the group the editor has active, while the chat part does not hold the keyboard and the editor names no stale group (the `active` of `panel`).
+    repositoryWikiActive: (): boolean => {
+      const front = activeTabGroup.activeTab?.input
+      return (
+        !separateEditorPart?.lastActive &&
+        !staleNamedGroup &&
+        front instanceof TabInputWebview &&
+        front.viewType.endsWith('codebook.repositoryWiki')
+      )
+    },
   }
   const presentationPreferences = new Map<string, unknown>()
   /** The workspace state's Application group record (finding 590), kept apart from the presentation preferences: a test that asserts no preference was saved counts only those, and the injected preference holds and failures do not reach this record. */

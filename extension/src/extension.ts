@@ -299,6 +299,7 @@ export function activate(
           repository().open(selection, undefined, true, preserveNativeInput),
         openArticle: (selection) => repository().open(selection),
         repositoryWikiOpen: () => Boolean(repositoryReader?.panelOpen()),
+        repositoryWikiActive: () => Boolean(repositoryReader?.panelActive()),
       },
       [...unsavedStudies],
     )

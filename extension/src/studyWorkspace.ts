@@ -954,6 +954,8 @@ export class StudyWorkspace {
       openArticle?(selection: RepositorySelection): Promise<void>
       /** Tells whether the Wiki reader of this host owns its Repository Wiki panel; a Wiki tab seen while it does not is an earlier host's. */
       repositoryWikiOpen?(): boolean
+      /** Tells whether the Wiki reader's panel is the active editor; a Wiki tab the editor names while its panel is not active stands under another editor part's chat input (row 680). */
+      repositoryWikiActive?(): boolean
     },
     /** The archives the reader this one replaces could not save ({@link releaseUnsavedStudies}); this reader shows "History not saved: …" for those of its library and writes them at Retry storage / refresh. */
     handedOverArchives: readonly UnsavedStudyArchive[] = [],
@@ -2921,9 +2923,10 @@ export class StudyWorkspace {
     const group = vscode.window.tabGroups.activeTabGroup,
       activeTab = group.activeTab
     const heldUri = this.textTabUriHeldByAnotherPart(activeTab, group)
-    // Beside a request no pane's control made a Study pane's tab named without an active pane is held by the chat, as a learner's file is (rows 628, 638); a moved pane's tab may be a preview, which says nothing of the chat.
+    // Beside a request no pane's control made a Study pane's tab named without an active pane is held by the chat, as a learner's file is (rows 628, 638); a moved pane's tab may be a preview, which says nothing of the chat. The Repository Wiki's tab named while its panel is not active is held by the chat for every request (row 680).
     const paneHeldByChat =
-      withoutPanePress && this.isStudyPaneInput(activeTab?.input)
+      (withoutPanePress && this.isStudyPaneInput(activeTab?.input)) ||
+      this.isWikiTabWithoutKeyboard(activeTab)
     const heldByAnotherPart = heldUri !== undefined || paneHeldByChat
     const tab = paneHeldByChat
       ? activeTab
@@ -4210,6 +4213,20 @@ export class StudyWorkspace {
     return (
       (this.isCapturedSourceInput(tab.input) && !heldByAnotherPart) ||
       this.isStudyPaneInput(tab.input)
+    )
+  }
+
+  /**
+   * Says whether the tab the editor names is the Repository Wiki's while the Wiki's panel is not the active editor, which is where another editor part's chat input holds the keyboard; asked by {@link retainForeignTabFocus} before it picks the tab to give the keyboard back to (row 680).
+   * Cursor's Focus Agent gives its chat input the keyboard and changes no tab or group, so the editor goes on naming the group it named, the Wiki's when the learner read the Wiki last (C59 c59-5-cu-cold: the window's title named the Wiki, the agent's cold select ran `workbench.action.focusFourthEditorGroup` for the Wiki's group and the chat got nothing back for 34.7 s); a pane whose tab is named is then not active, as for the Study panes of rows 628 and 638. The Wiki that has the keyboard is active, and keeps its group's return.
+   * @param tab - The tab the editor names as active, if any.
+   * @returns `true` for the Repository Wiki's tab while the embedder reports its panel not active; `false` for any other tab, none, and an embedder that does not tell.
+   * @example this.isWikiTabWithoutKeyboard(vscode.window.tabGroups.activeTabGroup.activeTab) // => true after Focus Agent while Cursor names the Wiki's group
+   */
+  private isWikiTabWithoutKeyboard(tab: vscode.Tab | undefined): boolean {
+    return (
+      this.isCodebookPaneInput(tab?.input, 'codebook.repositoryWiki') &&
+      this.controls.repositoryWikiActive?.() === false
     )
   }
 
@@ -8250,8 +8267,12 @@ export class StudyWorkspace {
     requester: PresentationRequester = 'learner',
   ): Promise<void> {
     this.assertPresentationIdle()
+    // An agent's Return is pressed in no pane: a Study pane's tab the editor names without an active pane is the place of the chat Focus Agent gave the keyboard (rows 628 and 680).
     const lifetime = this.lifetime,
-      returnForeignFocus = this.retainForeignTabFocus(undefined),
+      returnForeignFocus = this.retainForeignTabFocus(
+        undefined,
+        requester === 'agent',
+      ),
       // Only the learner's press has a place of its own: the pane or the view whose control was pressed.
       learnersPlace =
         requester === 'learner' ? this.learnersKeyboardPlace() : undefined
