@@ -4966,6 +4966,8 @@ test("the chat that took the keyboard from the Study pane has it again when a st
   let live: { close(): void } | undefined
   try {
     await harness.reader.open()
+    // The learner works in the Study pane, which reports its keyboard: the run's preparation gives that pane its keyboard back (row 656 withholds it only from a place no sign proves).
+    harness.receiveContext({ type: 'pane-focus', focused: true })
     live = await harness.reader.presentation.createViewport(
       randomUUID(),
       () => {},

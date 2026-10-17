@@ -5059,7 +5059,7 @@ export class StudyWorkspace {
           assertRetainedPlacement()
         }
         restoreFocusAttempted = true
-        if (!(await this.keepsKeyboardAfterAgentSelection(agentSelection)))
+        if (!this.keepsKeyboardAfterAgentSelection(agentSelection))
           await restoreFocus?.(signal, assertSourceFocus, true)
         assertCurrent()
         assertRetainedPlacement = this.retainPresentationPlacement()
@@ -5127,9 +5127,9 @@ export class StudyWorkspace {
         lifetime === this.lifetime &&
         (this.app?.active || this.contextPanel?.active || assertSourceFocus) &&
         // An agent's failed selection names the place that has the keyboard now, a pane or the captured source (row 634).
-        !(await this.keepsKeyboardAfterAgentSelection(agentSelection, () =>
+        !this.keepsKeyboardAfterAgentSelection(agentSelection, () =>
           this.tellKeyboardPlaceAfterFailedSelection(),
-        ).catch(() => false))
+        )
       )
         await restoreFocus?.(signal, assertSourceFocus).catch(() => undefined)
       // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays.
@@ -13305,6 +13305,8 @@ export class StudyWorkspace {
         placed.preparation,
         captured.knowsLearnersPlace,
         placed.stillCurrent,
+        // The captured source Codebook's own selection gave the keyboard is a known place (row 642).
+        giveBack === undefined && !this.isCodebooksSourceKeyboard(),
       ) ||
       giveBack
     )
@@ -13319,19 +13321,21 @@ export class StudyWorkspace {
    * @param preparation - Whether the main editor is the only editor part, whether the preparation is a live run's, and whether it focused an editor group.
    * @param knowsLearnersPlace - Whether a fresh sign of the learner's own hand in the active text editor ({@link learnerWorksInActiveEditor}) or the Study pane's report ({@link reportsKeyboard}) said where the keyboard was.
    * @param stillCurrent - The preparation's guard for the current input; a newer learner choice is told nothing.
+   * @param noChatToReturnTo - Whether the preparation remembered no chat to give the keyboard back to. Beside another editor part (Cursor's chat part) the main editor was then the active part, and its file reads the same while the terminal or a view has the keyboard, since Cursor keeps the part that took the focus last as the active one after a click into them (Cursor 3.23.12 `workbench.desktop.main.js` 17501:84373, 17501:88693): the rule of the only editor part holds there too, so no file the learner is not known to work in gets the keyboard back for the replay's captured source to cover it (row 656).
    * @returns
    * - `true` when the keyboard stays where the preparation left it, and the learner was told once.
-   * - `false` for another editor part, a preparation that is not an agent's run, and a place the learner is known to work in: the ordinary return goes on.
-   * @example this.settleKeyboardBesideChatView({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true, ownedByReturn: false }, false, stillCurrent) // => true, after the notice
+   * - `false` beside another editor part with a chat to give the keyboard back to, for a preparation that is not an agent's run, and for a place the learner is known to work in: the ordinary return goes on.
+   * @example this.settleKeyboardBesideChatView({ onlyEditorPart: true, forAgentRun: true, tookKeyboard: true, ownedByReturn: false }, false, stillCurrent, true) // => true, after the notice
    */
   private settleKeyboardBesideChatView(
     preparation: PreparedApplicationFocus,
     knowsLearnersPlace: boolean,
     stillCurrent: () => boolean,
+    noChatToReturnTo: boolean,
   ): boolean {
-    // Only an agent's run in the only editor part can find the learner typing in a chat view, and a known place still gets its keyboard back.
+    // Only an agent's run whose main editor held the keyboard can find the learner typing in a view, and a known place still gets its keyboard back.
     if (
-      !preparation.onlyEditorPart ||
+      !(preparation.onlyEditorPart || noChatToReturnTo) ||
       !preparation.forAgentRun ||
       knowsLearnersPlace
     )
@@ -13431,18 +13435,19 @@ export class StudyWorkspace {
 
   /**
    * Decides, after an agent's Study selection placed its panes, whether the keyboard stays on the captured source the placement focused: in the only editor part (VS Code, and Cursor with its chat in the side bar) the place the selection captured reads the same while a chat view has the keyboard, so only a place the learner is known to work in gets it back, and the learner is told once where it is ({@link AGENT_SELECTION_TOOK_KEYBOARD_MESSAGE}, row 613). Asked by {@link performPresentation} in place of its ordinary return, also after a failed placement, where the sentence names the place the keyboard has then ({@link tellKeyboardPlaceAfterFailedSelection}, row 634).
+   * The same holds beside another editor part (Cursor's Agent chat part) when the selection remembered no chat to give the keyboard back to: the main editor was then the active part, and Cursor reads its file the same while the terminal or a view has the keyboard (Cursor 3.23.12 `workbench.desktop.main.js` 17501:84373, 17501:88693), so the ordinary return gave an unproven file the keyboard, which the captured source then covered without a word when the two shared a group (row 656).
    * @param selection - What the agent's selection knew before any native effect; `undefined` for the learner's own selection, which keeps the ordinary return.
    * @param tellKeyboardPlace - Tells the learner where the keyboard stays; left out, the captured source's sentence of a placement that holds.
    * @returns
    * - `true` when the keyboard stays where the placement left it (the learner was told once).
-   * - `false` for the learner's own selection, a place the learner is known to work in, a chat of another editor part that gets the keyboard back, and another editor part: the ordinary return goes on.
-   * @example await this.keepsKeyboardAfterAgentSelection({ knowsLearnersPlace: false, returnsToForeignTab: false }) // => true in VS Code
+   * - `false` for the learner's own selection, a place the learner is known to work in, and a chat that gets the keyboard back: the ordinary return goes on.
+   * @example this.keepsKeyboardAfterAgentSelection({ knowsLearnersPlace: false, returnsToForeignTab: false }) // => true in VS Code, and in Cursor beside its chat part when no chat was remembered
    */
-  private async keepsKeyboardAfterAgentSelection(
+  private keepsKeyboardAfterAgentSelection(
     selection:
       { knowsLearnersPlace: boolean; returnsToForeignTab: boolean } | undefined,
     tellKeyboardPlace: () => void = () => this.tellAgentSelectionKeyboard(),
-  ): Promise<boolean> {
+  ): boolean {
     // The learner's own selection, a known place and a chat tab of another editor part keep the ordinary return.
     if (
       !selection ||
@@ -13450,11 +13455,6 @@ export class StudyWorkspace {
       selection.returnsToForeignTab
     )
       return false
-    // A layout read answers for the part that has the keyboard: only when it accounts for every group is the main editor the only part.
-    const count = editorLayoutGroupCount(
-      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
-    )
-    if (count !== vscode.window.tabGroups.all.length) return false
     tellKeyboardPlace()
     return true
   }

@@ -4865,6 +4865,72 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
+// Value: protects=the learner's knowledge of where the keyboard is when an agent's Study selection (codebook_presentation) beside Cursor's Agent chat part reopens a replay an agent opened earlier while the learner's file had the keyboard: the main editor was then the active part, and Cursor reads its file the same while the terminal or a view has the keyboard (Cursor 3.23.12 workbench.desktop.main.js 17501:84373, 17501:88693), so row 612's rule of the only editor part holds: no unproven file gets the keyboard back, the Application pane keeps it, and the learner is told once; fails_when=the selection gives the learner's file its keyboard back and the replay's captured source then covers that file in its group with nothing told (the 640 fixer's reading of the model); why_new=Cycle 0046 row 656; seam=recordedReaderHarness, the service's playback (codebook_playback open) and the reader's close, useNativeLayout, addSeparateEditorPart (Cursor's chat part), leaveEmptyGroup, focusMutableDraft, the service's selectPresentation, the editor's active text editor and the first group's front tab, textDocumentShows and the information messages
+test('in Cursor beside its chat part, an agent’s Study selection that reopens a replay an agent opened earlier while the learner’s file has the keyboard gives that file nothing back and says once that the Application pane has the keyboard', async () => {
+  // Arrange: an agent opened a saved recording while the learner worked in login-form.tsx in the first group, and the Study workspace was closed; Cursor's Agent chat stands in its own editor part, and the learner's file has the keyboard again, put there without a key press.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.addSeparateEditorPart()
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const state = harness.reader.presentationState(),
+      showsBefore = harness.textDocumentShows().length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    await harness.controller.settle()
+
+    // Assert: the replay's arrangement is confirmed, the Application pane in front of its new group has the keyboard, no learner file was shown with it, and the sentence says once where it is.
+    assert.deepEqual(
+      {
+        layoutConfirmed: answer.layoutConfirmed,
+        contentTab: answer.reader.contentTab,
+        activePane: harness.focusedPanel(),
+        paneWithKeyboard: harness.innerFocusedPanel(),
+        shownWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus)
+          .map((shown) => shown.name),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        layoutConfirmed: true,
+        contentTab: 'recording',
+        activePane: 'codebook.scopedBrowser',
+        paneWithKeyboard: 'codebook.scopedBrowser',
+        shownWithKeyboard: [],
+        messages: [
+          'Codebook arranged the Study workspace an agent asked for with its Application pane in a new editor group, and the Application pane has the keyboard now: placing the pane needed the focus of an editor group, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's terminal and its keyboard in the bottom panel when an agent opens a recording through codebook_playback in VS Code: the Observed moments view's focus command opens its container in place of the terminal even with the focus kept (1.140.0 workbench.desktop.main.js 1639:157156 -> openView 1639:152215 -> doOpenComposite 1106:186495, hideActiveComposite 1106:190002), which hides the terminal and drops its keyboard; the agent's entry leaves the panel as it is, and the one sentence told once names both places where the replay's controls wait; fails_when=the agent's replay open still focuses the moments view while it is not shown, or tells nothing about where the controls wait; why_new=Cycle 0046 row 621; seam=recordedReaderHarness, the reader's close, useNativeLayout, focusMutableDraft, focusTerminalInBottomPanel (the panel's terminal with the keyboard), the service's playback (the codebook_playback handler), viewFocusCommands, keyboardInView, terminalInFrontOfPanel and the information messages
 test('an agent’s replay open in VS Code while the learner types in the bottom panel’s terminal keeps the terminal in front with its keyboard and says where the replay controls wait', async () => {
   // Arrange: a saved recording, the reader closed; the learner's actions.ts is the active editor of the first group, and the learner types in the terminal of the bottom panel.

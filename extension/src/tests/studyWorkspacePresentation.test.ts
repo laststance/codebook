@@ -4761,8 +4761,62 @@ for (const host of ['Cursor', 'VS Code'] as const)
     }
   })
 
-// Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the service's selectPresentation
-test('in Cursor, a cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
+// Value: protects=the learner's knowledge of where the keyboard is after an agent's Study selection (codebook_presentation) beside Cursor's Agent chat part while a learner's file of the main editor was the active text editor without a fresh sign: Cursor keeps the main editor the active part after a click from that file into the terminal or a view (Cursor 3.23.12 workbench.desktop.main.js 17501:84373, 17501:88693), so the file reads the same as in VS Code's only editor part and row 613's rule holds: the captured source keeps the keyboard the placement gave it, no unproven file gets it back, and the learner is told once; fails_when=beside another editor part the selection makes its ordinary return, which gives the file in the captured source's group nothing visible to hold, so the source covers that file and keeps the keyboard with nothing told; why_new=Cycle 0046 row 656 (the Study selection's half of the same rule); seam=useNativeLayout, addSeparateEditorPart (Cursor's chat part, not focused), focusMutableDraft, the service's selectPresentation, the editor's active text editor, textDocumentShows and the information messages
+test('in Cursor beside its chat part, an agent’s Study selection made while a learner’s file is the active text editor gives that file nothing back and says once that the captured source has the keyboard', async () => {
+  // Arrange: Cursor's Agent chat stands in its own editor part without the keyboard; login-form.tsx is in front of the first group and actions.ts, the active text editor, in front of the second, put there without a key press.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('actions.ts', 2)
+    const selection = harness.reader.presentationState()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: the Study layout is confirmed; the measurement gave actions.ts back the keyboard it borrowed (twice), the captured source took it at its placement and no file got it after that, the source is the active text editor, and the sentence says so once.
+    assert.deepEqual(
+      {
+        layoutConfirmed: answer.layoutConfirmed,
+        showsWithKeyboard: harness
+          .textDocumentShows()
+          .slice(showsBefore)
+          .filter((shown) => !shown.preserveFocus)
+          .map((shown) => `${shown.name}@${shown.viewColumn}`),
+        activeTextEditor: harness.editor.window.activeTextEditor?.document.uri
+          .toString()
+          .split('/')
+          .at(-1),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        layoutConfirmed: true,
+        showsWithKeyboard: [
+          'actions.ts@2',
+          'actions.ts@2',
+          'Captured-overview.mts@2',
+        ],
+        activeTextEditor: 'Captured-overview.mts',
+        messages: [
+          'Codebook arranged the Study workspace an agent asked for, and its captured source has the keyboard now: placing the panes needed the focus of the source, and this editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat. Click where you want to type.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); the selection is the learner's since row 656: an agent's selection beside Cursor's chat part gives no unproven file its focus back, so only the learner's own selection still makes that return; seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the reader's changePresentation for the learner
+test('in Cursor, a learner’s cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
   // Arrange: as above in Cursor; the selection's layout command will wait until the learner closed auth.ts.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
@@ -4790,9 +4844,8 @@ test('in Cursor, a cold Study selection after a reload is still refused when the
 
     // Act
     let refusal: unknown
-    const selecting = harness.service
-      .selectPresentation({
-        instanceId: harness.service.instanceId,
+    const selecting = harness.reader
+      .changePresentation({
         presentationId: selection.presentationId,
         expectedRevision: selection.presentationControlRevision,
         mode: 'study-workspace',
