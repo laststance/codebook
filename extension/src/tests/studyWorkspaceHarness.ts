@@ -51,6 +51,8 @@ const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 const DISPOSED_TAB_CLOSE_DELAY_MS = 20
 /** How long after a disposed pane's tab closed the fake editor removes the group that tab left empty, in the model of `removeEmptiedGroupsLater`: Cursor 3.23.12 removed the captured source's group 57 ms after its tab at "Codebook: Close Study Workspace", and the Study pane's 12 ms after its tab (Cycle 0046 row 66). The longer of the two is modelled: it is longer than one poll of the reader's wait for the panes' tabs, so the group is still there when that wait ends. */
 const EMPTIED_GROUP_CLOSE_DELAY_MS = 57
+/** How long after a pane's move into another group the fake editor removes the group the move left empty, in the model of `removeGroupLeftByPanelMoveLater`: VS Code 1.140.0 closes a moved webview's editor in its old group only once the open in the new group has begun (`workbench.desktop.main.js` 4037:7120 calls the old group's `closeEditor` from `onWillOpenEditor`), and that close awaits its confirmation before it removes the emptied group (1106:79300, 1106:79400, 1106:80531); in C58 round 1d the leftover was gone about 130 ms after the Application's move (frames at +0.45 s and +0.58 s, group events +513 to +571 ms of the Return; Cycle 0046 row 658). */
+const MOVED_PANE_GROUP_REMOVAL_DELAY_MS = 130
 /** How long after `reveal()` returned a pane revealed with the keyboard takes it, in the model of `focusRevealedPanesLater`: a webview's focus is a message to its frame, sent while the editor opens the pane, so it lands after the calls an extension made right behind the reveal. The length is the model's choice; no trace gives it. */
 const LATE_WEBVIEW_FOCUS_DELAY_MS = 30
 /** The fake window of {@link workspaceHarness}'s side bar model, in pixels as Cursor 3.23.12 showed it (Cycle 0045 NF-22, obs15 P4): primary side bar 214, editor area 660, secondary side bar 461. */
@@ -649,6 +651,10 @@ export async function workspaceHarness(
   /** The view column of the group the editor's maximize command maximized, read while `maximizedEditorGroup` is set: the group that was the active one when the command ran. */
   let maximizedColumn: number | undefined
   let closeEmptyGroupsOnMove = false
+  /** Whether the group a pane's move left empty goes {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move instead of with it; see `removeGroupLeftByPanelMoveLater`. */
+  let removesGroupLeftByMoveLater = false
+  /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
+  const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard; the next tab or group change rebuilds the tab model and corrects the name.
   let staleNamedGroup: (typeof groups)[number] | undefined
@@ -698,14 +704,15 @@ export async function workspaceHarness(
   const stopTopFrameIds = new Map<string, number>()
   /**
    * The settings the fake editor answers, by their full key; every other setting is unset. Read at each `get`, so a test that changes one of the values is answered with the new one.
-   * @returns The values of `codebook.savedStudyLimit`, `debug.focusEditorOnBreak` (the learner's own value, else Codebook's contributed default, else unset: the editor's default, on) and `workbench.editor.closeEmptyGroups` (the fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`).
+   * @returns The values of `codebook.savedStudyLimit`, `debug.focusEditorOnBreak` (the learner's own value, else Codebook's contributed default, else unset: the editor's default, on) and `workbench.editor.closeEmptyGroups` (the fake editor removes an emptied group only in the models of `closeDisposedPanelTabsLater` and `closeEmptyGroupsAfterPanelMove`, row 658).
    * @example configuredValues()['debug.focusEditorOnBreak'] // => false after harness.pauseDebugger({ focusesEditorOnBreak: false })
    */
   const configuredValues = (): Record<string, unknown> => ({
     'codebook.savedStudyLimit': savedStudyCapacity,
     'debug.focusEditorOnBreak':
       focusEditorOnBreak ?? contributedFocusEditorOnBreak,
-    'workbench.editor.closeEmptyGroups': closeDisposedPanelTabsLater,
+    'workbench.editor.closeEmptyGroups':
+      closeDisposedPanelTabsLater || closeEmptyGroupsOnMove,
   })
   /**
    * What the fake editor's `inspect` answers for a setting: the learner's value of `debug.focusEditorOnBreak` (set by `pauseDebugger`) in the user layer and Codebook's contributed value as the default; every other setting is reported in the user layer.
@@ -2051,8 +2058,25 @@ export async function workspaceHarness(
             previousColumn !== value.viewColumn &&
             emptied
           ) {
-            automaticallyClosedColumns.push(emptied.viewColumn)
-            removeEmptiedGroup(emptied)
+            // VS Code removes the emptied group a moment after the move is reported (row 658): while the next layout read is pending, or by itself later; the group still empty then goes, at the column it stands at by then.
+            if (removesGroupLeftByMoveLater) {
+              const removeLater = (): void => {
+                const index = pendingMoveRemovals.indexOf(removeLater)
+                if (index < 0) return
+                pendingMoveRemovals.splice(index, 1)
+                if (!groups.includes(emptied) || emptied.tabs.length) return
+                automaticallyClosedColumns.push(emptied.viewColumn)
+                removeEmptiedGroup(emptied)
+              }
+              pendingMoveRemovals.push(removeLater)
+              runEditorChangeLater(
+                removeLater,
+                MOVED_PANE_GROUP_REMOVAL_DELAY_MS,
+              )
+            } else {
+              automaticallyClosedColumns.push(emptied.viewColumn)
+              removeEmptiedGroup(emptied)
+            }
           }
           if (!preserveFocus) {
             // A pane revealed with the focus takes the keyboard from the page body.
@@ -3114,6 +3138,12 @@ export async function workspaceHarness(
               setImmediate(() => {
                 for (const close of dueTabCloses) close()
               })
+            // VS Code reports the removal of the group a pane's move emptied while this read is pending (C58 round 1d: group events 7 ms after the read began, its answer 47 ms later; row 658).
+            if (pendingMoveRemovals.length) {
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              for (const remove of [...pendingMoveRemovals]) remove()
+              await new Promise<void>((resolve) => setImmediate(resolve))
+            }
             // The focused separate part answers for itself, and a hidden editor area reports its stacked groups collapsed.
             let reportedLayout = editorLayout
             if (separateEditorPart?.focused)
@@ -4452,6 +4482,15 @@ export async function workspaceHarness(
     },
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
+    },
+    /**
+     * Makes the fake editor remove the group a pane's move left empty after the move, which is reported at once, instead of with the move: while the next layout read is pending, or by itself {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move when no read comes, as VS Code 1.140.0 did with the earlier window's leftover after the Application's move into its own group in C58 round 1d (the group events at +571 ms of the Return, during the layout read issued at +564 and answered at +611; Cycle 0046 row 658). Only in the model of `closeEmptyGroupsAfterPanelMove`.
+     * @example
+     * harness.closeEmptyGroupsAfterPanelMove()
+     * harness.removeGroupLeftByPanelMoveLater()
+     */
+    removeGroupLeftByPanelMoveLater(): void {
+      removesGroupLeftByMoveLater = true
     },
     /** The fake editor the reader runs in, so a test can act on it as the learner or another extension does: run a native command, create a panel, show a document or close a tab. @example await harness.editor.commands.executeCommand('workbench.action.focusFirstEditorGroup') */
     editor: editorDependencies.vscode,

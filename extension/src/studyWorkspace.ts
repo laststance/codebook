@@ -12992,6 +12992,12 @@ export class StudyWorkspace {
           signal,
         )
         assertCurrent()
+        // VS Code removes the group the move emptied only a moment later; a placement guard taken before that removal reads it as a learner change (row 658).
+        await this.followRemovalOfGroupLeftByApplication(
+          groupsRemovedByMove.identity,
+          signal,
+        )
+        assertCurrent()
       }
       await this.settleInitialApp(signal, lifetime)
       // Move Source only after App leaves its old group, so native preview replacement cannot dispose the retained renderer.
@@ -13008,8 +13014,8 @@ export class StudyWorkspace {
       // Retain accepted native placement for a later Return even when this entry was cancelled; Close and newer input still revoke its proof.
       this.assertLifetime(lifetime)
       assertPlaced()
-      // Read after the layout reply, which the editor sends after the removal of the group the pane's move emptied (row 626).
-      const removedByMove = groupsRemovedByMove()
+      // Read after the layout reply, which the editor sends after the removal of the group the pane's move emptied (row 626), or once that removal was followed (row 658).
+      const removedByMove = groupsRemovedByMove.removedCount()
       // The groups the removed leftover leaves stand as the Study's columns left them; they are stacked as without it (row 639).
       if (removedByMove > 0)
         layout = await this.stackGroupsAfterLeftoverRemoval(layout, () => {
@@ -13520,12 +13526,15 @@ export class StudyWorkspace {
   /**
    * Remembers the group the Application pane stands alone in before {@link reserveApplicationGroup} moves it into its new group, because the editor removes the group the move leaves empty: it closes a moved webview's editor in its old group (VS Code 1.140.0 `workbench.desktop.main.js` 4037:7120, Cursor 3.23.12 19764:8061), and that close removes a group whose last editor it was, a locked one too, under `workbench.editor.closeEmptyGroups`, on by default (1106:79878 and 1106:80531, 857:4736; Cursor 17501:42289 and 17501:43016, 17351:4267). Such a group is an earlier window's leftover that no record proved after Developer: Reload Window, which a cold Study select gave the pane (row 626); Codebook itself never unlocks, closes or merges it (row 591).
    * @param panel - The Application pane, before its move.
-   * @returns A count read after the placement's layout reply: `1` when that group is gone, `0` when it stands (`closeEmptyGroups` off), the pane shared its group or did not move.
-   * @example const groupsRemovedByMove = this.watchGroupLeftByApplication(panel) // groupsRemovedByMove() => 1 once the editor removed the leftover at column 2
+   * @returns
+   * - `identity`: the identity of that group, which {@link followRemovalOfGroupLeftByApplication} waits for the editor to remove; `undefined` when the pane shares its group.
+   * - `removedCount`: a count read after the placement's layout reply: `1` when that group is gone, `0` when it stands (`closeEmptyGroups` off), the pane shared its group or did not move.
+   * @example const groupsRemovedByMove = this.watchGroupLeftByApplication(panel) // groupsRemovedByMove.removedCount() => 1 once the editor removed the leftover at column 2
    */
-  private watchGroupLeftByApplication(
-    panel: vscode.WebviewPanel,
-  ): () => number {
+  private watchGroupLeftByApplication(panel: vscode.WebviewPanel): {
+    identity: symbol | undefined
+    removedCount: () => number
+  } {
     const group = vscode.window.tabGroups.all.find(
       (candidate) => candidate.viewColumn === panel.viewColumn,
     )
@@ -13533,13 +13542,78 @@ export class StudyWorkspace {
       group?.tabs.length === 1
         ? this.editorGroupIdentities.get(group)
         : undefined
-    return () =>
-      identity !== undefined &&
-      !vscode.window.tabGroups.all.some(
-        (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+    return {
+      identity,
+      removedCount: () =>
+        identity !== undefined &&
+        !vscode.window.tabGroups.all.some(
+          (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+        )
+          ? 1
+          : 0,
+    }
+  }
+
+  /**
+   * Waits after the Application pane's move until the editor has removed the group the move left empty, and follows that removal as an effect Codebook issued; called by {@link reserveApplicationGroup} right after the move, before it takes the placement guard of its layout read (row 658).
+   * VS Code closes the moved webview's editor in its old group only once the open in the new group has begun (VS Code 1.140.0 `workbench.desktop.main.js` 4037:7120, from `onWillOpenEditor`), and that close awaits its confirmation before it removes the group it emptied (1106:79300, 1106:79400, 1106:80531). So the removal comes a moment after the move is reported: in C58 round 1d about 130 ms later, during the reservation's layout read, whose guard then refused the Return with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.". The wait is marked as Codebook's own removal of that group ({@link issuedApplicationColumnShift}), as {@link closeLeftoverAsIssuedRemoval} marks the close of a proven leftover, so the groups behind it keep their identities. Any other change of the groups meanwhile is a learner's and refuses.
+   * @param identity - The group the pane stood alone in before its move ({@link watchGroupLeftByApplication}); `undefined` when it shared its group.
+   * @param signal - The reservation's cancellation.
+   * @returns Once the editor removed that group; at once for no such group, a group that still holds a tab, and while `workbench.editor.closeEmptyGroups` is off, where the editor keeps it; after {@link PRESENTATION_READY_TIMEOUT_MS} when the editor keeps it all the same, which the placement's count then reads.
+   * @throws When the entry is cancelled, and when another group was opened, closed or moved during the wait: "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."
+   * @example await this.followRemovalOfGroupLeftByApplication(groupsRemovedByMove.identity, signal) // returns once VS Code removed the leftover at column 2
+   */
+  private async followRemovalOfGroupLeftByApplication(
+    identity: symbol | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const emptied = vscode.window.tabGroups.all.find(
+      (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+    )
+    // Only an emptied group the editor removes by itself is waited for.
+    if (
+      identity === undefined ||
+      !emptied ||
+      emptied.tabs.length ||
+      !this.closesEmptyEditorGroups()
+    )
+      return
+    /** Names the groups the editor shows now by their identities, in their order. */
+    const shownGroups = (): (symbol | undefined)[] =>
+      vscode.window.tabGroups.all.map((candidate) =>
+        this.editorGroupIdentities.get(candidate),
       )
-        ? 1
-        : 0
+    const othersBefore = shownGroups().filter(
+      (candidate) => candidate !== identity,
+    )
+    const previous = this.applicationGroupChange
+    const removal: NonNullable<StudyWorkspace['applicationGroupChange']> = {
+      kind: 'remove',
+      identity,
+    }
+    this.applicationGroupChange = removal
+    try {
+      await waitUntil(
+        () => !shownGroups().includes(identity),
+        "the editor's removal of the group the Application's move emptied",
+        PRESENTATION_READY_TIMEOUT_MS,
+        signal,
+      ).catch(() => signal?.throwIfAborted())
+    } finally {
+      if (this.applicationGroupChange === removal)
+        this.applicationGroupChange = previous
+    }
+    // The removal leaves the other groups as they were, in their order; any other change is the learner's.
+    const othersAfter = shownGroups().filter(
+      (candidate) => candidate !== identity,
+    )
+    if (
+      othersAfter.length !== othersBefore.length ||
+      othersAfter.some((candidate, index) => candidate !== othersBefore[index])
+    )
+      throw new Error(
+        'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+      )
   }
 
   /**

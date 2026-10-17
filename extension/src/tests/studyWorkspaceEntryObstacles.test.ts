@@ -639,6 +639,175 @@ for (const situation of [
     }
   })
 
+// Value: protects=the way back to the live run on row 626's path in VS Code (Developer: Reload Window, the learner resized the stacked groups so the earlier window's record proves nothing, the cold Study select put the Application into the unproven leftover) when the editor removes the leftover the Application's move emptied only a moment after that move, as VS Code 1.140.0 did about 130 ms later in C58 round 1d (it closes the moved webview's old editor from `onWillOpenEditor` and awaits that close's confirmation before it removes the group: workbench.desktop.main.js 4037:7120, 1106:79300, 1106:79400, 1106:80531); the Return follows that removal as its own move's effect, reaches the live run stacked, and Close gives the learner's groups back stacked; fails_when=the reservation's placement guard, taken before the late removal, reads the editor's own removal as a learner's change and the Return is refused with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved." (C58 rounds c58-vs-1d and c58-vs-1d2; C57 reached the live run); why_new=Cycle 0046 row 658; seam=applicationGroupMarkers (a record the resized grid no longer equals), leaveEmptyLockedGroup, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, the reader's agent select and returnToCurrent, close, editorLayout, automaticallyClosedColumns and harness.groups
+test("in VS Code, an agent's Return Current after a reload whose record no longer proves the leftover follows the editor's late removal of the leftover the Application's move emptied, reaches the live run stacked, and Close gives the learner's groups back stacked", async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of three equal rows; after the reload that group stands empty and locked, and the learner grew the second row twice. actions.ts is in the second row and auth.ts in the third. The editor removes a group a pane's move emptied 130 ms after the move. The agent selected the Study cold, which put the Application into the leftover.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    const learnerAuth = harness.focusMutableDraft('auth.ts', 3)
+    const learnerActions = harness.focusMutableDraft('actions.ts', 2)
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    /** Names the column of the group that holds a tab. */
+    const columnOf = (tab: unknown): number | undefined =>
+      harness.groups.find((group) => group.tabs.some((held) => held === tab))
+        ?.viewColumn
+
+    // Act
+    const answer = await harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    const live = {
+      answer,
+      layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+      leftoverGone: !harness.groups.includes(leftover),
+      removedColumns: harness.automaticallyClosedColumns(),
+      rows: harness.editorLayout(),
+      applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+      actionsColumn: columnOf(learnerActions.tab),
+      sourceColumn: harness.sourceColumn(),
+      authColumn: columnOf(learnerAuth.tab),
+    }
+    await harness.reader.close()
+
+    // Assert: the Return answered, the editor removed the leftover at column 2 after the move, three stacked rows (the Application, the captured source with actions.ts, auth.ts) stand while the run is live, and after Close the learner's two groups stand stacked again with the sizes they had.
+    assert.deepEqual(
+      {
+        ...live,
+        rows: {
+          orientation: (live.rows as { orientation: number }).orientation,
+          nested: (live.rows as { groups: { groups?: unknown }[] }).groups.some(
+            (group) => group.groups !== undefined,
+          ),
+          count: (live.rows as { groups: unknown[] }).groups.length,
+        },
+        afterClose: harness.editorLayout(),
+      },
+      {
+        answer: 'returned',
+        layoutConfirmed: true,
+        leftoverGone: true,
+        removedColumns: [2],
+        rows: { orientation: 1, nested: false, count: 3 },
+        applicationColumn: 1,
+        actionsColumn: 2,
+        sourceColumn: 2,
+        authColumn: 3,
+        afterClose: { orientation: 1, groups: [{ size: 349 }, { size: 109 }] },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's own change of the editor groups while the Return waits for the editor's late removal of the leftover the Application's move emptied (row 658): a group the learner adds then is no effect of Codebook's move, and the Return refuses instead of arranging around it; fails_when=the wait takes every group change before the removal for the editor's own, so the learner's new group is stacked into the live arrangement or refused only later with another cause; why_new=Cycle 0046 row 658 (the bound of its fix); seam=applicationGroupMarkers, leaveEmptyLockedGroup, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, the reader's agent select and returnToCurrent, the fake editor's workbench.action.newGroupAbove run as the learner, panelColumn and harness.groups
+test("in VS Code, a group the learner adds while an agent's Return Current waits for the editor's late removal of the emptied leftover refuses the Return as a learner's change", async () => {
+  // Arrange: as in the late-removal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+
+    // Act: the agent's Return moves the Application out of the leftover; before the editor removes the emptied leftover, the learner runs New Group Above in the Application's new group.
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.scopedBrowser') === 1 &&
+        harness.groups.includes(leftover) &&
+        leftover.tabs.length === 0,
+      "the Application's move out of the leftover",
+    )
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+
+    // Assert: the Return is refused as a learner's change.
+    assert.equal(
+      await answer,
+      'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's groups from Codebook's lock: when Cursor activates the group that held the keyboard before the Return's new Application group was inserted (the learner's first group, whose Application pane the reservation focused) again before the lock reaches it, the lock without argument locks that learner group (C57 round 1b: the new Application group stood unlocked above the learner's locked group, which stayed locked after Close); the reservation now finds the tab model naming that group as the lock answers, unlocks it, focuses the new group and locks that one, so only the Application's own group is locked and Close leaves no group locked; fails_when=the lock's target is taken on trust from the naming before the lock, so a learner's group stays locked through Close and into the next rounds; why_new=Cycle 0046 row 644; seam=useNativeLayout, addSeparateEditorPart (Cursor's chat part), reactivatePreviousGroupBeforeLock, the reader's agent select and returnToCurrent, close, the groups' lock flags and the command log
 test("in Cursor, an agent's Return Current whose lock reaches the learner's group Cursor activated again locks only the Application's own group, and Close leaves no group locked", async () => {
   // Arrange: actions.ts in the first group and auth.ts in the second; the agent selected the Study from Cursor's chat, which put the Application pane into the first group. Cursor will activate that group again before the Return's lock arrives.
