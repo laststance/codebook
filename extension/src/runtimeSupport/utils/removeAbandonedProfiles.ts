@@ -47,10 +47,10 @@ async function removeUnusedProfile(
 
 /**
  * Says whether a profile folder is a real directory of this user, before its owner marker is read; called by {@link sweepProfile} for each candidate folder.
- * Why: the profile root is the shared `/tmp`, where another user of the machine can make a folder with the profile prefix and a marker that names a gone process of this machine. Such a folder is never judged, so it is neither removed nor counted.
+ * Why: on macOS and Linux the profile root is the shared `/tmp`, where another user of the machine can make a folder with the profile prefix and a marker that names a gone process of this machine. Such a folder is never judged, so it is neither removed nor counted. Windows has no user id; there the root is the user's own temp folder ({@link managedProfileRoot}), which other users cannot open.
  * @param profile - The candidate folder.
  * @returns
- * - `true` for a real directory (looked at without following a link) whose owner is the user this process runs as; on Windows, which has no user id (`process.getuid` is absent), for every real directory
+ * - `true` for a real directory (looked at without following a link) whose owner is the user this process runs as; on Windows, which has no user id (`process.getuid` is absent), for every real directory of the user's own root
  * - `false` for a folder of another user, for a link, and for a path that cannot be looked at
  * @example
  * await isOwnProfileFolder('/tmp/codebook-browser-a1b2c3') // => true for a folder this user's editor made
@@ -59,7 +59,7 @@ async function removeUnusedProfile(
 async function isOwnProfileFolder(profile: string): Promise<boolean> {
   const entry = await lstat(profile).catch(() => undefined)
   if (!entry?.isDirectory()) return false
-  // Windows has no user id to compare: there every real directory is judged by its marker, as before.
+  // Windows has no user id to compare: there the root is the user's own temp folder (managedProfileRoot), and every real directory in it is judged by its marker.
   return process.getuid === undefined || entry.uid === process.getuid()
 }
 
@@ -101,7 +101,7 @@ async function sweepProfile(
 /**
  * Removes the browser profile folders that a killed editor left behind, so that they do not pile up in the profile root; started by {@link HostBrowser.launch} beside a managed run's start, which does not wait for it, and awaited by {@link HostBrowser.close}.
  *
- * A folder is removed only on proof that Codebook made it for this user and nothing uses it: it is a real directory of the user this process runs as ({@link isOwnProfileFolder}; Windows has no user id to compare), it carries the owner marker
+ * A folder is removed only on proof that Codebook made it for this user and nothing uses it: it is a real directory of the user this process runs as ({@link isOwnProfileFolder}; Windows has no user id to compare, and its root is the user's own temp folder), it carries the owner marker
  * ({@link MANAGED_PROFILE_OWNER_FILE}), the marker's process is gone from this machine, also when another process has its id now ({@link isRecordedOwnerGone}, judged without a boot time,
  * see {@link withoutBootTime}), and no process runs with the folder as its profile. A folder without a readable marker is never touched, whoever made it.
  * One sweep judges at most {@link MANAGED_PROFILE_SWEEP_LIMIT} marked folders; the folders without a marker that builds before the marker left behind,
@@ -110,7 +110,7 @@ async function sweepProfile(
  * ({@link listProcesses}) removes nothing: every folder stays for a later run, like a folder whose removal fails. A folder is removed by {@link removeWithoutFollowing}: a link inside it is removed as a name, and the files it leads to stay. The starts of the marker's processes are kept for the sweep, so the folders of one running editor cost one read;
  * a kept start never calls an owner gone.
  *
- * @param root - The directory that holds the profile folders: {@link MANAGED_PROFILE_ROOT} in the product, a directory of their own in tests.
+ * @param root - The directory that holds the profile folders: {@link managedProfileRoot} in the product (the shared `/tmp` on macOS and Linux, the user's own temp folder on Windows), a directory of their own in tests.
  * @param identity - The machine and the boot of this process, by which a marker's owner is judged.
  * @param listRunningProcesses - Lists the processes of this machine; {@link listProcesses} unless a test counts the listings.
  * @param readStart - Reads the start of the process that has a marker's process id now; {@link readProcessStart} unless a test names its own.

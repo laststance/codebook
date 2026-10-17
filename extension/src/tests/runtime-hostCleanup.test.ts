@@ -9,8 +9,9 @@ import fsPromises, {
   stat,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import * as os from 'node:os'
 import { hostname, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import {
   setImmediate as nextEventLoopTurn,
@@ -78,6 +79,7 @@ async function loadHostBrowser(
  * @param options.createViewport - Holds or rejects the real factory boundary while the test observes launch and cleanup ordering.
  * @param options.platform - The system the adapter reads from `process.platform`; this machine's by default.
  * @param options.processesOfProfile - The processes a look for the profile finds, by the look's number (1 for the first); none by default.
+ * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot); the user's temp folder its loaded context reads (`os.tmpdir`) is the test's root then. By default the browser is given the test's root.
  * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
  * const managed = await managedBrowser(context)
@@ -94,6 +96,7 @@ async function managedBrowser(
     createViewport?: BrowserViewportFactory
     platform?: NodeJS.Platform
     processesOfProfile?: (look: number) => { pid: number; command: string }[]
+    rootChosenByTheBrowser?: boolean
   } = {},
 ) {
   const root = await realpath(
@@ -136,6 +139,9 @@ async function managedBrowser(
           currentStorageOwner: options.currentStorageOwner,
         },
       }),
+      ...(options.rootChosenByTheBrowser && {
+        'node:os': { ...os, tmpdir: () => root },
+      }),
     },
     // The owner marker names this process; a test may name another system, which the adapter reads as `process.platform`.
     {
@@ -171,7 +177,7 @@ async function managedBrowser(
     'normal',
     undefined,
     options.createViewport,
-    root,
+    options.rootChosenByTheBrowser ? undefined : root,
   )
   return { browser, root, events, processProbes }
 }
@@ -832,6 +838,32 @@ for (const { system, platform, intervalMs } of [
       true,
     )
   })
+
+// Value: protects=the profiles of a managed run on Windows, which has no user id to tell another user's folder by: the browser creates its profile folder in the user's own temp folder, which other users cannot open, and its sweep of abandoned folders looks there, not in `<drive>:\tmp`, a folder at a drive root every user may change, where another user's in-use profile (whose command line the listing shows empty) could be removed and another user could plant folders and markers (SC3, Cycle 0046 repeat review); fails_when=the profile root is `/tmp` on every system, so on Windows the launch and the sweep use `<drive>:\tmp`; why_new=every managed-browser test named a root of its own; seam=the system the adapter reads (`process.platform` of its loaded context), its user temp folder (`os.tmpdir` of that context, the test's root), the browser given no root of its own, and the sweep's stand-in, which notes the root it is asked to sweep
+test('on Windows a managed browser creates its profile folder in the user’s own temp folder and sweeps abandoned folders there', async (context) => {
+  // Arrange: a managed browser on Windows whose user temp folder is the test's root and which is given no profile root.
+  const sweptRoots: string[] = []
+  const managed = await managedBrowser(context, {
+    platform: 'win32',
+    rootChosenByTheBrowser: true,
+    removeAbandonedProfiles: async (root) => {
+      sweptRoots.push(root)
+      return []
+    },
+  })
+  // Act
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const profile = profileOf(managed.events)
+  await managed.browser.close()
+  // Assert
+  assert.deepEqual(
+    { profileFolderIn: dirname(profile), sweptRoots },
+    { profileFolderIn: managed.root, sweptRoots: [managed.root] },
+  )
+})
 
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
   // Arrange: three folders lie in the profile root when the next run starts. The killed editor's marker names an id no process can have: the id of a child that just exited could be given to another process before the sweep judges it.

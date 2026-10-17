@@ -7,6 +7,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -17,7 +18,6 @@ import {
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_REMOVAL_RETRIES,
   MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
-  MANAGED_PROFILE_ROOT,
   PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -34,6 +34,7 @@ import {
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
 import { awaitResponse } from './utils/awaitResponse'
+import { managedProfileRoot } from './utils/managedProfileRoot'
 import { profileProcesses } from './utils/profileProcesses'
 import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
 import type { selectHost } from './utils/selectHost'
@@ -95,7 +96,7 @@ export class HostBrowser {
   private abandonedProfileSweep?: Promise<void>
 
   /**
-   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own.
+   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own. Left out, a managed run uses this user's directory ({@link managedProfileRoot}: the shared `/tmp` on macOS and Linux, the user's own temp folder on Windows).
    */
   constructor(
     private readonly host: HostConfiguration,
@@ -105,9 +106,18 @@ export class HostBrowser {
     private readonly scenario: Scenario,
     private readonly fail: (reason: string) => void = () => undefined,
     private readonly createViewport?: BrowserViewportFactory,
-    private readonly profileRoot: string = MANAGED_PROFILE_ROOT,
+    private readonly profileRoot?: string,
   ) {
     this.ownerOptions = { ownerAgentId: `codebook-${runId}` }
+  }
+
+  /**
+   * Names the directory of this run's managed profile folder and of the folders a killed editor left, the same for both; read by {@link launch} for a managed browser only, and handed to {@link startAbandonedProfileSweep}.
+   * @returns The directory a test named; else this user's directory of {@link managedProfileRoot} on this system.
+   * @example this.managedRoot // => '/tmp' on Linux, 'C:\Users\learner\AppData\Local\Temp' on Windows
+   */
+  private get managedRoot(): string {
+    return this.profileRoot ?? managedProfileRoot(process.platform, tmpdir)
   }
 
   /**
@@ -155,7 +165,7 @@ export class HostBrowser {
       if (this.closing) throw new Error('Owned browser is closing')
       this.startAbandonedProfileSweep(owner)
       this.managedProfile = await realpath(
-        await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
+        await mkdtemp(join(this.managedRoot, MANAGED_PROFILE_PREFIX)),
       )
       // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
       await writeFile(
@@ -392,7 +402,7 @@ export class HostBrowser {
   private startAbandonedProfileSweep(owner: StorageOwnerIdentity): void {
     if (this.closing || this.abandonedProfileSweep) return
     this.abandonedProfileSweep = removeAbandonedProfiles(
-      this.profileRoot,
+      this.managedRoot,
       owner,
     )
       .then((abandoned) => {
