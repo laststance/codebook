@@ -2776,20 +2776,28 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the text editor that has the keyboard, which is the editor's active text editor unless the Repository Wiki's tab in another group is the active tab: VS Code goes on reporting the text editor that had the keyboard when the Wiki's group became the active one, because it counts a code editor that still has the text focus at that moment as the active one (VS Code 1.140.0 `workbench.desktop.main.js` 705:2664, in `_updateState`, which `onDidActiveEditorChange` runs) before the webview's own focus reaches its frame, and afterwards updates it only on a code editor's text or widget focus (705:1683). C58 saw that report (`c58-vs-567d`: the cited source's copy in the first group named active while the Wiki's group, the second, was the active one), and the Wiki's "View recording" was refused with "The previously focused source group changed; focus was not guessed." (row 659). Asked by {@link capturePresentationFocus} before it decides where the keyboard is, and by {@link retainForeignTabFocus} for an entry the Wiki asked for.
-   * @returns The active text editor, or `undefined` while the Repository Wiki's tab is the active tab of another group than that editor's.
+   * Names the text editor that has the keyboard, which is the editor's active text editor unless a webview's tab in another group is the active tab, the Repository Wiki's or another extension's (row 671; the Application and Study panes report their own focus): VS Code goes on reporting the text editor that had the keyboard when the Wiki's group became the active one, because it counts a code editor that still has the text focus at that moment as the active one (VS Code 1.140.0 `workbench.desktop.main.js` 705:2664, in `_updateState`, which `onDidActiveEditorChange` runs) before the webview's own focus reaches its frame, and afterwards updates it only on a code editor's text or widget focus (705:1683). C58 saw that report (`c58-vs-567d`: the cited source's copy in the first group named active while the Wiki's group, the second, was the active one), and the Wiki's "View recording" was refused with "The previously focused source group changed; focus was not guessed." (row 659). Asked by {@link capturePresentationFocus} before it decides where the keyboard is, and by {@link retainForeignTabFocus} for an entry the Wiki asked for. Row 671: the report stays behind any editor that is no code editor, so an agent's replay open while another extension's webview had the keyboard met it too.
+   * @param readPastWiki - Whether the Repository Wiki's tab counts as a webview with the keyboard; {@link retainForeignTabFocus} passes `false` for an entry the Wiki did not ask for.
+   * @returns The active text editor, or `undefined` while a webview's tab other than the Application or Study pane (and the Wiki's, unless `readPastWiki` is `false`) is the active tab of another group than that editor's.
    * @example this.activeTextEditorWithKeyboard() // => undefined after the learner pressed View recording in the Wiki beside the cited source's copy
    */
-  private activeTextEditorWithKeyboard(): vscode.TextEditor | undefined {
+  private activeTextEditorWithKeyboard(
+    readPastWiki = true,
+  ): vscode.TextEditor | undefined {
     const editor = vscode.window.activeTextEditor,
       group = vscode.window.tabGroups.activeTabGroup,
       input = group.activeTab?.input
-    // The Wiki in front of the active group has the keyboard; a text editor of another group is the editor's stale report.
+    // A webview in front of the active group has the keyboard (the Wiki, or another extension's); a text editor of another group is the editor's stale report (rows 659 and 671). The Application and Study panes say so by their own `active` flag, which both callers ask first.
     if (
       editor &&
       editor.viewColumn !== group.viewColumn &&
       input instanceof vscode.TabInputWebview &&
-      isCodebookPaneViewType(input.viewType, 'codebook.repositoryWiki')
+      !isCodebookPaneViewType(
+        input.viewType,
+        'codebook.scopedBrowser',
+        'codebook.studyContext',
+        ...(readPastWiki ? [] : ['codebook.repositoryWiki']),
+      )
     )
       return undefined
     return editor
@@ -2883,7 +2891,7 @@ export class StudyWorkspace {
   /**
    * Remembers the tab the editor names as active when no text editor and no Study pane has the focus, so a selection or a restore is admitted without closing or moving that tab; called by {@link admitPresentation} for every arrangement and by {@link confirmPresentationNoop}, by {@link sampleKeyboardOutsideEditors} for the record of a pause, and by {@link close} before it ends a Read. Cursor's Agent chat is such a tab of an editor group while it is shown as a tab of another editor part; and while its chat input holds the keyboard there, Cursor can name a learner's own file of the main editor as the active tab without an active text editor. Nobody can focus anything else while the agent works. While Cursor shows that chat as a pane of the secondary side bar, the editor names an active text editor beside it, as VS Code does beside its chat view, and nothing is remembered.
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
-   * @param fromWiki - `true` for an entry the Repository Wiki asked for ({@link open} with the origin `repository`: a recording or observation visit): the Wiki's tab in front of the active group has the keyboard although VS Code may still report a text editor of another group as the active one ({@link activeTextEditorWithKeyboard}, row 659), so that report does not end the search for the tab to give the keyboard back to.
+   * @param fromWiki - `true` for an entry the Repository Wiki asked for ({@link open} with the origin `repository`: a recording or observation visit): the Wiki's tab in front of the active group has the keyboard although VS Code may still report a text editor of another group as the active one ({@link activeTextEditorWithKeyboard}, row 659), so that report does not end the search for the tab to give the keyboard back to. Another extension's webview in front of the active group is read past for every entry (row 671); the Wiki only for its own entries, since Cursor reports the text editor the Wiki took the keyboard from for a moment after a learner's own entry from it, which keeps its own handoff.
    * @param withoutPanePress - `true` for an arrangement of the live or recording panes that no control of a Study pane or view asked for (the composition branch of {@link admitPresentation}): an agent's (row 628), and the learner's Arrange Study Workspace run from the command palette or a shortcut (row 638). A Study pane's tab the editor names while no Study pane and no text editor is active is then read as the chat input of another editor part over that tab, as a learner's file is, because Cursor's Focus Agent, with which an agent's Return Current gave the chat its keyboard back, changes no tab or group. A press in a Study pane or view keeps its rule: such a tab is no foreign tab to return to.
    * @returns
    * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's (outside `withoutPanePress`), or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
@@ -2907,9 +2915,7 @@ export class StudyWorkspace {
       ) => Promise<boolean>)
     | undefined {
     // The Wiki that asked for this entry has the keyboard even while VS Code still reports the text editor of another group (row 659).
-    const focusedTextEditor = fromWiki
-      ? this.activeTextEditorWithKeyboard()
-      : vscode.window.activeTextEditor
+    const focusedTextEditor = this.activeTextEditorWithKeyboard(fromWiki)
     if (this.hasActiveStudyPane() || focusedTextEditor) return undefined
     const group = vscode.window.tabGroups.activeTabGroup,
       activeTab = group.activeTab

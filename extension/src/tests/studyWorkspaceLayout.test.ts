@@ -976,7 +976,74 @@ for (const corrupt of [false, true])
     }
   })
 
-// Value: protects=the Repository Wiki's "View recording" in VS Code while the Wiki has the keyboard in the learner's second group and VS Code still names the text editor of the first group as the active one (C58 c58-vs-567d: the cited source's copy reported active while the Wiki's group was the active one; VS Code 1.140.0 workbench.desktop.main.js 705:2664 and 705:1683): the recording opens with its Application in its own group above the learner's groups, the recorded source below it, and the Wiki's group, now the third, gets its keyboard back; fails_when=the preparation takes that stale text editor for the learner's place and pairs it with the Wiki's group, so its focus return refuses with "The previously focused source group changed; focus was not guessed." and the visit fails with an unavailable Application pane left in a new group (3 of 3 natively); why_new=Cycle 0046 row 659; seam=articleRecordingLayoutHarness (the learner's two stacked groups with the Wiki in the second), focusWikiTabKeepingTextEditorReport, openRepositoryEvidence with the recording, the playback state, the groups, the active tab group and the command log
+// Value: protects=an agent's replay open (codebook_playback open) in VS Code while another extension's webview, a Markdown preview in front of the learner's second group, has the keyboard and VS Code still names the first group's text editor as active (VS Code 1.140.0 workbench.desktop.main.js 705:2664 and 705:1683: the report of a code editor that had the text focus when another group became the active one stays for any editor that is no code editor, not only for the Wiki): the recording opens with its Application in its own group and the preview's group gets its keyboard back; fails_when=the preparation takes that stale text editor for the learner's place and pairs it with the preview's group, so its focus return refuses with "The previously focused source group changed; focus was not guessed.", or gives the stale text editor the keyboard; why_new=Cycle 0046 row 671; seam=articleRecordingLayoutHarness (the learner's two stacked groups), addForeignWebviewTab, focusWebviewTabKeepingTextEditorReport, openRecording, the playback state, the groups, the active tab group and the command log
+test('in VS Code, an agent’s replay open while another extension’s webview in the second group has the keyboard and VS Code still names the first group’s text editor as active shows the recording in its own group and gives the webview its keyboard back', async () => {
+  // Arrange: the learner's two groups are stacked, article-source.ts in front of the first and a Markdown preview in front of the second, which has the keyboard while VS Code still reports article-source.ts as the active text editor.
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    const preview = harness.addForeignWebviewTab(
+      'markdown.preview',
+      'Preview README.md',
+      2,
+    )
+    harness.focusWebviewTabKeepingTextEditorReport(preview)
+    const before = {
+      activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      activeTextEditor: harness
+        .focusedSource()
+        ?.document.uri.path.split('/')
+        .at(-1),
+    }
+    const commandsBefore = harness.commands.length
+
+    // Act
+    const visit = await harness.reader.openRecording(harness.studyId).then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await harness.controller.settle()
+
+    // Assert: the recording is ready with its Application alone at column 1 and the recorded source at column 2, and the preview's group, now column 3, was focused again by its number.
+    const state = harness.controller.state()
+    assert.deepEqual(before, {
+      activeColumn: 2,
+      activeTextEditor: 'article-source.ts',
+    })
+    assert.deepEqual(
+      {
+        visit,
+        readiness: state.readiness,
+        reason: state.reason,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+        sourceColumn: harness.sourceColumn(),
+        previewColumn: harness.groups.find((group) =>
+          group.tabs.includes(preview),
+        )?.viewColumn,
+        activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        groupFocusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+      },
+      {
+        visit: 'opened',
+        readiness: 'ready',
+        reason: undefined,
+        applicationColumn: 1,
+        sourceColumn: 2,
+        previewColumn: 3,
+        activeColumn: 3,
+        groupFocusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusThirdEditorGroup',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Repository Wiki's "View recording" in VS Code while the Wiki has the keyboard in the learner's second group and VS Code still names the text editor of the first group as the active one (C58 c58-vs-567d: the cited source's copy reported active while the Wiki's group was the active one; VS Code 1.140.0 workbench.desktop.main.js 705:2664 and 705:1683): the recording opens with its Application in its own group above the learner's groups, the recorded source below it, and the Wiki's group, now the third, gets its keyboard back; fails_when=the preparation takes that stale text editor for the learner's place and pairs it with the Wiki's group, so its focus return refuses with "The previously focused source group changed; focus was not guessed." and the visit fails with an unavailable Application pane left in a new group (3 of 3 natively); why_new=Cycle 0046 row 659; seam=articleRecordingLayoutHarness (the learner's two stacked groups with the Wiki in the second), focusWebviewTabKeepingTextEditorReport, openRepositoryEvidence with the recording, the playback state, the groups, the active tab group and the command log
 test('in VS Code, View recording pressed in the Wiki of the second group while VS Code still names the first group’s text editor as active shows the recording in its own group and gives the Wiki its keyboard back', async () => {
   // Arrange: the learner's two groups are stacked, article-source.ts in front of the first and the Repository Wiki in front of the second; the learner pressed View recording in the Wiki, and VS Code still reports article-source.ts as the active text editor.
   const harness = await articleRecordingLayoutHarness()
@@ -984,7 +1051,7 @@ test('in VS Code, View recording pressed in the Wiki of the second group while V
     const wiki = harness.groups[1]!.tabs.find(
       (tab) => Reflect.get(tab.input, 'viewType') === 'codebook.repositoryWiki',
     )!
-    harness.focusWikiTabKeepingTextEditorReport(wiki)
+    harness.focusWebviewTabKeepingTextEditorReport(wiki)
     const before = {
       activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
       activeTextEditor: harness

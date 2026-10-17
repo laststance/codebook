@@ -839,8 +839,8 @@ export async function workspaceHarness(
     { kind: string; wait: Promise<void>; observed(): void } | undefined
   let retainedTextFocus:
     { kind: string; editor: SourceEditor; observed(): void } | undefined
-  /** The text editor VS Code goes on reporting as the active one after the Repository Wiki's tab took the keyboard in another group, until the active group changes again; see `focusWikiTabKeepingTextEditorReport`. */
-  let textEditorReportedBehindWiki:
+  /** The text editor VS Code goes on reporting as the active one after the Repository Wiki's tab took the keyboard in another group, until the active group changes again; see `focusWebviewTabKeepingTextEditorReport`. */
+  let textEditorReportedBehindWebview:
     | { group: (typeof groups)[number]; tab: Tab; editor: SourceEditor }
     | undefined
   const windowState = { focused: true, active: true },
@@ -1777,13 +1777,13 @@ export async function workspaceHarness(
     if (separateEditorPart?.lastActive) return undefined
     const input = activeTabGroup.activeTab?.input
     // VS Code's stale report of the text editor behind the Wiki lasts until another group or tab is the active one.
-    if (textEditorReportedBehindWiki) {
+    if (textEditorReportedBehindWebview) {
       if (
-        activeTabGroup === textEditorReportedBehindWiki.group &&
-        activeTabGroup.activeTab === textEditorReportedBehindWiki.tab
+        activeTabGroup === textEditorReportedBehindWebview.group &&
+        activeTabGroup.activeTab === textEditorReportedBehindWebview.tab
       )
-        return textEditorReportedBehindWiki.editor
-      textEditorReportedBehindWiki = undefined
+        return textEditorReportedBehindWebview.editor
+      textEditorReportedBehindWebview = undefined
     }
     // A newer learner target wins immediately; the delayed clear never steals its focus.
     if (
@@ -4299,11 +4299,11 @@ export async function workspaceHarness(
       return { started, release }
     },
     /**
-     * Gives the Repository Wiki's tab the keyboard the way VS Code 1.140.0 reported it in C58 (`c58-vs-567d`, the extension-host observer's baseline before the Wiki's "View recording"): the Wiki's group is the active tab group and the Wiki's tab its active tab, while the active text editor stays the text editor that had the keyboard before, in another group. VS Code updates its active text editor when the active group changes and counts a code editor that still has the text focus then as the active one (`workbench.desktop.main.js` 705:2664 `a.hasTextFocus()`, in `_updateState`, which `onDidActiveEditorChange` runs), before the webview's own focus reaches its frame, and afterwards only a text or widget focus of a code editor updates it again (705:1683 `onDidFocusEditorText`, `onDidFocusEditorWidget`; no blur is listened to), so the report stays until the active group changes again (Cycle 0046 row 659).
-     * @param tab - The Repository Wiki's tab, in a group of the main editor.
-     * @example harness.focusWikiTabKeepingTextEditorReport(wikiTab) // activeTabGroup is the Wiki's, activeTextEditor still the cited source copy of the first group
+     * Gives a webview tab the keyboard the way VS Code 1.140.0 reported it for the Repository Wiki in C58 (`c58-vs-567d`, the extension-host observer's baseline before the Wiki's "View recording"): the webview's group is the active tab group and its tab the active tab, while the active text editor stays the text editor that had the keyboard before, in another group. The cause below is no property of the Wiki: any editor that is no code editor (another extension's webview too) leaves that report (Cycle 0046 row 671). VS Code updates its active text editor when the active group changes and counts a code editor that still has the text focus then as the active one (`workbench.desktop.main.js` 705:2664 `a.hasTextFocus()`, in `_updateState`, which `onDidActiveEditorChange` runs), before the webview's own focus reaches its frame, and afterwards only a text or widget focus of a code editor updates it again (705:1683 `onDidFocusEditorText`, `onDidFocusEditorWidget`; no blur is listened to), so the report stays until the active group changes again (Cycle 0046 row 659).
+     * @param tab - The webview's tab (the Repository Wiki's, or another extension's from `addForeignWebviewTab`), in a group of the main editor.
+     * @example harness.focusWebviewTabKeepingTextEditorReport(wikiTab) // activeTabGroup is the Wiki's, activeTextEditor still the cited source copy of the first group
      */
-    focusWikiTabKeepingTextEditorReport(tab: Tab): void {
+    focusWebviewTabKeepingTextEditorReport(tab: Tab): void {
       assert.equal(separateEditorPart, undefined)
       const group = groups.find((candidate) => candidate.tabs.includes(tab))
       assert.ok(group)
@@ -4315,7 +4315,7 @@ export async function workspaceHarness(
       keyboardOnBody = false
       keyboardInView = false
       innerFocusedPanel = undefined
-      textEditorReportedBehindWiki = { group, tab, editor }
+      textEditorReportedBehindWebview = { group, tab, editor }
       changedGroups({ opened: [], closed: [], changed: [previousGroup, group] })
     },
     /** Delivers Cursor's delayed source deactivation after a handoff reads the stale receipt. @example const held = harness.holdTextFocusClear('codebook.studyContext'); await held.observed; held.release(); */
@@ -5476,6 +5476,27 @@ export async function workspaceHarness(
         activeTabGroup = group
         activeTextEditorChanged(focusedSourceEditor())
       }
+      return tab
+    },
+    /**
+     * Opens another extension's webview tab in front of a group without giving it the keyboard, as a learner's Markdown preview: the tab model lists it under the main-thread view type with its title as its label, and the reader owns no panel for it.
+     * @param viewType - The other extension's view type.
+     * @param label - The tab's title.
+     * @param column - The view column of the group it stands in front of.
+     * @returns The new tab.
+     * @example const preview = harness.addForeignWebviewTab('markdown.preview', 'Preview README.md', 2)
+     */
+    addForeignWebviewTab(viewType: string, label: string, column: number): Tab {
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      assert.ok(group)
+      const tab: Tab = {
+        input: new TabInputWebview(`mainThreadWebview-${viewType}`),
+        label,
+        isPreview: false,
+        isDirty: false,
+      }
+      group.tabs.push(tab)
+      group.activeTab = tab
       return tab
     },
     /** Leaves a Codebook pane tab without a panel in a group, as an extension-host restart leaves the old host's panes: the tab model lists it under the main-thread view type and this host owns no panel for it. @example const deadApplication = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1); harness.leaveDeadCodebookPane('codebook.studyContext', 3, { focused: true, refuseClose: true }) */
