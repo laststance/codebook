@@ -39,10 +39,17 @@ async function namesIn(path: string): Promise<string[]> {
   return (await readdir(path).catch(passIfMissing)) ?? []
 }
 
+/** What {@link removeWithoutFollowing} may be told beside the path. */
+export type RemovalOrder = {
+  /** The name of one entry of the directory at the path, removed after all its other entries and just before the directory itself: the owner marker by which a later sweep knows the folder ({@link removeAbandonedProfiles}), so a folder whose removal stops at an entry that refuses keeps it. Left out, the entries go in the order the system lists them. */
+  lastEntry?: string
+}
+
 /**
  * Removes every entry of a directory that answered "not empty", after it is shown to be its parent's own entry; called by {@link removeWithoutFollowing} before it removes the emptied directory.
  * @param path - The directory that is not empty.
  * @param notEmptyError - What the system answered to its removal.
+ * @param lastEntry - The name of the entry removed after all the others ({@link RemovalOrder}); none when left out.
  * @returns After every entry is removed; also when the directory is gone meanwhile.
  * @throws `notEmptyError` when the entry is no directory of its parent's own ({@link isFolderOfItsOwn}): nothing below it is listed. The file system's error of the first entry that cannot be removed.
  * @example
@@ -51,14 +58,20 @@ async function namesIn(path: string): Promise<string[]> {
 async function removeEntriesOf(
   path: string,
   notEmptyError: unknown,
+  lastEntry?: string,
 ): Promise<void> {
   const isOwnFolder = await isFolderOfItsOwn(path).catch(passIfMissing)
   // An entry that leads elsewhere is never listed: the system's answer to its removal is the walk's error.
   if (isOwnFolder === false) throw notEmptyError
   // Gone since the system was asked: nothing is left to remove.
   if (isOwnFolder === undefined) return
-  for (const name of await namesIn(path))
-    await removeWithoutFollowing(join(path, name))
+  const names = await namesIn(path)
+  // The named entry goes last, so a removal that stops at an earlier entry leaves it in place.
+  const ordered = [
+    ...names.filter((name) => name !== lastEntry),
+    ...names.filter((name) => name === lastEntry),
+  ]
+  for (const name of ordered) await removeWithoutFollowing(join(path, name))
 }
 
 /**
@@ -70,13 +83,18 @@ async function removeEntriesOf(
  * Limit: the look and the listing are separate steps; a path that a running program replaces by a link between them is listed through the link. A repository cannot do that.
  *
  * @param path - The entry to remove: a file, a link (a junction on Windows) or a directory with its content.
+ * @param order - The entry of a directory at the path to remove last ({@link RemovalOrder}); the entries go in the order the system lists them when left out.
  * @returns After the entry is gone; also when nothing stood at the path, or another process removed it meanwhile.
  * @throws The file system's error of the first entry that cannot be looked at, unlinked, listed or removed (for example `EPERM` for a link the system does not let this user remove, `ENOTEMPTY` for an entry that leads elsewhere and that the system does not remove as a name); what was removed before stays removed, and nothing below a link is touched.
  * @example
  * await removeWithoutFollowing('/repo/.codebook/wiki.update-run.json.takeover-4f2c') // the prepared claim folder and its owner file are gone
  * await removeWithoutFollowing('/repo/.codebook/a-link-to-the-project')              // the link is gone, the project keeps every file
+ * await removeWithoutFollowing(profile, { lastEntry: 'codebook-owner.json' })          // the marker goes after every other entry of the profile folder
  */
-export async function removeWithoutFollowing(path: string): Promise<void> {
+export async function removeWithoutFollowing(
+  path: string,
+  order: RemovalOrder = {},
+): Promise<void> {
   const entry = await lstat(path).catch(passIfMissing)
   if (!entry) return
   // A link, a file or a special file is one name: it is unlinked and never opened or listed.
@@ -87,6 +105,6 @@ export async function removeWithoutFollowing(path: string): Promise<void> {
   // The system is asked first; only a directory it calls not empty is listed.
   const notEmptyError = await removeIfEmpty(path)
   if (notEmptyError === undefined) return
-  await removeEntriesOf(path, notEmptyError)
+  await removeEntriesOf(path, notEmptyError, order.lastEntry)
   await rmdir(path).catch(passIfMissing)
 }

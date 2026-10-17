@@ -23,12 +23,12 @@ import { profileProcesses } from './profileProcesses'
 
 /**
  * Removes one profile folder when no process uses it as its profile; called by {@link sweepProfile} for a folder whose owner is gone.
- * The folder is removed by {@link removeWithoutFollowing}, which unlinks every link inside it as a name: the recursive `rm` of Node.js follows a link it cannot unlink on Windows and empties the folder the link leads to.
+ * The folder is removed by {@link removeWithoutFollowing}, which unlinks every link inside it as a name: the recursive `rm` of Node.js follows a link it cannot unlink on Windows and empties the folder the link leads to. Its owner marker ({@link MANAGED_PROFILE_OWNER_FILE}) is removed last, after every other entry, so a removal that stops at an entry the system refuses (a file Windows still holds) leaves a folder a later sweep still knows and tries again.
  * @param profile - The profile folder.
  * @param processes - The one process listing of the sweep ({@link ProfileSweep}), made at its first folder whose owner is gone.
  * @returns
  * - `true` when the folder was removed
- * - `false` when a process still runs with it, when the processes cannot be listed, and when the removal fails: what was not removed stays
+ * - `false` when a process still runs with it, when the processes cannot be listed, and when the removal fails: what was not removed stays, the marker among it
  * @example
  * await removeUnusedProfile('/tmp/codebook-browser-a1b2c3', sweep.processes()) // => true
  */
@@ -38,7 +38,10 @@ async function removeUnusedProfile(
 ): Promise<boolean> {
   try {
     if ((await profileProcesses(profile, await processes)).length) return false
-    await removeWithoutFollowing(profile)
+    // The marker goes last: a folder whose removal stops at an entry that refuses keeps it, and a later sweep tries again.
+    await removeWithoutFollowing(profile, {
+      lastEntry: MANAGED_PROFILE_OWNER_FILE,
+    })
     return true
   } catch {
     return false

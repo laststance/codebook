@@ -255,6 +255,80 @@ test('a profile folder of a killed editor that holds a link the system refuses t
   )
 })
 
+// Value: protects=a profile folder of a killed editor whose removal stops at a file the system still holds (Windows keeps a file of an ended browser a moment, an antivirus scan holds one): the owner marker is removed last, so the folder keeps it, and the next sweep, once the file is free, removes the folder (CX10, /ship Codex adversarial review); fails_when=the walk removes the marker before the entry that refuses, so every later sweep skips the folder as one without a marker and it stays for good; why_new=every sweep test removed its folders at the first try; seam=a file system stand-in for the removal walk whose listing of the profile folder names the marker first and whose unlink refuses one file (EBUSY) until the test frees it, and the process lister the sweep is given
+test('a profile folder whose removal stops at a file the system still holds keeps its marker, and the next sweep removes it once the file is free', async (context) => {
+  // Arrange: a marked folder of a gone editor with a log file the system holds; the walk's listing names the marker first, as a file system may.
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-held')
+  await profileFolder(folder, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+  })
+  const heldFile = join(folder, 'chrome_debug.log')
+  await writeFile(heldFile, 'held')
+  let fileHeld = true
+  const walk = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        readdir: async (path: string): Promise<string[]> => {
+          const names = await fileSystem.readdir(path)
+          return path === folder
+            ? [
+                'codebook-owner.json',
+                ...names.filter((name) => name !== 'codebook-owner.json'),
+              ]
+            : names
+        },
+        unlink: async (path: string): Promise<void> => {
+          if (fileHeld && path === heldFile)
+            throw Object.assign(
+              new Error(`EBUSY: resource busy or locked, unlink '${path}'`),
+              { code: 'EBUSY' },
+            )
+          await fileSystem.unlink(path)
+        },
+      },
+    },
+  )
+  const { removeAbandonedProfiles: sweepWithHeldFile } = await loadModule<
+    typeof sweepModule
+  >(resolve(__dirname, '../runtimeSupport/utils/removeAbandonedProfiles.js'), {
+    '../../utils/removeWithoutFollowing': walk,
+  })
+  const firstSweep = await sweepWithHeldFile(
+    root,
+    { hostname: 'workstation' },
+    countingLister().list,
+  )
+  const markerAfterFirstSweep = await exists(
+    join(folder, 'codebook-owner.json'),
+  )
+  // Act: the system frees the file, and the next run sweeps again.
+  fileHeld = false
+  const secondSweep = await sweepWithHeldFile(
+    root,
+    { hostname: 'workstation' },
+    countingLister().list,
+  )
+  // Assert: the loaded sweep's answers are copied into this test's realm.
+  assert.deepEqual(
+    {
+      firstSweep: [...firstSweep],
+      markerAfterFirstSweep,
+      secondSweep: [...secondSweep],
+      folderLeft: await exists(folder),
+    },
+    {
+      firstSweep: [],
+      markerAfterFirstSweep: true,
+      secondSweep: [folder],
+      folderLeft: false,
+    },
+  )
+})
+
 test('a marked profile folder of an earlier kernel boot is removed although a process with its id runs now, and a boot time alone removes nothing', async (context) => {
   // Arrange: both markers name the id of this running process; one was written under another kernel boot id, the other under a boot time far in the past.
   const root = await profileRoot(context)
