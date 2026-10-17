@@ -802,6 +802,8 @@ export class StudyWorkspace {
   }
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
+  /** How often {@link focusApplicationSourceGroup} focused the main editor's first group for an Application preparation's new group; {@link performPresentation} compares it with {@link mainEditorFocusBorrows} for a refusal that comes after either (Cycle 0046 row 718). */
+  private applicationFocusBorrows = 0
   /** Positive host-lifetime discovery retained by {@link chatFocusCommand}; absent commands remain discoverable later. */
   private registeredChatFocusCommand = false
   /** The main layout Codebook confirmed last, read and written as {@link layoutReceipt}. */
@@ -4927,6 +4929,12 @@ export class StudyWorkspace {
             returnsToForeignTab: returnForeignFocus !== undefined,
           }
         : undefined
+    // What a refusal after a borrow of the measurement gives back (row 718): the file that had the keyboard, read before any effect as the focus return captured it.
+    const refusal = {
+      borrowsBefore: this.focusBorrowCount(),
+      learnerSignBefore: this.learnerWorkedInEditorAtMs,
+      fileHadKeyboard: this.activeTextEditorWithKeyboard() !== undefined,
+    }
     const previousMode = this.presentationMode
     let evidenceConfirmed = false,
       restoreFocusAttempted = false
@@ -5258,9 +5266,29 @@ export class StudyWorkspace {
         )
       )
         await restoreFocus?.(signal, assertSourceFocus).catch(() => undefined)
-      // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays.
+      const borrowed = this.focusBorrowCount() !== refusal.borrowsBefore
+      // A refusal after the measurement borrowed the main editor and before the placement moved the keyboard gives the file back what the borrow took (row 718).
+      if (
+        borrowed &&
+        refusal.fileHadKeyboard &&
+        !restoreFocusAttempted &&
+        !this.presentationMovedFocus &&
+        !this.closing &&
+        lifetime === this.lifetime
+      )
+        await this.returnBorrowedKeyboardAfterRefusal(
+          restoreFocus,
+          signal,
+          agentSelection?.knowsLearnersPlace ?? true,
+          refusal.learnerSignBefore,
+        )
+      // A failed change must not leave an agent chat without the focus it had; a newer focus of the learner stays. After a borrow its sentence says that nothing was placed (row 718).
       if (!this.closing && lifetime === this.lifetime)
-        await returnForeignFocus?.().catch(() => undefined)
+        await returnForeignFocus?.(
+          false,
+          undefined,
+          borrowed ? 'refusedArrangement' : undefined,
+        ).catch(() => undefined)
       if (transition.id === this.presentationId) {
         if (!this.presentationConfirmed) this.presentationMode = previousMode
         this.presentationReason = String(error)
@@ -13782,6 +13810,62 @@ export class StudyWorkspace {
   }
 
   /**
+   * Counts the focus commands Codebook ran on the main editor's first group to measure the grid ({@link mainEditorFocusBorrows}) or to prepare the Application's group ({@link applicationFocusBorrows}); {@link performPresentation} compares the count before and after a refused change (Cycle 0046 row 718).
+   * @returns The sum of both counters.
+   * @example this.focusBorrowCount() // => 2 after one measurement's borrow and one preparation's focus of the first group
+   */
+  private focusBorrowCount(): number {
+    return this.mainEditorFocusBorrows + this.applicationFocusBorrows
+  }
+
+  /**
+   * Gives the file that had the keyboard back what the measurement's borrow took, when a presentation change was refused after that borrow and before its placement moved the keyboard; called by {@link performPresentation}'s refusal path (Cycle 0046 row 718).
+   * Beside another editor part (Cursor's chat part) the measurement focuses the main editor's first group, and an Application preparation then inserts its group above it, whose own element takes the keyboard; a refusal afterwards closes that group, and the keyboard stays on the page body (C61 c61-cu-692: BODY from the insertion to the end, no focus command and no `showTextDocument` after the cleanup). The focus return the change captured shows the file again with the keyboard in its group ({@link capturePresentationFocus}), only while the keyboard is still where Codebook's effects left it ({@link assertKeyboardWhereBorrowLeftIt}). An agent's selection whose learner was not known to work in that file says so ({@link AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES}'s `file`, rows 613 and 656); a chat that had the keyboard gets it back through the change's foreign-tab return instead.
+   * @param restoreFocus - The focus return the change captured at its admission.
+   * @param signal - The change's cancellation.
+   * @param knowsLearnersPlace - Whether the learner was known to work in that file: an agent's selection's sign, `true` for the learner's own change.
+   * @param learnerSignBefore - The moment of the learner's last click or key in a text editor when the change began.
+   * @example await this.returnBorrowedKeyboardAfterRefusal(restoreFocus, signal, true, learnerSignBefore) // auth.ts has the keyboard again in its group
+   */
+  private async returnBorrowedKeyboardAfterRefusal(
+    restoreFocus:
+      ReturnType<StudyWorkspace['capturePresentationFocus']> | undefined,
+    signal: AbortSignal,
+    knowsLearnersPlace: boolean,
+    learnerSignBefore: number | undefined,
+  ): Promise<void> {
+    const returned = await restoreFocus?.(signal, () =>
+      this.assertKeyboardWhereBorrowLeftIt(learnerSignBefore),
+    ).then(
+      () => true,
+      () => false,
+    )
+    // Only a file the learner was not known to work in is told about (rows 613 and 656).
+    if (returned && !knowsLearnersPlace)
+      this.tellFailedSelectionPaneKeyboard('file')
+  }
+
+  /**
+   * Refuses the give-back of {@link returnBorrowedKeyboardAfterRefusal} once the keyboard is no longer where the refused change's own effects left it: the window lost the focus, the learner clicked or typed in a text editor since the change began, or the editor reports a text editor outside the first group, which the measurement focused.
+   * @param learnerSignBefore - The moment of the learner's last click or key in a text editor when the change began.
+   * @throws An `Error` in any of those cases; the learner's newer place keeps the keyboard.
+   * @example this.assertKeyboardWhereBorrowLeftIt(learnerSignBefore) // passes while login-form.tsx, the first group's file the borrow focused, is the active text editor
+   */
+  private assertKeyboardWhereBorrowLeftIt(
+    learnerSignBefore: number | undefined,
+  ): void {
+    const editor = vscode.window.activeTextEditor
+    if (
+      !vscode.window.state.focused ||
+      this.learnerWorkedInEditorAtMs !== learnerSignBefore ||
+      (editor !== undefined && editor.viewColumn !== vscode.ViewColumn.One)
+    )
+      throw new Error(
+        'The keyboard moved after the refused arrangement; it stays where it is.',
+      )
+  }
+
+  /**
    * Tells the learner, once in an editor session for each place, that one of the reader's panes or its captured source has the keyboard after an agent's Study selection failed; called by {@link tellKeyboardPlaceAfterFailedSelection}.
    * @param pane - `'application'` for the Application pane, `'study'` for the Study pane, `'source'` for the captured source.
    * @example this.tellFailedSelectionPaneKeyboard('source') // "Codebook could not finish the Study arrangement an agent asked for, and the captured source has the keyboard now. …"
@@ -13868,10 +13952,33 @@ export class StudyWorkspace {
     }
     // No allocation means no cleanup authority; two unknown identities never prove ownership.
     const empty = this.emptyNativeGroup(allocated)
-    if (empty) await vscode.window.tabGroups.close(empty, true)
+    if (empty && allocated)
+      await this.closeFailedAllocationAsIssuedRemoval(empty, allocated)
     this.releaseFailedApplicationOwner(allocated, empty)
     // The record of a group this preparation already recorded follows that group: it goes once the group is gone, and stays while a refused close keeps it (finding 598).
     this.forgetRecordOfRemovedApplicationGroup()
+  }
+
+  /**
+   * Closes the empty group a failed Application preparation inserted as Codebook's own issued removal, the cleanup step of {@link retireFailedApplicationPreparation}.
+   * The groups behind it move one column to the left, and Cursor answers the removal with a whole new tab model and a new object for every group, so {@link observeEditorGroups} keeps a moved group's identity only through a shift Codebook issued ({@link issuedApplicationColumnShift}), as for a leftover's close ({@link closeLeftoverAsIssuedRemoval}, row 643). Marked so, the learner's group whose focus the refused change captured is still found by its identity when the refusal gives the borrowed keyboard back ({@link returnBorrowedKeyboardAfterRefusal}, Cycle 0046 row 718), instead of "The previously focused source group changed; focus was not guessed.".
+   * @param group - The failed preparation's empty group.
+   * @param identity - That group's identity.
+   * @example await this.closeFailedAllocationAsIssuedRemoval(empty, allocated)
+   */
+  private async closeFailedAllocationAsIssuedRemoval(
+    group: vscode.TabGroup,
+    identity: symbol,
+  ): Promise<void> {
+    const previous = this.applicationGroupChange
+    const removal = { kind: 'remove' as const, identity }
+    this.applicationGroupChange = removal
+    try {
+      await vscode.window.tabGroups.close(group, true)
+    } finally {
+      if (this.applicationGroupChange === removal)
+        this.applicationGroupChange = previous
+    }
   }
 
   /**
@@ -15133,10 +15240,12 @@ export class StudyWorkspace {
         vscode.ViewColumn.One
     )
     try {
-      if (takesKeyboard)
+      if (takesKeyboard) {
+        this.applicationFocusBorrows++
         await vscode.commands.executeCommand(
           'workbench.action.focusFirstEditorGroup',
         )
+      }
       assertCurrent()
       sourceReceipt?.assertRetained()
       const borrow = this.preparationSourceToBorrow(primary)

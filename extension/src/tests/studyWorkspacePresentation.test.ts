@@ -4957,6 +4957,182 @@ test('in Cursor beside its chat part, an agent’s cold Study selection during a
   }
 })
 
+/**
+ * Opens the workspace harness as Cursor beside its Agent chat part with a run paused and the Study closed: login-form.tsx is in front of the first group and auth.ts in front of the second, and the next lock of an editor group fails, so an agent's cold Study selection is refused right after its measurement borrowed the first group and the Application's group was inserted, the point at which C61 refused (c61-cu-692, Cycle 0046 rows 712 and 718).
+ * @returns The harness, its chat part and auth.ts's draft.
+ * @example const { harness, chat, auth } = await cursorSelectionRefusedAfterInsertion()
+ */
+async function cursorSelectionRefusedAfterInsertion() {
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  const auth = harness.focusMutableDraft('auth.ts', 2)
+  await pauseLiveRun(harness)
+  harness.failNextCommand('workbench.action.lockEditorGroup')
+  return { harness, chat, auth }
+}
+
+/**
+ * Makes the agent's cold Study selection (codebook_presentation select) and reads where the keyboard went, for row 718's tests of a refusal after the borrow and the insertion.
+ * @param harness - The harness {@link cursorSelectionRefusedAfterInsertion} opened.
+ * @param chat - Its chat part.
+ * @returns The refusal's message, the commands that move the keyboard, the documents shown with the keyboard, the keyboard's place and the sentences told.
+ * @example const outcome = await refusedSelectionOutcome(harness, chat)
+ */
+async function refusedSelectionOutcome(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  chat: ReturnType<
+    Awaited<ReturnType<typeof workspaceHarness>>['addSeparateEditorPart']
+  >,
+) {
+  const selection = harness.reader.presentationState()
+  const commandsBefore = harness.commands.length,
+    showsBefore = harness.textDocumentShows().length,
+    messagesBefore = harness.informationMessages.length
+  const refusal = await harness.service
+    .selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+  return {
+    refusal,
+    keyboardCommands: harness.commands
+      .slice(commandsBefore)
+      .filter((command) =>
+        [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.newGroupAbove',
+          'composer.focusComposer',
+        ].includes(command),
+      ),
+    shownWithKeyboard: harness
+      .textDocumentShows()
+      .slice(showsBefore)
+      .filter((shown) => !shown.preserveFocus)
+      .map((shown) => `${shown.name}@${shown.viewColumn}`),
+    keyboardOnBody: harness.keyboardOnBody(),
+    chatHasKeyboard: chat.focused(),
+    activeTextEditor: harness.editor.window.activeTextEditor?.document.uri
+      .toString()
+      .split('/')
+      .at(-1),
+    groups: harness.groups.length,
+    messages: harness.informationMessages
+      .slice(messagesBefore)
+      .map((message) => message.message),
+  }
+}
+
+// Value: protects=the learner's keyboard when an agent's cold Study selection beside Cursor's chat part is refused after its measurement borrowed the first group and the Application's group was inserted, while the learner typed in auth.ts a moment before: the refusal gives auth.ts back the keyboard the borrow took, in its group, instead of leaving it on the page body; fails_when=the refused selection gives nothing back, so the borrow's keyboard, which the inserted group's element took and its cleanup dropped, stays on the page body (C61 c61-cu-692: BODY from +464 ms to the end, after the cleanup no focus command and no showTextDocument); why_new=Cycle 0046 row 718 (the fork of row 712's report); seam=cursorSelectionRefusedAfterInsertion (failNextCommand on workbench.action.lockEditorGroup forces the refusal after the insertion, since row 712's fix removed C61's cause), keepChatPartNameAtLearnersFileClick, workInActiveTextEditor (the learner's fresh click), the service's selectPresentation, the command log, textDocumentShows, keyboardOnBody and the information messages
+test('in Cursor beside its chat part, an agent’s cold Study selection refused after its borrow and the Application group’s insertion gives the file the learner typed in its keyboard back', async () => {
+  // Arrange: the learner clicked the chat tab, then into auth.ts, while Cursor still names its chat part's group.
+  const { harness, chat, auth } = await cursorSelectionRefusedAfterInsertion()
+  try {
+    chat.focusTab()
+    harness.keepChatPartNameAtLearnersFileClick()
+    auth.focus()
+    harness.workInActiveTextEditor('mouse')
+
+    // Act
+    const outcome = await refusedSelectionOutcome(harness, chat)
+
+    // Assert: refused after the borrow and the insertion, whose group the cleanup removed; auth.ts was shown with the keyboard in its group again and has it; nothing needed telling.
+    assert.deepEqual(outcome, {
+      refusal:
+        'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      keyboardCommands: [
+        'workbench.action.focusFirstEditorGroup',
+        'workbench.action.newGroupAbove',
+      ],
+      shownWithKeyboard: ['auth.ts@2'],
+      keyboardOnBody: false,
+      chatHasKeyboard: false,
+      activeTextEditor: 'auth.ts',
+      groups: 3,
+      messages: [],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat's keyboard and the truth of what the learner is told when an agent's cold Study selection made from Cursor's chat tab is refused after its measurement's borrow and the Application group's insertion: the chat gets its keyboard back with Focus Agent, and the sentence says that Codebook could not finish arranging its panes; fails_when=the refusal tells the arrangement's sentence, "Codebook placed its panes and gave the keyboard back to the chat. …", although nothing was placed, or leaves the chat without its keyboard; why_new=Cycle 0046 row 718 (its chat half, under CHAT_KEYBOARD_RETURNED_MESSAGES' rule); seam=cursorSelectionRefusedAfterInsertion, the chat's focusTab, the service's selectPresentation, the command log and the information messages
+test('in Cursor beside its chat part, an agent’s cold Study selection from the chat tab refused after its borrow and the Application group’s insertion gives the chat its keyboard back and says that nothing was arranged', async () => {
+  // Arrange: the chat tab has the keyboard.
+  const { harness, chat } = await cursorSelectionRefusedAfterInsertion()
+  try {
+    chat.focusTab()
+
+    // Act
+    const outcome = await refusedSelectionOutcome(harness, chat)
+
+    // Assert: the measurement's borrow, the preparation's focus and the insertion ran; Focus Agent gave the chat its keyboard back, and the sentence says that the arrangement was not finished.
+    assert.deepEqual(outcome, {
+      refusal:
+        'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      keyboardCommands: [
+        'workbench.action.focusFirstEditorGroup',
+        'workbench.action.focusFirstEditorGroup',
+        'workbench.action.newGroupAbove',
+        'composer.focusComposer',
+      ],
+      shownWithKeyboard: [],
+      keyboardOnBody: false,
+      chatHasKeyboard: true,
+      activeTextEditor: undefined,
+      groups: 3,
+      messages: [
+        'Codebook could not finish arranging its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+      ],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's keyboard when an agent's cold Study selection beside Cursor's chat part is refused after its borrow and the Application group's insertion while the editor reported a learner's file without a fresh sign of the learner's hand (the keyboard may have been in that file, the terminal or a view): the file the editor reported gets the keyboard back instead of the page body, and the sentence says so without claiming that the learner typed there (rows 613 and 656); fails_when=the refusal leaves the keyboard on the page body with nothing told; why_new=Cycle 0046 row 718 (its unknown half); seam=cursorSelectionRefusedAfterInsertion, the chat's focusTab, keepChatPartNameAtLearnersFileClick and auth.ts's focus (a click on its tab with no selection, so no sign), the service's selectPresentation, the command log, textDocumentShows, keyboardOnBody and the information messages
+test('in Cursor beside its chat part, an agent’s cold Study selection refused after its borrow and the Application group’s insertion gives the file the editor reported its keyboard back and says so once, when the learner was not known to type there', async () => {
+  // Arrange: the learner clicked the chat tab, then auth.ts's tab, which gives no sign of typing there.
+  const { harness, chat, auth } = await cursorSelectionRefusedAfterInsertion()
+  try {
+    chat.focusTab()
+    harness.keepChatPartNameAtLearnersFileClick()
+    auth.focus()
+
+    // Act
+    const outcome = await refusedSelectionOutcome(harness, chat)
+
+    // Assert: auth.ts was shown with the keyboard in its group again and has it, and the learner was told once.
+    assert.deepEqual(outcome, {
+      refusal:
+        'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+      keyboardCommands: [
+        'workbench.action.focusFirstEditorGroup',
+        'workbench.action.newGroupAbove',
+      ],
+      shownWithKeyboard: ['auth.ts@2'],
+      keyboardOnBody: false,
+      chatHasKeyboard: false,
+      activeTextEditor: 'auth.ts',
+      groups: 3,
+      messages: [
+        'Codebook could not finish the Study arrangement an agent asked for, and the file you had open has the keyboard again. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+      ],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); the selection is the learner's since row 656: an agent's selection beside Cursor's chat part gives no unproven file its focus back, so only the learner's own selection still makes that return; seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the reader's changePresentation for the learner
 test('in Cursor, a learner’s cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
   // Arrange: as above in Cursor; the selection's layout command will wait until the learner closed auth.ts.
