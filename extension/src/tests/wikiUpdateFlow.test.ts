@@ -3684,6 +3684,53 @@ test('after a stopped watch on one Wiki output and an update of another output, 
 })
 
 // Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes
+// Value: protects=the reloaded window and other windows after a stopped watch on one Wiki output and a finished update of another, when the window closes within the first watch's bound; fails_when=the shutdown takes the stored record of the later run for the record of the stopped watch, so it removes that watch's reservation although the workspace state no longer holds its record, and the reloaded window starts a second chat beside one that may still work; why_new=Cycle 0046 /ship repeat testing review TR2 (R7's per-output rule had no test); seam=none
+test('a window that closes within a stopped watch’s bound keeps that watch’s reservation on disk when a later finished update of another output took its record’s place in storage', async () => {
+  // Arrange: a watch on the first output is stopped; the setting names a second output, whose update finishes with a publish.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress })
+  const isOnDisk = (path: string): Promise<boolean> =>
+    access(path).then(
+      () => true,
+      () => false,
+    )
+  try {
+    const secondOutput = await writeSecondWiki(
+      wiki.projectRoot,
+      '.codebook/wiki-two',
+    )
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    wiki.setOutputSetting('.codebook/wiki-two')
+    await wiki.clickUpdate()
+    wiki.setFreshness(CURRENT)
+    await writePublishedWiki(secondOutput, wiki.projectRoot, 'b'.repeat(64))
+    const secondEnd = await waitForEnd(wiki.status)
+
+    // Act
+    await wiki.closeWindow()
+
+    // Assert
+    assert.deepEqual(
+      {
+        secondEnd: secondEnd.state,
+        isFirstReserved: await isOnDisk(
+          `${wiki.outputDirectory}.update-run.json`,
+        ),
+        isSecondReserved: await isOnDisk(`${secondOutput}.update-run.json`),
+      },
+      {
+        secondEnd: 'succeeded',
+        isFirstReserved: true,
+        isSecondReserved: false,
+      },
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('the reservation a stopped watch left on one Wiki output leaves the disk at its watch bound, also after an update of another output began in the meantime', async () => {
   // Arrange: the watch bound is 3 seconds; a watch on the first output is stopped, then the setting names a second output, whose update begins and is stopped too.
   const progress: CancellableProgress[] = []
