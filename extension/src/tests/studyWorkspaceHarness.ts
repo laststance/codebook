@@ -321,7 +321,10 @@ export async function workspaceHarness(
         group: (typeof groups)[number]
         tab: Tab
         layout: unknown
+        /** Says that the chat input of this part has the keyboard. */
         focused: boolean
+        /** Says that this part is the editor part the editor counts as active: a layout read answers for it, its active editor is the editor's active editor (so no text editor is active and no pane of the main editor is), and the group focus commands of the active group act on its group. Cursor makes the part that took the focus last its active part among the parts of one window (Cursor 3.23.12 `workbench.desktop.main.js` 17501:84373 `onDidFocus` → `doUpdateMostRecentActive`, 17501:88693 `get activePart`, 17501:90249 `getLayout`), so its chat part stays active after a click into the terminal or a side-bar view; VS Code counts the part of the focused window (1.140.0 993:31655), the main window's once a view of it has the keyboard. Set with `focused`, ended by `leaveChatForMainEditor`, and by `leaveChatForView` only for VS Code's floating chat (row 647). */
+        lastActive: boolean
         /** `true` for VS Code's chat editor tab moved into a floating window (see `addSeparateEditorPart`), `false` for Cursor's Agent chat part. */
         floatingVsCodeChat: boolean
       }
@@ -954,7 +957,8 @@ export async function workspaceHarness(
    */
   function insertNativeAppGroup(): void {
     assert.equal(activeTabGroup.viewColumn, 1)
-    assert.equal(Boolean(separateEditorPart?.focused), false)
+    // The command acts on the active part's active group: a chat part that is still the active one would get the new group.
+    assert.equal(Boolean(separateEditorPart?.lastActive), false)
     const aboveFirstLeaf = (node: unknown, orientation: number): unknown => {
       if (
         node &&
@@ -1482,10 +1486,30 @@ export async function workspaceHarness(
   function giveDraftKeyboard(opened: ReturnType<typeof openDraftTab>): void {
     opened.group.activeTab = opened.tab
     activeTabGroup = opened.group
-    if (separateEditorPart) separateEditorPart.focused = false
+    leaveChatForMainEditor()
     keyboardOnBody = false
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
+  }
+  /**
+   * Ends the separate part's keyboard and its place as the active editor part, as an editor group, a pane or a text editor of the main editor that takes the keyboard does; called wherever the fake editor gives the main editor the keyboard (a group focus command, a document shown with the focus, a pane revealed with the focus, the learner's click on a tab).
+   * @example leaveChatForMainEditor() // layout reads answer for the main editor again
+   */
+  function leaveChatForMainEditor(): void {
+    if (!separateEditorPart) return
+    separateEditorPart.focused = false
+    separateEditorPart.lastActive = false
+  }
+  /**
+   * Ends the chat input's keyboard when a view that is no editor takes it (the terminal, the Call Stack, a side-bar view, a side bar); Cursor's chat part stays the active editor part, so layout reads still answer for it and no text editor or main pane becomes active (Cursor 3.23.12 17501:84373, 17501:88693), while VS Code's floating chat window gives the active part back to the main window whose view took the keyboard (1.140.0 993:31655); row 647.
+   * @example leaveChatForView() // after the learner's click into the terminal beside Cursor's chat
+   */
+  function leaveChatForView(): void {
+    if (!separateEditorPart) return
+    separateEditorPart.focused = false
+    // Only VS Code's floating window loses its place: Cursor's parts share one window.
+    if (separateEditorPart.floatingVsCodeChat)
+      separateEditorPart.lastActive = false
   }
   /**
    * Runs the side bar part of `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` as both editors do: the bar is shown when hidden and its active view container gets the keyboard (VS Code 1.140.0 `workbench.desktop.main.js` 1113:33119 and 859:17926; Cursor 3.23.12 18340:23013 and 17376:10969). A view that had the keyboard elsewhere (the terminal, the Call Stack, VS Code's chat in another bar), the page body and a pane's inner element have it no longer; the editor reports none of it to an extension (row 633).
@@ -1502,7 +1526,7 @@ export async function workspaceHarness(
     keyboardOnBody = false
     innerFocusedPanel = undefined
     // The primary bar's view has the keyboard now, so the chat's input has it no longer; only Cursor's Focus Agent or the learner gives it back. (Cursor keeps its chat tab's editor part inside the secondary bar, and what that bar's focus command focuses there is not known: the model leaves the chat as it is for that command.)
-    if (!auxiliary && separateEditorPart) separateEditorPart.focused = false
+    if (!auxiliary) leaveChatForView()
   }
   /** Models native debug opens skipping a locked App group; pause and Call Stack fixtures use an existing unlocked main group, without affecting explicit learner moves. @param requested - Native debug's preferred group. @returns An unlocked main column. @example nativeDebugColumn(1) // => 2 when App group one is locked */
   function nativeDebugColumn(requested: number): number {
@@ -1671,6 +1695,7 @@ export async function workspaceHarness(
   function focusChatInput(): void {
     if (!separateEditorPart) return
     separateEditorPart.focused = true
+    separateEditorPart.lastActive = true
     keyboardOnBody = false
     keyboardInView = false
     innerFocusedPanel = undefined
@@ -1693,6 +1718,7 @@ export async function workspaceHarness(
     const previous = activeTabGroup
     activeTabGroup = separateEditorPart!.group
     separateEditorPart!.focused = true
+    separateEditorPart!.lastActive = true
     keyboardOnBody = false
     keyboardInView = false
     innerFocusedPanel = undefined
@@ -1719,7 +1745,8 @@ export async function workspaceHarness(
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
     if (partialFocusEditor) return partialFocusEditor.value
-    if (separateEditorPart?.focused) return undefined
+    // The active part's active editor is the chat while that part is the active one, whether its input or a view has the keyboard.
+    if (separateEditorPart?.lastActive) return undefined
     const input = activeTabGroup.activeTab?.input
     // A newer learner target wins immediately; the delayed clear never steals its focus.
     if (
@@ -1955,7 +1982,7 @@ export async function workspaceHarness(
           !registered ||
           heldActivePane === kind ||
           (pendingPanelActivity !== kind &&
-            !separateEditorPart?.focused &&
+            !separateEditorPart?.lastActive &&
             !staleNamedGroup &&
             activeTabGroup.activeTab === nativeTab)
         )
@@ -2091,7 +2118,7 @@ export async function workspaceHarness(
               innerFocusedPanel = undefined
             else if (!suppressNativeInnerFocus && !value.blockInnerFocus)
               innerFocusedPanel = kind
-            if (separateEditorPart) separateEditorPart.focused = false
+            leaveChatForMainEditor()
             // Refocusing an already kept Application can echo after the following Context acknowledgement.
             if (pendingKeptFocusEcho && kind === 'codebook.studyContext') {
               const previous = pendingKeptFocusEcho
@@ -3000,6 +3027,13 @@ export async function workspaceHarness(
             keyboardOnBody = false
             keyboardInView = false
           }
+          // Cursor's command focuses the active part's active group (3.23.12 17388:4895 `activeGroup.focus()`, the part named at 17501:88693): while its chat part is the active one, also after a click into the terminal or a view, that group's chat input takes the keyboard.
+          if (
+            name === 'workbench.action.focusActiveEditorGroup' &&
+            separateEditorPart?.lastActive &&
+            !separateEditorPart.floatingVsCodeChat
+          )
+            focusChatInput()
           const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
           // VS Code's commands count the groups of every editor part, so the column of a floating window's group focuses that group, raises its window and gives its chat input the keyboard (1.140.0 workbench.desktop.main.js 987:4284, 1106:181056, 1106:133818, 3129:7546).
           if (
@@ -3020,7 +3054,7 @@ export async function workspaceHarness(
                 groups.find((group) => group.viewColumn === focusedColumn) ??
                 opened
               innerFocusedPanel = undefined
-              if (separateEditorPart) separateEditorPart.focused = false
+              leaveChatForMainEditor()
               changedGroups({
                 opened: [],
                 closed: [],
@@ -3036,7 +3070,7 @@ export async function workspaceHarness(
               returnHiddenEditorArea()
               activeTabGroup = focusedGroup
               innerFocusedPanel = undefined
-              if (separateEditorPart) separateEditorPart.focused = false
+              leaveChatForMainEditor()
               changedGroups({
                 opened: [],
                 closed: [],
@@ -3071,11 +3105,11 @@ export async function workspaceHarness(
               separateEditorPart &&
               ((staleNamedGroup ?? activeTabGroup) ===
                 separateEditorPart.group ||
-                separateEditorPart.focused)
+                separateEditorPart.lastActive)
             ) {
               staleNamedGroup = staleNamedGroup ?? activeTabGroup
               activeTabGroup = primaryGroup
-              separateEditorPart.focused = false
+              leaveChatForMainEditor()
               if (primaryGroup.activeTab?.input instanceof TabInputText)
                 activeTextEditorChanged(focusedSourceEditor())
             } else {
@@ -3089,7 +3123,7 @@ export async function workspaceHarness(
               activeTabGroup = primaryGroup
               if (deferPrimaryFocusEcho)
                 pendingPrimaryFocusEcho = activeTabGroup
-              if (separateEditorPart) separateEditorPart.focused = false
+              leaveChatForMainEditor()
               if (primaryNotificationOrder !== 'together')
                 changedGroups({
                   opened: [],
@@ -3144,9 +3178,9 @@ export async function workspaceHarness(
               for (const remove of [...pendingMoveRemovals]) remove()
               await new Promise<void>((resolve) => setImmediate(resolve))
             }
-            // The focused separate part answers for itself, and a hidden editor area reports its stacked groups collapsed.
+            // The active separate part answers for itself, also while a view has the keyboard beside Cursor's chat part, and a hidden editor area reports its stacked groups collapsed.
             let reportedLayout = editorLayout
-            if (separateEditorPart?.focused)
+            if (separateEditorPart?.lastActive)
               reportedLayout =
                 separatePartLayoutReport ?? separateEditorPart.layout
             else if (panelMaximized)
@@ -3187,7 +3221,7 @@ export async function workspaceHarness(
             explicitEditorLayout = true
             maximizedEditorGroup = false
             // The public layout command changes the active part even while TabGroups still reports the old main active group.
-            if (separateEditorPart?.focused) {
+            if (separateEditorPart?.lastActive) {
               separateEditorPart.layout = structuredClone(layout)
               return
             }
@@ -3545,12 +3579,12 @@ export async function workspaceHarness(
               !showsAnotherTab &&
               ((staleNamedGroup ?? activeTabGroup) ===
                 separateEditorPart.group ||
-                separateEditorPart.focused)
+                separateEditorPart.lastActive)
             )
               staleNamedGroup = staleNamedGroup ?? activeTabGroup
             activeTabGroup = group
             innerFocusedPanel = undefined
-            if (separateEditorPart) separateEditorPart.focused = false
+            leaveChatForMainEditor()
             // A text document shown with the focus takes the keyboard from the page body.
             keyboardOnBody = false
             keyboardInView = false
@@ -4383,7 +4417,7 @@ export async function workspaceHarness(
       lastSourceEditor = editor
       keyboardInView = false
       keyboardOnBody = false
-      if (separateEditorPart) separateEditorPart.focused = false
+      leaveChatForMainEditor()
       innerFocusedPanel = undefined
       activeTextEditorChanged(editor)
       changedGroups({ opened: [], closed: [], changed: [group] })
@@ -5007,7 +5041,7 @@ export async function workspaceHarness(
       keyboardOnBody = false
       // The native active tab stays, but its inner document loses the actual keyboard.
       innerFocusedPanel = undefined
-      if (separateEditorPart) separateEditorPart.focused = false
+      leaveChatForView()
     },
     /**
      * Gives VS Code's chat view the keyboard where that editor puts it by default: in front of the secondary side bar, the bar the Learning summary's container stands in too. The editor reports it as `focusView` does; showing the summary's container in that bar then removes the chat's element with the keyboard inside.
@@ -5019,7 +5053,7 @@ export async function workspaceHarness(
       keyboardOnBody = false
       // The native active tab stays, but its inner document loses the actual keyboard.
       innerFocusedPanel = undefined
-      if (separateEditorPart) separateEditorPart.focused = false
+      leaveChatForView()
     },
     /**
      * Gives the learner's terminal the keyboard in front of the bottom panel, the panel the Observed moments' container stands in too. The editor reports it as `focusView` does; showing the moments' container in that panel then hides the terminal and removes its element with the keyboard inside.
@@ -5031,7 +5065,7 @@ export async function workspaceHarness(
       terminalInFrontOfPanel = true
       keyboardOnBody = false
       innerFocusedPanel = undefined
-      if (separateEditorPart) separateEditorPart.focused = false
+      leaveChatForView()
     },
     /** Says whether the learner's terminal still stands in front of the bottom panel; see `focusTerminalInBottomPanel`. @example harness.terminalInFrontOfPanel() // => false after the moments' container replaced it */
     terminalInFrontOfPanel: () => terminalInFrontOfPanel,
@@ -5256,6 +5290,7 @@ export async function workspaceHarness(
         tab: chatTab,
         layout: { orientation: 1, groups: [{ size: 743 }] },
         focused: false,
+        lastActive: false,
         floatingVsCodeChat,
       }
       groups.push(group)
@@ -5268,6 +5303,7 @@ export async function workspaceHarness(
         focused: () => separateEditorPart?.focused,
         focus(): void {
           separateEditorPart!.focused = true
+          separateEditorPart!.lastActive = true
           keyboardOnBody = false
           keyboardInView = false
           activeTextEditorChanged(undefined)
@@ -5394,7 +5430,7 @@ export async function workspaceHarness(
       group.activeTab = tab
       if (options.focused) {
         activeTabGroup = group
-        if (separateEditorPart) separateEditorPart.focused = false
+        leaveChatForMainEditor()
         activeTextEditorChanged(focusedSourceEditor())
       }
       return tab
@@ -5446,7 +5482,7 @@ export async function workspaceHarness(
       assert.ok(group)
       group.activeTab = tab
       activeTabGroup = group
-      if (separateEditorPart) separateEditorPart.focused = false
+      leaveChatForMainEditor()
       for (const listener of tabChangeListeners) listener()
       activeTextEditorChanged(focusedSourceEditor())
     },
@@ -5498,7 +5534,7 @@ export async function workspaceHarness(
       group.tabs.push(tab)
       group.activeTab = tab
       activeTabGroup = group
-      if (separateEditorPart) separateEditorPart.focused = false
+      leaveChatForMainEditor()
       keyboardOnBody = false
       keyboardInView = false
       innerFocusedPanel = undefined

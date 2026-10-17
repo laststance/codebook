@@ -2053,6 +2053,89 @@ test('the fake editor hides both side bars for the maximize command, shows neith
   }
 })
 
+// Value: protects=reader tests beside Cursor's Agent chat part: Cursor makes the editor part that took the focus last its active part among the parts of one window (Cursor 3.23.12 workbench.desktop.main.js 17501:84373, 17501:88693), so after a click from the chat into the terminal or a view the chat part is still the active part: a layout read answers for it (17501:90249), no text editor is active, and the active group's focus command focuses the chat's group (17388:4895); fails_when=the fake answers layout reads for the main editor once the terminal or a view has the keyboard, so a reader that reads the chat part's layout natively passes in the tests (row 638's pin of a press in a Study view did); why_new=Cycle 0046 row 647 (harness fidelity); seam=the fake editor's addSeparateEditorPart and its focusTab, focusTerminalInBottomPanel, focusView, vscode.getEditorLayout, the active text editor and workbench.action.focusActiveEditorGroup
+test("the fake Cursor keeps its chat part the active editor part after a click into the terminal or a view: layout reads answer for the chat part, no text editor is active, and the active group's focus gives the chat input the keyboard", async () => {
+  // Arrange: actions.ts is in the first group; the learner typed in Cursor's chat tab, then clicked into the terminal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    harness.focusTerminalInBottomPanel()
+    const afterTerminal = {
+      layoutRead: await harness.editor.commands.executeCommand(
+        'vscode.getEditorLayout',
+      ),
+      activeTextEditor: harness.editor.window.activeTextEditor,
+      chatHasKeyboard: chat.focused(),
+    }
+    harness.focusView()
+    const afterView = {
+      layoutRead: await harness.editor.commands.executeCommand(
+        'vscode.getEditorLayout',
+      ),
+      activeTextEditor: harness.editor.window.activeTextEditor,
+      chatHasKeyboard: chat.focused(),
+    }
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusActiveEditorGroup',
+    )
+
+    // Assert: both clicks leave the chat part the active part, and the active group's focus gives the chat input the keyboard.
+    assert.deepEqual(
+      {
+        afterTerminal,
+        afterView,
+        chatHasKeyboardAfterGroupFocus: chat.focused(),
+      },
+      {
+        afterTerminal: {
+          layoutRead: { orientation: 1, groups: [{ size: 743 }] },
+          activeTextEditor: undefined,
+          chatHasKeyboard: false,
+        },
+        afterView: {
+          layoutRead: { orientation: 1, groups: [{ size: 743 }] },
+          activeTextEditor: undefined,
+          chatHasKeyboard: false,
+        },
+        chatHasKeyboardAfterGroupFocus: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests beside VS Code's chat editor tab in a floating window: VS Code counts the part of the focused window as the active one (1.140.0 workbench.desktop.main.js 993:31655), so a click into the main window's terminal makes the main editor the active part again and a layout read answers for it; fails_when=row 647's model of Cursor's chat part is applied to VS Code's floating window too, so the main editor's layout could not be read after a click into the terminal; why_new=Cycle 0046 row 647 (the bound of the harness change); seam=the fake editor's addSeparateEditorPart('vscode-floating-chat') and its focusTab, focusTerminalInBottomPanel and vscode.getEditorLayout
+test('the fake VS Code makes its main editor the active part again after a click from the floating chat window into the terminal: layout reads answer for the main editor', async () => {
+  // Arrange: actions.ts is in the first group; the learner typed in VS Code's chat editor tab in a floating window, then clicked into the main window's terminal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart('vscode-floating-chat')
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    harness.focusTerminalInBottomPanel()
+
+    // Act
+    const layoutRead = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Assert: the main editor's two groups answer.
+    assert.deepEqual(layoutRead, {
+      orientation: 0,
+      groups: [{ size: 1 }, { size: 1 }],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests meeting the side bars' focus commands as both editors run them: the command shows the bar and focuses its active view container (VS Code 1.140.0 workbench.desktop.main.js 1113:33119 and 859:17926; Cursor 3.23.12 18340:23013 and 17376:10969), so the terminal or a view that had the keyboard has it no longer; fails_when=the fake gives the bar the keyboard and leaves it in the terminal or the view too, so a reader that shows a bar and gives nothing back passes in the tests as if the learner's terminal kept its keyboard; why_new=Cycle 0046 row 633 (harness fidelity); seam=the fake editor's modelSideBars, sideBars, focusTerminalInBottomPanel, focusView, keyboardInView and keyboardOnBody
 test("the fake editor's side bar focus commands take the keyboard from the terminal and from a view that had it and give it to the bar, as both editors do", async () => {
   // Arrange: both side bars are hidden; the learner types in the terminal of the bottom panel.

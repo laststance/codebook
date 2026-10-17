@@ -1661,9 +1661,10 @@ export class StudyWorkspace {
       const knowsKeyboardPlace = this.knowsKeyboardPlaceAtAdmission()
       const focusedPane = this.trackFocusedStudyPane(),
         lifetime = this.lifetime
+      // A press in a Codebook view (no Study pane is pressed) reads like the command: the view keeps no tab the measurement could give back (row 647).
       const returnForeignFocus = this.retainForeignTabFocus(
         undefined,
-        !fromPane,
+        !this.isPressInStudyPane(fromPane),
       )
       const recordedBundle = this.recordingActive
         ? this.playback?.bundle()
@@ -1952,6 +1953,22 @@ export class StudyWorkspace {
       this.summaryComposition &&
       this.replayApplicationCovered &&
       action !== 'save-preference'
+    )
+  }
+
+  /**
+   * Says whether a presentation change came from a press in the Study pane itself, whose tab the arrangement's measurement gives its focus back; asked by the composition branch of {@link admitPresentation} before it remembers a foreign tab (row 647).
+   * A press in a Codebook view of a side bar or the panel (the Learning summary) leaves the editor naming whatever tab it named before, and beside Cursor's chat part, which stays the active editor part after a click into a view (Cursor 3.23.12 `workbench.desktop.main.js` 17501:84373, 17501:88693), that is the tab Cursor's Focus Agent left named: such a press reads like the command run from the Command Palette, whose named Study pane's tab is the chat's place.
+   * @param fromPane - Whether a control of a Study pane or view asked for the change ({@link changePresentation}).
+   * @returns `true` when a pane or view asked and the Study pane is active or reports the keyboard ({@link reportsKeyboard}); `false` for a command, and for a press in a view.
+   * @example this.isPressInStudyPane(true) // => false for the Restore of the Learning summary while Cursor's chat part is the active one
+   */
+  private isPressInStudyPane(fromPane: boolean): boolean {
+    const studyPane = this.contextPanel
+    return (
+      fromPane &&
+      studyPane !== undefined &&
+      (studyPane.active || this.reportsKeyboard(studyPane))
     )
   }
 
@@ -2949,7 +2966,13 @@ export class StudyWorkspace {
       )
       // A newer pause, replay or learner choice can revoke a return while native command discovery waits.
       if (stillCurrent && !stillCurrent()) return false
-      return this.runFocusReturnCommand(command, toldCause, chatEditorTab)
+      // A return after a measurement that borrowed the main editor's focus beside the chat is told with the arrangement's cause, unless the caller names another (rows 647 and 655).
+      const borrowedMainEditor = this.mainEditorFocusBorrows !== borrowsBefore
+      return this.runFocusReturnCommand(
+        command,
+        toldCause ?? (borrowedMainEditor ? 'arrangement' : undefined),
+        chatEditorTab,
+      )
     }
   }
 

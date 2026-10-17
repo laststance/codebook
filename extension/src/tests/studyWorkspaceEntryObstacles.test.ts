@@ -2518,7 +2518,7 @@ test('in Cursor, an agent’s cold Study select from the chat that retires the e
       'agent',
     )
 
-    // Assert: the layout is confirmed, Focus Agent gave the chat its keyboard back after the proofs, and the learner is told once why, with the leftovers' sentence.
+    // Assert: the layout is confirmed, Focus Agent gave the chat its keyboard back after the proofs, and the learner is told once why, with the leftovers' sentence; the selection's own return after its measurement's borrow then tells the arrangement's sentence (rows 647 and 655).
     assert.deepEqual(
       {
         layoutConfirmed: selected.layoutConfirmed,
@@ -2534,6 +2534,7 @@ test('in Cursor, an agent’s cold Study select from the chat that retires the e
         focusAgentRuns: 2,
         messages: [
           'Codebook gave the keyboard back to the chat after it closed the editor groups an earlier window had left, which moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+          'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
         ],
       },
     )
@@ -3121,8 +3122,8 @@ test('an agent’s run that prepares the Application while VS Code’s chat edit
   }
 })
 
-// Value: protects=the keyboard of VS Code's chat editor tab that the learner moved into a floating window (Chat: Move Chat into New Window), where the learner typed the request: an agent's run places its Application in a new group above the first one, and the chat gets its keyboard back through the numbered focus command of its group's column, which in VS Code counts the groups of every editor part, raises the floating window and gives the chat editor's input the keyboard (1.140.0 workbench.desktop.main.js 987:4284, 1106:181056, 1106:133818, 3129:7546); nothing is told; fails_when=the floating window's group counts as another editor part, whose only give-back is Cursor's Focus Agent, so VS Code runs nothing and tells nothing while the Application's group keeps the keyboard; why_new=Cycle 0046 row 636; seam=useNativeLayout, focusMutableDraft, addSeparateEditorPart('vscode-floating-chat') and its focusTab, presentation.createViewport (the MCP-first preparation), the command log, the chat's keyboard and the information messages
-test('an agent’s run that prepares the Application while VS Code’s chat editor tab in a floating window has the keyboard gives that chat its keyboard back and tells nothing', async () => {
+// Value: protects=the keyboard of VS Code's chat editor tab that the learner moved into a floating window (Chat: Move Chat into New Window), where the learner typed the request: an agent's run places its Application in a new group above the first one, and the chat gets its keyboard back through the numbered focus command of its group's column, which in VS Code counts the groups of every editor part, raises the floating window and gives the chat editor's input the keyboard (1.140.0 workbench.desktop.main.js 987:4284, 1106:181056, 1106:133818, 3129:7546); the measurement's focus of the first group gave the learner's file the keyboard for a moment, so the return says so once (rows 647 and 655); fails_when=the floating window's group counts as another editor part, whose only give-back is Cursor's Focus Agent, so VS Code runs nothing and tells nothing while the Application's group keeps the keyboard, or the return after the measurement's borrow is made without a word; why_new=Cycle 0046 row 636, and rows 647 and 655 (the sentence); seam=useNativeLayout, focusMutableDraft, addSeparateEditorPart('vscode-floating-chat') and its focusTab, presentation.createViewport (the MCP-first preparation), the command log, the chat's keyboard and the information messages
+test('an agent’s run that prepares the Application while VS Code’s chat editor tab in a floating window has the keyboard gives that chat its keyboard back and says once that a file of the main editor had it for a moment', async () => {
   // Arrange: actions.ts is in the first group and auth.ts in the second; the learner typed the request into the chat editor tab moved into a floating window, whose group the editor counts at column 3.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
@@ -3144,7 +3145,7 @@ test('an agent’s run that prepares the Application while VS Code’s chat edit
     )
 
     try {
-      // Assert: the Application stands in its own group at column 1; the floating window's group, now column 4, got the keyboard back through its numbered focus command, and nothing was told.
+      // Assert: the Application stands in its own group at column 1; the floating window's group, now column 4, got the keyboard back through its numbered focus command, and the arrangement's sentence was told once.
       assert.deepEqual(
         {
           applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
@@ -3168,7 +3169,9 @@ test('an agent’s run that prepares the Application while VS Code’s chat edit
             'workbench.action.focusFourthEditorGroup',
           ],
           chatHasKeyboard: true,
-          messages: [],
+          messages: [
+            'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+          ],
         },
       )
     } finally {

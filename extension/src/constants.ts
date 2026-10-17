@@ -407,7 +407,7 @@ export const CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE =
  * - `pause`: the editor's debugger opened the paused file with the keyboard ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}, rows 632 and 635).
  * - `leftoverProof`: Codebook's proof of the editor groups an earlier window left focused one of them before it closed them, at an agent's cold Study selection or first run after a reload (rows 608 and 646).
  * - `close`: "Codebook: Close Study Workspace" ended a Read and showed the side bars the Read had hidden, whose commands take the keyboard (row 649; VS Code's chat editor tab of the active main group is told {@link STUDY_CLOSE_KEYBOARD_MESSAGE} instead, which names the active editor group the chat is in).
- * - `arrangement`: the learner's own arrangement made from the Command Palette or a shortcut, whose layout measurement beside the chat moved the keyboard into the main editor (row 647).
+ * - `arrangement`: an arrangement or an Application preparation whose layout measurement beside the chat borrowed the main editor's focus (rows 647 and 655): both editors answer a layout read, and apply a layout, for the active editor part only (Cursor 3.23.12 17501:90249 `getLayout(){return this.activePart.getLayout()}` and `applyLayout`; VS Code 1.140.0 1106:182079), Cursor's active part changes only when an editor part takes the focus (17501:84373, 17501:88693), and a group's focus focuses its active editor, so the file or pane in front of the main editor's first group has the keyboard until the chat gets it back; the learner's own Arrange Study Workspace run from the terminal or a view loses its keyboard to the chat the same way (row 647).
  * @example void showPlainNotice(vscode.window, 'information', CHAT_KEYBOARD_RETURNED_MESSAGES.leftoverProof)
  */
 export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
@@ -417,7 +417,7 @@ export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
   close:
     'Study workspace closed, and Codebook gave the keyboard back to the chat: showing the side bars your Read had hidden took it. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
   arrangement:
-    'Codebook arranged the Study workspace and gave the keyboard back to the chat, which arranging the panes had taken. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+    'Codebook placed its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
 } as const
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
