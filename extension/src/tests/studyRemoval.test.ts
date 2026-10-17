@@ -22,10 +22,7 @@ import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { readProcessStart } from '../utils/readProcessStart'
-import {
-  recordingMayStillBeWritten,
-  recordingWriterOf,
-} from '../utils/recordingMayStillBeWritten'
+import { recordingWriterOf } from '../utils/recordingMayStillBeWritten'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import type * as lockModule from '../utils/withStorageLock'
 
@@ -1699,12 +1696,6 @@ test('a removal judges the writers of the study’s recordings before it takes t
     resolve(__dirname, '../learningLibrary.js'),
     {
       './utils/recordingMayStillBeWritten': {
-        recordingMayStillBeWritten: async (
-          ...judging: Parameters<typeof recordingMayStillBeWritten>
-        ): ReturnType<typeof recordingMayStillBeWritten> => {
-          await noteTheLockAndWriteMeanwhile()
-          return recordingMayStillBeWritten(...judging)
-        },
         recordingWriterOf: async (
           ...judging: Parameters<typeof recordingWriterOf>
         ): ReturnType<typeof recordingWriterOf> => {

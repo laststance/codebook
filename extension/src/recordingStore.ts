@@ -284,7 +284,7 @@ export class RecordingStore {
   }
 
   /**
-   * Keeps the full identity of this editor process (the storage lock's record: machine, boot and process start) for a recording it starts, outside the recording ({@link recordingOwnerRecordPath}), so that the judgement of a recording's writer ({@link isRecordingWriterLive}, and through it the library's {@link recordingMayStillBeWritten}, its removal and this store's {@link ownerState}) tells this machine after its host name changed, another machine, and a process id that went to another process; called by {@link start} under the storage lock, after the header.
+   * Keeps the full identity of this editor process (the storage lock's record: machine, boot and process start) for a recording it starts, outside the recording ({@link recordingOwnerRecordPath}), so that the judgement of a recording's writer ({@link isRecordingWriterLive} and {@link recordingWriterState}, and through them the library's list and removal ({@link recordingWriterOf}) and this store's {@link ownerState}) tells this machine after its host name changed, another machine, and a process id that went to another process; called by {@link start} under the storage lock, after the header.
    * The record lies where 0.2.29.0 never looks: that version refuses a header or a recording folder that holds anything it does not know. It is a help, not a part of the recording: a record that cannot be written (a link or a file at the folder's path, a full disk) leaves the recording to be judged by its header, as one of 0.2.29.0 is.
    * @param studyId - The recording's study id.
    * @example await this.recordWriterIdentity(header.studyId)
