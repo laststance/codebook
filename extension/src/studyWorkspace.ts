@@ -958,7 +958,13 @@ export class StudyWorkspace {
     >
   }
   private presentationMovedFocus = false
-  /** Whether the running presentation change, Return to current pause, entry or arrangement of the live or recording panes was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732), and neither does {@link returnCurrentSelection} (row 735), an entry of {@link open} that owns its chat return (row 736), nor {@link returnForeignFocusAfterFailure} (row 738). Each of them clears it when it begins. */
+  /**
+   * Whether the running presentation change, Return to current pause, entry or arrangement of the live or recording panes was refused for a learner's newer input; {@link yieldFocusToLearner} sets it. Its refusal then gives no borrowed keyboard back, not even to a chat. Who clears it and who reads it:
+   * - {@link performPresentation} clears it when it begins and when it ends, and reads it at its refusal (Cycle 0046 rows 728 and 732).
+   * - {@link returnCurrentSelection} clears it when it begins, and at its end reads it and clears it before {@link finishCurrentReturn} (row 735).
+   * - {@link open}, for an entry that owns its chat return, clears it when it begins and when it ends, and reads it at its refusal (row 736).
+   * - The composition branch of {@link admitPresentation} clears it at its admission and at its end; {@link returnForeignFocusAfterFailure}, the failure path of that branch, only reads it (row 738).
+   */
   private presentationYieldedToLearner = false
   private presentationPoseRequest?: PresentationPoseCapture
   private presentationPose?: PresentationPose
