@@ -2983,3 +2983,93 @@ test("a leftover Repository Wiki pane of an earlier extension host selected besi
     await harness.close()
   }
 })
+
+// Value: protects=reader tests that know a tab by its label, as the chat's give-back does for a remembered tab (Cycle 0046 row 648): every tab of the fake editor has the label its editor input names it with, a string in both editors (VS Code 1.140.0 `workbench.desktop.main.js` 725:2597, Cursor 3.23.12 17269:26483 `label:t.getName()`); fails_when=the fake's tabs have no label, so any two of its text tabs compare equal by label and the give-back's check of an empty group's missing front tab reads its input, which throws: reading every group's front tab there instead of the shifted column's alone turned three Cursor verdicts of the chat's keyboard return (row 664); why_new=Cycle 0046 row 664; seam=the workspace harness's tab model: focusMutableDraft, addOpaqueTab, the reader's panes and the chat part
+test("every tab of the fake editor has the label its editor names it with, as both editors' tab models give one to every tab", async () => {
+  // Arrange: the learner's file and Cursor's settings page in the first group beside the harness's own file, its Wiki in the second, Cursor's chat part beside the main editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.addOpaqueTab('Cursor Settings', 1)
+  harness.focusMutableDraft('login-form.tsx', 1)
+  try {
+    // Act
+    await harness.reader.open()
+    const labels = harness.editor.window.tabGroups.all.map((group) => ({
+      column: group.viewColumn,
+      labels: group.tabs.map((tab) => tab.label),
+    }))
+
+    // Assert
+    assert.deepEqual(labels, [
+      {
+        column: 1,
+        labels: [
+          'Cursor Settings',
+          'article-source.ts',
+          'login-form.tsx',
+          'codebook · Application',
+        ],
+      },
+      {
+        column: 2,
+        labels: ['codebook · Repository Wiki', 'Captured-overview.mts'],
+      },
+      { column: 3, labels: ['codebook · Study'] },
+      { column: 4, labels: [chat.tab.label] },
+    ])
+    assert.equal(chat.tab.label, 'New Agent')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests whose product reads the front tab of every group, as the chat's give-back may: in the fake editor, as in both editors, reading a group's front tab, its label and its input is a read only; fails_when=a read of the fake's tab model changes a group, a tab, the active group or the keyboard, or runs a command, so a product that reads more of it gets other verdicts than one that reads less (row 664: the three Cursor verdicts an eager read changed came from a label the fake's tabs lacked, not from a read); why_new=Cycle 0046 row 664; seam=the workspace harness's tab model read through the editor API the product uses
+test("reading every group's front tab, its label and its input in the fake editor changes no group, no tab, no focus and runs no command", async () => {
+  // Arrange: an open Study workspace beside Cursor's chat, which has the keyboard, in the model that replaces every tab group object with each tab change.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  try {
+    await harness.reader.open()
+    chat.focusTab()
+    const tabGroups = harness.editor.window.tabGroups
+    const modelOf = () => ({
+      groups: [...tabGroups.all],
+      tabs: tabGroups.all.map((group) => [...group.tabs]),
+      activeGroup: tabGroups.activeTabGroup,
+      activeTextEditor: harness.editor.window.activeTextEditor,
+      chatHasKeyboard: chat.focused(),
+      commands: harness.commands.length,
+    })
+    const before = modelOf()
+
+    // Act
+    const read = tabGroups.all.map((group) => ({
+      label: group.activeTab?.label,
+      hasInput: group.activeTab?.input !== undefined,
+    }))
+
+    // Assert
+    const after = modelOf()
+    assert.equal(read.length, 4)
+    assert.equal(
+      after.groups.every((group, index) => group === before.groups[index]),
+      true,
+    )
+    assert.equal(
+      after.tabs.every((tabs, index) =>
+        tabs.every((tab, position) => tab === before.tabs[index]![position]),
+      ),
+      true,
+    )
+    assert.equal(after.activeGroup, before.activeGroup)
+    assert.equal(after.activeTextEditor, before.activeTextEditor)
+    assert.equal(after.chatHasKeyboard, true)
+    assert.equal(after.commands, before.commands)
+  } finally {
+    await harness.close()
+  }
+})

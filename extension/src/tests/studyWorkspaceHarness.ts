@@ -299,13 +299,21 @@ export async function workspaceHarness(
       return new Range(start, end)
     }
   }
+  /** A tab of the fake tab model. Its `label` is a string for every tab, as both editors' tab models give it: the name of the tab's editor input (VS Code 1.140.0 `workbench.desktop.main.js` 725:2597, Cursor 3.23.12 17269:26483 `label:t.getName()`); a tab without one made a comparison of labels true for any two unlabelled tabs (Cycle 0046 row 664). */
   type Tab = {
     input: TabInputText | TabInputWebview | TabInputUnknown
-    label?: string
+    label: string
     isPreview?: boolean
     isDirty?: boolean
     isPinned?: boolean
   }
+  /**
+   * Names a text tab as both editors do, by the base name of its document's path ({@link Tab}'s `label`); called wherever the fake editor opens a text tab.
+   * @param uri - The tab's document.
+   * @returns The last segment of the document's path.
+   * @example textTabLabel(Uri.file('/repository/src/login-form.tsx')) // => 'login-form.tsx'
+   */
+  const textTabLabel = (uri: Uri): string => basename(uri.path)
   const groups: {
     viewColumn: number
     tabs: Tab[]
@@ -1454,6 +1462,7 @@ export async function workspaceHarness(
     const group = groups.find((group) => group.viewColumn === column)!
     const tab = {
       input: new TabInputText(document.uri),
+      label: textTabLabel(document.uri),
       isPreview,
       // A draft has unsaved text; a file the editor opens as a preview tab has none.
       isDirty: !isPreview,
@@ -1792,14 +1801,19 @@ export async function workspaceHarness(
   }
   function panel(
     kind: string,
-    _title?: string,
+    title = '',
     options?: { viewColumn: number; preserveFocus?: boolean },
   ) {
     if (failedPanelKind === kind) {
       failedPanelKind = undefined
       throw new Error('Injected native panel creation failure')
     }
-    let nativeTab = { input: new TabInputWebview(kind), isPreview: false }
+    // The tab of a webview panel is labelled with the panel's title, as both editors' tab models name it.
+    let nativeTab: Tab = {
+      input: new TabInputWebview(kind),
+      label: title,
+      isPreview: false,
+    }
     const epoch = randomUUID(),
       messageListeners = new Set<(message: unknown) => void>()
     const emit = (message: unknown): void => {
@@ -1967,7 +1981,7 @@ export async function workspaceHarness(
       },
       emit,
       viewColumn,
-      title: _title ?? '',
+      title,
       /**
        * Keeps the actual panel handle associated with its current tab wrapper for registration and full-model resync tests.
        * @param replacement - A full-model replacement already present in the current native groups; omitted, only the tab object is rebuilt.
@@ -3562,7 +3576,10 @@ export async function workspaceHarness(
               (tab) =>
                 tab.input instanceof TabInputText &&
                 tab.input.uri.toString() === sourceDocument.uri.toString(),
-            ) ?? { input: new TabInputText(sourceDocument.uri) }
+            ) ?? {
+              input: new TabInputText(sourceDocument.uri),
+              label: textTabLabel(sourceDocument.uri),
+            }
           if (!group.tabs.includes(tab)) group.tabs.push(tab)
           revealIntoHiddenEditorArea(
             group.viewColumn,
@@ -5277,6 +5294,7 @@ export async function workspaceHarness(
       initialSource.tab.isDirty = false
       groups[1]?.tabs.push({
         input: new TabInputWebview('codebook.repositoryWiki'),
+        label: 'codebook · Repository Wiki',
       })
       activeTabGroup = groups[0]!
       activeTabGroup.activeTab = activeTabGroup.tabs[0]
@@ -5416,6 +5434,7 @@ export async function workspaceHarness(
       }
       const tab: Tab = {
         input: new TabInputText(document.uri),
+        label: textTabLabel(document.uri),
         isPreview: false,
         isDirty: false,
       }
@@ -5588,6 +5607,7 @@ export async function workspaceHarness(
     addTextPreview(path: string, column: number, dirty = false) {
       const tab = {
         input: new TabInputText(Uri.file(path)),
+        label: textTabLabel(Uri.file(path)),
         isPreview: true,
         isDirty: dirty,
       }
@@ -5606,6 +5626,7 @@ export async function workspaceHarness(
       })
       const tab = {
         input: new TabInputText(uri),
+        label: textTabLabel(uri),
         isPreview: true,
         isDirty: Boolean(options.dirty),
         isPinned: Boolean(options.pinned),
@@ -5639,6 +5660,7 @@ export async function workspaceHarness(
         if (!group.tabs.length && change !== 'empty' && !preserveEmpty)
           group.tabs.push({
             input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)),
+            label: `group-${group.viewColumn}`,
           })
       const previous = [...groups]
       const refreshedTabs = new Map<Tab, Tab>()
@@ -5703,6 +5725,7 @@ export async function workspaceHarness(
         )
         destination.tabs.splice(1, 0, {
           input: new TabInputText(Uri.file('/learner-added-notes.txt')),
+          label: 'learner-added-notes.txt',
         })
       }
       if (change === 'remove') groups[0]!.tabs.pop()
