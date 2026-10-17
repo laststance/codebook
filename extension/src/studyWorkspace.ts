@@ -224,6 +224,7 @@ import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import { isCurrentRunRememberedWhileClosed } from './utils/isCurrentRunRememberedWhileClosed'
+import { isDiffTabOfDocument } from './utils/isDiffTabOfDocument'
 import { isLiveSourceViewUri } from './utils/isLiveSourceViewUri'
 import {
   editorLayoutSchema,
@@ -17303,12 +17304,65 @@ export class StudyWorkspace {
     )
       return false
     const front = vscode.window.tabGroups.all.find(
-      (group) => group.viewColumn === column,
-    )?.activeTab?.input
+        (group) => group.viewColumn === column,
+      )?.activeTab?.input,
+      uri = editor.document.uri.toString()
+    // The front tab shows the editor's document as a text editor, or as a side of a diff (row 688).
     return (
-      front instanceof vscode.TabInputText &&
-      front.uri.toString() === editor.document.uri.toString()
+      (front instanceof vscode.TabInputText && front.uri.toString() === uri) ||
+      isDiffTabOfDocument(front, uri, Reflect.get(vscode, 'TabInputTextDiff'))
     )
+  }
+
+  /**
+   * Gives the keyboard back to the text editor that had it before a layout read borrowed the main editor's first group ({@link readMainEditorGrid}): a text editor in front of its group is shown again, and a side of a diff editor gets it through its group's numbered focus command ({@link focusEditorGroupCommand}), which keeps the diff in front; `showTextDocument` of a diff's document opens a plain text tab of it in front of the diff in both editors (Cycle 0046 row 688). The group's focus gives its active editor, the diff, the keyboard (the group view's `focus()`, VS Code 1.140.0 `workbench.desktop.main.js` 1106:74902; Cursor 3.23.12 17501:37250), and the extension host reports the side that has it as the active text editor.
+   * @param editor - The text editor that had the keyboard, in a column the read after the borrow measured as the main editor's.
+   * @param preview - Whether that editor's tab was a preview tab, which its display keeps.
+   * @param signal - The measurement's cancellation.
+   * @returns The text editor that has the keyboard again, for the caller's checks of its document, column and selections.
+   * @throws When the diff's group focus does not report that editor within {@link PRESENTATION_READY_TIMEOUT_MS}.
+   * @example const restored = await this.showBorrowedTextEditorAgain(editor, false, signal) // the diff of auth.ts in front of column 2 has the keyboard again
+   */
+  private async showBorrowedTextEditorAgain(
+    editor: vscode.TextEditor,
+    preview: boolean,
+    signal: AbortSignal | undefined,
+  ): Promise<vscode.TextEditor> {
+    const column = editor.viewColumn,
+      front = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === column,
+      )?.activeTab?.input,
+      command =
+        column !== undefined &&
+        isDiffTabOfDocument(
+          front,
+          editor.document.uri.toString(),
+          Reflect.get(vscode, 'TabInputTextDiff'),
+        )
+          ? focusEditorGroupCommand(column)
+          : undefined
+    // A text editor in front of its group is shown again as before.
+    if (!command)
+      return vscode.window.showTextDocument(editor.document, {
+        viewColumn: column,
+        preserveFocus: false,
+        preview,
+      })
+    await vscode.commands.executeCommand(command)
+    await waitUntil(
+      () =>
+        editorShowsDocument(
+          vscode.window.activeTextEditor,
+          editor.document.uri,
+        ) && vscode.window.activeTextEditor?.viewColumn === column,
+      "the diff editor's focus",
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    )
+    const focused = vscode.window.activeTextEditor
+    if (!focused)
+      throw new Error('The diff editor did not report the keyboard focus.')
+    return focused
   }
 
   /**
@@ -17726,11 +17780,11 @@ export class StudyWorkspace {
             )
           },
         })
-        const restored = await vscode.window.showTextDocument(editor.document, {
-          viewColumn: editor.viewColumn,
-          preserveFocus: false,
+        const restored = await this.showBorrowedTextEditorAgain(
+          editor,
           preview,
-        })
+          signal,
+        )
         assertCurrent()
         assertGroups()
         if (editor.document.version !== documentVersion)

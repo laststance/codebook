@@ -273,6 +273,13 @@ export async function workspaceHarness(
   class TabInputText {
     constructor(readonly uri: Uri) {}
   }
+  /** A diff editor's tab input, as both editors' extension hosts export it: the original and the modified document (Cycle 0046 row 688). */
+  class TabInputTextDiff {
+    constructor(
+      readonly original: Uri,
+      readonly modified: Uri,
+    ) {}
+  }
   class RelativePattern {
     constructor(
       readonly base: string,
@@ -337,7 +344,7 @@ export async function workspaceHarness(
   }
   /** A tab of the fake tab model. Its `label` is a string for every tab, as both editors' tab models give it: the name of the tab's editor input (VS Code 1.140.0 `workbench.desktop.main.js` 725:2597, Cursor 3.23.12 17269:26483 `label:t.getName()`); a tab without one made a comparison of labels true for any two unlabelled tabs (Cycle 0046 row 664). */
   type Tab = {
-    input: TabInputText | TabInputWebview | TabInputUnknown
+    input: TabInputText | TabInputTextDiff | TabInputWebview | TabInputUnknown
     label: string
     isPreview?: boolean
     isDirty?: boolean
@@ -1997,8 +2004,11 @@ export async function workspaceHarness(
     return visibleSourceEditors.find(
       (editor) =>
         activeTabGroup === editor.group &&
-        input instanceof TabInputText &&
-        input.uri.toString() === editor.document.uri.toString(),
+        // A diff editor in front reports its modified side's text editor as the active one (row 688).
+        ((input instanceof TabInputText &&
+          input.uri.toString() === editor.document.uri.toString()) ||
+          (input instanceof TabInputTextDiff &&
+            input.modified.toString() === editor.document.uri.toString())),
     )
   }
   /** Retains the old text receipt before either native or inner activation for delayed-notification tests. @example retainDelayedTextFocus('codebook.studyContext'); */
@@ -3050,6 +3060,7 @@ export async function workspaceHarness(
       EventEmitter,
       Uri,
       TabInputText,
+      TabInputTextDiff,
       TabInputWebview,
       TabInputChat,
       TreeItem: class {},
@@ -5636,6 +5647,40 @@ export async function workspaceHarness(
           floatingEditorWindow!.active = true
         },
       }
+    },
+    /**
+     * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's, in the group's column; `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (Cycle 0046 row 688).
+     * @param filename - The learner's file.
+     * @param column - The group's view column.
+     * @returns The modified document, the diff tab and the modified side's text editor.
+     * @example const diff = harness.focusDiffEditor('auth.ts', 2) // auth.ts (Working Tree) in front of column 2 with the keyboard
+     */
+    focusDiffEditor(filename: string, column: number) {
+      const opened = openDraftTab(filename, column)
+      const diffTab: Tab = {
+        input: new TabInputTextDiff(
+          Uri.from({
+            scheme: 'git',
+            authority: '',
+            path: opened.document.uri.path,
+          }),
+          opened.document.uri,
+        ),
+        label: `${filename} (Working Tree)`,
+        isPreview: false,
+      }
+      opened.group.tabs.splice(
+        opened.group.tabs.indexOf(opened.tab),
+        1,
+        diffTab,
+      )
+      opened.group.activeTab = diffTab
+      activeTabGroup = opened.group
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      activeTextEditorChanged(opened.editor)
+      return { document: opened.document, tab: diffTab, editor: opened.editor }
     },
     useNativeLayout(layout: unknown): void {
       // Replacing the fixture's native desktop closes its real pane handles and removes their old editors, rather than leaving invisible owners alive.

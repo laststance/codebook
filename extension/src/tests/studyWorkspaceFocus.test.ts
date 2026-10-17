@@ -3345,3 +3345,87 @@ test("a passive layout read while a text editor of VS Code's floating window wit
     await harness.close()
   }
 })
+
+// Value: protects=a learner's diff editor beside Cursor's chat part: the diff of auth.ts in front of the second group has the keyboard, and its modified side is the active text editor, which proves the main editor the active part as the learner's file does (row 663), so a layout read borrows nothing and shows nothing; fails_when=the proof asks for a plain text tab in front of the editor's column, so the read borrows the first group and gives the keyboard back with showTextDocument of auth.ts, which opens a plain text tab of it in front of the learner's diff; why_new=Cycle 0046 row 688; seam=the workspace harness's Cursor model (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat), focusDiffEditor, readerSeams' measureMainEditorGrid, textDocumentShows and the native commands
+test("a layout read beside Cursor's chat part while a learner's diff editor in front of the second group has the keyboard borrows nothing and leaves the diff in front", async () => {
+  // Arrange: login-form.tsx in the first group; the learner's diff of auth.ts in front of the second group has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.focusDiffEditor('auth.ts', 2)
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const measured = await readerSeams(harness).measureMainEditorGrid()
+
+    // Assert
+    assert.deepEqual(
+      {
+        measured,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        shows: harness.textDocumentShows(),
+        secondGroupFront: harness.groups.find((group) => group.viewColumn === 2)
+          ?.activeTab?.label,
+        keyboard: harness.focusedSource()?.document.uri.path.split('/').at(-1),
+      },
+      {
+        measured: [1, 2],
+        focusCommands: [],
+        shows: [],
+        secondGroupFront: 'auth.ts (Working Tree)',
+        keyboard: 'auth.ts',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's diff editor when a layout read has to borrow the main editor's first group (VS Code with a floating window of text editors beside the main editor, where no text editor of a measured column beyond the first proves the main editor, row 689): the borrow gives the keyboard back to the diff through its group's focus, so the diff stays in front of its group with the keyboard; fails_when=the give-back shows auth.ts with showTextDocument, which opens a plain text tab of it in front of the learner's diff; why_new=Cycle 0046 row 688; seam=useNativeLayout with two main groups, focusDiffEditor, addFloatingEditorWindow (not focused), readerSeams' measureMainEditorGrid, textDocumentShows and the native commands
+test("a layout read that borrows the first group while a learner's diff editor in front of the second group has the keyboard gives the keyboard back to the diff through its group's focus", async () => {
+  // Arrange: VS Code's floating window shows notes.ts; in the main editor the learner's diff of auth.ts in front of the second group has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.addFloatingEditorWindow(['notes.ts'])
+  harness.focusDiffEditor('auth.ts', 2)
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const measured = await readerSeams(harness).measureMainEditorGrid()
+
+    // Assert
+    assert.deepEqual(
+      {
+        measured,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        shows: harness.textDocumentShows(),
+        secondGroupFront: harness.groups.find((group) => group.viewColumn === 2)
+          ?.activeTab?.label,
+        keyboard: harness.focusedSource()?.document.uri.path.split('/').at(-1),
+      },
+      {
+        measured: [1, 2],
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusSecondEditorGroup',
+        ],
+        shows: [],
+        secondGroupFront: 'auth.ts (Working Tree)',
+        keyboard: 'auth.ts',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
