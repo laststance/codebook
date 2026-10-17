@@ -209,6 +209,7 @@ import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
+import { hasRowAtMinimumHeight } from './utils/hasRowAtMinimumHeight'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
@@ -13266,6 +13267,8 @@ export class StudyWorkspace {
           this.assertLifetime(lifetime)
           assertPlaced()
         })
+      // A row the new group left at the minimum height would be expanded by its first activation, the focus return among them (row 691).
+      layout = await this.stackRowsLeftAtMinimum(layout, lifetime, assertPlaced)
       const expectedCount =
         grid.groups.length + (retiredSource ? 0 : 1) - removedByMove
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
@@ -14080,6 +14083,41 @@ export class StudyWorkspace {
     const read = await vscode.commands.executeCommand<unknown>(
       'vscode.getEditorLayout',
     )
+    assertPlaced()
+    return read
+  }
+
+  /**
+   * Stacks the rows of the main editor at one height when the Application's new group left one of them at the editor's minimum height ({@link hasRowAtMinimumHeight}), before anything activates that row; called by {@link reserveApplicationGroup} once the Application stands in its group, before the layout it remembers is read (Cycle 0046 row 691).
+   * Over a learner's uneven stack `workbench.action.newGroupAbove` takes the new row's height from the last row down to the minimum (VS Code 1.140.0 `workbench.desktop.main.js` 540:73732; 524/163 gives 262/355/70), and VS Code expands a minimized group it activates (1106:114938 `doRestoreGroup`): the focus return to the Wiki's row gave 70/70/547, so the arrangement was no longer confirmed and the article Return gave nothing back (c59-vs-567, c59-vs-691probe4). Rows of one height are what the editor gives an even stack itself (343/344 gives 229/229/229, c59-vs-691probe3) and what {@link stackGroupsAfterLeftoverRemoval} gives; the Return gives the learner's own sizes back from the noted layout.
+   * @param layout - The layout the editor answered after the placement.
+   * @param lifetime - The reader lifetime of the preparation; a closed reader refuses after each command.
+   * @param assertPlaced - Refuses when the placement changed, after the layout command and after its read.
+   * @returns The layout the editor answers after the rows are applied; the given layout when no row stands at the minimum.
+   * @throws What `assertPlaced` or the lifetime check throws.
+   * @example layout = await this.stackRowsLeftAtMinimum(layout, lifetime, assertPlaced) // 262/355/70 => { orientation: 1, groups: [{ size: 229 }, { size: 229 }, { size: 229 }] }
+   */
+  private async stackRowsLeftAtMinimum(
+    layout: unknown,
+    lifetime: number,
+    assertPlaced: () => void,
+  ): Promise<unknown> {
+    const count = editorLayoutGroupCount(layout)
+    if (count === undefined || !hasRowAtMinimumHeight(layout)) return layout
+    const rows = toPixelEditorLayout(
+      {
+        orientation: VERTICAL_EDITOR_ORIENTATION,
+        groups: Array.from({ length: count }, () => ({ size: 1 })),
+      },
+      layout,
+    )
+    await vscode.commands.executeCommand('vscode.setEditorLayout', rows)
+    this.assertLifetime(lifetime)
+    assertPlaced()
+    const read = await vscode.commands.executeCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    this.assertLifetime(lifetime)
     assertPlaced()
     return read
   }

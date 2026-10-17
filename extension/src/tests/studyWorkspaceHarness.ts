@@ -702,6 +702,8 @@ export async function workspaceHarness(
   /** The editor area in which the fake editor answers a layout given in proportions as pixels; see `answerProportionsAsPixels`. `undefined`: such a layout is kept as it was given. */
   let proportionsAnsweredInPx: { width: number; height: number } | undefined
   let hideGridWhileMaximized = false
+  /** Set by `modelVsCodeStackedRowSizing`: a group inserted into stacked rows given in pixels is sized as VS Code's split view sizes it, and a row at the minimum height that a numbered focus command activates is expanded, as VS Code 1.140.0 does (Cycle 0046 row 691). */
+  let modelsVsCodeStackedRowSizing = false
   // The legacy fixture keeps an empty App destination beside source; both groups must exist before MCP-first preparation measures them.
   let editorLayout: unknown = { orientation: 0, groups: [{}, {}] }
   let nextMovedPanelLayout: unknown
@@ -1073,7 +1075,15 @@ export async function workspaceHarness(
       'orientation' in editorLayout
         ? Number(editorLayout.orientation)
         : 0
-    editorLayout = aboveFirstLeaf(editorLayout, orientation)
+    const pixelRows = modelsVsCodeStackedRowSizing
+      ? stackedPixelRows(editorLayout)
+      : undefined
+    editorLayout = pixelRows
+      ? {
+          orientation: 1,
+          groups: rowsAfterNewGroupAbove(pixelRows).map((size) => ({ size })),
+        }
+      : aboveFirstLeaf(editorLayout, orientation)
     const rootChildren = layoutChildren(editorLayout),
       soleChildren =
         rootChildren?.length === 1 ? layoutChildren(rootChildren[0]) : undefined
@@ -1312,6 +1322,70 @@ export async function workspaceHarness(
       editorLayout,
       Reflect.get(Object(editorLayout), 'orientation') === 1,
     ).node
+  }
+  /**
+   * Reads the heights of a layout of stacked rows given in pixels, the only grid `modelVsCodeStackedRowSizing` sizes as VS Code does; called by the fake `workbench.action.newGroupAbove` and by `expandMinimizedRow`.
+   * @param layout - The fake editor's layout.
+   * @returns The rows' heights, top to bottom, for stacked rows that are all single groups with a size above one pixel; `undefined` for any other layout (columns, nested groups, proportions).
+   * @example stackedPixelRows({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] }) // => [524, 163]
+   */
+  function stackedPixelRows(layout: unknown): number[] | undefined {
+    const rows = layoutChildren(layout)
+    if (
+      Reflect.get(Object(layout), 'orientation') !== 1 ||
+      !rows ||
+      rows.length < 2 ||
+      rows.some((row) => layoutChildren(row) || layoutSize(row) <= 1)
+    )
+      return undefined
+    return rows.map(layoutSize)
+  }
+  /**
+   * Sizes the rows after `workbench.action.newGroupAbove` adds a row above the first one, as VS Code 1.140.0's split view does with its default `workbench.editor.splitSizing` ("auto"): rows within 2 px of each other are distributed evenly (`areViewsDistributed`, `workbench.desktop.main.js` 540:77201; `distributeViewSizes`, 540:71277); otherwise the new row takes half of the row it splits (`addView`, 540:72177) and the height that is now missing is taken from the last row upward, each down to the minimum, the new row last (`relayout` with the new row at low priority, 540:73529 and 540:73732). Called by `insertNativeAppGroup` while `modelVsCodeStackedRowSizing` is on.
+   * @param rows - The heights of the stacked rows before the insertion, top to bottom.
+   * @returns The heights of the rows after it, the new row first.
+   * @example
+   * rowsAfterNewGroupAbove([343, 344]) // => [229, 229, 229]
+   * rowsAfterNewGroupAbove([524, 163]) // => [262, 355, 70] (VS Code 1.140.0, Cycle 0046 c59-vs-691probe4)
+   */
+  function rowsAfterNewGroupAbove(rows: readonly number[]): number[] {
+    const total = rows.reduce((sum, row) => sum + row, 0)
+    // Rows that are distributed already stay distributed, the new one among them.
+    if (Math.max(...rows) - Math.min(...rows) <= 2) {
+      const even = Math.floor(total / (rows.length + 1))
+      return [
+        total - even * rows.length,
+        ...Array.from({ length: rows.length }, () => even),
+      ]
+    }
+    const sized = [rows[0]! / 2, ...rows]
+    let missing = rows[0]! / 2
+    // From the last row up to the new one, each row gives what it has above the minimum.
+    for (let index = sized.length - 1; index >= 0 && missing > 0; index--) {
+      const given = Math.min(missing, sized[index]! - GROUP_MINIMUM_PX.height)
+      sized[index]! -= given
+      missing -= given
+    }
+    return sized
+  }
+  /**
+   * Expands a stacked row at the minimum height once a numbered focus command made its group the active one, as VS Code 1.140.0 does for every group it activates: `doSetGroupActive` restores the group (`workbench.desktop.main.js` 1106:114938 `doRestoreGroup`), which expands a group whose width or height is its minimum (`arrangeGroups` with `EXPAND`, 1106:111202, the grid's `expandView`, 981:48778): every other row of the stack goes to the minimum, and the activated one takes the rest. Called by the fake numbered focus commands while `modelVsCodeStackedRowSizing` is on (Cycle 0046 row 691; c59-vs-691probe4: 262/355/70, then 70/70/547 after `workbench.action.focusThirdEditorGroup`).
+   * @param column - The view column of the group the command activated.
+   * @example expandMinimizedRow(3) // [262, 355, 70] => [70, 70, 547]
+   */
+  function expandMinimizedRow(column: number): void {
+    const rows = stackedPixelRows(editorLayout)
+    if (!rows || rows[column - 1] !== GROUP_MINIMUM_PX.height) return
+    const total = rows.reduce((sum, row) => sum + row, 0)
+    editorLayout = {
+      orientation: 1,
+      groups: rows.map((_row, index) => ({
+        size:
+          index === column - 1
+            ? total - GROUP_MINIMUM_PX.height * (rows.length - 1)
+            : GROUP_MINIMUM_PX.height,
+      })),
+    }
   }
   /**
    * Models what VS Code 1.140 does when an editor is opened or revealed while the bottom panel is maximized.
@@ -3209,6 +3283,9 @@ export async function workspaceHarness(
               const previousGroup = activeTabGroup
               returnHiddenEditorArea()
               activeTabGroup = focusedGroup
+              // VS Code expands a minimized row it activates (row 691).
+              if (modelsVsCodeStackedRowSizing)
+                expandMinimizedRow(focusedColumn)
               innerFocusedPanel = undefined
               leaveChatForMainEditor()
               changedGroups({
@@ -5467,6 +5544,15 @@ export async function workspaceHarness(
     },
     constrainStudyGrid(): void {
       constrainStudyGrid = true
+    },
+    /**
+     * Makes the fake editor size stacked rows given in pixels as VS Code 1.140.0 does, for a learner's stack of uneven rows (Cycle 0046 row 691): `workbench.action.newGroupAbove` sizes the rows as VS Code's split view does (`rowsAfterNewGroupAbove`: 524/163 gives 262/355/70, 343/344 gives 229/229/229), and a numbered focus command that activates a row at the minimum height expands it (`expandMinimizedRow`, `doRestoreGroup` at 1106:114938: 262/355/70 gives 70/70/547 when the third row is activated), as c59-vs-691probe4 recorded. Off by default: the other tests keep the fake editor's halving of the first row, on which their verdicts were taken.
+     * @example
+     * harness.useNativeLayout({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] })
+     * harness.modelVsCodeStackedRowSizing()
+     */
+    modelVsCodeStackedRowSizing(): void {
+      modelsVsCodeStackedRowSizing = true
     },
     /**
      * Makes the fake editor answer a layout that is given in proportions as both editors answered it natively when the reader applied the three-pane layout over the learner's two columns and the Study pane's new column: each group but the last of its siblings at one pixel, the last with the rest (VS Code 1.140.0: a first column of 1 px with rows of 1 and 687 px beside 1269 px; Cursor 3.23.12: 1 px with rows of 1 and 657 px beside 659 px; Cycle 0046 row 340). A layout given in pixels is kept as given. The workbench bundles take every given size as it is and scale none, and show nothing that treats a grid of columns differently; that the same proportions give the split over a single group is what the running editors do.

@@ -1109,6 +1109,149 @@ test('in VS Code, View recording pressed in the Wiki of the second group while V
   }
 })
 
+// Value: protects=the fidelity of the workspace harness's VS Code model of stacked rows, on which row 691's verdict rests: newGroupAbove sizes the rows as VS Code 1.140.0's split view does (an even stack is distributed, an uneven one split with the missing height taken from the last row down to the minimum), and a numbered focus command that activates a row at the minimum height expands it (doRestoreGroup, workbench.desktop.main.js 1106:114938); fails_when=the fake editor halves the first row and never expands a row, so a test of a learner's uneven stack passes on sizes VS Code never gives; why_new=Cycle 0046 row 691 (c59-vs-691probe3 and c59-vs-691probe4 recorded every layout); seam=workspaceHarness, useNativeLayout with stacked pixel rows, modelVsCodeStackedRowSizing, the fake editor's newGroupAbove and numbered focus commands, editorLayout
+test('the fake editor sizes and expands a learner’s stacked rows as VS Code 1.140.0 was recorded to', async () => {
+  // Arrange: two stacks of the learner's, even and uneven, each with the first row active.
+  const even = await workspaceHarness(),
+    uneven = await workspaceHarness()
+  try {
+    even.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 343 }, { size: 344 }],
+    })
+    even.modelVsCodeStackedRowSizing()
+    uneven.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 524 }, { size: 163 }],
+    })
+    uneven.modelVsCodeStackedRowSizing()
+
+    // Act: a group above the first row in each; then the third row and the second one activated in the uneven stack.
+    await even.editor.commands.executeCommand('workbench.action.newGroupAbove')
+    await uneven.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    const unevenAfterInsertion = uneven.editorLayout()
+    await uneven.editor.commands.executeCommand(
+      'workbench.action.focusThirdEditorGroup',
+    )
+    const unevenAfterThirdRow = uneven.editorLayout()
+    await uneven.editor.commands.executeCommand(
+      'workbench.action.focusSecondEditorGroup',
+    )
+
+    // Assert: the sizes VS Code 1.140.0 answered in c59-vs-691probe3 and c59-vs-691probe4.
+    assert.deepEqual(
+      {
+        evenAfterInsertion: even.editorLayout(),
+        unevenAfterInsertion,
+        unevenAfterThirdRow,
+        unevenAfterSecondRow: uneven.editorLayout(),
+      },
+      {
+        evenAfterInsertion: {
+          orientation: 1,
+          groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+        },
+        unevenAfterInsertion: {
+          orientation: 1,
+          groups: [{ size: 262 }, { size: 355 }, { size: 70 }],
+        },
+        unevenAfterThirdRow: {
+          orientation: 1,
+          groups: [{ size: 70 }, { size: 70 }, { size: 547 }],
+        },
+        unevenAfterSecondRow: {
+          orientation: 1,
+          groups: [{ size: 70 }, { size: 547 }, { size: 70 }],
+        },
+      },
+    )
+  } finally {
+    await even.close()
+    await uneven.close()
+  }
+})
+
+// Value: protects=the learner's uneven stack of two rows through a Repository Wiki recording visit and its article Return in VS Code: the visit's newGroupAbove leaves the Wiki's row at the minimum height, which VS Code expands when the visit gives the Wiki its keyboard back (doRestoreGroup, workbench.desktop.main.js 1106:114938), so the visit stacks its rows at one height first; its arrangement stays confirmed and the Return gives the learner's rows back at 524 and 163 px, with row 681's retained tabs while the Study stays open; fails_when=the visit keeps VS Code's 262/355/70, the focus return expands the Wiki's row to 70/70/547, the Study reports "The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout…" and the Return gives nothing back (C59 c59-vs-567, c59-vs-691probe4: the Application's group left at column 1, three rows); why_new=Cycle 0046 row 691; seam=articleRecordingLayoutHarness, useNativeLayout with the uneven stack, modelVsCodeStackedRowSizing, focusWebviewTabKeepingTextEditorReport (View recording pressed in the Wiki), openRepositoryEvidence with the recording, the presentation state, the return-wiki action, editorLayout and the groups' tabs
+test('in VS Code, a Wiki recording visit in the learner’s uneven stack of two rows stays confirmed, and the article Return gives both rows back at their sizes', async () => {
+  // Arrange: the learner's rows are 524 and 163 px high, article-source.ts in the first and the Repository Wiki in the second, where the learner pressed View recording.
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 524 }, { size: 163 }],
+    })
+    harness.modelVsCodeStackedRowSizing()
+    const wiki = harness.groups[1]!.tabs.find(
+      (tab) => Reflect.get(tab.input, 'viewType') === 'codebook.repositoryWiki',
+    )!
+    harness.focusWebviewTabKeepingTextEditorReport(wiki)
+    const tabsOfGroups = (): string[][] =>
+      harness.groups
+        .toSorted((left, right) => left.viewColumn - right.viewColumn)
+        .map((group) =>
+          group.tabs.map((tab) =>
+            'uri' in tab.input
+              ? tab.input.uri.path.split('/').at(-1)!
+              : String(Reflect.get(tab.input, 'viewType')),
+          ),
+        )
+
+    // Act: the visit, then the article Return from the recording.
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    // The arrangement as an agent's codebook_status reads it, from the editor's grid now.
+    const presentation = await harness.reader.readPresentationState()
+    const visit = {
+      layout: harness.editorLayout(),
+      layoutConfirmed: presentation.layoutConfirmed,
+      reason: presentation.reason,
+      readiness: harness.controller.state().readiness,
+    }
+    await harness.reader.action('return-wiki')
+
+    // Assert: three rows of one height during the visit, confirmed; the learner's two rows at their own sizes after the Return, with the parked Application and the captured source left in the learner's first group while the Study stays open (row 681's retention, as this fake editor parks them for an even stack too).
+    assert.deepEqual(
+      {
+        visit,
+        layoutAfterReturn: harness.editorLayout(),
+        tabsAfterReturn: tabsOfGroups(),
+      },
+      {
+        visit: {
+          layout: {
+            orientation: 1,
+            groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+          },
+          layoutConfirmed: true,
+          reason: undefined,
+          readiness: 'ready',
+        },
+        layoutAfterReturn: {
+          orientation: 1,
+          groups: [{ size: 524 }, { size: 163 }],
+        },
+        tabsAfterReturn: [
+          [
+            'article-source.ts',
+            'Captured-source.mts',
+            'codebook.scopedBrowser',
+          ],
+          ['codebook.repositoryWiki'],
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's window when a Repository Wiki recording visit is refused by a real change of the learner's, made while its Application was being placed: the learner typed in the file that had the keyboard, so the visit's focus return refuses, and the Application pane and the group the visit created go again, leaving the learner's two groups at their columns; fails_when=the refusal of the preparation's focus return, which comes after the Application stands in its own group, leaves that pane alone in a new group at column 1 with the learner's groups shifted (C58 c58-vs-567: "Recorded playback unavailable. …" in a new group); why_new=Cycle 0046 row 659 (a failed visit leaves no Application group behind); seam=articleRecordingLayoutHarness, focusMutableDraft and its replaceContent, holdNextCommand on workbench.action.lockEditorGroup, openRepositoryEvidence with the recording, the playback state's refusal and the groups
 test('a Repository Wiki recording visit refused because the learner typed in the focused file during its placement leaves no Application group behind', async () => {
   // Arrange: the learner's two groups are stacked and the learner's notes in the first group have the keyboard; the editor holds its answer to the new Application group's lock.
