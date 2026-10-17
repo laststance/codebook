@@ -27,6 +27,7 @@ import { RepositoryBookStore } from '../repositoryBook'
 import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
+import type { RepositoryViewMessage } from '../repositoryView'
 import type { ConfiguredRuntimeView } from '../runtime'
 import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -244,14 +245,29 @@ export async function workspaceHarness(
     ) {
       this.fsPath = path
     }
-    static from(value: { scheme: string; authority: string; path: string }) {
-      return new Uri(value.scheme, value.authority, value.path)
+    // The editor's Uri keeps the query and the fragment it is given (a Repository Wiki citation names its source's hash in the query) and writes them after the path.
+    static from(value: {
+      scheme: string
+      authority: string
+      path: string
+      query?: string
+      fragment?: string
+    }) {
+      return new Uri(
+        value.scheme,
+        value.authority,
+        value.path,
+        value.query,
+        value.fragment,
+      )
     }
     static file(path: string) {
       return new Uri('file', '', path)
     }
     toString() {
-      return `${this.scheme}://${this.authority}${this.path}`
+      const query = this.query ? `?${this.query}` : '',
+        fragment = this.fragment ? `#${this.fragment}` : ''
+      return `${this.scheme}://${this.authority}${this.path}${query}${fragment}`
     }
   }
   class TabInputText {
@@ -286,10 +302,30 @@ export async function workspaceHarness(
   }
   /** Supplies native range membership/retention to workspace presentation tests. @example range.contains(new Position(22, 0)) */
   class Range {
+    readonly start: Position
+    readonly end: Position
+    // As the editor's Range: two positions, or the start's line and character and the end's (a Repository Wiki citation's lines, createRepositoryWikiReader).
+    constructor(start: Position, end: Position)
     constructor(
-      readonly start: Position,
-      readonly end: Position,
-    ) {}
+      startLine: number,
+      startCharacter: number,
+      endLine: number,
+      endCharacter: number,
+    )
+    constructor(
+      start: Position | number,
+      end: Position | number,
+      endLine = 0,
+      endCharacter = 0,
+    ) {
+      // Numbers name the start's line and character, then the end's.
+      this.start =
+        typeof start === 'number'
+          ? new Position(start, typeof end === 'number' ? end : 0)
+          : start
+      this.end =
+        typeof end === 'number' ? new Position(endLine, endCharacter) : end
+    }
     contains(value: Position | Range): boolean {
       return value instanceof Range
         ? this.contains(value.start) && this.contains(value.end)
@@ -463,12 +499,21 @@ export async function workspaceHarness(
       changed: typeof groups
     }) => void
   >()
-  const changedGroups = (event: {
-    opened: typeof groups
-    closed: typeof groups
-    changed: typeof groups
-  }): void => {
-    staleNamedGroup = undefined
+  /**
+   * Tells the group listeners of a group event; the event names the active group again, so a stale name ends, unless the event is the rebuild Cursor answers a document shown in the main editor with (see `replaceGroupObjects`).
+   * @param event - The groups the event opened, closed and changed.
+   * @param keptStaleName - The group the stale name names after the event, for that rebuild only.
+   * @example changedGroups({ opened: [], closed: [], changed: [...groups] })
+   */
+  const changedGroups = (
+    event: {
+      opened: typeof groups
+      closed: typeof groups
+      changed: typeof groups
+    },
+    keptStaleName?: (typeof groups)[number],
+  ): void => {
+    staleNamedGroup = keptStaleName
     for (const listener of groupChangeListeners) listener(event)
   }
   const textDocumentChangeListeners = new Set<
@@ -476,7 +521,13 @@ export async function workspaceHarness(
       document: Pick<SourceEditor['document'], 'uri' | 'getText'>
     }) => void
   >()
-  let sourceProvider = async (_uri: Uri) => ''
+  /** The content provider each registration of `registerTextDocumentContentProvider` gave for its scheme, as the editor keeps one per scheme: the Study's captured sources (`codebook-source`) and a Repository Wiki reader's cited sources (`codebook-repository-source`, `createRepositoryWikiReader`) stand side by side. */
+  const contentProviders = new Map<string, (uri: Uri) => Promise<string>>()
+  /** The provider registered last, which answers a scheme no registration named, as the one provider of this fake did before it kept them by scheme. */
+  let lastContentProvider = async (_uri: Uri): Promise<string> => ''
+  /** Gives the text of a virtual document from the provider of its scheme ({@link contentProviders}). @example await sourceProvider(capturedSourceUri) // => 'export const theme = …' */
+  const sourceProvider = (uri: Uri): Promise<string> =>
+    (contentProviders.get(uri.scheme) ?? lastContentProvider)(uri)
   let nextSourceUpdate: { wait: Promise<void>; entered(): void } | undefined
   const virtualSourceDocuments = new Map<
     string,
@@ -886,12 +937,14 @@ export async function workspaceHarness(
    * @param closed - Groups the same change closed; they are reported as closed and get no new object.
    * @param opened - The group the same change opened; it is reported as opened and keeps its object.
    * @param notify - False snapshots the next model before an empty group's first source tab changes, then the completed change emits normally.
+   * @param keepsStaleName - True for the rebuild a document shown in the main editor brings while Cursor names its chat part's group: the rebuild names the group Cursor's editor groups service holds active (`workbench.desktop.main.js` 17269:31013 `isActive:t.id===this._editorGroupsService.activeGroup.id`), which that display does not change, so the chat's group stays the named one (C58 c58-cu-567: the cited source took the keyboard in the first group under the chat's name; C59 c59-cu-2c: the citation's group event named column 3 still; Cycle 0046 row 674).
    * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
    */
   function replaceGroupObjects(
     closed: typeof groups = [],
     opened?: (typeof groups)[number],
     notify = true,
+    keepsStaleName = false,
   ): void {
     if (!replacesGroupObjectsOnTabChanges) return
     const replacements = new Map(
@@ -909,11 +962,16 @@ export async function workspaceHarness(
     for (const editor of visibleSourceEditors)
       editor.group = replaced(editor.group)
     if (notify)
-      changedGroups({
-        opened: opened ? [opened] : [],
-        closed,
-        changed: [...replacements.values()],
-      })
+      changedGroups(
+        {
+          opened: opened ? [opened] : [],
+          closed,
+          changed: [...replacements.values()],
+        },
+        keepsStaleName && staleNamedGroup
+          ? replaced(staleNamedGroup)
+          : undefined,
+      )
   }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
@@ -1814,6 +1872,39 @@ export async function workspaceHarness(
       activeTextEditorChanged(focusedSourceEditor())
     })
   }
+  /**
+   * Makes a Repository Wiki panel's document answer as the Wiki's script does (`ui/repositoryHtml.ts`): once the reader wrote its HTML it posts `ready`, and for every article model the reader posts while the panel is visible it posts `rendered` with that model's revision and selection; called by `panel` for the Wiki's view type, so a real Repository Wiki reader made with `createRepositoryWikiReader` can wait for its article to render (Cycle 0046 row 674).
+   * A model posted while the panel is hidden is not rendered, as a hidden document is gone; the document a panel reloads when it is shown again is not modelled.
+   * @param wiki - The Wiki's panel, right after `panel` made it.
+   * @example answerAsWikiDocument(value) // value.webview.html = repositoryHtml() then posts { type: 'ready' }
+   */
+  function answerAsWikiDocument(wiki: ReturnType<typeof panel>): void {
+    const postToDocument = wiki.webview.postMessage
+    let html = ''
+    Object.defineProperty(wiki.webview, 'html', {
+      get: () => html,
+      set: (value: string) => {
+        html = value
+        // The script runs once the document has loaded, after the extension wrote it.
+        queueMicrotask(() => wiki.emit({ type: 'ready' }))
+      },
+    })
+    wiki.webview.postMessage = async (
+      message: Parameters<typeof postToDocument>[0] | RepositoryViewMessage,
+    ): Promise<boolean> => {
+      if (message.type !== 'repository') return postToDocument(message)
+      if (!wiki.visible) return false
+      queueMicrotask(() =>
+        wiki.emit({
+          type: 'rendered',
+          revision: message.revision,
+          selection: message.selection,
+          width: 1024,
+        }),
+      )
+      return true
+    }
+  }
   function panel(
     kind: string,
     title = '',
@@ -2362,6 +2453,7 @@ export async function workspaceHarness(
         for (const listener of disposed) listener()
       },
     }
+    if (kind === 'codebook.repositoryWiki') answerAsWikiDocument(value)
     // Both hosts initialize optimistic panel flags before the native tab/view-state acknowledgement arrives.
     const register = (): void => {
       registered = true
@@ -2661,20 +2753,25 @@ export async function workspaceHarness(
       languageId: uri.path.endsWith('.tsx') ? 'typescriptreact' : 'typescript',
     }
     if (uri.scheme !== 'file') virtualSourceDocuments.set(uri.toString(), model)
+    /** Moves a position into the document's text, as the editor's TextDocument does. */
+    const validatePosition = (position: Position): Position => {
+      const lines = model.text.split('\n'),
+        line = Math.min(position.line, lines.length - 1)
+      return new Position(
+        line,
+        Math.min(position.character, lines[line]!.length),
+      )
+    }
     return {
       uri,
       getText: () => model.text,
       get languageId() {
         return model.languageId
       },
-      validatePosition: (position: Position) => {
-        const lines = model.text.split('\n'),
-          line = Math.min(position.line, lines.length - 1)
-        return new Position(
-          line,
-          Math.min(position.character, lines[line]!.length),
-        )
-      },
+      validatePosition,
+      // A Repository Wiki citation moves its cited lines into the document before it selects them (createRepositoryWikiReader).
+      validateRange: (range: Range): Range =>
+        new Range(validatePosition(range.start), validatePosition(range.end)),
     }
   }
   const summaryListeners = new Set<(message: unknown) => void>()
@@ -3509,6 +3606,8 @@ export async function workspaceHarness(
           outlineItem = options.treeDataProvider.getTreeItem
           return outline
         },
+        // The Repository Wiki's catalog view (`createRepositoryWikiReader`); no test reads it.
+        registerTreeDataProvider: () => disposable(),
         registerWebviewViewProvider: (
           id: string,
           provider: typeof summaryProvider,
@@ -3596,7 +3695,8 @@ export async function workspaceHarness(
               input: new TabInputText(sourceDocument.uri),
               label: textTabLabel(sourceDocument.uri),
             }
-          if (!group.tabs.includes(tab)) group.tabs.push(tab)
+          const opensTab = !group.tabs.includes(tab)
+          if (opensTab) group.tabs.push(tab)
           revealIntoHiddenEditorArea(
             group.viewColumn,
             group.activeTab !== tab || !options?.preserveFocus,
@@ -3649,11 +3749,11 @@ export async function workspaceHarness(
           // Revealing an existing native document without a selection keeps its learner cursor.
           if (!options?.selection && previous)
             editor.selections = previous.selections
-          // An explicit native selection reveals its statement even when playback reopens the same document.
+          // An explicit native selection reveals its statement even when playback reopens the same document. The editor selects the given range from its start to its end, so the caret stands at its end (VS Code 1.140.0 `workbench.desktop.main.js` 981:134134, Cursor 3.23.12 11678:42235 `setSelection({startLineNumber,…,endColumn})`); the Study's own ranges are carets, a Repository Wiki citation's are its cited lines.
           if (options?.selection) {
             editor.selections = [
               {
-                active: options.selection.start,
+                active: options.selection.end,
                 anchor: options.selection.start,
               },
             ]
@@ -3681,14 +3781,22 @@ export async function workspaceHarness(
           // A document that comes to the front of the active group is the active text editor from then on, also when it was shown preserving the focus: the editor names the text editor in front of the active group while no text editor has the keyboard.
           const comesToFrontOfActiveGroup =
             showsAnotherTab && group.viewColumn === activeTabGroup.viewColumn
-          // A tab that opened or became the one its group shows changed the tabs; the same tab shown again did not.
-          if (showsAnotherTab) replaceGroupObjects()
+          // A tab that opened or became the one its group shows changed the tabs; the same tab shown again did not. Beside Cursor's chat part a tab that opened leaves the chat's group named (row 674); an open tab brought to the front with the keyboard names its group, as the Application's preparation borrows it to (focusApplicationSourceGroup).
+          if (showsAnotherTab)
+            replaceGroupObjects(
+              [],
+              undefined,
+              true,
+              leavesPaneFocusUnreportedBesideChat && opensTab,
+            )
           if (!options?.preserveFocus || comesToFrontOfActiveGroup)
             activeTextEditorChanged(focusedSourceEditor())
           const displayed = nextSourceDisplay
           nextSourceDisplay = undefined
           displayed?.(editor)
-          return (lastSourceEditor = editor)
+          lastSourceEditor = editor
+          // The editor answers with the text editor it then reports as the active one, one object for one editor (a Repository Wiki citation compares the two, row 674); the stale-column control keeps its separate wrapper.
+          return reportedSourceColumn === undefined ? visible : editor
         },
         tabGroups: {
           all: groups,
@@ -3850,7 +3958,7 @@ export async function workspaceHarness(
         },
         textDocuments,
         registerTextDocumentContentProvider: (
-          _scheme: string,
+          scheme: string,
           provider: {
             provideTextDocumentContent(uri: Uri): Promise<string>
             onDidChange?: (listener: (value: unknown) => void) => {
@@ -3858,7 +3966,8 @@ export async function workspaceHarness(
             }
           },
         ) => {
-          sourceProvider = provider.provideTextDocumentContent
+          contentProviders.set(scheme, provider.provideTextDocumentContent)
+          lastContentProvider = provider.provideTextDocumentContent
           const subscription = provider.onDidChange?.((value) => {
             if (!(value instanceof Uri)) return
             const model = virtualSourceDocuments.get(value.toString())
@@ -3990,8 +4099,30 @@ export async function workspaceHarness(
     await reader.attach(harness.service)
     await reader.action('return-current')
   }
+  /** The Repository Wiki readers {@link createRepositoryWikiReader} made; the harness's `close` disposes them before its panes. */
+  const repositoryWikiReaders: InstanceType<
+    typeof repositoryBoundary.RepositoryReader
+  >[] = []
+  /**
+   * Makes a real Repository Wiki reader over this fake editor, wired to the harness's Study workspace as the extension wires it (`extension.ts`: the workspace's learning storage, its `arrangeRepository` and its `openRepositoryEvidence`), so the reader's own focus receipts and the workspace's layout meet the fake editor's models, Cursor's chat part among them (Cycle 0046 row 674).
+   * @returns The reader; a book published into the workspace's learning storage is what its `open` shows.
+   * @example const wiki = harness.createRepositoryWikiReader(); await wiki.open(selection)
+   */
+  const createRepositoryWikiReader = () => {
+    const wiki = new repositoryBoundary.RepositoryReader({
+      storage: () => reader.learningStorage(),
+      connect: async (): Promise<void> => {},
+      arrange: (signal, returnSelection, focus) =>
+        reader.arrangeRepository(signal, returnSelection, focus),
+      evidence: (binding, recording, signal, origin) =>
+        reader.openRepositoryEvidence(binding, recording, signal, origin),
+    })
+    repositoryWikiReaders.push(wiki)
+    return wiki
+  }
   return {
     ...harness,
+    createRepositoryWikiReader,
     playbackPanel,
     playbackPanelMessages,
     hidePlaybackPanel(): void {
@@ -5981,6 +6112,7 @@ export async function workspaceHarness(
     },
     async close(): Promise<void> {
       await reader.retire(harness.service)
+      for (const wiki of repositoryWikiReaders.splice(0)) await wiki.dispose()
       // Teardown releases exact fixture panel handles after assertions; intentionally ambiguous/duplicate inputs must not be mistaken for a successful product Close.
       for (const current of [...panels]) current.dispose()
       await reader.dispose()
