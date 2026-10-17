@@ -6436,11 +6436,18 @@ export async function workspaceHarness(
     },
     /**
      * Opens a terminal in the editor area of a group and gives it the keyboard, as the learner's Terminal: Create Terminal in Editor Area or a click on such a tab does: its tab (`TabInputTerminal`) is the one its group shows, the group is the active one and named by the group event both editors send (Cursor's rebuild names it, as the main editor is the active part again), and no text editor is active (Cycle 0046 row 714).
+     * With `keepsTextEditorReport` the text editor that had the keyboard stays reported as the active text editor until another group or tab is the active one, as `focusWebviewTabKeepingTextEditorReport` models it for an editor that is no code editor (rows 659 and 671), here also beside Cursor's chat part (row 727).
      * @param column - The view column of the group.
+     * @param keepsTextEditorReport - Whether the text editor that had the keyboard stays reported.
      * @returns The terminal's tab.
      * @example harness.focusEditorTerminal(2) // the terminal in front of group 2 has the keyboard, and group 2 is named
      */
-    focusEditorTerminal(column: number): Tab {
+    focusEditorTerminal(column: number, keepsTextEditorReport = false): Tab {
+      const reported = keepsTextEditorReport ? focusedSourceEditor() : undefined
+      assert.ok(
+        !keepsTextEditorReport || reported,
+        'No text editor has the keyboard before the terminal',
+      )
       const group = groups.find((candidate) => candidate.viewColumn === column)!
       const tab = {
         input: new TabInputTerminal(),
@@ -6460,7 +6467,14 @@ export async function workspaceHarness(
         listener({ opened: [tab], closed: [], changed: [] })
       if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
       else changedGroups({ opened: [], closed: [], changed: [previous, group] })
-      activeTextEditorChanged(undefined)
+      // The kept report sends no active-editor event; it names the group's object after Cursor's rebuild.
+      if (reported)
+        textEditorReportedBehindWebview = {
+          group: activeTabGroup,
+          tab,
+          editor: reported,
+        }
+      else activeTextEditorChanged(undefined)
       return tab
     },
     addOpaqueTab(label: string, column: number) {

@@ -5256,6 +5256,190 @@ test('in Cursor, an agent’s Return Current from a replay while the learner’s
   }
 })
 
+// Value: protects=the learner's newer choice during an agent's Return Current from the saved replay beside Cursor's Agent chat part (row 711's order): right after the measurement showed the captured source with the keyboard, the learner opens a terminal in the editor area of the Wiki's group, and the editor goes on reporting the captured source as the active text editor (an editor that is no code editor leaves that report, rows 659 and 671); the terminal keeps the keyboard, and the chat gets none back; fails_when=namesAnotherEditorPartsTab takes any front tab that is no text tab and no webview for the chat's tab, so isCapturedSourceUnderAnotherPartsName reads the terminal's group as Cursor's chat part's group and Focus Agent gives the chat the keyboard over the learner's terminal; why_new=Cycle 0046 row 727 (both final reviews of 8ac142df..b5f8bf97, rows 711 and 723's test of the chat's tab); seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus, leavePaneFocusUnreportedBesideChat, focusMutableDraft, focusExistingWebviewTab, the service's playback, selectPresentation and returnToCurrent, changeAfterNextSourceDisplay with focusEditorTerminal keeping the text editor report, the command log and the information messages
+test('in Cursor, an agent’s Return Current from the saved replay leaves the keyboard in the terminal the learner opened in another group after the measurement showed the captured source, while the editor still reports that source', async () => {
+  // Arrange: as in row 711's test; the agent's cold select reopened the replay and gave the chat its keyboard back. The learner will open a terminal in the Wiki's group (column 3) once the captured source has the keyboard.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    await harness.reader.close()
+    const wiki = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Repository Wiki')!
+    harness.focusExistingWebviewTab(wiki)
+    chat.focus()
+    const state = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    await harness.controller.settle()
+    const selected = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    /** Opens the learner's terminal at the first display after which the captured source is the active text editor. */
+    const chooseTerminalOnceSourceHasKeyboard = (): void => {
+      if (
+        harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+          '/Captured-theme.ts',
+        )
+      )
+        harness.focusEditorTerminal(3, true)
+      else
+        harness.changeAfterNextSourceDisplay(
+          chooseTerminalOnceSourceHasKeyboard,
+        )
+    }
+    harness.changeAfterNextSourceDisplay(chooseTerminalOnceSourceHasKeyboard)
+
+    // Act
+    const returned = await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: selected.presentationId,
+      expectedRevision: selected.reader.contentRevision,
+    })
+    await harness.controller.settle()
+
+    // Assert: the live panes are confirmed; the terminal's group is named with the terminal in front, the captured source is still reported, no Focus Agent ran, the chat has no keyboard, and nothing was told.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        layoutConfirmed: returned.layoutConfirmed,
+        named: `${named.viewColumn}:${named.activeTab?.label}`,
+        reportedTextEditor:
+          harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        keyboardOnBody: harness.keyboardOnBody(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        layoutConfirmed: true,
+        named: '3:bash',
+        reportedTextEditor: 'Captured-theme.ts',
+        keyboardCommands: [],
+        chatHasKeyboard: false,
+        keyboardOnBody: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's newer choice during an agent's Return Current from a replay beside Cursor's Agent chat part (row 723's order): right after the measurement borrowed the first group with workbench.action.focusFirstEditorGroup, the learner opens a terminal in the editor area of the Wiki's group, and the editor goes on reporting login-form.tsx, the first group's file the borrow focused (an editor that is no code editor leaves that report, rows 659 and 671); the Return is refused for the learner's change, the terminal keeps the keyboard, and the chat gets none back; fails_when=namesAnotherEditorPartsTab takes any front tab that is no text tab and no webview for the chat's tab, so isFirstGroupEditorUnderAnotherPartsName reads the terminal's group as Cursor's chat part's group, the borrow counts as left where the measurement left it, and Focus Agent gives the chat the keyboard over the learner's terminal; why_new=Cycle 0046 row 727 (both final reviews of 8ac142df..b5f8bf97); seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus, leavePaneFocusUnreportedBesideChat, focusMutableDraft, the service's playback and returnToCurrent, holdNextCommand on workbench.action.focusFirstEditorGroup and on the layout read after it, focusEditorTerminal keeping the text editor report, the command log and the information messages
+test('in Cursor, an agent’s Return Current from a replay leaves the keyboard in the terminal the learner opened in another group after the borrow of the first group, while the editor still reports the first group’s file', async () => {
+  // Arrange: as in row 723's test; the learner will open a terminal in the Wiki's group (column 3) right after the measurement's borrow of the first group.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focus()
+    const state = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const borrow = harness.holdNextCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    void borrow.started.then(() => {
+      const readAfterBorrow = harness.holdNextCommand('vscode.getEditorLayout')
+      void readAfterBorrow.started.then(() => {
+        harness.focusEditorTerminal(3, true)
+        readAfterBorrow.release()
+      })
+      borrow.release()
+    })
+
+    // Act
+    const refusal = await harness.service
+      .returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    await harness.controller.settle()
+
+    // Assert: refused for the learner's change; the terminal's group is named with the terminal in front, login-form.tsx is still reported, no Focus Agent ran after the borrow, the chat has no keyboard, and nothing was told.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        refusal,
+        named: `${named.viewColumn}:${named.activeTab?.label}`,
+        reportedTextEditor:
+          harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        keyboardOnBody: harness.keyboardOnBody(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal:
+          'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+        named: '3:bash',
+        reportedTextEditor: 'login-form.tsx',
+        keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+        chatHasKeyboard: false,
+        keyboardOnBody: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of where the keyboard is after an agent's replay open (codebook_playback open) beside Cursor's Agent chat part while the chat tab has the keyboard: the preparation's measurement borrows the first group, Focus Agent gives the chat its keyboard back, and the arrangement's sentence is told the first time in an editor session only, so the next replay open in that session says nothing (C59 c59-cu-656a told nothing because round c59-cu-650 had told the sentence in the same extension host, after its reload: the notification shows in that round's recording at 7 to 8.5 s, and both rounds' observers share the host's time origin 1792204656982); fails_when=the replay open gives the chat its keyboard back without the sentence the first time, or tells it again each time; why_new=Cycle 0046 row 678 (evidence: not a defect; this test holds the rule the native rounds followed); seam=recordedReaderHarness, useNativeLayout, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, the service's playback and the reader's close, the command log and the information messages
 test('in Cursor, an agent’s replay open from the chat tab gives the chat its keyboard back and says so the first time in an editor session only', async () => {
   // Arrange: Cursor's Agent chat as a tab of its own editor part has the keyboard; the learner's login-form.tsx is in front of the first group, and the reader is closed.
