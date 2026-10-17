@@ -186,6 +186,10 @@ import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { capturedAppHtml } from './utils/capturedAppHtml'
 import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
+import {
+  capturedSourceNotShownReason,
+  type CapturedSourceStanding,
+} from './utils/capturedSourceNotShownReason'
 import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
@@ -1040,13 +1044,13 @@ export class StudyWorkspace {
     if (!reason && this.opened && !this.closing && !layoutConfirmed) {
       if (!currentSourceReady) {
         const playback = this.playback?.state()
-        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again.
+        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again. Otherwise the reason says how the source stands (row 695).
         reason =
           playback?.readiness === 'loading'
             ? 'The recorded source is opening in its native pane.'
             : this.recordingActive && playback?.readiness === 'failed'
               ? recordingNotShownReason(playback.reason)
-              : 'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
+              : this.capturedSourceReason()
       } else if (!matchingColumns)
         reason =
           'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
@@ -12837,6 +12841,59 @@ export class StudyWorkspace {
           group.activeTab.input.uri.toString() === this.sourceUri?.toString(),
       )
     )
+  }
+
+  /**
+   * Words the reason of a presentation whose captured source is not in front of its pane while no recording is loading or failed, with the control the learner sees where the reason is shown; called by {@link presentationState} (Cycle 0046 row 695).
+   * @returns {@link capturedSourceNotShownReason} of {@link capturedSourceStanding}, for the Learning summary of a recording, the strip of a Live run, or the Study pane.
+   * @example this.capturedSourceReason() // => "The Study is set aside since Return to Wiki, so its captured source is not in front of its native pane. Use View recording in the Repository Wiki, or Reload saved recording, to bring the Study back."
+   */
+  private capturedSourceReason(): string {
+    return capturedSourceNotShownReason(
+      this.capturedSourceStanding(),
+      this.recordingActive
+        ? 'recording'
+        : this.liveComposition
+          ? 'live'
+          : 'study',
+    )
+  }
+
+  /**
+   * Reads how the captured source stands while {@link sourceReady} is false, for {@link capturedSourceReason}: only the reader's own work under way is something to wait for.
+   * @returns
+   * - `placing` while the reader's entry, render, source display, presentation change or arrangement is under way
+   * - `set-aside` after the learner's Return to Wiki gave the article's groups back ({@link settleArticleReturn}) and no Study arrangement followed
+   * - `closed` when no tab of the captured source is open, `covered` when one is open behind another tab
+   * - `not-shown` otherwise: no source was shown for the selection, or the tab in front is not its current display
+   * @example this.capturedSourceStanding() // => 'closed' right after the learner closed the captured source's tab by hand
+   */
+  private capturedSourceStanding(): CapturedSourceStanding {
+    // The reader's own work places the source: waiting brings it.
+    if (
+      this.loading ||
+      this.sourceEntryPending ||
+      this.pendingSourceDisplay !== undefined ||
+      this.presentationTransition !== undefined ||
+      this.arranging !== undefined
+    )
+      return 'placing'
+    // The learner's Return to Wiki left the Study open behind the article's groups (row 567's retention).
+    if (this.repositoryLayoutRestored) return 'set-aside'
+    const uri = this.sourceUri?.toString()
+    // No source was shown for the selection at all.
+    if (uri === undefined) return 'not-shown'
+    const groups = vscode.window.tabGroups.all
+    if (
+      !groups.some((group) =>
+        group.tabs.some((tab) => this.textTabUri(tab) === uri),
+      )
+    )
+      return 'closed'
+    // A tab in front that still fails sourceReady is not the selection's current display.
+    return groups.some((group) => this.textTabUri(group.activeTab) === uri)
+      ? 'not-shown'
+      : 'covered'
   }
 
   /**

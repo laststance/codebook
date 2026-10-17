@@ -976,6 +976,143 @@ for (const corrupt of [false, true])
     }
   })
 
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=what the learner reads in the Learning summary (Cursor shows it in the side bar for as long as the Study stays open) and what an agent reads in codebook_status after a Repository Wiki recording visit and its Return to Wiki, which keeps the Study open behind the article's groups with the parked Application and the captured source (row 567's retention, D2=A): the reason says that the Study is set aside since Return to Wiki and names View recording and Reload saved recording, each of which brings the Study back; fails_when=the reason is the reader's catch-all "The current captured source is not ready in its native pane. Wait for it, or use Return to current…", although nothing is pending and a saved recording has no current pause (C60 c60-cu-567, frames at 30.0 s and 33.0 s); why_new=Cycle 0046 row 695; seam=articleRecordingLayoutHarness (the learner's two stacked groups), addSeparateEditorPart and the chat's focusTab for Cursor's chat part, openRepositoryEvidence with recording (View recording), the controller's settle, the Study's Return to Wiki control, the groups, presentationState and readPresentationState
+  test(`after a Wiki recording visit and its Return to Wiki, the Study left open behind the article says it is set aside and names View recording to bring it back, not a wait (${host})`, async () => {
+    // Arrange: the learner's article in two stacked groups; in Cursor its chat part has the keyboard.
+    const harness = await articleRecordingLayoutHarness(true)
+    const chat = host === 'Cursor' ? harness.addSeparateEditorPart() : undefined
+    try {
+      chat?.focusTab()
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      const afterVisit = harness.reader.presentationState()
+
+      // Act
+      await harness.reader.action('return-wiki')
+      await harness.controller.settle()
+
+      // Assert: the article's groups hold the retained Study tabs; the Study stays open, unconfirmed, with the reason of the set-aside Study.
+      const state = harness.reader.presentationState(),
+        read = await harness.reader.readPresentationState()
+      assert.deepEqual(
+        {
+          confirmedAfterVisit: afterVisit.layoutConfirmed,
+          groups: harness.groups.map((group) =>
+            group.tabs.map((tab) =>
+              'uri' in tab.input
+                ? tab.input.uri.path.split('/').at(-1)
+                : 'viewType' in tab.input
+                  ? tab.input.viewType
+                  : 'chat',
+            ),
+          ),
+          state: state.state,
+          layoutConfirmed: state.layoutConfirmed,
+          reason: state.reason,
+          readReason: read.reason,
+        },
+        {
+          confirmedAfterVisit: true,
+          groups: [
+            ['article-source.ts', 'Captured-source.mts'],
+            ['codebook.repositoryWiki', 'codebook.scopedBrowser'],
+            ...(chat ? [['chat']] : []),
+          ],
+          state: 'open',
+          layoutConfirmed: false,
+          reason:
+            'The Study is set aside since Return to Wiki, so its captured source is not in front of its native pane. Use View recording in the Repository Wiki, or Reload saved recording, to bring the Study back.',
+          readReason:
+            'The Study is set aside since Return to Wiki, so its captured source is not in front of its native pane. Use View recording in the Repository Wiki, or Reload saved recording, to bring the Study back.',
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the bound of row 695's reason: the action it names brings the set-aside Study back, so View recording in the Wiki after the Return confirms the Study's layout again and the reason goes; fails_when=the named action leaves the Study unconfirmed (as Restore does from this state: "The recording's Study layout could not be confirmed after Restore."), so the sentence would send the learner to a step that does not help; why_new=Cycle 0046 row 695 (its expected result: the action that brings the Study back); seam=articleRecordingLayoutHarness, openRepositoryEvidence with recording, the controller's settle, the Study's Return to Wiki control and presentationState
+test('after a Wiki recording visit and its Return to Wiki, View recording in the Wiki brings the set-aside Study back with its layout confirmed', async () => {
+  // Arrange: the recording visit and its Return to Wiki.
+  const harness = await articleRecordingLayoutHarness(true)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    await harness.reader.action('return-wiki')
+    await harness.controller.settle()
+    const afterReturn = harness.reader.presentationState().layoutConfirmed
+
+    // Act: the learner presses View recording in the Wiki again.
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        afterReturn,
+        layoutConfirmed: state.layoutConfirmed,
+        reason: state.reason,
+      },
+      { afterReturn: false, layoutConfirmed: true, reason: undefined },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the reason of the Study an observation visit leaves after Return to Wiki: the Study context pane stands in front of the Wiki's group and the captured source behind it, and the reason says that the Study is set aside and names View observation, which brings it back; fails_when=the reason asks the learner to wait for the captured source or to return to a current pause, which a saved observation does not have; why_new=Cycle 0046 row 695 (the observation visit's Return reaches the same catch-all); seam=articleRecordingLayoutHarness, openRepositoryEvidence without recording (View observation), the Study's Return to Wiki control, presentationState
+test('after a Wiki observation visit and its Return to Wiki, the Study left open says it is set aside and names View observation to bring it back', async () => {
+  // Arrange: the learner's article in two stacked groups and the observation visit.
+  const harness = await articleRecordingLayoutHarness(true)
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    const afterVisit = harness.reader.presentationState().layoutConfirmed
+
+    // Act
+    await harness.reader.action('return-wiki')
+
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        afterVisit,
+        layoutConfirmed: state.layoutConfirmed,
+        reason: state.reason,
+      },
+      {
+        afterVisit: true,
+        layoutConfirmed: false,
+        reason:
+          'The Study is set aside since Return to Wiki, so its captured source is not in front of its native pane. Use View observation in the Repository Wiki to bring the Study back.',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent's replay open (codebook_playback open) in VS Code while another extension's webview, a Markdown preview in front of the learner's second group, has the keyboard and VS Code still names the first group's text editor as active (VS Code 1.140.0 workbench.desktop.main.js 705:2664 and 705:1683: the report of a code editor that had the text focus when another group became the active one stays for any editor that is no code editor, not only for the Wiki): the recording opens with its Application in its own group and the preview's group gets its keyboard back; fails_when=the preparation takes that stale text editor for the learner's place and pairs it with the preview's group, so its focus return refuses with "The previously focused source group changed; focus was not guessed.", or gives the stale text editor the keyboard; why_new=Cycle 0046 row 671; seam=articleRecordingLayoutHarness (the learner's two stacked groups), addForeignWebviewTab, focusWebviewTabKeepingTextEditorReport, openRecording, the playback state, the groups, the active tab group and the command log
 test('in VS Code, an agent’s replay open while another extension’s webview in the second group has the keyboard and VS Code still names the first group’s text editor as active shows the recording in its own group and gives the webview its keyboard back', async () => {
   // Arrange: the learner's two groups are stacked, article-source.ts in front of the first and a Markdown preview in front of the second, which has the keyboard while VS Code still reports article-source.ts as the active text editor.
@@ -5913,7 +6050,7 @@ function layoutTold(messages: readonly StudyViewMessage[]) {
   }))
 }
 
-// Value: protects=the Study pane's status line saying that the layout is not confirmed, with the reason, as soon as the learner closes the captured source's tab by hand on the Recording tab; fails_when=no tab event makes the reader publish, so an agent's status read answers "not confirmed" at once while the pane's line stays empty until some other action publishes (seen natively 1, 5, 10 and 40 s after the close); why_new=Cycle 0046 row 327 (the native look of row 74 (c) in VS Code 1.140.0); seam=the workspace harness's closeTabByHand, which closes a tab and tells the editor's tab listeners, and the Study messages the reader posts
+// Value: protects=the Study pane's status line saying that the layout is not confirmed, with the reason, as soon as the learner closes the captured source's tab by hand on the Recording tab; fails_when=no tab event makes the reader publish, so an agent's status read answers "not confirmed" at once while the pane's line stays empty until some other action publishes (seen natively 1, 5, 10 and 40 s after the close); why_new=Cycle 0046 row 327 (the native look of row 74 (c) in VS Code 1.140.0); the reason it reads since row 695: the closed tab and Reload saved recording, which shows the source again, in place of "Wait for it, or use Return to current…", which no pending display and no current pause of a saved recording answers; seam=the workspace harness's closeTabByHand, which closes a tab and tells the editor's tab listeners, and the Study messages the reader posts
 test('when the learner closes the captured source’s tab by hand on the Recording tab, the Study pane is told in the same turn that the layout is not confirmed, with the reason, and tab events that change nothing afterwards post nothing more', async () => {
   // Arrange: a saved recording is open and paused with its panes in a confirmed layout.
   const harness = await recordedReaderHarness(true)
@@ -5944,7 +6081,7 @@ test('when the learner closes the captured source’s tab by hand on the Recordi
         JSON.stringify({
           layoutConfirmed: false,
           reason:
-            'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.',
+            'The tab of the captured source was closed. Use Reload saved recording in Playback details to show it again.',
         }),
       ],
     )
@@ -5954,11 +6091,11 @@ test('when the learner closes the captured source’s tab by hand on the Recordi
   }
 })
 
-// Value: protects=the Study pane's status line saying that the layout is not confirmed as soon as the learner closes the captured source's tab or the Application pane's tab by hand beside a saved study; fails_when=the reader publishes nothing at a tab event, so the line stays empty until another action publishes; why_new=Cycle 0046 row 327 (the same change outside the Recording tab, and a pane's own tab); seam=the workspace harness's closeTabByHand, which also ends the pane whose tab it closes, and the Study messages the reader posts
+// Value: protects=the Study pane's status line saying that the layout is not confirmed as soon as the learner closes the captured source's tab or the Application pane's tab by hand beside a saved study; fails_when=the reader publishes nothing at a tab event, so the line stays empty until another action publishes; why_new=Cycle 0046 row 327 (the same change outside the Recording tab, and a pane's own tab); the captured source's reason since row 695: the closed tab and Focus source, which shows it again, in place of "Wait for it, or use Return to current…", which nothing pending and no current pause of a saved study answers; seam=the workspace harness's closeTabByHand, which also ends the pane whose tab it closes, and the Study messages the reader posts
 for (const [closedTab, reason] of [
   [
     'the captured source’s tab',
-    'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.',
+    'The tab of the captured source was closed. Use Focus source to show it again.',
   ],
   [
     'the Application pane’s tab',
@@ -5993,6 +6130,72 @@ for (const [closedTab, reason] of [
       await harness.close()
     }
   })
+
+// Value: protects=the bound of row 695's reason for a captured source's tab the learner closed by hand beside a saved study: Focus source, which the reason names, shows the source again and confirms the layout; fails_when=the named control leaves the layout unconfirmed, so the reason sends the learner to a step that does not help; why_new=Cycle 0046 row 695 (row 327's case decided: the reason names the closed tab and the control); seam=studyLayoutWithSecondSavedStudy, the workspace harness's closeTabByHand, the Study's Focus source control and presentationState
+test('after the learner closes the captured source’s tab by hand beside a saved study, Focus source, which its reason names, shows the source again and confirms the layout', async () => {
+  // Arrange: a saved study's three panes stand in a confirmed layout; the learner closes the captured source's tab.
+  const { harness } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.closeTabByHand(capturedSourceTab(harness))
+    const reasonAfterClose = harness.reader.presentationState().reason
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        reasonAfterClose,
+        layoutConfirmed: state.layoutConfirmed,
+        reason: state.reason,
+      },
+      {
+        reasonAfterClose:
+          'The tab of the captured source was closed. Use Focus source to show it again.',
+        layoutConfirmed: true,
+        reason: undefined,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the same bound on the Recording tab, whose Learning summary shows no Focus source: Reload saved recording, which the reason names, shows the closed captured source again and confirms the layout; fails_when=the reason names a control the summary does not show, or one that leaves the layout unconfirmed; why_new=Cycle 0046 row 695 (row 327's Recording-tab case decided); seam=recordedReaderHarness, openRecording, the controller's settle, closeTabByHand, the Reload saved recording control and presentationState
+test('after the learner closes the captured source’s tab by hand on the Recording tab, Reload saved recording, which its reason names, shows the source again and confirms the layout', async () => {
+  // Arrange: a saved recording is open and paused with its panes in a confirmed layout; the learner closes the captured source's tab.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.closeTabByHand(capturedSourceTab(harness))
+    const reasonAfterClose = harness.reader.presentationState().reason
+
+    // Act
+    await harness.reader.action('reload-recording')
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        reasonAfterClose,
+        layoutConfirmed: state.layoutConfirmed,
+        reason: state.reason,
+      },
+      {
+        reasonAfterClose:
+          'The tab of the captured source was closed. Use Reload saved recording in Playback details to show it again.',
+        layoutConfirmed: true,
+        reason: undefined,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
 
 // Value: protects=the Study pane's status line against a reason of the middle of the reader's own work: a tab that changes while the reader restores its layout makes it publish nothing at that moment, and the panes are told how the layout stands when the restore has ended; fails_when=every tab event publishes, also the ones of the reader's own arrangement, so the line shows and a screen reader announces a state the reader is about to change; why_new=Cycle 0046 row 327 (the reader does not publish on its own tab changes); seam=the workspace harness holding the editor's layout answer during Restore, its closeTabByHand, and the Study messages the reader posts
 test('a tab that is closed while the reader restores its layout makes the reader post nothing at that moment, and the Study pane is told how the layout stands once the restore has ended', async () => {
