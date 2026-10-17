@@ -790,7 +790,9 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/scripts/utils/packageConstants.mjs',
     'extension/scripts/utils/readVsixBytes.mjs',
     'extension/src/runtimeSupport/utils/listProcesses.ts',
+    'extension/src/runtimeSupport/utils/profileProcesses.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
+    'extension/src/runtimeSupport/utils/windowsCommandLineArguments.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
     'extension/src/tests/claimWikiUpdateMarker.test.ts',
     'extension/src/tests/currentStorageOwner.test.ts',
@@ -815,6 +817,8 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/removeWithoutFollowing.test.ts',
+    'extension/src/tests/runBoundedQuery.test.ts',
+    'extension/src/tests/runtime-profileProcesses.test.ts',
     'extension/src/tests/utils/answerKernelBootId.ts',
     'extension/src/tests/utils/createLinkIfAllowed.ts',
     'extension/src/tests/utils/fileSystemWhoseLinksResistRemoval.ts',
@@ -873,11 +877,13 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/removeStaleStorageClaims.ts',
     'extension/src/utils/removeStaleStorageLock.ts',
     'extension/src/utils/removeWithoutFollowing.ts',
+    'extension/src/utils/runBoundedQuery.ts',
     'extension/src/utils/startOverBy.ts',
     'extension/src/utils/stepPastNoRealFolder.ts',
     'extension/src/utils/storageLockHeldError.ts',
     'extension/src/utils/systemErrorCode.ts',
     'extension/src/utils/unopenedFileCode.ts',
+    'extension/src/utils/windowsPowerShellPath.ts',
     'extension/src/utils/withStorageLock.ts',
     'extension/src/utils/withoutBootTime.ts',
   ])
@@ -904,7 +910,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js',
     'node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs',
   ])
   assert.deepEqual(actionReferences, [
@@ -1387,7 +1393,10 @@ const WINDOWS_JOB_TEST_KINDS = [
     kind: 'the recovery that puts a moved file back',
     tests: ['dropSecondNameOfMovedFile'],
   },
-  { kind: 'the process listing', tests: ['listProcesses'] },
+  {
+    kind: 'the process listing',
+    tests: ['listProcesses', 'runBoundedQuery', 'runtime-profileProcesses'],
+  },
   { kind: 'the removal walk', tests: ['removeWithoutFollowing'] },
   {
     kind: 'the folder listing',
