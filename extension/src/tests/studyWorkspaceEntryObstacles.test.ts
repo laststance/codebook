@@ -1769,6 +1769,77 @@ for (const editor of [
     }
   })
 
+// Value: protects=the next Study action after an Application preparation that failed inside the layout queue: the failed preparation's cleanup disposed the pane it created, and the editor's dispose event, which both extension hosts fire inside dispose() before the pane leaves the editor (VS Code 1.140.0 extensionHostProcess.js 295:115246, Cursor 3.23.12 203:121182), lets the reader's own pane handler forget that pane at once, so the next run prepares a new pane in a new group and acts on nothing of the disposed one; fails_when=the reader still names the disposed pane after the cleanup, so the next preparation reveals or reads it and fails, or keeps a second pane; why_new=Cycle 0046 row 672 (evidence: no reference to the disposed pane remains, this test holds the reader to it); seam=presentation.createViewport with its cancellation (an MCP-first preparation a newer run replaces), holdNextCommand('vscode.getEditorLayout'), counts and panelColumn
+test('the run after an Application preparation that a newer run replaced inside the layout queue prepares a new Application pane in its own group, with nothing left of the disposed one', async () => {
+  // Arrange: an MCP run prepares the Application in a group of its own; the run is replaced while the preparation reads the confirmed layout, and its cleanup disposes the pane it created.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.addSeparateEditorPart()
+  harness.focusMutableDraft()
+  const reader = harness.createReader(),
+    preparation = new AbortController()
+  const gridRead = harness.holdNextCommand('vscode.getEditorLayout')
+  const viewport = Promise.resolve(
+    reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+      preparation.signal,
+    ),
+  ).catch((error: unknown) => error)
+  let finalRead: ReturnType<typeof harness.holdNextCommand> | undefined
+  let nextViewport:
+    Awaited<ReturnType<typeof reader.presentation.createViewport>> | undefined
+  try {
+    await gridRead.started
+    finalRead = harness.holdNextCommand('vscode.getEditorLayout')
+    gridRead.release()
+    await finalRead.started
+    preparation.abort(new Error('A newer run replaced this preparation.'))
+    finalRead.release()
+    const outcome = await viewport
+    const afterFailure = {
+      outcome: String(outcome),
+      panels: harness.counts().panels,
+      applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+    }
+
+    // Act: the newer run prepares its Application.
+    nextViewport = await reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+      new AbortController().signal,
+    )
+
+    // Assert: the failed preparation left no pane; the newer run's pane stands alone at column 1 in a locked group of its own.
+    assert.deepEqual(afterFailure, {
+      outcome: 'Error: A newer run replaced this preparation.',
+      panels: 0,
+      applicationColumn: undefined,
+    })
+    assert.deepEqual(
+      {
+        panels: harness.counts().panels,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+        applicationGroupLocked: Boolean(
+          harness.groups.find((group) => group.viewColumn === 1)?.locked,
+        ),
+      },
+      { panels: 1, applicationColumn: 1, applicationGroupLocked: true },
+    )
+  } finally {
+    gridRead.release()
+    finalRead?.release()
+    await viewport
+    nextViewport?.close()
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=a record that never outlives, in the same window, the Application group it describes once a preparation that already recorded its group is cancelled; fails_when=the cancellation that arrives during the preparation's final layout read closes the empty group the preparation claimed but keeps that group's record, so after a later reload a learner's empty group at column 1 in the same grid passes for Codebook's leftover; why_new=Cycle 0046 finding 598 (found by reading: the record is written before the preparation's last check of current intent, and the failure cleanup closed the group with tabGroups.close directly); seam=presentation.createViewport with its cancellation (the MCP-first preparation a newer run replaces), holdNextCommand('vscode.getEditorLayout') and applicationGroupMarkers
 test('a cancelled Application preparation that already recorded its group forgets that record as it retires the group', async () => {
   // Arrange: an MCP run prepares the Application in a group of its own; the run is replaced while the preparation reads the confirmed layout.
