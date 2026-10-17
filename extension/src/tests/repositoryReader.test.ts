@@ -1449,6 +1449,69 @@ test('the reader made after the workspace folders change retires the cited-sourc
   )
 })
 
+// Value: protects=a cited-source copy an earlier reader showed that the learner kept reading after the workspace's folders changed: the reader made in its place kept it because it had the keyboard (row 652), and that reader's own Wiki, opened on another citation and closed again, retires only the copy it showed itself; fails_when=Close Repository Wiki, or the next citation's display, picks the copies to close by their scheme and pin alone, so the copy the learner read in, which this reader never showed, is closed too; why_new=Cycle 0046 row 662 (CodeRabbit's review of dc60b8f6..465a6834, row 641's retirement and row 652's design reconciled); seam=readerHarness, a reader of its own (createReader), focusUnrelatedDraft, open, moveFrontSourceTabToWikiGroup (the learner's drag and click), dispose (the folder change's), createReader (the reader made in its place), open of another citation, close, firstGroupTabs, wikiGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy an earlier reader showed and the learner reads in stays when the reader made after a folder change shows and closes its own Wiki', async (context) => {
+  // Arrange: the learner's Wiki showed module.ts; the learner dragged that copy beside the Wiki and reads in it; then the workspace's folders change, the extension disposes that reader and makes another, which keeps the copy with the keyboard.
+  const harness = await readerHarness(context),
+    replaced = harness.createReader()
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await replaced.open(harness.selection)
+  harness.moveFrontSourceTabToWikiGroup()
+  await replaced.dispose()
+  const fresh = harness.createReader()
+  context.after(() => fresh.dispose())
+  const afterNewReader = {
+    firstGroup: harness.firstGroupTabs(),
+    wikiGroup: harness.wikiGroupTabs(),
+  }
+
+  // Act: the learner opens the new reader's Wiki on the article's second citation, order.ts, and closes it again.
+  await fresh.open({ ...harness.selection, anchorIndex: 1 })
+  fresh.close()
+
+  // Assert: the earlier reader's module.ts copy stayed through the new Wiki's citation and its close; only the order.ts copy the new reader showed was closed. (The fake lists each Wiki's tab in the Wiki's group, also after its panel was disposed.)
+  assert.deepEqual(
+    {
+      afterNewReader,
+      afterClose: {
+        firstGroup: harness.firstGroupTabs(),
+        wikiGroup: harness.wikiGroupTabs(),
+      },
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      afterNewReader: {
+        firstGroup: {
+          tabs: ['file:login-form.tsx'],
+          front: 'file:login-form.tsx',
+        },
+        wikiGroup: {
+          tabs: [
+            'mainThreadWebview-codebook.repositoryWiki',
+            'codebook-repository-source:module.ts',
+          ],
+          front: 'codebook-repository-source:module.ts',
+        },
+      },
+      afterClose: {
+        firstGroup: {
+          tabs: ['file:login-form.tsx'],
+          front: 'file:login-form.tsx',
+        },
+        wikiGroup: {
+          tabs: [
+            'mainThreadWebview-codebook.repositoryWiki',
+            'codebook-repository-source:module.ts',
+            'mainThreadWebview-codebook.repositoryWiki',
+          ],
+          front: 'mainThreadWebview-codebook.repositoryWiki',
+        },
+      },
+      closedTabs: ['order.ts'],
+    },
+  )
+})
+
 // Value: protects=the learner's own Open Repository Wiki in a window without a Wiki: it keeps activating the Wiki after the cited source, and the agent's keyboard return is not asked for it; fails_when=row 620's agent handling leaks into the learner's entry; why_new=Cycle 0046 row 620 guard; seam=readerHarness with useColdLayout, answerKeyboardReturn(true), open without forAgent
 test("the learner's cold Open Repository Wiki still gives the Wiki the keyboard and asks for no keyboard return", async (context) => {
   // Arrange

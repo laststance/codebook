@@ -112,6 +112,8 @@ export class RepositoryReader {
   private statusGeneration = 0
   private refreshTimer?: ReturnType<typeof setTimeout>
   private sourceUri?: vscode.Uri
+  /** The URIs of the cited-source copies this reader showed ({@link openSource}): the copies its Wiki's close and its next citation retire, and no other (Cycle 0046 row 662). Each citation has a URI of its own ({@link openSourceDocument}). */
+  private readonly shownCitedSources = new Set<string>()
   /** A primary file keeps its native input until the learner selects the Wiki; {@link revealDeferredSource} then pays this preview. */
   private sourceDeferred = false
   /** A command outside Study defers its original layout until the learner selects Wiki; {@link revealDeferredSource} completes that Return. */
@@ -183,7 +185,7 @@ export class RepositoryReader {
       }),
     )
     // A reader made after a change of the folders or a restart of the extension host retires the copies the reader before it left (row 652).
-    this.retireStaleCitedSources()
+    this.retireCopiesOfEarlierReaders()
   }
 
   /** Lazily shares the existing ledger without starting Chrome, a debugger, or a study run. @example service.repository = await reader.storage() */
@@ -815,34 +817,65 @@ export class RepositoryReader {
 
   /**
    * Closes the read-only cited-source tabs this reader showed once its Wiki closes, so the learner's own front tab of their groups comes back; called by {@link close} (Close Repository Wiki) and when the Wiki's tab is closed by hand ({@link ensurePanel}), Cycle 0046 row 641.
-   * The reader shows a citation in front of the first group without preview (`openSource`), over the learner's own file, also for an agent's open the learner never chose; it serves the Wiki beside it, whose article, refresh and navigation no longer reach it once the Wiki is gone, and the learner's current file stays one Open Current File away. The editor brings the group's most recently active other tab to the front with its view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141, 988:96536; Cursor 3.23.12 17264:12900, 11678:22600). A tab the learner pinned stays, and so does every cited source of a group that holds nothing else: its close would remove that group under `closeEmptyGroups` (VS Code 1106:79878). A copy an earlier reader left goes too ({@link retirableCitedSources}, row 652). A close the editor refuses leaves the tabs as they are.
+   * The reader shows a citation in front of the first group without preview (`openSource`), over the learner's own file, also for an agent's open the learner never chose; it serves the Wiki beside it, whose article, refresh and navigation no longer reach it once the Wiki is gone, and the learner's current file stays one Open Current File away. The editor brings the group's most recently active other tab to the front with its view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141, 988:96536; Cursor 3.23.12 17264:12900, 11678:22600). A tab the learner pinned stays, and so does every cited source of a group that holds nothing else: its close would remove that group under `closeEmptyGroups` (VS Code 1106:79878). Only the copies this reader showed go ({@link shownCitedSources}, row 662): a copy an earlier reader left was settled when this reader was made ({@link retireCopiesOfEarlierReaders}), and one that stayed then, because the learner read in it, stays. A close the editor refuses leaves the tabs as they are.
    * @example this.retireCitedSourceTabs() // the learner's login-form.tsx is in front of the first group again
    */
   private retireCitedSourceTabs(): void {
-    this.closeCitedSourceTabs(() => false)
+    this.closeCitedSourceTabs((uri) => !this.shownCitedSources.has(uri))
   }
 
   /**
-   * Closes the cited-source copies that no longer serve the Wiki while a reader goes on, Cycle 0046 row 652: an earlier citation's copy once {@link open} or {@link revealDeferredCitation} has shown another, and, when a reader is made, the copies a reader before it left in the window.
-   * Each citation has a copy of its own (its article, revision and citation are in the URI, {@link openSourceDocument}), so every citation followed added a tab until the Wiki closed. A disposed reader leaves its copies at a change of the workspace's folders and when a change of the first folder or the entry into a workspace restarts the extension host while the window stays (VS Code 1.140.0 `workbench.desktop.main.js` 4406:37553, 5281:6726; Cursor 3.23.12 20081:12211, 20392:3521); the extension makes the next reader at once. A window's close or reload brings no copy back: an editor group saves only the editors that have a serializer (VS Code 705:29495; Cursor 17264:18404), and a content provider's document opens as a resource editor input (VS Code 990:43737; Cursor 17388:51646), `workbench.editors.resourceEditorInput`, for which neither editor registers one (VS Code 705:31939 beside 993:5962; Cursor 11678:61617 beside 17388:58117).
-   * Besides the rules of {@link retireCitedSourceTabs} (a pinned tab and the only tabs of a group stay), the copy on screen stays, and so does a copy that has the keyboard: the learner reads in it.
-   * @param shown - The copy of the citation on screen; none when a reader is made.
+   * Closes the cited-source copies of this reader's earlier citations once {@link open} or {@link revealDeferredCitation} has shown another, Cycle 0046 row 652: each citation has a copy of its own (its article, revision and citation are in the URI, {@link openSourceDocument}), so every citation followed added a tab until the Wiki closed.
+   * Only the copies this reader showed go ({@link shownCitedSources}, row 662). Besides the rules of {@link retireCitedSourceTabs} (a pinned tab and the only tabs of a group stay), the copy on screen stays, and so does a copy that has the keyboard: the learner reads in it ({@link isReadInByLearner}).
+   * @param shown - The copy of the citation on screen.
    * @example this.retireStaleCitedSources(opened.uri) // the module.ts copy leaves; the order.ts copy stays in front of the learner's login-form.tsx
    */
-  private retireStaleCitedSources(shown?: vscode.Uri): void {
+  private retireStaleCitedSources(shown: vscode.Uri): void {
     const keyboard = vscode.window.activeTextEditor
     this.closeCitedSourceTabs(
       (uri, group) =>
-        uri === shown?.toString() ||
-        (uri === keyboard?.document.uri.toString() &&
-          group.viewColumn === keyboard.viewColumn),
+        !this.shownCitedSources.has(uri) ||
+        uri === shown.toString() ||
+        this.isReadInByLearner(uri, group, keyboard),
     )
   }
 
   /**
-   * Closes the cited-source tabs of every group that {@link retirableCitedSources} picks; called by {@link retireCitedSourceTabs} when the Wiki closes and by {@link retireStaleCitedSources}. A close the editor refuses leaves the tabs as they are.
+   * Closes, when a reader is made, the cited-source copies a reader before it left in the window, Cycle 0046 row 652; called once by the constructor, when this reader has shown no copy yet, so every copy present is an earlier reader's.
+   * A disposed reader leaves its copies at a change of the workspace's folders and when a change of the first folder or the entry into a workspace restarts the extension host while the window stays (VS Code 1.140.0 `workbench.desktop.main.js` 4406:37553, 5281:6726; Cursor 3.23.12 20081:12211, 20392:3521); the extension makes the next reader at once. A window's close or reload brings no copy back: an editor group saves only the editors that have a serializer (VS Code 705:29495; Cursor 17264:18404), and a content provider's document opens as a resource editor input (VS Code 990:43737; Cursor 17388:51646), `workbench.editors.resourceEditorInput`, for which neither editor registers one (VS Code 705:31939 beside 993:5962; Cursor 11678:61617 beside 17388:58117).
+   * A pinned copy, the only tabs of a group and a copy that has the keyboard stay ({@link isReadInByLearner}); this reader's later closes leave such a copy alone, since it never showed it ({@link retireCitedSourceTabs}, row 662).
+   * @example this.retireCopiesOfEarlierReaders() // the module.ts copy the disposed reader showed leaves; the learner's login-form.tsx is in front again
+   */
+  private retireCopiesOfEarlierReaders(): void {
+    const keyboard = vscode.window.activeTextEditor
+    this.closeCitedSourceTabs((uri, group) =>
+      this.isReadInByLearner(uri, group, keyboard),
+    )
+  }
+
+  /**
+   * Says whether a cited-source copy is the text editor that has the keyboard, which the learner reads in; asked by {@link retireStaleCitedSources} and {@link retireCopiesOfEarlierReaders}, which keep such a copy.
+   * @param uri - The copy's URI.
+   * @param group - The copy's group.
+   * @param keyboard - The active text editor when the retirement began, `undefined` when none is active.
+   * @returns `true` when the active text editor shows that copy in that group; `false` otherwise.
+   * @example this.isReadInByLearner(uri, wikiGroup, vscode.window.activeTextEditor) // => true for the module.ts copy the learner clicked into beside the Wiki
+   */
+  private isReadInByLearner(
+    uri: string,
+    group: vscode.TabGroup,
+    keyboard: vscode.TextEditor | undefined,
+  ): boolean {
+    return (
+      uri === keyboard?.document.uri.toString() &&
+      group.viewColumn === keyboard.viewColumn
+    )
+  }
+
+  /**
+   * Closes the cited-source tabs of every group that {@link retirableCitedSources} picks; called by {@link retireCitedSourceTabs} when the Wiki closes, by {@link retireStaleCitedSources} and by {@link retireCopiesOfEarlierReaders}. A close the editor refuses leaves the tabs as they are.
    * @param isKept - Says whether a copy stays, by its URI and its group.
-   * @example this.closeCitedSourceTabs(() => false) // every unpinned copy beside another tab leaves
+   * @example this.closeCitedSourceTabs((uri) => !this.shownCitedSources.has(uri)) // every unpinned copy this reader showed beside another tab leaves
    */
   private closeCitedSourceTabs(
     isKept: (uri: string, group: vscode.TabGroup) => boolean,
@@ -858,7 +891,7 @@ export class RepositoryReader {
   }
 
   /**
-   * Picks the cited-source tabs of one group that {@link closeCitedSourceTabs} closes. Every `codebook-repository-source` tab of the window counts, whichever workspace's reader showed it: a copy of another workspace is one no reader serves any more ({@link sourceText} refuses its authority).
+   * Picks the cited-source tabs of one group that {@link closeCitedSourceTabs} closes. Every `codebook-repository-source` tab of the window counts, whichever workspace's reader showed it, unless the caller keeps it: a copy of another workspace is one no reader serves any more ({@link sourceText} refuses its authority), and the callers keep what is not theirs to retire ({@link shownCitedSources}).
    * @param group - An editor group of the window.
    * @param isKept - Says whether a copy stays, by its URI and its group.
    * @returns
@@ -1065,6 +1098,8 @@ export class RepositoryReader {
         })
     // Native editors may normalize BOM/CRLF in getText; the provider/hash seal retains original bytes.
     try {
+      // Noted before the display: a copy the editor shows although a later check refuses the citation is this reader's too (row 662).
+      this.shownCitedSources.add(uri.toString())
       const editor = await vscode.window.showTextDocument(document, {
         viewColumn: vscode.ViewColumn.One,
         preview: false,
