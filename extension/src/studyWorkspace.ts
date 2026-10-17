@@ -8430,8 +8430,10 @@ export class StudyWorkspace {
       ),
       // Only the learner's press has a place of its own: the pane or the view whose control was pressed.
       learnersPlace =
-        requester === 'learner' ? this.learnersKeyboardPlace() : undefined
+        requester === 'learner' ? this.learnersKeyboardPlace() : undefined,
+      borrowsBefore = this.focusBorrowCount()
     this.returningCurrent = requester
+    let arranged = false
     try {
       this.historyRequest++
       this.leavePlayback()
@@ -8448,11 +8450,16 @@ export class StudyWorkspace {
       // The explicit selection owns arrangement; a subsequent background start must not borrow the chat keyboard to retire Context.
       if (this.opened && !this.liveComposition)
         await this.open(undefined, 'presentation', false, requester === 'agent')
+      arranged = true
     } finally {
+      // A chat given its keyboard back after a Return refused once Codebook borrowed the main editor is told that nothing was arranged (row 731).
       await this.finishCurrentReturn(
         lifetime,
         returnForeignFocus,
         learnersPlace,
+        !arranged && this.focusBorrowCount() !== borrowsBefore
+          ? 'refusedArrangement'
+          : undefined,
       )
     }
   }
@@ -8462,13 +8469,15 @@ export class StudyWorkspace {
    * @param lifetime - The reader lifetime that admitted this return; Close invalidates it.
    * @param returnForeignFocus - The existing native focus return, if another editor part originally held the keyboard.
    * @param learnersPlace - Where the learner's own Return was pressed ({@link learnersKeyboardPlace}); `undefined` for an agent's Return and for a place the editor does not tell.
+   * @param chatCause - Why a chat gets its keyboard back, for its sentence ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}): `'refusedArrangement'` for a Return refused after Codebook focused the main editor's first group (Cycle 0046 row 731); left out, the return's own rule tells the arrangement's sentence after a measurement's borrow.
    * @returns After restoring retained focus or preserving a newer window, tab or source selection.
-   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus, 'study')
+   * @example await this.finishCurrentReturn(lifetime, returnForeignFocus, undefined, 'refusedArrangement')
    */
   private async finishCurrentReturn(
     lifetime: number,
     returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
     learnersPlace?: ReturnType<StudyWorkspace['learnersKeyboardPlace']>,
+    chatCause?: ChatKeyboardReturnCause,
   ): Promise<void> {
     const assertRetainedFocus = this.retainPresentationPlacement(),
       selections = JSON.stringify(vscode.window.activeTextEditor?.selections)
@@ -8489,7 +8498,7 @@ export class StudyWorkspace {
     try {
       if (!stillCurrent()) return
       // A chat of another editor part that had the keyboard gets it back first; the learner's own place is settled only otherwise.
-      if (await returnForeignFocus?.(false, stillCurrent)) return
+      if (await returnForeignFocus?.(false, stillCurrent, chatCause)) return
       if (!stillCurrent()) return
       // An agent's Return whose remembered tab got nothing back tells what its preparation left (row 625).
       this.tellOwedPreparationNotice()
