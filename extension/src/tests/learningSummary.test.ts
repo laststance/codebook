@@ -806,6 +806,127 @@ test('a completed run whose 32 explanation keys are spent without a learning sum
   }
 })
 
+// Value: protects=an agent reading a stopped run whose learning summary's save failed after the result (a full disk): its evidence keeps that failure and fails every later write, so the run resource no longer offers save-learning-summary and says why, naming the failed write and what holds, and codebook_explain refuses a new key before it is reserved; fails_when=the resource keeps offering "Save one now … with a new key" and every new key is reserved, spends the 32-key budget and fails at the same failed write, also once the disk has room again; why_new=R2, Cycle 0046 /ship red-team review (row 699 left a stopped run's outcome and advice as they were after its explanation's save failed); seam=the synthetic runtime, which reports a demonstrated result once it is stopped, and its evidence's save, made to fail as a full disk fails Evidence.save
+test('a stopped run whose learning summary could not be written no longer offers save-learning-summary, names the failed write, and refuses a new explanation key without spending it', async () => {
+  // Arrange: a run reaches its result and is stopped; its learning summary's save then fails as on a full disk, which leaves the failure in its evidence.
+  class DemonstratedRuntime extends ControlledRuntime {
+    override view(): ConfiguredRuntimeView {
+      const state = super.view()
+      if (!this.stopped) return state
+      return {
+        ...state,
+        status: 'completed',
+        runtimeOutcome: 'demonstrated',
+        captureOutcome: 'complete',
+        finalOutcome: 'demonstrated',
+        operation: state.operation && {
+          ...state.operation,
+          afterVerified: true,
+        },
+      }
+    }
+  }
+  const harness = await createHarness({
+    create: async (directory, definition) =>
+      new DemonstratedRuntime(directory, definition),
+  })
+  const service = harness.service
+  try {
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'summary-not-written',
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    service.action({
+      ...receipt,
+      key: 'change-theme',
+      action: 'repository-click',
+    })
+    const snapshotUri = service.state(record).participants.browser.snapshotUri!
+    const sourceHash = snapshotSourceHashes(
+      service.snapshot(record, snapshotUri),
+    ).typescript
+    const atTheStop = service.state(record)
+    await service.continue(atTheStop.participants.browser.continueArguments!)
+    await service.stop(receipt)
+    const evidence = record.runtime!.evidence
+    evidence.save = async () => {
+      evidence.failure ??= 'Error: ENOSPC: no space left on device, write'
+      throw new Error('ENOSPC: no space left on device, write')
+    }
+    const terminalReference = service.state(record).terminalReference
+    if (!terminalReference)
+      throw new Error('Expected a demonstrated terminal reference.')
+    const content = summaryFor(snapshotUri, sourceHash)
+    content.steps[1] = {
+      id: 'result',
+      from: 'interface',
+      to: 'interface',
+      label: 'Theme changed',
+      explanation: 'The verified after frame shows dark mode.',
+      evidence: 'observed',
+      reference: terminalReference,
+    }
+    await service
+      .explain({
+        ...receipt,
+        key: 'summary-on-a-full-disk',
+        snapshotUri,
+        sourceHash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: 'The result was verified after the stop.',
+        learningSummary: content,
+      })
+      .catch(() => undefined)
+    const keysBefore = record.explanationKeys.size
+
+    // Act
+    const afterTheFailure = service.state(record)
+    let refusal: unknown
+    try {
+      await service.explain({
+        ...receipt,
+        key: 'summary-once-more',
+        snapshotUri,
+        sourceHash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: 'The result was verified after the stop.',
+        learningSummary: content,
+      })
+    } catch (error) {
+      refusal = error
+    }
+
+    // Assert
+    const advice =
+      'No explanation or learning summary can be saved for this run: a write of its evidence failed (Error: ENOSPC: no space left on device, write), and every later write of that evidence fails too, also once the cause is fixed. Codebook refuses a new explanation key for this run without spending it. What the run recorded until then holds: its result, its snapshots and the explanations saved before the failure; its saved study will have no learning summary. A new run can save one.'
+    assert.deepEqual(
+      {
+        nextActions: afterTheFailure.nextActions,
+        saveLearningSummary: afterTheFailure.saveLearningSummary,
+        finalOutcome: afterTheFailure.finalOutcome,
+        refusal:
+          refusal instanceof StudyError
+            ? { code: refusal.code, message: refusal.message }
+            : refusal,
+        keysSpentByTheRefusal: record.explanationKeys.size - keysBefore,
+      },
+      {
+        nextActions: ['read-history'],
+        saveLearningSummary: advice,
+        finalOutcome: 'demonstrated',
+        refusal: { code: 'EVIDENCE_UNAVAILABLE', message: advice },
+        keysSpentByTheRefusal: 0,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Cycle 0046 (row 161): red while the budget counted the 32nd key as soon as it was reserved: a read of the run resource during its save answered "The run's explanation budget (32 keys) is spent; the saved study will have no learning summary.", although that key carried the summary.
 test('a read of the run resource while the last explanation key’s learning summary is still being saved does not say that the study will have none', async () => {
   // Arrange: a run reaches its result with 31 accepted explanation keys, none with a learning summary, and is stopped; the save of the next explanation stays open until the test lets it go.

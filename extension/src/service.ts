@@ -126,26 +126,45 @@ const SAVE_LEARNING_SUMMARY_ADVICE =
 const EXPLANATION_BUDGET_SPENT_ADVICE = `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; the saved study will have no learning summary.`
 
 /**
+ * Words why a stopped run whose evidence failed takes no further explanation, for the run resource in place of {@link SAVE_LEARNING_SUMMARY_ADVICE} and for {@link StudyService.explain}'s refusal of a new key: the evidence keeps its first failure, so every later write of it fails, also once the disk has room again.
+ * @param failure - The evidence's failure ({@link Evidence.failure}), which names the failed write.
+ * @returns The sentence that names the failed write, that no key is spent, and what holds of the run.
+ * @example
+ * failedEvidenceAdvice('Error: ENOSPC: no space left on device, write')
+ * // => "No explanation or learning summary can be saved for this run: a write of its evidence failed (Error: ENOSPC: no space left on device, write), …"
+ */
+function failedEvidenceAdvice(failure: string): string {
+  return `No explanation or learning summary can be saved for this run: a write of its evidence failed (${failure}), and every later write of that evidence fails too, also once the cause is fixed. Codebook refuses a new explanation key for this run without spending it. What the run recorded until then holds: its result, its snapshots and the explanations saved before the failure; its saved study will have no learning summary. A new run can save one.`
+}
+
+/**
  * Chooses what the run resource says under `saveLearningSummary`, for {@link StudyService.state} each time the resource is read.
  * @param lacksLearningSummary - Whether the released run reached its demonstrated result and no saved explanation carries a learning summary.
  * @param explanationBudgetSpent - Whether {@link StudyService.explain} accepts no new key for the run.
  * @param isSavingLearningSummary - Whether an accepted key's explanation that carries a learning summary is still being saved. The budget counts a key when it is reserved, so the last key can be spent while its summary is on its way.
+ * @param evidenceFailure - The failure of the stopped run's evidence, which refuses every further explanation ({@link StudyService.stoppedRunEvidenceFailure}); `undefined` while its evidence writes.
  * @returns
  * - `undefined` for a run that lacks no learning summary
+ * - {@link failedEvidenceAdvice} for a stopped run whose evidence failed: explain refuses a new key, so the step is not offered
  * - {@link SAVE_LEARNING_SUMMARY_ADVICE} while explain still accepts a new key
  * - `undefined` once it does not, while a learning summary is still being saved: whether the study gets one is not known yet
  * - {@link EXPLANATION_BUDGET_SPENT_ADVICE} once the budget is spent and no summary is on its way
  * @example
- * learningSummaryAdvice(true, false, false) // => SAVE_LEARNING_SUMMARY_ADVICE
- * learningSummaryAdvice(true, true, true)   // => undefined
- * learningSummaryAdvice(false, true, false) // => undefined
+ * learningSummaryAdvice(true, false, false, undefined) // => SAVE_LEARNING_SUMMARY_ADVICE
+ * learningSummaryAdvice(true, false, false, 'Error: ENOSPC: no space left on device, write') // => failedEvidenceAdvice of that failure
+ * learningSummaryAdvice(true, true, true, undefined)   // => undefined
+ * learningSummaryAdvice(false, true, false, undefined) // => undefined
  */
 function learningSummaryAdvice(
   lacksLearningSummary: boolean,
   explanationBudgetSpent: boolean,
   isSavingLearningSummary: boolean,
+  evidenceFailure: string | undefined,
 ): string | undefined {
   if (!lacksLearningSummary) return undefined
+  // A new key would fail at the same failed evidence: the run's own advice replaces the step.
+  if (evidenceFailure !== undefined)
+    return failedEvidenceAdvice(evidenceFailure)
   if (!explanationBudgetSpent) return SAVE_LEARNING_SUMMARY_ADVICE
   return isSavingLearningSummary ? undefined : EXPLANATION_BUDGET_SPENT_ADVICE
 }
@@ -1328,6 +1347,13 @@ export class StudyService {
         'INVALID_REFERENCE',
         'Source hash or distinct value paths do not match the snapshot.',
       )
+    const evidenceFailure = this.stoppedRunEvidenceFailure(record)
+    // A stopped run's failed evidence fails every later write: the refusal comes before a key is reserved, so the budget is not spent on it.
+    if (evidenceFailure !== undefined)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        failedEvidenceAdvice(evidenceFailure),
+      )
     if (record.explanationKeys.size >= MAX_EXPLANATIONS)
       throw new StudyError(
         'LIMIT_EXCEEDED',
@@ -1445,6 +1471,18 @@ export class StudyService {
     }
     void result.then(saveEnded, saveEnded)
     return result
+  }
+
+  /**
+   * Gives the failure of a stopped run's evidence, which refuses every further explanation of the run: the evidence keeps its first failure, so a later write fails at the same failure (Evidence.flush); read by {@link StudyService.explain} before it reserves a key and by {@link StudyService.state} for the run resource's advice.
+   * @param record - The run.
+   * @returns
+   * - The evidence's failure for a stopped run whose evidence failed, at its stop or after it (an explanation's save after the result)
+   * - `undefined` for a run that has not stopped, has no runtime, or whose evidence writes
+   * @example this.stoppedRunEvidenceFailure(stoppedRecord) // => 'Error: ENOSPC: no space left on device, write' after a learning summary's save failed on a full disk
+   */
+  private stoppedRunEvidenceFailure(record: StudyRecord): string | undefined {
+    return record.stopped ? record.runtime?.evidence.failure : undefined
   }
 
   /**
@@ -2054,6 +2092,8 @@ export class StudyService {
     // explain refuses every new key once the budget is spent, so the step is no longer offered then.
     const explanationBudgetSpent =
       record.explanationKeys.size >= MAX_EXPLANATIONS
+    // explain refuses every new key of a stopped run whose evidence failed, so the step is not offered then either.
+    const stoppedEvidenceFailure = this.stoppedRunEvidenceFailure(record)
     const nextActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
@@ -2061,7 +2101,9 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      lacksLearningSummary && !explanationBudgetSpent
+      lacksLearningSummary &&
+      !explanationBudgetSpent &&
+      stoppedEvidenceFailure === undefined
         ? 'save-learning-summary'
         : undefined,
       holdsHistory ? 'read-history' : undefined,
@@ -2364,6 +2406,7 @@ export class StudyService {
         [...record.explanationKeys.values()].some(
           (accepted) => accepted.isSavingLearningSummary,
         ),
+        stoppedEvidenceFailure,
       ),
       observedAt:
         observedAtMs === undefined
