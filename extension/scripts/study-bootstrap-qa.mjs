@@ -6642,6 +6642,10 @@ function wikiShellPage(shell) {
     OPEN_SOURCE:
       '<p class="open-in-editor"><a href="#source" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a.ts:12</span></p>',
     SETTINGS: '#settings',
+    // The policy in the page's head names the shell's one script by its hash, as the publisher fills it.
+    SHELL_SCRIPT_HASH: `'sha256-${createHash('sha256')
+      .update(/<script>([\s\S]*?)<\/script>/.exec(shell)?.[1] ?? '')
+      .digest('base64')}'`,
   }
   return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
     assert.ok(Object.hasOwn(fields, name), `no text for the field ${field}`)

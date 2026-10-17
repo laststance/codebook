@@ -2973,6 +2973,41 @@ for (const [form, content, sentence] of [
     }
   })
 
+// Value: protects=the learner who opens a published page from disk, where no reader sends a Content-Security-Policy; fails_when=the page carries no policy of its own, so an event attribute or a javascript: address its content holds (a page published before the publisher refused them, or edited by hand) runs, or the policy does not name the hash of the shell's own script, so the theme button and the offline question note stop working; why_new=Cycle 0046 /ship follow-up N5 (finding F2's offline side); seam=none
+test('a published page carries a Content-Security-Policy that lets only the shell’s own script run, by its hash, before anything of its content', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-page-policy-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the policy stands in the head, before the title and the article, and the shell's one script is the one its hash names.
+    const page = pages.get('index.html')
+    const shellScript = /<script>([\s\S]*?)<\/script>/.exec(page)?.[1] ?? ''
+    assert.deepEqual(
+      {
+        head: page.slice(0, page.indexOf('<title>')),
+        scriptHash: createHash('sha256').update(shellScript).digest('base64'),
+        scripts: page.match(/<script\b/g)?.length,
+      },
+      {
+        head: '<!doctype html>\n<html lang="en" data-codebook-reader="2">\n<head>\n<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<meta http-equiv="Content-Security-Policy" content="script-src \'self\' \'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=\'; object-src \'none\'; base-uri \'none\'">\n',
+        scriptHash: 'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
+        scripts: 1,
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; seam=none
 test('a page that links to a relative path, a fragment, a web, mail or editor address, and shows an event attribute and a javascript: link only as escaped text or in a comment, is published as authored', async () => {
   // Arrange

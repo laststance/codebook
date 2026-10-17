@@ -13,6 +13,7 @@ import {
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import { startDeepWikiReader } from '../dist/deepWikiReader.js'
@@ -1976,6 +1977,36 @@ async function check(page, options, collected) {
       },
     )
   }
+  const useOfflinePageWithContentScript = async () => {
+    // Arrange: the same chapter opened from disk, where no reader serves it and only the page's own policy holds; the image fails to load.
+    await page.setViewportSize({ width: 1200, height: 720 })
+    await page.goto(options.offlinePageWithContentScript)
+    await page.waitForFunction(
+      () => document.querySelector('.wiki-article img').complete,
+    )
+    // Act: the link is followed and the theme button pressed, as a learner does.
+    await page.click('#content-script-link')
+    await page.click('button#theme-toggle')
+    const used = await page.evaluate(() => ({
+      contentScriptRuns: window.contentScriptRuns ?? [],
+      theme: document.documentElement.dataset.theme ?? null,
+      status: document.querySelector('[data-codebook-status]').textContent,
+      protocol: location.protocol,
+      address: location.pathname.split('/').at(-1),
+    }))
+    // Assert
+    record(
+      'a page opened from disk whose content carries an event attribute and a javascript: link runs neither, while the shell’s theme button works and the page says it is an offline copy',
+      used,
+      {
+        isOpenedFromDisk: used.protocol === 'file:',
+        doesNoContentScriptRun: used.contentScriptRuns.length === 0,
+        doesThemeButtonSwitchTheTheme: used.theme === 'dark',
+        isOfflineCopy: used.status === 'Offline reader · connection help',
+        doesPageStay: used.address === 'chapter-1.html',
+      },
+    )
+  }
   // Each step leaves the page as the next one needs it: the three 1200 px steps of the rail share one load, and so do the two steps after the conflict at 960 px; a step of the reading column loads the page itself, because it asks a question.
   const stepsOfAPage = [
     measureEntryInRow,
@@ -2012,6 +2043,7 @@ async function check(page, options, collected) {
     usePageWithReaderIds,
     usePagePublishedWithReaderIdsTwice,
     usePageWithContentScript,
+    useOfflinePageWithContentScript,
   ])
     await step()
 }
@@ -2110,6 +2142,10 @@ try {
       readerIdsPage: READER_IDS_PAGE,
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
       pageWithContentScript: PAGE_WITH_CONTENT_SCRIPT,
+      // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
+      offlinePageWithContentScript: pathToFileURL(
+        join(wiki.outputDirectory, PAGE_WITH_CONTENT_SCRIPT),
+      ).href,
     }),
   )
   await command(['open', 'about:blank'], 'open')
