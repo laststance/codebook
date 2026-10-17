@@ -874,6 +874,79 @@ test("in Cursor, an agent's Return Current whose lock reaches the learner's grou
   }
 })
 
+// Value: protects=the learner's groups from Codebook's lock when another group is the active one by the time the reservation acts on its lock's answer: the lock reached the learner's actions.ts group Cursor activated again (row 644), and auth.ts's group became the active one right after; the reservation takes the lock off the group the lock changed, whichever group is active then, and locks only the Application's own group, so Close leaves no group locked and auth.ts's group is never touched; fails_when=the unlock acts only while the group it read as changed is still the active one, so the learner's actions.ts group stays locked through the live run and Close; why_new=Cycle 0046 row 668; seam=useNativeLayout, addSeparateEditorPart (Cursor's chat part), reactivatePreviousGroupBeforeLock, activateGroupOfTabAfterNextLock, the reader's agent select and returnToCurrent, close, the groups' lock flags and the command log
+test("in Cursor, an agent's Return Current whose lock reached the learner's group takes that lock off again although another learner group is the active one by then, and Close leaves no group locked", async () => {
+  // Arrange: actions.ts in the first group and auth.ts in the second; the agent selected the Study from Cursor's chat. Cursor will activate the actions.ts group again before the Return's lock arrives, and the auth.ts group right after the lock answered.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    const learnerAuth = harness.focusMutableDraft('auth.ts', 2)
+    const learnerActions = harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    chat.focusTab()
+    harness.reactivatePreviousGroupBeforeLock()
+    harness.activateGroupOfTabAfterNextLock(learnerAuth.tab)
+    const selected = harness.reader.presentationState()
+    /** Says whether the group that holds a tab is locked. */
+    const lockedWith = (tab: unknown): boolean | undefined =>
+      harness.groups.find((group) => group.tabs.some((held) => held === tab))
+        ?.locked
+    const lockedGroups = (): number[] =>
+      harness.groups
+        .filter((group) => group.locked)
+        .map((group) => group.viewColumn)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.returnToCurrent(
+      {
+        presentationId: selected.presentationId,
+        expectedRevision: selected.reader.contentRevision,
+      },
+      'agent',
+    )
+    const live = {
+      layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+      applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+      lockedColumns: lockedGroups(),
+      actionsGroupLocked: Boolean(lockedWith(learnerActions.tab)),
+      authGroupLocked: Boolean(lockedWith(learnerAuth.tab)),
+      unlockCommands: harness.commands
+        .slice(commandsBefore)
+        .filter((command) => command === 'workbench.action.unlockEditorGroup')
+        .length,
+    }
+    await harness.reader.close()
+
+    // Assert: during the live run only the Application's own group at column 1 is locked, after one unlock of the actions.ts group; after Close no group is locked.
+    assert.deepEqual(
+      { ...live, lockedAfterClose: lockedGroups() },
+      {
+        layoutConfirmed: true,
+        applicationColumn: 1,
+        lockedColumns: [1],
+        actionsGroupLocked: false,
+        authGroupLocked: false,
+        unlockCommands: 1,
+        lockedAfterClose: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a lock the learner set on their own group (View: Lock Editor Group) when an agent's Return Current locks its new Application group and Cursor names the learner's group as the active one only after that lock reached the new group: the tab model the lock sends names the new group, so the learner's group keeps its lock through the live run and Close; fails_when=the reservation takes the group Cursor names after the lock for the group the lock reached (row 644's reading) and unlocks it because it holds a learner's tab, removing a lock Codebook never set; why_new=Cycle 0046 row 650; seam=useNativeLayout, addSeparateEditorPart (Cursor's chat part), lockGroupAsLearner, reactivatePreviousGroupAfterInsertion (Cursor names the group that had the keyboard again as the lock settles), the reader's agent select and returnToCurrent, close, the groups' lock flags and the command log
 test("in Cursor, an agent's Return Current whose lock reached the new Application group keeps the lock the learner set on their own group that Cursor names afterwards, through Close", async () => {
   // Arrange: actions.ts in the first group and auth.ts in the second; the agent selected the Study from Cursor's chat, and the learner then locked the group that shows actions.ts. Cursor will name the group that held the keyboard before the Return's insertion again only after the lock reached the new group.

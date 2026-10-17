@@ -13910,7 +13910,7 @@ export class StudyWorkspace {
 
   /**
    * Moves the lock of {@link reserveApplicationGroup} onto the new Application group when it reached another group; called right after {@link lockActiveEditorGroup}, which names the group the lock changed.
-   * Cursor can activate the group that held the keyboard before the insertion (the first group, whose Application pane the reservation focused) again before the lock reaches the editor: the lock then locks that group (C57 round 1b: the learner's first group stayed locked through Close, the Application's group stood unlocked; Cycle 0046 row 644). Cursor can also activate it only after the lock reached the new group, and the tab model then names that group as the lock answers although its lock is the learner's own or none (row 650). So only the group whose lock {@link lockActiveEditorGroup} shows changed is unlocked again, and only while it holds a learner's tab and is still the active one (an earlier window's leftover keeps its own lock, row 591); a lock the learner had set is never removed. Whenever the new group was not the one locked, it is focused, at column 1, and locked.
+   * Cursor can activate the group that held the keyboard before the insertion (the first group, whose Application pane the reservation focused) again before the lock reaches the editor: the lock then locks that group (C57 round 1b: the learner's first group stayed locked through Close, the Application's group stood unlocked; Cycle 0046 row 644). Cursor can also activate it only after the lock reached the new group, and the tab model then names that group as the lock answers although its lock is the learner's own or none (row 650). So only the group whose lock {@link lockActiveEditorGroup} shows changed is unlocked again, and only while it holds a learner's tab (an earlier window's leftover keeps its own lock, row 591), whichever group the editor names as active by then ({@link unlockLearnerGroupTheLockChanged}, row 668); a lock the learner had set is never removed. Whenever the new group was not the one locked, it is focused, at column 1, and locked.
    * @param identity - The new Application group's identity ({@link newApplicationGroup}).
    * @param lockReport - What {@link lockActiveEditorGroup} answered for the reservation's lock.
    * @param assertCurrent - The preparation's lifetime and cancellation guard.
@@ -13925,15 +13925,12 @@ export class StudyWorkspace {
   ): Promise<boolean> {
     // The lock's own tab model names the new group: the lock reached it, whatever the editor names afterwards (row 650).
     if (lockReport.reported && lockReport.identity === identity) return false
-    const named = vscode.window.tabGroups.activeTabGroup
-    // Only the learner's group the lock is shown to have changed gets its lock taken off again (row 644); a lock the learner had set, or one the editor reports no change of, stays.
-    if (
-      lockReport.reported &&
-      lockReport.identity !== undefined &&
-      this.editorGroupIdentities.get(named) === lockReport.identity &&
-      this.learnersTabKeysOf(named).length > 0
-    )
-      await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
+    // Only the learner's group the lock is shown to have changed gets its lock taken off again (row 644), whichever group is active by then (row 668); a lock the learner had set, or one the editor reports no change of, stays.
+    if (lockReport.reported && lockReport.identity !== undefined)
+      await this.unlockLearnerGroupTheLockChanged(
+        lockReport.identity,
+        assertCurrent,
+      )
     await vscode.commands.executeCommand(
       'workbench.action.focusFirstEditorGroup',
     )
@@ -13948,6 +13945,36 @@ export class StudyWorkspace {
     await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
     assertCurrent()
     return true
+  }
+
+  /**
+   * Takes the reservation's lock off the learner's group it reached instead of the new Application group, whichever group the editor names as active by then; called by {@link keepLockOnApplicationGroup} once {@link lockActiveEditorGroup} has shown which group the lock changed.
+   * `workbench.action.unlockEditorGroup` takes no argument and unlocks the group the editor names as active (VS Code 1.140.0 `workbench.desktop.main.js` 987:13191, Cursor 3.23.12 11684:15730, through the same helper as the lock), so a group that is no longer the active one, because the learner or the editor activated another group after the lock answered, is focused first by its column's numbered command; the unlock then runs only while that group is the active one. The caller focuses and locks the new group right after (row 668).
+   * @param changed - The identity of the group the lock changed.
+   * @param assertCurrent - The preparation's lifetime and cancellation guard.
+   * @returns Once the group's lock is off, or once nothing was unlocked: for a group that is gone, holds no learner's tab (an earlier window's leftover keeps its own lock, row 591), has no numbered focus command, or is not the active one after its focus.
+   * @example await this.unlockLearnerGroupTheLockChanged(lockReport.identity, assertCurrent) // the actions.ts group, at column 2, unlocked although auth.ts's group was the active one
+   */
+  private async unlockLearnerGroupTheLockChanged(
+    changed: symbol,
+    assertCurrent: () => void,
+  ): Promise<void> {
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => this.editorGroupIdentities.get(candidate) === changed,
+    )
+    if (!group || this.learnersTabKeysOf(group).length === 0) return
+    const isActive = (): boolean =>
+      this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup) ===
+      changed
+    // Another group is the active one: focus the changed group by its column before the unlock acts on the active group.
+    if (!isActive()) {
+      const focusCommand = focusEditorGroupCommand(group.viewColumn)
+      if (!focusCommand) return
+      await vscode.commands.executeCommand(focusCommand)
+      assertCurrent()
+      if (!isActive()) return
+    }
+    await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
   }
 
   /**

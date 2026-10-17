@@ -770,6 +770,8 @@ export async function workspaceHarness(
     commandsUntilAgentFocus = 0
   // Cursor activated that group again before the next lock reached the editor, so the lock locked it; see `reactivatePreviousGroupBeforeLock`.
   let reactivatesPreviousGroupBeforeLock = false
+  /** The tab whose group the editor names as the active one right after the next lock answered, once; see `activateGroupOfTabAfterNextLock`. */
+  let groupActivatedAfterLock: Tab | undefined
   let reactivatesPreviousGroupAtLayoutRead = false
   let layoutReadsUntilReactivation = 0
   let groupFocusedBeforeInsertion: (typeof groups)[number] | undefined
@@ -1044,6 +1046,19 @@ export async function workspaceHarness(
       })
     activeTextEditorChanged(undefined)
     groupFocusedBeforeInsertion = previouslyFocusedGroup
+  }
+  /**
+   * Names the group of the tab `activateGroupOfTabAfterNextLock` chose as the active one, once, right after a lock answered: a group's activation, which both editors send alone (Cursor 3.23.12 `workbench.desktop.main.js` 17269:28244, `extensionHostProcess.js` 131:33740); called by the fake `workbench.action.lockEditorGroup`.
+   * @example activateGroupOfTabOnce() // the group that shows auth.ts is the active one, and one group change lists it alone
+   */
+  function activateGroupOfTabOnce(): void {
+    const tab = groupActivatedAfterLock
+    groupActivatedAfterLock = undefined
+    if (!tab) return
+    const group = groups.find((candidate) => candidate.tabs.includes(tab))
+    if (!group) return
+    activeTabGroup = group
+    changedGroups({ opened: [], closed: [], changed: [group] })
   }
   /** Names the group that held the keyboard before the last native group insertion as active again while the inserted group still holds no tab; see `reactivatePreviousGroupAfterInsertion`. The change lists that group alone, as both editors send an activated group (Cursor 3.23.12 `workbench.desktop.main.js` 17269:28251, `extensionHostProcess.js` 131:33740). @example reactivatePreviousGroup() */
   function reactivatePreviousGroup(): void {
@@ -2957,6 +2972,7 @@ export async function workspaceHarness(
             setGroupLock(activeTabGroup, true)
             // The editor names the group that held the keyboard before the insertion again as the lock settles, while the new group is still empty.
             if (reactivatesPreviousGroupLater) reactivatePreviousGroup()
+            activateGroupOfTabOnce()
             return
           }
           // The editor unlocks only the group it names as active.
@@ -5236,6 +5252,14 @@ export async function workspaceHarness(
      */
     reactivatePreviousGroupBeforeLock(): void {
       reactivatesPreviousGroupBeforeLock = true
+    },
+    /**
+     * Makes the fake editor name the group that shows a tab as the active one right after the next `workbench.action.lockEditorGroup` answered, once, and before the reader's next command: another group than the one the lock reached is the active one when the reader acts on the lock's answer (Cycle 0046 row 668), as a group's activation that comes alone (a learner's click, or the editor's own activation of another group).
+     * @param tab - A tab of the group that becomes the active one.
+     * @example harness.activateGroupOfTabAfterNextLock(learnerAuth.tab)
+     */
+    activateGroupOfTabAfterNextLock(tab: Tab): void {
+      groupActivatedAfterLock = tab
     },
     /**
      * Locks a group as the learner's View: Lock Editor Group does, without moving the keyboard: the editor reports the whole tab model once (see `setGroupLock`), and the extension API cannot read the lock.
