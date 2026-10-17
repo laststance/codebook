@@ -44,8 +44,25 @@ async function listFiles(directory, prefix = '') {
   return files;
 }
 
-/** Whether a real path is the project root itself or lies below it. Called by {@link requireOwnFoldersToOutput}. @example isInProject('/repo', '/repo/.codebook') // => true; isInProject('/repo', '/elsewhere') // => false */
+/** Whether a real path is the project root itself or lies below it. Called by {@link requireOwnFolder} and {@link enteredProjectAt}. @example isInProject('/repo', '/repo/.codebook') // => true; isInProject('/repo', '/elsewhere') // => false */
 const isInProject = (root, path) => { const within = relative(root, path); return within === '' || !isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep); };
+
+/** Looks at one entry without following it; called by {@link enteredProjectAt}. @returns The entry's status, or undefined when nothing stands there. @example await lookAt('/repo/.codebook') // => undefined in a project without it */
+const lookAt = path => lstat(path).catch(error => { if (isMissing(error)) return undefined; throw error; });
+
+/** Refuses an entry on the output's path inside the project that is no folder of the project's own: a link, a file, or a folder whose real path leaves the project (a junction on Windows that lstat calls a directory). Called by {@link enteredProjectAt}. @example await requireOwnFolder('/repo', '/repo/wiki-link', stat) // throws while wiki-link is a link */
+async function requireOwnFolder(root, path, stat) {
+  if (!stat.isDirectory() || stat.isSymbolicLink() || !isInProject(root, await realpath(path)))
+    throw new Error('The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.');
+}
+
+/** Looks at one entry of the output's path, in the order {@link requireOwnFoldersToOutput} walks it: inside the project it must be a folder of the project's own ({@link requireOwnFolder}); before it, its real path says whether the project begins here. @returns Whether the path is inside the project from this entry on; undefined for a missing entry, below which nothing exists yet. @example await enteredProjectAt('/repo', '/repo/.codebook', true) // => true for a folder of the project's own */
+async function enteredProjectAt(root, path, hasEntered) {
+  const stat = await lookAt(path);
+  if (!stat) return undefined;
+  if (hasEntered) await requireOwnFolder(root, path, stat);
+  return hasEntered || isInProject(root, await realpath(path));
+}
 
 /** Refuses an output whose path, once it has entered the project, passes through a link or through an entry that is no folder of the project's own, before anything is created, read or written there: the stage, the journal and the backup lie beside the output, so a cloned repository that carries `.codebook` (or any folder on the way) as a link would have the publisher write outside the project. The folders up to the point where the path enters the project are the learner's choice, as is an output outside the project. Called by {@link locations} first. @example await requireOwnFoldersToOutput('/repo', '/repo/wiki-link/wiki') // throws while /repo/wiki-link is a link */
 async function requireOwnFoldersToOutput(root, requested) {
@@ -53,13 +70,9 @@ async function requireOwnFoldersToOutput(root, requested) {
   let path = parse(parent).root, hasEntered = false;
   for (const part of relative(path, parent).split(sep).filter(Boolean)) {
     path = join(path, part);
-    const stat = await lstat(path).catch(error => { if (isMissing(error)) return undefined; throw error; });
+    hasEntered = await enteredProjectAt(root, path, hasEntered);
     // Nothing below a missing folder exists yet; the preparation creates it as a folder of the project's own.
-    if (!stat) return;
-    // Inside the project, a link or a folder whose real path leaves the project (a junction on Windows) is refused; before it, the real path says whether this folder is where the project begins.
-    if (hasEntered && (!stat.isDirectory() || stat.isSymbolicLink() || !isInProject(root, await realpath(path))))
-      throw new Error('The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.');
-    hasEntered ||= isInProject(root, await realpath(path));
+    if (hasEntered === undefined) return;
   }
 }
 
