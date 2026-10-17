@@ -2189,6 +2189,66 @@ test('in VS Code, a Wiki recording visit with recorded values ends with the lear
   }
 })
 
+for (const host of ['VS Code', 'Cursor'] as const)
+  // Value: protects=the fidelity of the workspace harness's tab labels for a pane the reader retitles, on which every reader test that knows a tab by its label rests (the chat's give-back finds a remembered tab by its label, row 648): both editors name a webview's tab by its panel's title, also after `WebviewPanel.title` changes, and tell their tab listeners of the changed tab, so the recording's Application, which the reader retitles "codebook · Recorded application", has that label in front of its own group during a Repository Wiki recording visit and parked behind the Wiki after the article Return (C60 c60-vs-567 and c60-cu-567, 3-recording-open.json and 5-after-return.json); fails_when=the fake editor keeps the label the pane was created with, "codebook · Application", and reports no changed tab, so a test that reads tabs by label does not see the retitled pane; why_new=Cycle 0046 row 722; seam=articleRecordingLayoutHarness with a recording with recorded values, useHostAppName and addSeparateEditorPart for Cursor, the editor's onDidChangeTabs, openRepositoryEvidence with the recording, the return-wiki action and the groups' tab labels
+  test(`in ${host}, the recording's Application pane retitled by the reader is labelled codebook · Recorded application in front of its group during a Wiki recording visit and parked after the article Return, as ${host} labelled it`, async () => {
+    // Arrange: the learner's article in two stacked groups; in Cursor its chat part beside them.
+    const harness = await articleRecordingLayoutHarness(true, true)
+    if (host === 'Cursor') {
+      harness.useHostAppName('Cursor')
+      harness.addSeparateEditorPart()
+    }
+    const changedApplicationLabels: string[] = []
+    const subscription = harness.editor.window.tabGroups.onDidChangeTabs(
+      (event) => {
+        for (const tab of event?.changed ?? [])
+          if (Reflect.get(tab.input, 'viewType') === 'codebook.scopedBrowser')
+            changedApplicationLabels.push(tab.label)
+      },
+    )
+    /** Lists the labels of the Application's tabs in every group. */
+    const applicationLabels = (): string[] =>
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) =>
+            Reflect.get(tab.input, 'viewType') === 'codebook.scopedBrowser',
+        )
+        .map((tab) => tab.label)
+    try {
+      // Act: View recording in the Wiki, then Return to Wiki.
+      await harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      )
+      await harness.controller.settle()
+      const duringVisit = applicationLabels()
+      await harness.reader.action('return-wiki', true)
+      await harness.controller.settle()
+
+      // Assert
+      assert.deepEqual(
+        {
+          duringVisit,
+          toldChanged: changedApplicationLabels.includes(
+            'codebook · Recorded application',
+          ),
+          afterReturn: applicationLabels(),
+        },
+        {
+          duringVisit: ['codebook · Recorded application'],
+          toldChanged: true,
+          afterReturn: ['codebook · Recorded application'],
+        },
+      )
+    } finally {
+      subscription.dispose()
+      await harness.close()
+    }
+  })
+
 // Value: protects=the learner's window when a Repository Wiki recording visit is refused by a real change of the learner's, made while its Application was being placed: the learner typed in the file that had the keyboard, so the visit's focus return refuses, and the Application pane and the group the visit created go again, leaving the learner's two groups at their columns; fails_when=the refusal of the preparation's focus return, which comes after the Application stands in its own group, leaves that pane alone in a new group at column 1 with the learner's groups shifted (C58 c58-vs-567: "Recorded playback unavailable. …" in a new group); why_new=Cycle 0046 row 659 (a failed visit leaves no Application group behind); seam=articleRecordingLayoutHarness, focusMutableDraft and its replaceContent, holdNextCommand on workbench.action.lockEditorGroup, openRepositoryEvidence with the recording, the playback state's refusal and the groups
 test('a Repository Wiki recording visit refused because the learner typed in the focused file during its placement leaves no Application group behind', async () => {
   // Arrange: the learner's two groups are stacked and the learner's notes in the first group have the keyboard; the editor holds its answer to the new Application group's lock.

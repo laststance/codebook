@@ -4352,11 +4352,11 @@ for (const host of ['VS Code', 'Cursor'] as const)
       // Act
       await harness.reader.close()
 
-      // Assert: the copy stood beside the Application in its group; after the Close the learner's two groups (and Cursor's chat part) are the only ones, none locked.
+      // Assert: the copy stood beside the Application in its group, whose tab is named by the recording's title (row 722); after the Close the learner's two groups (and Cursor's chat part) are the only ones, none locked.
       assert.deepEqual(beforeClose[0], {
         column: 1,
         locked: true,
-        tabs: ['codebook · Application', 'login-form.tsx'],
+        tabs: ['codebook · Recorded application', 'login-form.tsx'],
       })
       assert.deepEqual(
         harness.groups.map((group) => ({

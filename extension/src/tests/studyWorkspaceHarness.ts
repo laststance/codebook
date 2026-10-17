@@ -2577,7 +2577,21 @@ export async function workspaceHarness(
       },
       emit,
       viewColumn,
-      title,
+      get title() {
+        return title
+      },
+      /**
+       * Retitles the pane as `WebviewPanel.title` does: both editors' tab models name a webview's tab by its panel's title, so the tab's label follows, and the editor tells its tab listeners that the tab changed (VS Code 1.140.0's main thread answers the editor input's label change with a tab update, which the extension host reports as a changed tab). C60's c60-vs-567 and c60-cu-567 read the parked recording's tab as "codebook · Recorded application" (3-recording-open.json, 5-after-return.json; Cycle 0046 row 722).
+       * @param value - The new title.
+       */
+      set title(value: string) {
+        title = value
+        nativeTab.label = value
+        // Only a tab that stands in a group is reported.
+        if (groups.some((group) => group.tabs.includes(nativeTab)))
+          for (const listener of tabChangeListeners)
+            listener({ opened: [], closed: [], changed: [nativeTab] })
+      },
       /**
        * Keeps the actual panel handle associated with its current tab wrapper for registration and full-model resync tests.
        * @param replacement - A full-model replacement already present in the current native groups; omitted, only the tab object is rebuilt.
