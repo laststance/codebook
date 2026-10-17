@@ -366,6 +366,71 @@ test('a recorded native stack selects its current historical model without requi
   }
 })
 
+// Value: protects=Play inside one recorded stop: its frames share one selection, so the owner asks the host for its commands once and selects the native model once, while the next stop is selected again (F6, Cycle 0046 /ship review); fails_when=every presented frame of a stop with values asks `getCommands(true)` and runs workbench.action.debug.focusProcess again, a catalog roundtrip and a model selection per frame; why_new=every model-selection test presented one frame; seam=the editor's command port, which counts discovery and selections, and the native client's threads and stackTrace requests
+test('the frames of one recorded stop ask the host for its commands once and select the native model once, and the next stop is selected again', async () => {
+  // Arrange: a client honors the focus hint, loading the stop's values when the model is selected; the host's command catalog counts its answers.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    let discoveries = 0
+    const selections: string[] = []
+    fixture.editor.commands = {
+      getCommands: async () => {
+        discoveries += 1
+        return ['workbench.action.debug.focusProcess']
+      },
+      executeCommand: async (command) => {
+        selections.push(command)
+        fixture.inspect()
+        return undefined
+      },
+    }
+    const firstFrame = fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 1.00 s',
+      new AbortController().signal,
+    )
+    await fixture.started
+    await flushNative()
+    const firstThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: firstThread.id })
+    const inspections = [await firstFrame]
+
+    // Act: two later frames of the same stop, as Play presents them, then the next stop.
+    for (let frame = 0; frame < 2; frame += 1)
+      inspections.push(
+        await fixture.owner.present(
+          inspectedSnapshot,
+          'Recorded pause · 1.00 s',
+          new AbortController().signal,
+        ),
+      )
+    const nextStop = fixture.owner.present(
+      structuredClone(inspectedSnapshot),
+      'Recorded pause · 2.50 s',
+      new AbortController().signal,
+    )
+    await flushNative()
+    const nextThread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: nextThread.id })
+    inspections.push(await nextStop)
+
+    // Assert
+    assert.deepEqual(
+      { inspections, discoveries, selections },
+      {
+        inspections: ['inspected', 'inspected', 'inspected', 'inspected'],
+        discoveries: 1,
+        selections: [
+          'workbench.action.debug.focusProcess',
+          'workbench.action.debug.focusProcess',
+        ],
+      },
+    )
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
 test('a background native debugger cannot be selected by historical default-session resolution', async () => {
   // Arrange: the host resolver may choose any paused session when no explicit native model is supplied.
   const fixture = harness(undefined, undefined, 0, false, true)

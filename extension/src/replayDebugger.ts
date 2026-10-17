@@ -59,6 +59,10 @@ export class ReplayDebugger {
     label: string
     sourceUri?: string
   }
+  /** The selection ({@link selected}) whose native model {@link selectNativeInspectionModel} has settled: it ran {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for it, or the host registers no such command. A later frame of the same stop does not select it again; a new selection is a new object and is selected once. */
+  private modelSelectionSettledFor?: ReplayDebugger['selected']
+  /** Positive discovery of {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, kept for this owner by {@link nativeInspectionCommands}, so later stops need no catalog roundtrip; a host that did not register it is asked again at its next new selection. */
+  private registeredNativeFocusCommand = false
   private hasPresented = false
   private lastPresentedSnapshot?: ReplayDebugSnapshot
   /** The last committed moment's values were not loaded and native Run and Debug has requested none since. */
@@ -541,17 +545,30 @@ export class ReplayDebugger {
     }[stage]
   }
 
-  /** Selects the current owned native model after its real stack receipt without borrowing editor keyboard focus; {@link present} calls it before inspection. @param adapter - Adapter owning this selection. @param revision - Presentation that must still own the model. @param signal - Cancels an outdated selection. @example await this.selectNativeInspectionModel(adapter, revision, signal) */
+  /**
+   * Selects the current owned native model after its real stack receipt without borrowing editor keyboard focus; {@link present} calls it before inspection for every presented frame of a stop with loadable values.
+   * It runs once per selection ({@link modelSelectionSettledFor}): during Play the frames of one stop share their selection, and asking the host for its commands and running {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} again for each frame would repeat a model selection the host already made. A selection whose model was not selected (its stack not fetched within the grace, another debugger beside it, an abandoned presentation) is tried again at its next frame.
+   * @param adapter - Adapter owning this selection.
+   * @param revision - Presentation that must still own the model.
+   * @param signal - Cancels an outdated selection.
+   * @example await this.selectNativeInspectionModel(adapter, revision, signal)
+   */
   private async selectNativeInspectionModel(
     adapter: ReplayDebugAdapter,
     revision: number,
     signal: AbortSignal,
   ): Promise<void> {
+    const selection = this.selected
+    // A later frame of the same stop: its model was selected already, or the host has no command for it.
+    if (selection && this.modelSelectionSettledFor === selection) return
     const commands = await this.nativeInspectionCommands(signal)
     signal.throwIfAborted()
     // Even an unsupported-command answer may arrive after another moment was selected.
     this.assertInspectionOwnership(adapter, revision)
-    if (!commands) return
+    if (!commands) {
+      this.modelSelectionSettledFor = selection
+      return
+    }
     const stackRetrieved = await untilAborted(
       this.awaitRetrieval('stack', REPLAY_DEBUG_INSPECTION_GRACE_MS),
       signal,
@@ -571,12 +588,21 @@ export class ReplayDebugger {
       signal,
     )
     this.assertInspectionOwnership(adapter, revision)
+    this.modelSelectionSettledFor = selection
   }
 
-  /** Resolves supported native model commands within the ordinary native-operation bound for {@link selectNativeInspectionModel}. @param signal - Cancels an abandoned presentation. @returns The editor command port only when it registers the native selection entry. @example await this.nativeInspectionCommands(signal) // => undefined on an unsupported host */
+  /**
+   * Resolves supported native model commands within the ordinary native-operation bound for {@link selectNativeInspectionModel}.
+   * A positive answer is kept for this owner ({@link registeredNativeFocusCommand}): the command is the workbench's own and stays registered while the editor runs, so later stops ask the host's catalog no more.
+   * @param signal - Cancels an abandoned presentation.
+   * @returns The editor command port only when it registers the native selection entry.
+   * @example await this.nativeInspectionCommands(signal) // => undefined on an unsupported host
+   */
   private async nativeInspectionCommands(signal: AbortSignal) {
     const commands = this.editor.commands
     if (!commands) return undefined
+    // Discovery cannot delay a later stop once this owner found the command.
+    if (this.registeredNativeFocusCommand) return commands
     const supported = await untilAborted(
       awaitResponse(
         commands.getCommands(true),
@@ -586,9 +612,9 @@ export class ReplayDebugger {
       ),
       signal,
     )
-    return supported?.includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND)
-      ? commands
-      : undefined
+    if (supported?.includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND))
+      this.registeredNativeFocusCommand = true
+    return this.registeredNativeFocusCommand ? commands : undefined
   }
 
   /** Rejects a lost historical owner before and after the native model request in {@link selectNativeInspectionModel}. @param adapter - Adapter serving the expected moment. @param revision - Expected presentation. @throws The existing closed or superseded presentation error after ownership changes. @example this.assertInspectionOwnership(adapter, revision) */
