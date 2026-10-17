@@ -18,7 +18,7 @@ export async function assertNoLinkOnWikiPath(
   projectRoot: string,
 ): Promise<void> {
   // The walk includes the Wiki folder itself: a link there would have the Wiki read and served from outside the project as much as one above it.
-  const linkedEntry = await findLinkOnWikiPath(projectRoot, outputDirectory)
+  const linkedEntry = await findLinkOnWikiPath(outputDirectory, projectRoot)
   if (linkedEntry === undefined) return
   throw new Error(
     linkedEntry === outputDirectory

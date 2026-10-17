@@ -102,20 +102,20 @@ async function findFolderBlock(
 /**
  * Says what blocks an update when the Wiki folder's path inside the project passes through a link or a file; called by {@link findPathBlock} first, before the Wiki folder itself is looked at.
  * Why: the publisher looks at that path before anything else and refuses it, because its stage, journal and backup beside the Wiki folder would lie beyond the link, outside the project. Found here, the learner reads the reason at once and no agent is asked. The look is the publisher's own walk ({@link findLinkOnWikiPath}).
- * @param projectRoot - The opened project.
  * @param outputDirectory - Resolved Wiki output folder.
+ * @param projectRoot - The opened project.
  * @returns Cause `linked-parent` with the entry as the learner reads it (project-relative, {@link wikiOutputLabel}); `undefined` when the path holds none, for an output outside the project, and when the path cannot be looked at.
  * @example
- * await findLinkedParentBlock('/repo', '/repo/.codebook/wiki') // => { cause: 'linked-parent', paths: ['.codebook'] } while `.codebook` is a link
+ * await findLinkedParentBlock('/repo/.codebook/wiki', '/repo') // => { cause: 'linked-parent', paths: ['.codebook'] } while `.codebook` is a link
  */
 async function findLinkedParentBlock(
-  projectRoot: string,
   outputDirectory: string,
+  projectRoot: string,
 ): Promise<WikiUpdateStartBlock | undefined> {
   // The Wiki folder itself is the next look's ({@link findFolderBlock}), with a cause of its own.
   const linkedEntry = await findLinkOnWikiPath(
-    projectRoot,
     dirname(outputDirectory),
+    projectRoot,
   ).catch(() => undefined)
   return linkedEntry === undefined
     ? undefined
@@ -127,18 +127,18 @@ async function findLinkedParentBlock(
 
 /**
  * Says what blocks an update on the Wiki folder's path, in the publisher's order: a link or a file on the path inside the project ({@link findLinkedParentBlock}), then the Wiki folder itself ({@link findFolderBlock}); called by {@link findWikiUpdateStartBlock} before anything at or below the Wiki folder is listed or read.
- * @param projectRoot - The opened project.
  * @param outputDirectory - Resolved Wiki output folder.
+ * @param projectRoot - The opened project.
  * @returns Cause `linked-parent` or `not-a-folder` as those two answer it; `undefined` when neither blocks.
  * @example
- * await findPathBlock('/repo', '/repo/.codebook/wiki') // => { cause: 'not-a-folder', paths: ['wiki'] } while `wiki` is a link and `.codebook` a folder
+ * await findPathBlock('/repo/.codebook/wiki', '/repo') // => { cause: 'not-a-folder', paths: ['wiki'] } while `wiki` is a link and `.codebook` a folder
  */
 async function findPathBlock(
-  projectRoot: string,
   outputDirectory: string,
+  projectRoot: string,
 ): Promise<WikiUpdateStartBlock | undefined> {
   return (
-    (await findLinkedParentBlock(projectRoot, outputDirectory)) ??
+    (await findLinkedParentBlock(outputDirectory, projectRoot)) ??
     findFolderBlock(outputDirectory)
   )
 }
@@ -212,7 +212,7 @@ export async function findWikiUpdateStartBlock(
   const now = options.now ?? Date.now
   const wait = options.wait ?? ((delayMs: number) => sleepFor(delayMs))
   // The publisher refuses a link on the Wiki folder's path, or a Wiki folder that is no folder of its own, before it looks at anything else.
-  const pathBlock = await findPathBlock(projectRoot, outputDirectory)
+  const pathBlock = await findPathBlock(outputDirectory, projectRoot)
   if (pathBlock) return pathBlock
   // The publisher checks its journal first, so an unfinished publish is reported before any edited page.
   const journalPath = outputDirectory + WIKI_PUBLISH_JOURNAL_SUFFIX

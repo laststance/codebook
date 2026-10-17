@@ -28,20 +28,20 @@ function isInProject(realRoot: string, realPath: string): boolean {
  * Why: the publisher writes its stage, journal and backup beside the Wiki folder, so a cloned repository that carries `.codebook`, or another folder on that path, as a link would have it write outside the project, and a Wiki folder that is itself such a link would have Codebook read and serve a Wiki from outside the project. The publisher (`skills/codebook/publish-wiki.mjs`) refuses such a path before it writes anything, and Codebook reads no Wiki through it either.
  * The path is walked the way the publisher walks it: from the file system's root to `folder`. The folders before the path enters the project (a folder whose real path is the project or lies in it) are followed, and so is every folder of a path outside the project: they are the learner's choice. From there on, each entry must be a folder (no link, no file) whose real path stays in the project, which also refuses a junction on Windows that a look without following calls a directory.
  *
- * @param projectRoot - The opened project.
  * @param folder - The last folder of the path to look at: the Wiki folder's parent, or the Wiki folder itself.
+ * @param projectRoot - The opened project.
  * @returns
  * - The path, as `folder` writes it, of the first entry after the path entered the project that is a link, a file or a folder whose real path leaves the project
  * - `undefined` when there is none, when the path lies outside the project, and from the first entry on the path that is missing (the publisher creates it as a folder of its own)
  * @throws What the file system throws for an entry on the path that cannot be looked at, other than a missing one.
  * @example
- * await findLinkOnWikiPath('/repo', '/repo/.codebook')      // => '/repo/.codebook' while the repository carries `.codebook` as a link
- * await findLinkOnWikiPath('/repo', '/repo/.codebook/wiki') // => '/repo/.codebook/wiki' while the Wiki folder itself is a link
- * await findLinkOnWikiPath('/repo', '/srv')                 // => undefined
+ * await findLinkOnWikiPath('/repo/.codebook', '/repo')      // => '/repo/.codebook' while the repository carries `.codebook` as a link
+ * await findLinkOnWikiPath('/repo/.codebook/wiki', '/repo') // => '/repo/.codebook/wiki' while the Wiki folder itself is a link
+ * await findLinkOnWikiPath('/srv', '/repo')                 // => undefined
  */
 export async function findLinkOnWikiPath(
-  projectRoot: string,
   folder: string,
+  projectRoot: string,
 ): Promise<string | undefined> {
   const realRoot = await realpath(projectRoot)
   let path = parse(folder).root
