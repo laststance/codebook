@@ -1898,12 +1898,45 @@ export class StudyService {
       : record.runtime?.evidence.failure
   }
 
+  /**
+   * Gives the runtime's own first failure for {@link StudyService.state}'s terminal reason, read when the run has no error of its own and no evidence failure of the run: a runtime that failed itself on a failed evidence write (a snapshot's save into the gone directory of a removed study) gives its raw error, and when the run was stopped before a maintenance turn made that the run's error, nothing words it again once the removal is known ({@link StudyService.wordFailuresByRemoval}). For a removed study such a failure names the internal storage path, so it is worded as a failed evidence write with the removal's sentence ({@link StudyService.writeFailureError}), as the run's error is (Cycle 0046 rows 667, 700 and 707); every other failure stays as the runtime gave it.
+   * @param record - The run.
+   * @param runtime - Its runtime's view read for this state; `undefined` without a runtime.
+   * @returns
+   * - `undefined` when the runtime reported no failure
+   * - For a removed study's failure that names the run's evidence directory: 'Evidence buffering or persistence failed. Cause: ' and the removal's sentence
+   * - Otherwise the runtime's first failure
+   * @example this.runtimeFailureOf(removedRecord, runtime) // => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …"
+   */
+  private runtimeFailureOf(
+    record: StudyRecord,
+    runtime: RuntimeView | undefined,
+  ): string | undefined {
+    const failure = runtime?.failures[0]
+    // Only a removed study's failure that names its evidence directory is worded again.
+    if (
+      !runtime ||
+      failure === undefined ||
+      !isStudyRemovalExclusion(record.historyExcluded) ||
+      !failure.includes(runtime.artifactDirectory)
+    )
+      return failure
+    return this.writeFailureError(
+      record,
+      'Evidence buffering or persistence failed.',
+      failure,
+    ).message
+  }
+
   /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const runtime = record.runtime?.view()
     const evidenceFailure = this.runEvidenceFailure(record)
     // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
-    const runtimeFailure = runtime?.failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
+    const runtimeFailure = this.runtimeFailureOf(record, runtime)?.slice(
+      0,
+      MAX_UI_TEXT_CHARS,
+    )
     const terminalReason =
       record.error?.message.slice(0, MAX_UI_TEXT_CHARS) ??
       evidenceFailure?.slice(0, MAX_UI_TEXT_CHARS) ??

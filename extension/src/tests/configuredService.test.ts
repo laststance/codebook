@@ -1106,6 +1106,134 @@ test('a run whose saved study was found removed after its evidence write failed 
   )
 })
 
+// Value: protects=the evidence that no resource serves the storage path a removed study's kept run.failed holds in memory: once the removal is known, the run's journal (Evidence.events) still holds the run.failed the runtime journaled with the write's raw failure, but every resource below the run, its events among them, refuses with the removal's sentence (StudyService.assertEvidenceReadable), and the run resource and the status resource read the error row 700 worded again; the recording context takes no run.failed reason (only its time, for a paused interval) and is built only from a saved archive, which a removed study no longer gets; fails_when=a resource below a removed run serves its journal again, so an agent reads the storage path in the kept run.failed; why_new=Cycle 0046 row 707 (evidence: the in-memory event is served by no resource after the removal; this test reads every copy a reader can reach); seam=the run's evidence directory removed, an event recorded after that, maintain, the run.failed ConfiguredBrowserRun.fail journals (Evidence.recordFailure with the run's error), the release's wait, StudyService.excludeHistory, readResource of the run, its events and its manifest, and StudyService.status
+test("a removed study's kept run failure with the storage path is served by no resource: its events and manifest are refused with the removal, and the run and status name no path", async (context) => {
+  // Arrange: as above, and the runtime journals the run's failure as ConfiguredBrowserRun.fail does, with the raw write failure in its reason; then the learner's Retry storage finds the archive gone.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-kept-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  service.maintain()
+  runtime.evidence.recordFailure(record.error!.message)
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  service.excludeHistory(record, 'archive-removed')
+  const path = runtime.evidence.directory
+
+  // Act: every copy a reader can reach.
+  const refusalOf = (uri: string) =>
+    readResource(service, uri).then(
+      () => 'served',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+    )
+  const events = await refusalOf(`${receipt.runUri}/events/0`)
+  const manifest = await refusalOf(`${receipt.runUri}/manifest`)
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert: the journal keeps the raw reason in memory, and no resource serves it.
+  assert.ok('text' in run)
+  const keptFailure = runtime.evidence.events.find(
+    (event) => event.type === 'run.failed',
+  )
+  assert.deepEqual(
+    {
+      journalKeepsPath: JSON.stringify(keptFailure?.detail).includes(path),
+      events,
+      manifest,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      journalKeepsPath: true,
+      events:
+        "EVIDENCE_UNAVAILABLE: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      manifest:
+        "EVIDENCE_UNAVAILABLE: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
+// Value: protects=what an agent and the learner read for a run whose runtime failed itself on an evidence write into the gone directory of its removed study and was stopped before a maintenance turn made that failure the run's error (a learner's or an agent's Stop within MAINTENANCE_INTERVAL_MS of the failure): once the removal is known, the run resource's terminal reason, read from the runtime's own failure (the reason of its kept run.failed too), names the failed write and the removal, and neither the run nor the status resource names the storage path; fails_when=the terminal reason is the runtime's raw failure, "Error: ENOENT: no such file or directory, open '<global storage>/…/snapshot.json.tmp'", which row 700's rewording does not reach because the run has no error of its own; why_new=Cycle 0046 row 707 (the runtime's copy of the kept run.failed's reason, which the run resource serves); seam=the run's evidence directory removed, the snapshot save ConfiguredBrowserRun makes and its own failure (track and fail: the failure listed, the status failed, run.failed journaled), StudyService.stop before maintain, StudyService.excludeHistory, readResource of the run and StudyService.status
+test("a run that failed itself on a removed study's evidence write and was stopped before a maintenance turn names the failed write and the removal, not the storage path", async (context) => {
+  // Arrange: the evidence directory is gone; the runtime's snapshot save fails and the runtime fails itself with that raw error, as ConfiguredBrowserRun does; the learner stops the run before the next maintenance turn.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-runtime-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  await runtime.evidence.save('snapshot.json', {}).catch((error: unknown) => {
+    runtime.failures.push(String(error))
+    runtime.status = 'failed'
+    runtime.evidence.recordFailure(String(error))
+  })
+  await service.stop(receipt).catch(() => undefined)
+  const path = runtime.evidence.directory
+  const terminalNamedPathBefore = Boolean(
+    service.state(record).terminalReason?.includes(path),
+  )
+
+  // Act: the learner's Retry storage finds the archive gone.
+  service.excludeHistory(record, 'archive-removed')
+  const run = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in run)
+  assert.deepEqual(
+    {
+      terminalNamedPathBefore,
+      terminalReason: z
+        .object({ terminalReason: z.string() })
+        .parse(JSON.parse(run.text)).terminalReason,
+      runNamesPath: run.text.includes(path),
+      statusNamesPath: JSON.stringify(
+        status.runs.find((entry) => entry.runId === record.id),
+      ).includes(path),
+    },
+    {
+      terminalNamedPathBefore: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      runNamesPath: false,
+      statusNamesPath: false,
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange
