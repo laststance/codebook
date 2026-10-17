@@ -4816,6 +4816,72 @@ test('in Cursor beside its chat part, an agent’s Study selection made while a 
   }
 })
 
+// Value: protects=an agent's cold Study selection beside Cursor's Agent chat part made while the learner types in a file of the second group and Cursor still names its chat part's group (C61 c61-cu-692: a genuine click into auth.ts renamed no group; rows 702 and 712): the selection completes, its focus capture takes the group of the text editor that has the keyboard rather than the chat part's group Cursor names, and the keyboard ends on no page body; fails_when=the capture takes the named chat part's group for auth.ts's, so the focus return finds no auth.ts there and the selection is refused with "The previously focused source group changed; focus was not guessed." after its borrow and insertion, the keyboard left on the page body (C61); why_new=Cycle 0046 row 712; seam=useNativeLayout, addSeparateEditorPart and its focusTab (the chat tab named), leavePaneFocusUnreportedBesideChat, keepChatPartNameAtLearnersFileClick, focusMutableDraft and its focus (the learner's click), workInActiveTextEditor (the click's sign), the service's selectPresentation, keyboardOnBody, the editor's active text editor and the information messages
+test('in Cursor beside its chat part, an agent’s cold Study selection made while the learner types in a file of the second group under the chat part’s group name completes and leaves the keyboard on no page body', async () => {
+  // Arrange: login-form.tsx is in front of the first group and auth.ts in front of the second; the learner clicked the chat tab, then into auth.ts, and Cursor still names its chat part's group.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const auth = harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    harness.keepChatPartNameAtLearnersFileClick()
+    auth.focus()
+    harness.workInActiveTextEditor('mouse')
+    const before = {
+      named: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      activeTextEditor: harness.editor.window.activeTextEditor?.document.uri
+        .toString()
+        .split('/')
+        .at(-1),
+    }
+    const selection = harness.reader.presentationState()
+
+    // Act
+    const answer = await harness.service
+      .selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .then(
+        (value) => ({ layoutConfirmed: value.layoutConfirmed }),
+        (error: unknown) => ({ refusal: String(error) }),
+      )
+
+    // Assert: the selection is confirmed; the captured source placed in front of the second group over auth.ts has the keyboard, and the learner was told once that a Codebook pane came over the file.
+    assert.deepEqual(
+      {
+        before,
+        answer,
+        keyboardOnBody: harness.keyboardOnBody(),
+        chatHasKeyboard: chat.focused(),
+        activeTextEditor: harness.editor.window.activeTextEditor?.document.uri
+          .toString()
+          .split('/')
+          .at(-1),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        before: { named: 3, activeTextEditor: 'auth.ts' },
+        answer: { layoutConfirmed: true },
+        keyboardOnBody: false,
+        chatHasKeyboard: false,
+        activeTextEditor: 'Captured-overview.mts',
+        messages: [
+          'A Codebook pane (the Application pane or the captured source) came to the front over the file you were working in and has the keyboard now: a hidden file cannot keep it. Click where you want to type.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); the selection is the learner's since row 656: an agent's selection beside Cursor's chat part gives no unproven file its focus back, so only the learner's own selection still makes that return; seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the reader's changePresentation for the learner
 test('in Cursor, a learner’s cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
   // Arrange: as above in Cursor; the selection's layout command will wait until the learner closed auth.ts.

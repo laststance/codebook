@@ -946,6 +946,8 @@ export async function workspaceHarness(
   let leavesPaneFocusUnreportedBesideChat = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
   let keepsNamingGroupAfterFrameNavigation = false
+  // Cursor 3.23.12: the learner's click into a file of the main editor keeps the chat part's group named; see `keepChatPartNameAtLearnersFileClick`.
+  let keepsChatPartNameAtLearnersFileClick = false
   let deferMovedFocusEcho = false,
     pendingMovedFocusEcho: typeof activeTabGroup | undefined
   let deferKeptFocusEcho = false,
@@ -1716,6 +1718,23 @@ export async function workspaceHarness(
     keyboardOnBody = false
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
+  }
+  /**
+   * Gives a draft's text editor the keyboard as the learner's click into its text does; called by `focusMutableDraft` and its `focus`. In the model of `keepChatPartNameAtLearnersFileClick` the click renames no group while Cursor names its chat part's group: that name stays, with the file reported as the active text editor ({@link giveDraftKeyboard} otherwise).
+   * @param opened - What `openDraftTab` returned for that draft.
+   * @example clickIntoDraft(openDraftTab('auth.ts', 2)) // auth.ts has the keyboard; Cursor may still name its chat part's group
+   */
+  function clickIntoDraft(opened: ReturnType<typeof openDraftTab>): void {
+    const named = staleNamedGroup ?? activeTabGroup
+    giveDraftKeyboard(opened)
+    // Cursor 3.23.12 kept its chat part's group named through the learner's click into auth.ts (C61 c61-cu-692; Cycle 0046 rows 702 and 712).
+    if (
+      keepsChatPartNameAtLearnersFileClick &&
+      separateEditorPart &&
+      !separateEditorPart.floatingVsCodeChat &&
+      named === separateEditorPart.group
+    )
+      staleNamedGroup = named
   }
   /**
    * Ends the separate part's keyboard and its place as the active editor part, as an editor group, a pane or a text editor of the main editor that takes the keyboard does; called wherever the fake editor gives the main editor the keyboard (a group focus command, a document shown with the focus, a pane revealed with the focus, the learner's click on a tab).
@@ -5656,6 +5675,16 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
+     * Makes the learner's click into a file of the main editor (`focusMutableDraft` and its `focus`) keep Cursor's name of its chat part's group, as Cursor 3.23.12 did on C61: after a genuine click into the text of auth.ts in front of group 2, auth.ts was the active text editor with the keyboard in its TEXTAREA while `activeTabGroup` still named the chat part's group 3 (private c61-cu-692; a click renames no group, as row 702's probe read for the chat input; Cycle 0046 row 712). The name stays until the next group event, as every stale name of this model does. Without it the click names the file's group.
+     * @example
+     * chat.focusTab()
+     * harness.keepChatPartNameAtLearnersFileClick()
+     * auth.focus() // auth.ts has the keyboard; the chat part's group is still named
+     */
+    keepChatPartNameAtLearnersFileClick(): void {
+      keepsChatPartNameAtLearnersFileClick = true
+    },
+    /**
      * Opens VS Code 1.140.0's floating window of text editors beside the main editor: one learner's file per group, the groups counted after the main editor's (`workbench.desktop.main.js` 699:19807, 1106:181094), a layout read answered for the floating window's own grid while it is the focused window (993:31655), `workbench.action.focusFirstEditorGroup` focusing the main window's first group, and a numbered focus command of a floating group's column raising that window (987:4284). Not modelled: panes in the floating window and its close (Cycle 0046 rows 688 and 689).
      * @param filenames - The learner's file of each group of the floating window, from its first group on.
      * @returns `focus(index)`: the learner's click into the text editor of that group, after which the floating window is the focused one.
@@ -5850,7 +5879,7 @@ export async function workspaceHarness(
     ) {
       const opened = openDraftTab(filename, column)
       const { document, tab, editor, replaceText } = opened
-      giveDraftKeyboard(opened)
+      clickIntoDraft(opened)
       return {
         document,
         tab,
@@ -5859,7 +5888,7 @@ export async function workspaceHarness(
           replaceText(value)
         },
         focus(): void {
-          giveDraftKeyboard(opened)
+          clickIntoDraft(opened)
         },
       }
     },

@@ -2741,7 +2741,7 @@ export class StudyWorkspace {
     if (editor) {
       const document = editor.document,
         documentVersion = document.version,
-        group = vscode.window.tabGroups.activeTabGroup,
+        group = this.groupOfKeyboardEditor(editor),
         selections = editor.selections,
         restoreReadingPosition = retainEditorReadingPosition(editor),
         preview = group.activeTab?.isPreview ?? false
@@ -2815,6 +2815,28 @@ export class StudyWorkspace {
       )
     // Any other tab stays as it is: an agent chat, a settings page, an image the learner keeps, and a learner's own file that the editor names as the active tab while another part (the chat input) holds the keyboard, so that no text editor is active. {@link retainForeignTabFocus} gives its group the focus back after the last layout read.
     return async (): Promise<void> => {}
+  }
+
+  /**
+   * Names the group of the text editor that has the keyboard, for the focus {@link capturePresentationFocus} captures: the group the editor names as active when it shows that editor's document in front, otherwise the group of that editor's column that does. Cursor 3.23.12 keeps naming its chat part's group after the learner's click into a file of the main editor (C61 c61-cu-692, Cycle 0046 row 712), and that group holds no tab of the document, so the focus return refused the selection with "The previously focused source group changed; focus was not guessed.".
+   * @param editor - The text editor that has the keyboard.
+   * @returns That group; the named group when no group of the editor's column shows the document in front.
+   * @example this.groupOfKeyboardEditor(editor).viewColumn // => 2 for auth.ts in front of the second group while Cursor names its chat part's group 3
+   */
+  private groupOfKeyboardEditor(editor: vscode.TextEditor): vscode.TabGroup {
+    const named = vscode.window.tabGroups.activeTabGroup,
+      uri = editor.document.uri.toString()
+    /** Says whether a group shows the editor's document in front, as a text tab. */
+    const showsDocument = (group: vscode.TabGroup): boolean =>
+      group.activeTab?.input instanceof vscode.TabInputText &&
+      group.activeTab.input.uri.toString() === uri
+    if (showsDocument(named)) return named
+    return (
+      vscode.window.tabGroups.all.find(
+        (group) =>
+          group.viewColumn === editor.viewColumn && showsDocument(group),
+      ) ?? named
+    )
   }
 
   /**
