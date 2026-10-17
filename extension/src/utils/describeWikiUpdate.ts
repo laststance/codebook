@@ -440,7 +440,7 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
-   * Words a start refused because the Wiki folder, or a folder on its path inside the project, is a link or a file; called by {@link describeConflict} between {@link describePageRefusal} and {@link describeRecoveryRefusal}.
+   * Words a start refused because the Wiki folder, or a folder on its path inside the project, is a link or a file, or leads out of the project; called by {@link describeConflict} between {@link describePageRefusal} and {@link describeRecoveryRefusal}.
    * @param cause - The cause of the conflict.
    * @param named - The Wiki folder's own name for `not-a-folder`, the folder on its path as the learner reads it for `linked-parent`, as the sentence names it.
    * @returns The sentence after the time for `not-a-folder` and `linked-parent`, with the next step; undefined for every other cause.
@@ -456,7 +456,7 @@ export function describeWikiUpdate(
       return (
         'the Wiki folder itself (' +
         named +
-        ') is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), then press Update LLM Wiki again.'
+        ') is a link or a file, or leads out of the project, and the publisher refuses anything there but a folder of its own. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.'
       )
     if (cause === 'linked-parent')
       return (

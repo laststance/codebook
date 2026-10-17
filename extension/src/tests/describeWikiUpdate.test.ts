@@ -773,8 +773,8 @@ test('a link or special file in the Wiki folder is named with the step that lets
   )
 })
 
-// Value: protects=the learner whose Wiki folder is itself a link or a file (a repository that carries `.codebook/wiki` as a link); fails_when=the refusal has no sentence, so the page shows "Update stopped: it would overwrite your own file in the Wiki folder (wiki)", or it reuses the sentence of a link inside the folder and tells the learner to move the Wiki folder out of the Wiki folder (row 185), or it reads otherwise than its sibling refusals of a link on the Wiki's path; why_new=Cycle 0046 row 185: a cause of its own; /ship repeat review D1b: the three refusals of the same kind read alike; seam=none
-test('a Wiki folder that is itself a link or a file is named as the reason no update started, with the step that gives the publisher a real folder', () => {
+// Value: protects=the learner whose Wiki folder is itself a link or a file (a repository that carries `.codebook/wiki` as a link); fails_when=the refusal has no sentence, so the page shows "Update stopped: it would overwrite your own file in the Wiki folder (wiki)", or it reuses the sentence of a link inside the folder and tells the learner to move the Wiki folder out of the Wiki folder (row 185), or it reads otherwise than its sibling refusals of a link on the Wiki's path; why_new=Cycle 0046 row 185: a cause of its own; /ship repeat review D1b: the three refusals of the same kind read alike; repeat design review PD5: the sentence names a folder that leads out of the project and gives both ways on, as its siblings do; seam=none
+test('a Wiki folder that is itself a link or a file, or leads out of the project, is named as the reason no update started, with the two ways to give the publisher a folder of its own', () => {
   // Arrange
   const refused: WikiUpdateStatus = {
     state: 'conflict',
@@ -792,7 +792,7 @@ test('a Wiki folder that is itself a link or a file is named as the reason no up
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update not started (21:10): the Wiki folder itself (wiki) is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), then press Update LLM Wiki again.',
+    'Update not started (21:10): the Wiki folder itself (wiki) is a link or a file, or leads out of the project, and the publisher refuses anything there but a folder of its own. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.',
   )
 })
 
