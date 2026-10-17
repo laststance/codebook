@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import {
   APPLICATION_GROUP_MARKER_KEY,
   CURSOR_FOCUS_AGENT_COMMAND,
+  NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
   type ReaderErrorKind,
 } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
@@ -126,6 +127,7 @@ export async function workspaceHarness(
     'list.focusFirst',
     'list.expand',
     'workbench.view.debug',
+    NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
   ]
   /** Commands this host does not register; see `removeHostCommands`. */
   const absentHostCommands = new Set<string>()
@@ -614,6 +616,8 @@ export async function workspaceHarness(
     { wait: Promise<void>; entered(): void } | undefined
   let nextRecordingReveal: { wait: Promise<void>; entered(): void } | undefined
   let registeredHistoricalDebuggers = 0
+  /** The source document of the stop the fake historical debugger presented last with values, which the fake editor's {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} reveals (`revealHistoricalStopSource`, row 721). */
+  let historicalStopSource: string | undefined
   class TestReplayDebugger {
     available = true
     private closed = false
@@ -623,7 +627,12 @@ export async function workspaceHarness(
      * @example new TestReplayDebugger(vscode, (reason) => workspace.replayDebuggerChanged(reason))
      */
     constructor(
-      _editor: unknown,
+      private readonly editor: {
+        commands: {
+          getCommands(filterInternal?: boolean): Thenable<string[]>
+          executeCommand(name: string, ...rest: unknown[]): Thenable<unknown>
+        }
+      },
       readonly changed: (
         reason: 'values-loaded' | 'session-ended',
       ) => void = () => {},
@@ -649,6 +658,13 @@ export async function workspaceHarness(
           'Historical debugger closed. Reopen the learning replay to restore it.',
         )
       historicalDebugPresentations.push({ snapshot, label, sourceDocument })
+      // A stop with values selects the native model, as the real owner does before it waits for Variables (row 721).
+      if (
+        snapshot?.frames.some((frame) => frame.scopes.length) &&
+        sourceDocument &&
+        !activeStackItem
+      )
+        await this.selectNativeInspectionModel(sourceDocument.uri)
       // A held presentation models native Run and Debug still loading the recorded values.
       const held = nextHistoricalDebugPresentation
       // A hold reserved for a recorded stop lets earlier gap presentations pass and stays armed.
@@ -658,6 +674,22 @@ export async function workspaceHarness(
         await held.wait
       }
       return historicalDebugInspection
+    }
+    /**
+     * Selects the native debugger model of a presented stop as the real owner does (`ReplayDebugger.selectNativeInspectionModel`): where the host registers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, it runs that command with `null`, which the fake editor answers by revealing the stop's source (`revealHistoricalStopSource`). The real owner runs it only once native Call Stack fetched the stop and while no other debug session is active, which the fake reads as no live stop the editor reports (Cycle 0046 row 721).
+     * @param sourceUri - The stop's captured source, whose document the recorded frame names.
+     * @example await this.selectNativeInspectionModel(capturedSourceUri) // the captured source's group is the active one, its text editor the active text editor
+     */
+    private async selectNativeInspectionModel(
+      sourceUri: string,
+    ): Promise<void> {
+      const commands = await this.editor.commands.getCommands(true)
+      if (!commands.includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND)) return
+      historicalStopSource = sourceUri
+      await this.editor.commands.executeCommand(
+        NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
+        null,
+      )
     }
     /**
      * Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter.
@@ -1834,6 +1866,38 @@ export async function workspaceHarness(
    * @param column - The group the editor opens it in.
    * @example openPausedFileKeepingFocus('login-form.tsx', 2)
    */
+  /**
+   * Answers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for the stop the fake historical debugger presented with values, as both editors do: the command focuses the session's frame and opens its source preserving the focus (`stackFrame.openInEditor(editorService, true)`: `revealIfOpened`, the active group preferred), and an editor opened preserving the focus in a group that is not the active one makes that group the active one without giving it the keyboard (VS Code 1.140.0's `handleGroupActivation`, `EditorActivation.ACTIVATE`). So the captured source comes to the front of the group that holds it, that group is the active one, and the editor reports its text editor as the active text editor, while the keyboard stays where it was. C60's c60-vs-567 read it natively at a Repository Wiki recording visit: after the visit's focus return to the Wiki's group (`workbench.action.focusThirdEditorGroup`), `workbench.action.debug.focusProcess` named the learner's first group, with Captured-source.mts in front, and reported that file as the active text editor (ext-observer.json, 3-recording-open.json); c60-cu-567 read the same in Cursor (Cycle 0046 row 721).
+   * Not modelled: a source no group holds, which the editor would open in the active group, the active stack item the command focuses, and the command beside Cursor's chat part while that part is the active one, for which no native receipt exists.
+   * @example revealHistoricalStopSource() // the learner's first group, with Captured-source.mts in front, is the active group
+   */
+  function revealHistoricalStopSource(): void {
+    const uri = historicalStopSource
+    if (!uri || separateEditorPart?.lastActive) return
+    /** Finds the source's tab in a group. */
+    const sourceTab = (group: (typeof groups)[number]): Tab | undefined =>
+      group.tabs.find(
+        (tab) =>
+          tab.input instanceof TabInputText && tab.input.uri.toString() === uri,
+      )
+    // `revealIfOpened` takes the group that shows the source in front, the active group first, else a group that holds it.
+    const shows = (group: (typeof groups)[number]): boolean =>
+      group.activeTab !== undefined && group.activeTab === sourceTab(group)
+    const group =
+      (shows(activeTabGroup) ? activeTabGroup : undefined) ??
+      groups.find(shows) ??
+      groups.find((candidate) => sourceTab(candidate) !== undefined)
+    if (!group) return
+    const previousGroup = activeTabGroup
+    group.activeTab = sourceTab(group)
+    activeTabGroup = group
+    activeTextEditorChanged(focusedSourceEditor())
+    changedGroups({
+      opened: [],
+      closed: [],
+      changed: previousGroup === group ? [group] : [previousGroup, group],
+    })
+  }
   function openPausedFileKeepingFocus(filename: string, column: number): void {
     const pausedColumn = nativeDebugColumn(column)
     // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
@@ -3460,6 +3524,9 @@ export async function workspaceHarness(
             for (const listener of summaryVisibilityListeners) listener()
           }
           commands.push(name)
+          // The historical session's frame comes to the front of its group, which becomes the active one, without the keyboard (row 721).
+          if (name === NATIVE_DEBUG_FOCUS_SESSION_COMMAND)
+            revealHistoricalStopSource()
           if (name === 'workbench.debug.action.focusVariablesView') {
             focusedList = 'variables'
             showNativeVariablesView()

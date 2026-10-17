@@ -1393,10 +1393,10 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
-// Value: protects=the learner's uneven stack of two rows through a Repository Wiki recording visit and its article Return in VS Code: the visit's newGroupAbove leaves the Wiki's row at the minimum height, which VS Code expands when the visit gives the Wiki its keyboard back (doRestoreGroup, workbench.desktop.main.js 1106:114938), so the visit stacks its rows at one height first; its arrangement stays confirmed and the Return gives the learner's rows back at 524 and 163 px, with row 681's retained tabs while the Study stays open; fails_when=the visit keeps VS Code's 262/355/70, the focus return expands the Wiki's row to 70/70/547, the Study reports "The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout…" and the Return gives nothing back (C59 c59-vs-567, c59-vs-691probe4: the Application's group left at column 1, three rows); why_new=Cycle 0046 row 691; seam=articleRecordingLayoutHarness, useNativeLayout with the uneven stack, modelVsCodeStackedRowSizing, focusWebviewTabKeepingTextEditorReport (View recording pressed in the Wiki), openRepositoryEvidence with the recording, the presentation state, the return-wiki action, editorLayout and the groups' tabs
+// Value: protects=the learner's uneven stack of two rows through a Repository Wiki recording visit and its article Return in VS Code: the visit's newGroupAbove leaves the Wiki's row at the minimum height, which VS Code expands when the visit gives the Wiki its keyboard back (doRestoreGroup, workbench.desktop.main.js 1106:114938), so the visit stacks its rows at one height first; its arrangement stays confirmed and the Return gives the learner's rows back at 524 and 163 px, with row 681's retained tabs while the Study stays open; fails_when=the visit keeps VS Code's 262/355/70, the focus return expands the Wiki's row to 70/70/547, the Study reports "The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout…" and the Return gives nothing back (C59 c59-vs-567, c59-vs-691probe4: the Application's group left at column 1, three rows); why_new=Cycle 0046 row 691; seam=articleRecordingLayoutHarness with a recording with recorded values, as the native rounds' study had (its debugger's model selection activates the captured source's group, row 721), useNativeLayout with the uneven stack, modelVsCodeStackedRowSizing, focusWebviewTabKeepingTextEditorReport (View recording pressed in the Wiki), openRepositoryEvidence with the recording, the presentation state, the return-wiki action, editorLayout and the groups' tabs
 test('in VS Code, a Wiki recording visit in the learner’s uneven stack of two rows stays confirmed, and the article Return gives both rows back at their sizes', async () => {
-  // Arrange: the learner's rows are 524 and 163 px high, article-source.ts in the first and the Repository Wiki in the second, where the learner pressed View recording.
-  const harness = await articleRecordingLayoutHarness()
+  // Arrange: the learner's rows are 524 and 163 px high, article-source.ts in the first and the Repository Wiki in the second, where the learner pressed View recording of a recording with recorded values.
+  const harness = await articleRecordingLayoutHarness(false, true)
   try {
     harness.useNativeLayout({
       orientation: 1,
@@ -1436,7 +1436,7 @@ test('in VS Code, a Wiki recording visit in the learner’s uneven stack of two 
     }
     await harness.reader.action('return-wiki')
 
-    // Assert: three rows of one height during the visit, confirmed; the learner's two rows at their own sizes after the Return, with the parked Application and the captured source left in the learner's first group while the Study stays open (row 681's retention, as this fake editor parks them for an even stack too).
+    // Assert: three rows of one height during the visit, confirmed; the learner's two rows at their own sizes after the Return, with the captured source left in the learner's first group and the parked Application behind the Wiki while the Study stays open (row 681's retention, where VS Code parked it in c60-vs-567 and c59-vs-691probe3, row 721).
     assert.deepEqual(
       {
         visit,
@@ -1458,12 +1458,8 @@ test('in VS Code, a Wiki recording visit in the learner’s uneven stack of two 
           groups: [{ size: 524 }, { size: 163 }],
         },
         tabsAfterReturn: [
-          [
-            'article-source.ts',
-            'Captured-source.mts',
-            'codebook.scopedBrowser',
-          ],
-          ['codebook.repositoryWiki'],
+          ['article-source.ts', 'Captured-source.mts'],
+          ['codebook.repositoryWiki', 'codebook.scopedBrowser'],
         ],
       },
     )
@@ -1981,6 +1977,210 @@ test('in Cursor, the article Return of a Wiki recording visit leaves the Wiki’
         layoutAfterReturn: {
           orientation: 1,
           groups: [{ size: 328 }, { size: 329 }],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the fidelity of the workspace harness's VS Code model of a Repository Wiki recording visit and its article Return, on which the VS Code tests of the tabs that Return leaves rest (rows 567, 681 and 710): VS Code 1.140.0 read in C60's c60-vs-567 (2-before-enter.json, 3-recording-open.json, 5-after-return.json, ext-observer.json): the visit of a recording with recorded values ends with the learner's first group active, Captured-source.mts in front of it and reported as the active text editor, because the historical debugger's model selection (workbench.action.debug.focusProcess, after the visit's focus return to the Wiki's group) opens the stop's source preserving the focus and so activates its group; the article Return then parks the Application right behind the Repository Wiki in the article's second group, and the Wiki's cited copy stands in front of the learner's first group again with Captured-source.mts right behind it; fails_when=the fake editor answers no focusProcess, so the visit ends with the Wiki's group active and the Return parks the Application in the learner's first group behind Captured-source.mts, which VS Code never did; why_new=Cycle 0046 row 721; seam=articleRecordingLayoutHarness with a recording with recorded values and openRepositoryWiki (the real RepositoryReader, and the Return through its open), useNativeLayout with 343/344 px rows, modelVsCodeStackedRowSizing, keepTextEditorReportAfterNewGroup, closeTabByHand, focusMutableDraft, focusExistingSource and focusWebviewTabKeepingTextEditorReport (the cited copy reported while the Wiki has the keyboard), openRepositoryEvidence with the recording, the Learning summary's return-wiki action, the command log, the groups' tabs, the active text editor and editorLayout
+test('in VS Code, a Wiki recording visit with recorded values ends with the learner’s first group active, and the article Return parks the Application right behind the Wiki in the article’s group, as VS Code did natively', async () => {
+  // Arrange: c60-vs-567's window before View recording: the learner's two stacked rows, login-form.tsx's cited copy in front of the first row and the Repository Wiki in front of the second, which is the active group with the keyboard while VS Code still reports the cited copy as the active text editor.
+  const harness = await articleRecordingLayoutHarness(true, true)
+  try {
+    harness.useNativeLayout({
+      orientation: 1,
+      groups: [{ size: 343 }, { size: 344 }],
+    })
+    harness.modelVsCodeStackedRowSizing()
+    harness.keepTextEditorReportAfterNewGroup()
+    // The learner's own files take the place of the fixture's article-source.ts.
+    harness.closeTabByHand(
+      harness.groups.find((group) => group.viewColumn === 1)!.tabs[0]!,
+    )
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.focusMutableDraft('app-page.runtime.dev.js', 1)
+    const loginForm = harness.focusMutableDraft('login-form.tsx', 1)
+    harness.focusMutableDraft('README.md', 1)
+    harness.focusMutableDraft('auth.ts', 1)
+    harness.focusMutableDraft('auth.ts', 2)
+    loginForm.focus()
+    await harness.openRepositoryWiki()
+    harness.focusExistingSource(
+      harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.document.uri.scheme === 'codebook-repository-source',
+      )!,
+    )
+    harness.focusWebviewTabKeepingTextEditorReport(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .find(
+          (tab) =>
+            Reflect.get(tab.input, 'viewType') === 'codebook.repositoryWiki',
+        )!,
+    )
+    /** Names a tab as the receipts do: a file by its label, another document with its scheme, a pane by its view type, a preview tab marked. */
+    const tabName = (tab: (typeof harness.groups)[number]['tabs'][number]) =>
+      ('uri' in tab.input
+        ? tab.input.uri.scheme === 'file'
+          ? tab.label
+          : `${tab.label} (${tab.input.uri.scheme})`
+        : String(Reflect.get(tab.input, 'viewType') ?? tab.label)) +
+      (tab.isPreview ? ' (preview)' : '')
+    const groupsOfWindow = () =>
+      harness.groups
+        .toSorted((left, right) => left.viewColumn - right.viewColumn)
+        .map((group) => ({
+          column: group.viewColumn,
+          active:
+            group.viewColumn ===
+            harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+          front: group.activeTab && tabName(group.activeTab),
+          tabs: group.tabs.map(tabName),
+        }))
+    /** Names the active text editor's document as `tabName` names its tab. */
+    const activeTextEditor = (): string | undefined => {
+      const uri = harness.editor.window.activeTextEditor?.document.uri
+      return uri && `${uri.path.split('/').at(-1)} (${uri.scheme})`
+    }
+    const beforeVisit = {
+        groups: groupsOfWindow(),
+        activeTextEditor: activeTextEditor(),
+      },
+      commandsBefore = harness.commands.length
+
+    // Act: View recording in the Wiki, then Return to Wiki pressed in the Learning summary.
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const visit = {
+      groups: groupsOfWindow(),
+      activeTextEditor: activeTextEditor(),
+      layout: harness.editorLayout(),
+      focusCommands: harness.commands
+        .slice(commandsBefore)
+        .filter((command) =>
+          /^workbench\.action\.(focus\w+EditorGroup|debug\.focusProcess)$/.test(
+            command,
+          ),
+        ),
+    }
+    const returnRefusal = await harness.reader.action('return-wiki', true).then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+    await harness.controller.settle()
+
+    // Assert: the groups of 2-before-enter.json, 3-recording-open.json and 5-after-return.json, the visit's focus commands as ext-observer.json lists them, and the learner's sizes after the Return.
+    assert.deepEqual(
+      {
+        beforeVisit,
+        visit,
+        returnRefusal,
+        afterReturn: groupsOfWindow(),
+        layoutAfterReturn: harness.editorLayout(),
+      },
+      {
+        beforeVisit: {
+          groups: [
+            {
+              column: 1,
+              active: false,
+              front: 'login-form.tsx (codebook-repository-source)',
+              tabs: [
+                'actions.ts',
+                'app-page.runtime.dev.js',
+                'login-form.tsx',
+                'login-form.tsx (codebook-repository-source)',
+                'README.md',
+                'auth.ts',
+              ],
+            },
+            {
+              column: 2,
+              active: true,
+              front: 'codebook.repositoryWiki',
+              tabs: ['auth.ts', 'codebook.repositoryWiki'],
+            },
+          ],
+          activeTextEditor: 'login-form.tsx (codebook-repository-source)',
+        },
+        visit: {
+          groups: [
+            {
+              column: 1,
+              active: false,
+              front: 'codebook.scopedBrowser',
+              tabs: ['codebook.scopedBrowser'],
+            },
+            {
+              column: 2,
+              active: true,
+              front: 'Captured-source.mts (codebook-source)',
+              tabs: [
+                'actions.ts',
+                'app-page.runtime.dev.js',
+                'login-form.tsx',
+                'login-form.tsx (codebook-repository-source)',
+                'Captured-source.mts (codebook-source)',
+                'README.md',
+                'auth.ts',
+              ],
+            },
+            {
+              column: 3,
+              active: false,
+              front: 'codebook.repositoryWiki',
+              tabs: ['auth.ts', 'codebook.repositoryWiki'],
+            },
+          ],
+          activeTextEditor: 'Captured-source.mts (codebook-source)',
+          layout: {
+            orientation: 1,
+            groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+          },
+          focusCommands: [
+            'workbench.action.focusFirstEditorGroup',
+            'workbench.action.focusThirdEditorGroup',
+            'workbench.action.debug.focusProcess',
+          ],
+        },
+        returnRefusal: undefined,
+        afterReturn: [
+          {
+            column: 1,
+            active: false,
+            front: 'login-form.tsx (codebook-repository-source)',
+            tabs: [
+              'actions.ts',
+              'app-page.runtime.dev.js',
+              'login-form.tsx',
+              'login-form.tsx (codebook-repository-source)',
+              'Captured-source.mts (codebook-source)',
+              'README.md',
+              'auth.ts',
+            ],
+          },
+          {
+            column: 2,
+            active: true,
+            front: 'codebook.repositoryWiki',
+            tabs: [
+              'auth.ts',
+              'codebook.repositoryWiki',
+              'codebook.scopedBrowser (preview)',
+            ],
+          },
+        ],
+        layoutAfterReturn: {
+          orientation: 1,
+          groups: [{ size: 343 }, { size: 344 }],
         },
       },
     )
