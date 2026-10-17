@@ -6374,6 +6374,61 @@ for (const situation of [
     }
   })
 
+// Value: protects=the learner's place an agent's next request reads after a reentry below the Application gave the captured source the keyboard in place of a copy it retired: the reentry's focus (focusLiveSource, while the render's display is pending) is Codebook's own, so Codebook's placement note stays and the learner's place stays unknown, and an agent's next selection or Return keeps the keyboard where Codebook put it and says so once (rows 613, 642 and 654); fails_when=that focus is taken for the learner's move onto the captured source (endSourceKeyboardPlacementAtLearnersMove), so the next request reads the source as the learner's known place, gives the keyboard back as usual and tells nothing; why_new=Cycle 0046 row 692 (row 684's second path: its guard, pendingSourceDisplay, covers this reentry, which no harness scenario reached); seam=useNativeLayout with two learner groups, addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, the chat's focusTab and failNextCommand on Cursor's Focus Agent, the service's selectPresentation and start, stopOwnTimer and the reader's refresh (the reader's own Live entry of the agent's run), and readerSeams' knowsLearnersPlace (what an agent's next request reads)
+test("the reentry's focus of the captured source below the Application, in place of the copy it retires, is no learner's move, so an agent's next request reads the learner's place as unknown", async () => {
+  // Arrange: in Cursor beside its chat part, the agent's Study selection left the keyboard on the captured source in front of the second learner group, and the agent started a run the reader has not entered yet.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.leavePaneFocusUnreportedBesideChat()
+    chat.focusTab()
+    harness.failNextCommand('composer.focusComposer')
+    const selection = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    readerSeams(harness).stopOwnTimer()
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+
+    // Act: the reader's timer enters the Live arrangement of the run; its reentry retires the copy that had the keyboard and focuses the source below the Application.
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.deepEqual(
+      {
+        activeTextEditor: {
+          name: harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+          column: harness.editor.window.activeTextEditor?.viewColumn,
+        },
+        knowsLearnersPlace: readerSeams(harness).knowsLearnersPlace(),
+      },
+      {
+        activeTextEditor: { name: 'Captured-theme.ts', column: 2 },
+        knowsLearnersPlace: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the chat input's keyboard in VS Code when an agent starts a run right after its own Study selection, without Return Current: the reader's next refresh (every 250 ms, well before the run's Application viewport) enters the Live arrangement as the agent's run, so no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=that entry prepares the Application as the learner's and its focus return shows the captured source, the active text editor, with the keyboard, and nothing tells the learner; why_new=Cycle 0046 finding on codebook_start (the reader's own Live entry of a run); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), the reader's refresh as its timer runs it, textDocumentShows and the information messages
 test('an agent’s run started right after its own Study selection, while the chat view has the keyboard, enters Live with no file given the keyboard and says once that the Application’s group has it', async () => {
   // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again.
