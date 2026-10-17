@@ -277,6 +277,55 @@ test('only the first run failure is kept in the journal after the evidence refus
   }
 })
 
+// Value: protects=the size bound of the one run failure the evidence keeps past a refusal: its reason (a stack or an adapter's message may be of any length) is cut so that its detail fits the event detail limit and says where it was cut, in the journal every reader reads and in events.jsonl, while the refusal stays the evidence's failure; fails_when=the failure past the refusal is kept at its full length, so the journal's overshoot of its bounds has no size bound (the whole reason is held in memory and written); why_new=Cycle 0046 row 698 (CodeRabbit's review of cc231f08..e6a3daeb); seam=a recorder with a bound of one event and a reason of 100,000 characters
+test('the one run failure kept past a refusal is cut to the event detail limit and says where it was cut', async () => {
+  // Arrange: the bound of one event is reached, and the second event is refused.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-'))
+  const evidence = new Evidence(directory, {
+    maxEvents: 1,
+    retainedBytes: 10_000,
+    queuedBytes: 10_000,
+  })
+  try {
+    evidence.record('first')
+    evidence.record('overflow')
+
+    // Act
+    evidence.recordFailure('x'.repeat(100_000))
+    await evidence.flush().catch(() => undefined)
+
+    // Assert: the reason keeps its first 8,170 characters and the marker, so its detail is 8,192 bytes; the file holds the same line.
+    const kept = evidence.events.at(-1)!,
+      reason = String(Reflect.get(Object(kept.detail), 'reason'))
+    const fileLines = (await readFile(join(directory, 'events.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    assert.deepEqual(
+      {
+        type: kept.type,
+        reasonLength: reason.length,
+        reasonStart: reason.slice(0, 3),
+        reasonEnd: reason.slice(-9),
+        detailBytes: Buffer.byteLength(JSON.stringify(kept.detail)),
+        fileHoldsTheSameReason: fileLines.at(-1)?.detail.reason === reason,
+        failure: evidence.failure,
+      },
+      {
+        type: 'run.failed',
+        reasonLength: 8_177,
+        reasonStart: 'xxx',
+        reasonEnd: 'xx… [cut]',
+        detailBytes: 8_192,
+        fileHoldsTheSameReason: true,
+        failure: 'Evidence buffering limit exceeded',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true })
+  }
+})
+
 // Value: protects=the journal of a run that fails after its evidence could not be written: the run's failure is still the last event of the journal every reader reads (Evidence.events), the evidence keeps its write failure, and the missing evidence directory is not created again by the failure's append; fails_when=the write failure drops run.failed; why_new=Cycle 0046 row 666 (the 653 fork's finding 2); seam=the recorder's directory, removed after its first event so that the next append fails
 test('a run failure journaled after the evidence failed to write an event ends the journal, and the first write failure stays the evidence failure', async () => {
   // Arrange: the evidence directory is gone, so the second event's append fails.

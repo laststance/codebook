@@ -82,6 +82,11 @@ export const MAX_EXPLANATIONS = 32
 export const MAX_VALUE_PATHS = 10
 export const EVENT_PAGE_SIZE = 50
 export const EVENT_DETAIL_LIMIT_BYTES = 8_192
+/**
+ * What ends a text {@link cutTextToFit} cut to fit a bound, so a reader sees that the text went on: the reason of the one run failure the evidence keeps past a refusal, cut to fit {@link EVENT_DETAIL_LIMIT_BYTES} (Cycle 0046 row 698).
+ * @example cutTextToFit('x'.repeat(100), (candidate) => candidate.length <= 20) // => 'xxxxxxxxxxxxx… [cut]'
+ */
+export const CUT_TEXT_MARKER = '… [cut]'
 export const MAX_EVENTS = 10_000
 export const MAX_RETAINED_EVENT_BYTES = 4_194_304
 export const MAX_QUEUED_EVIDENCE_BYTES = 16_777_216

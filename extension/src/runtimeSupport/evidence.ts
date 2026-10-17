@@ -1,6 +1,9 @@
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { EVENT_DETAIL_LIMIT_BYTES } from '../constants'
+import { cutTextToFit } from '../utils/cutTextToFit'
+
 import { NANOSECONDS_PER_MILLISECOND } from './constants'
 
 export interface RecordedEvent {
@@ -59,7 +62,7 @@ export class Evidence {
 
   /**
    * Journals a run's failure as `run.failed`, also once the evidence refused further events or failed to write them, so the journal every reader reads (the run's events resource, the end of its recording, the replay's paused intervals) ends with the run's failure (Cycle 0046 row 666); called by {@link ConfiguredBrowserRun.fail}, which journals a run's failure once.
-   * Past a refusal the event is kept in {@link Evidence.events} and appended to `events.jsonl` while that file can still be written; the first failure stays the evidence's {@link Evidence.failure}, and only one failure is kept past a refusal.
+   * Past a refusal the event is kept in {@link Evidence.events} and appended to `events.jsonl` while that file can still be written; the first failure stays the evidence's {@link Evidence.failure}, and only one failure is kept past a refusal. Its reason is cut so that its detail fits {@link EVENT_DETAIL_LIMIT_BYTES}, ending with {@link CUT_TEXT_MARKER} where it was cut ({@link cutTextToFit}): the journal's bounds are exceeded by one event at most, and that event by one line of bounded size, as long as a stack or an adapter's message may be (row 698). The same limit is the one the run's events resource shows an event's detail whole within.
    * @param reason - The run's failure, as its runtime was given it.
    * @returns The journaled event; an event that is not kept for a second failure past a refusal.
    * @example
@@ -69,13 +72,19 @@ export class Evidence {
    */
   recordFailure(reason: string): RecordedEvent {
     const receipt = this.receiptOf('run.failed', { reason })
-    if (this.refuses(receipt.bytes)) {
-      this.failure ??= 'Evidence buffering limit exceeded'
-      // One failure past the refusal, so the journal's bounds are exceeded by one event at most.
-      if (this.isFailureKeptPastRefusal) return receipt.event
-      this.isFailureKeptPastRefusal = true
-    }
-    return this.retain(receipt)
+    if (!this.refuses(receipt.bytes)) return this.retain(receipt)
+    this.failure ??= 'Evidence buffering limit exceeded'
+    // One failure past the refusal, so the journal's bounds are exceeded by one event at most.
+    if (this.isFailureKeptPastRefusal) return receipt.event
+    this.isFailureKeptPastRefusal = true
+    // That one event's reason is cut to the detail limit, so its line has a size bound too (row 698).
+    const boundedReason = cutTextToFit(
+      reason,
+      (candidate) =>
+        Buffer.byteLength(JSON.stringify({ reason: candidate })) <=
+        EVENT_DETAIL_LIMIT_BYTES,
+    )
+    return this.retain(this.receiptOf('run.failed', { reason: boundedReason }))
   }
 
   /**
