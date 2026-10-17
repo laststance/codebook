@@ -446,3 +446,45 @@ test('a run failure journaled after the evidence failed to write an event ends t
     await rm(parent, { recursive: true })
   }
 })
+
+// Value: protects=the cause a run's error, its terminal reason and its evidence failure at stop name when an append that was queued before a save fails: the save, which refuses on the failure it finds, keeps that first failure as it is; fails_when=the save's own refusal replaces the first failure with its wrapped text ("Error: Error: ENOENT: …"), which then reads doubled in evidenceFailureAtStop, the run's error and its terminal reason; why_new=R3, Cycle 0046 /ship red-team review (Evidence.save set the failure with `=` where the append keeps the first with `??=`); seam=the recorder's directory, removed after its first event so that the next append fails, with a save queued behind that append
+test('a save queued behind an append that fails keeps the append’s failure as the evidence failure, named once', async () => {
+  // Arrange: the evidence directory is gone; one event's append and then a save are queued.
+  const parent = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-')),
+    directory = join(parent, 'run')
+  const evidence = new Evidence(directory, {
+    maxEvents: 100,
+    retainedBytes: 10_000,
+    queuedBytes: 10_000,
+  })
+  try {
+    evidence.record('first')
+    await evidence.flush()
+    await rm(directory, { recursive: true })
+    evidence.record('unwritten')
+
+    // Act
+    await evidence
+      .save('manifest.json', { status: 'completed' })
+      .catch(() => undefined)
+    const flushFailure = await evidence.flush().then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+
+    // Assert: the texts before the evidence directory's path, which the system's error names.
+    assert.deepEqual(
+      {
+        evidenceFailure: evidence.failure?.split(directory)[0],
+        flushFailure: flushFailure?.split(directory)[0],
+      },
+      {
+        evidenceFailure: "Error: ENOENT: no such file or directory, open '",
+        flushFailure:
+          "Error: Evidence write failed: Error: ENOENT: no such file or directory, open '",
+      },
+    )
+  } finally {
+    await rm(parent, { recursive: true })
+  }
+})

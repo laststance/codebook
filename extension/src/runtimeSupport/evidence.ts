@@ -198,7 +198,8 @@ export class Evidence {
         this.queuedBytes -= byteCount
       })
     this.pending = saving.catch((error) => {
-      this.failure = String(error)
+      // The first failure is the evidence's cause, as for an append: a save that refused on an earlier append's failure would name it a second time.
+      this.failure ??= String(error)
     })
     await saving
   }
