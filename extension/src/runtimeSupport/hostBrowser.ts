@@ -1,13 +1,14 @@
 import { constants as filesystemConstants } from 'node:fs'
 import {
   access,
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -21,6 +22,7 @@ import {
   PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import { currentUserName } from '../utils/currentUserName'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
@@ -114,10 +116,16 @@ export class HostBrowser {
   /**
    * Names the directory of this run's managed profile folder and of the folders a killed editor left, the same for both; read by {@link launch} for a managed browser only, and handed to {@link startAbandonedProfileSweep}.
    * @returns The directory a test named; else this user's directory of {@link managedProfileRoot} on this system.
-   * @example this.managedRoot // => '/tmp' on Linux, 'C:\Users\learner\AppData\Local\Temp' on Windows
+   * @example this.managedRoot // => '/tmp' on Linux, 'C:\Users\learner\AppData\Local\Codebook\browser-profiles' on Windows
    */
   private get managedRoot(): string {
-    return this.profileRoot ?? managedProfileRoot(process.platform, tmpdir)
+    return (
+      this.profileRoot ??
+      managedProfileRoot(process.platform, {
+        environment: process.env,
+        homeDirectory: homedir,
+      })
+    )
   }
 
   /**
@@ -164,15 +172,20 @@ export class HostBrowser {
       signal.throwIfAborted()
       if (this.closing) throw new Error('Owned browser is closing')
       this.startAbandonedProfileSweep(owner)
+      const root = this.managedRoot
+      // The root of Windows (below the user's local application data folder) is made at the first run; /tmp is always there.
+      await mkdir(root, { recursive: true })
       this.managedProfile = await realpath(
-        await mkdtemp(join(this.managedRoot, MANAGED_PROFILE_PREFIX)),
+        await mkdtemp(join(root, MANAGED_PROFILE_PREFIX)),
       )
-      // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
+      const user = currentUserName()
+      // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes; it names the user, whose sweep alone judges it.
       await writeFile(
         join(this.managedProfile, MANAGED_PROFILE_OWNER_FILE),
         JSON.stringify({
           pid: process.pid,
           ...owner,
+          ...(user !== undefined && { user }),
           createdAt: new Date().toISOString(),
         }),
       )

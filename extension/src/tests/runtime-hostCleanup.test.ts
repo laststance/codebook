@@ -80,7 +80,7 @@ async function loadHostBrowser(
  * @param options.createViewport - Holds or rejects the real factory boundary while the test observes launch and cleanup ordering.
  * @param options.platform - The system the adapter reads from `process.platform`; this machine's by default.
  * @param options.processesOfProfile - The processes a look for the profile finds, by the look's number (1 for the first); none by default.
- * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot); the user's temp folder its loaded context reads (`os.tmpdir`) is the test's root then. By default the browser is given the test's root.
+ * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot): its loaded context reads `LOCALAPPDATA` as the test's root then, and answers a home folder and a temp folder (`os.homedir`, `os.tmpdir`) that no system's root may be taken from. By default the browser is given the test's root.
  * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
  * const managed = await managedBrowser(context)
@@ -142,19 +142,27 @@ async function managedBrowser(
         },
       }),
       ...(options.rootChosenByTheBrowser && {
-        'node:os': { ...os, tmpdir: () => root },
+        'node:os': {
+          ...os,
+          homedir: () => join(root, 'a-home-folder-not-to-use'),
+          tmpdir: () => '/var/folders/zz/a-long-temporary-folder-not-to-use/T',
+        },
       }),
     },
-    // The owner marker names this process; a test may name another system, which the adapter reads as `process.platform`.
+    // The owner marker names this process; a test may name another system, which the adapter reads as `process.platform`, and the user's local application data folder it reads as `process.env.LOCALAPPDATA`.
     {
-      process: options.platform
-        ? new Proxy(process, {
-            get: (target, key) =>
-              key === 'platform'
-                ? options.platform
-                : Reflect.get(target, key, target),
-          })
-        : process,
+      process:
+        options.platform || options.rootChosenByTheBrowser
+          ? new Proxy(process, {
+              get: (target, key) => {
+                if (key === 'platform' && options.platform)
+                  return options.platform
+                if (key === 'env' && options.rootChosenByTheBrowser)
+                  return { ...process.env, LOCALAPPDATA: root }
+                return Reflect.get(target, key, target)
+              },
+            })
+          : process,
     },
   )
   const browser = new HostBrowser(
@@ -930,9 +938,9 @@ for (const { system, platform, intervalMs } of [
     )
   })
 
-// Value: protects=the profiles of a managed run on Windows, which has no user id to tell another user's folder by: the browser creates its profile folder in the user's own temp folder, which other users cannot open, and its sweep of abandoned folders looks there, not in `<drive>:\tmp`, a folder at a drive root every user may change, where another user's in-use profile (whose command line the listing shows empty) could be removed and another user could plant folders and markers (SC3, Cycle 0046 repeat review); fails_when=the profile root is `/tmp` on every system, so on Windows the launch and the sweep use `<drive>:\tmp`; why_new=every managed-browser test named a root of its own; seam=the system the adapter reads (`process.platform` of its loaded context), its user temp folder (`os.tmpdir` of that context, the test's root), the browser given no root of its own, and the sweep's stand-in, which notes the root it is asked to sweep
-test('on Windows a managed browser creates its profile folder in the user’s own temp folder and sweeps abandoned folders there', async (context) => {
-  // Arrange: a managed browser on Windows whose user temp folder is the test's root and which is given no profile root.
+// Value: protects=the profiles of a managed run on Windows, which has no user id to tell another user's folder by: the browser creates its profile folder below the user's own local application data folder (made at the first run), which no other user can open and no TEMP setting moves, its sweep of abandoned folders looks there, and its marker names the operating-system user, whose sweep alone judges it (SC3, Cycle 0046 repeat review; CX7, /ship Codex adversarial review); fails_when=the profile root is `<drive>:\tmp`, a folder every user may change, or the user's TEMP, which an administrator may point at a folder several users share, or the marker names no user, so another user's sweep judges it; why_new=every managed-browser test named a root of its own; seam=the system the adapter reads (`process.platform` of its loaded context), its local application data folder (`LOCALAPPDATA` of that context, the test's root) beside a home and a temp folder not to use, the browser given no root of its own, and the sweep's stand-in, which notes the root it is asked to sweep
+test('on Windows a managed browser creates its profile folder below the user’s local application data folder, sweeps abandoned folders there, and names the user in its marker', async (context) => {
+  // Arrange: a managed browser on Windows whose local application data folder is the test's root and which is given no profile root.
   const sweptRoots: string[] = []
   const managed = await managedBrowser(context, {
     platform: 'win32',
@@ -948,11 +956,26 @@ test('on Windows a managed browser creates its profile folder in the user’s ow
     new AbortController().signal,
   )
   const profile = profileOf(managed.events)
+  const marker: unknown = JSON.parse(
+    await readFile(join(profile, 'codebook-owner.json'), 'utf8'),
+  )
   await managed.browser.close()
   // Assert
+  const profileRoot = join(managed.root, 'Codebook', 'browser-profiles')
   assert.deepEqual(
-    { profileFolderIn: dirname(profile), sweptRoots },
-    { profileFolderIn: managed.root, sweptRoots: [managed.root] },
+    {
+      profileFolderIn: dirname(profile),
+      sweptRoots,
+      markerUser:
+        typeof marker === 'object' && marker !== null && 'user' in marker
+          ? marker.user
+          : undefined,
+    },
+    {
+      profileFolderIn: profileRoot,
+      sweptRoots: [profileRoot],
+      markerUser: os.userInfo().username,
+    },
   )
 })
 

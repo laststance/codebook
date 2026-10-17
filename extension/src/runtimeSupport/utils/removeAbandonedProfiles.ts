@@ -6,6 +6,7 @@ import {
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_SWEEP_LIMIT,
 } from '../../constants'
+import { currentUserName } from '../../utils/currentUserName'
 import { isRecordedOwnerGone } from '../../utils/isRecordedOwnerGone'
 import {
   readProcessStart,
@@ -68,6 +69,8 @@ async function isOwnProfileFolder(profile: string): Promise<boolean> {
 
 /** What one sweep has done so far: how many folders with a readable owner marker it judged, which is what its bound counts, and the folders it removed; `processes` gives the sweep's one process listing, made when it is first asked for, and `readStart` reads a process's start and keeps what the sweep has read. */
 type ProfileSweep = {
+  /** The operating-system user this sweep runs as ({@link currentUserName}); `undefined` where the system names none. */
+  userName: string | undefined
   judgedCount: number
   removed: string[]
   processes: () => Promise<ListedProcess[]>
@@ -94,6 +97,8 @@ async function sweepProfile(
     join(profile, MANAGED_PROFILE_OWNER_FILE),
   )
   if (!owner) return
+  // A marker that names another user is that user's to judge, wherever the folder lies (a root several users share on Windows).
+  if (owner.user !== undefined && owner.user !== sweep.userName) return
   sweep.judgedCount += 1
   // An owner that may still run: the folder is not known to be abandoned.
   if (!(await isRecordedOwnerGone(owner, judgedBy, sweep.readStart))) return
@@ -117,6 +122,7 @@ async function sweepProfile(
  * @param identity - The machine and the boot of this process, by which a marker's owner is judged.
  * @param listRunningProcesses - Lists the processes of this machine; {@link listProcesses} unless a test counts the listings.
  * @param readStart - Reads the start of the process that has a marker's process id now; {@link readProcessStart} unless a test names its own.
+ * @param userName - The operating-system user this sweep runs as; {@link currentUserName} unless a test names its own. A folder whose marker names another user is left and not counted, on every system.
  * @returns The folders that were removed, in the order the directory listed them; empty when the root cannot be read. Nothing here throws: what cannot be
  * read, judged or removed stays in place.
  * @example
@@ -127,6 +133,7 @@ export async function removeAbandonedProfiles(
   identity: StorageOwnerIdentity,
   listRunningProcesses: () => Promise<ListedProcess[]> = listProcesses,
   readStart: ProcessStartReader = readProcessStart,
+  userName: string | undefined = currentUserName(),
 ): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
   // A link with the prefix is no profile folder of Codebook's making; only real directories are looked at.
@@ -138,6 +145,7 @@ export async function removeAbandonedProfiles(
   let listing: Promise<ListedProcess[]> | undefined
   const cache = new Map<number, Promise<string | undefined>>()
   const sweep: ProfileSweep = {
+    userName,
     judgedCount: 0,
     removed: [],
     // One listing serves every folder of the sweep; it is made only when a folder's owner is gone.

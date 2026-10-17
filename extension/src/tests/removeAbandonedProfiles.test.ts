@@ -329,6 +329,37 @@ test('a profile folder whose removal stops at a file the system still holds keep
   )
 })
 
+// Value: protects=the live profile of another user of the same machine when the profile root is a folder several users can reach (an administrator pointing Windows folders at a shared one): a folder whose marker names another operating-system user is left untouched and not counted, whatever the marker's process says, on every system (CX7, /ship Codex adversarial review); fails_when=the sweep judges a marker by its process and machine alone, so one user's sweep removes another user's profile; why_new=markers named no user; seam=the user name the sweep is given, and the process lister it is given
+test('a marked profile folder whose marker names another user is left untouched and not counted, however gone its editor is', async (context) => {
+  // Arrange: a folder whose marker names a gone process of this machine and another user, beside a folder of this user's killed editor.
+  const root = await profileRoot(context)
+  const ofAnotherUser = join(root, 'codebook-browser-of-another-user')
+  const ofThisUser = join(root, 'codebook-browser-of-this-user')
+  await profileFolder(ofAnotherUser, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+    user: 'another-learner',
+  })
+  await profileFolder(ofThisUser, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+    user: 'learner',
+  })
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    countingLister().list,
+    readProcessStart,
+    'learner',
+  )
+  // Assert
+  assert.deepEqual(
+    { removed, left: await readdir(root) },
+    { removed: [ofThisUser], left: ['codebook-browser-of-another-user'] },
+  )
+})
+
 test('a marked profile folder of an earlier kernel boot is removed although a process with its id runs now, and a boot time alone removes nothing', async (context) => {
   // Arrange: both markers name the id of this running process; one was written under another kernel boot id, the other under a boot time far in the past.
   const root = await profileRoot(context)

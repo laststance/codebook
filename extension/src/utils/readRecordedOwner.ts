@@ -17,6 +17,8 @@ const recordedOwnerSchema = z.object({
     .optional(),
   /** When the owner's process began ({@link readProcessStart}); absent in a record of 0.2.29.0 and in one of a window whose start could not be read. */
   processStart: z.string().min(1).optional(),
+  /** The operating-system user the owner ran as ({@link currentUserName}); written into a managed browser profile's marker, whose sweep leaves the folder of another user. */
+  user: z.string().min(1).optional(),
 })
 
 /** The process a storage lock, a takeover claim, a connection descriptor or a profile marker says wrote it, with the machine and the boot it ran under and the start of the process; a file of an earlier build records the process id alone, with the host name, or without the start. @example const owner: RecordedOwner = { pid: 4242, hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux@4026531836:16362446' } */

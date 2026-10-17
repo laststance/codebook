@@ -1171,8 +1171,13 @@ export const CHROME_LINUX_EXECUTABLE_NAMES = [
 ] as const
 /** How long "no Chrome found on PATH" is given again without a new search; a browser installed in that time is found by the first prerequisite check after it. */
 export const CHROME_NOT_FOUND_REUSE_MS = 10_000
-/** The directory that holds the profile folder of every managed browser run on macOS and Linux; short and fixed, because Chrome and the debugger resolve the path before they start. Windows uses the user's own temp folder instead ({@link managedProfileRoot}). */
+/** The directory that holds the profile folder of every managed browser run on macOS and Linux; short and fixed, because Chrome and the debugger resolve the path before they start. Windows uses a folder of the user's own instead ({@link MANAGED_PROFILE_ROOT_UNDER_LOCAL_APP_DATA}, {@link managedProfileRoot}). */
 export const MANAGED_PROFILE_ROOT = '/tmp'
+/** Where the managed browser profiles lie on Windows, below the user's local application data folder (`%LOCALAPPDATA%`), which is the user's alone by Windows' default rights. */
+export const MANAGED_PROFILE_ROOT_UNDER_LOCAL_APP_DATA = [
+  'Codebook',
+  'browser-profiles',
+]
 /** What the name of every managed browser profile folder begins with; the rest is random. */
 export const MANAGED_PROFILE_PREFIX = 'codebook-browser-'
 /** The file in a managed browser profile folder that names the editor process, the machine and the boot that made it. Only a folder that carries it is ever removed by a later run. */
