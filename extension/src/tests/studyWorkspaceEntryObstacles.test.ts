@@ -2614,6 +2614,76 @@ test('the first Application preparation of a reloaded window retires the earlier
   }
 })
 
+// Value: protects=the learner told where the keyboard went when an agent's first run in Cursor after Developer: Reload Window retires the earlier window's proven leftover at column 1: the proof focuses that empty group for its layout read and its unlock, and Cursor's close of a focused group gives the next group's file the keyboard (Cursor 3.23.12 workbench.desktop.main.js 17269:33927 `$closeGroup` → `removeGroup`, 17501:61528 `doRemoveEmptyGroup` with 17501:43055 `shouldRestoreFocus`), the same group the Application's allocation focuses right after (row 655), so the chat gets the keyboard back at the end and the learner is told once with the leftovers' sentence; Codebook itself shows no learner file with the keyboard; fails_when=the chat's return after the proof is made without a word, or Codebook gives the learner's file the keyboard on purpose; why_new=Cycle 0046 row 657 (C58 c58-cu-1f-reload: login-form.tsx had the keyboard for 124 ms after the leftover's close); seam=useNativeLayout (three stacked rows), applicationGroupMarkers (a record the grid still equals), leaveEmptyLockedGroup, focusMutableDraft, addSeparateEditorPart with focusTab, leavePaneFocusUnreportedBesideChat, presentation.createViewport (the MCP-first preparation), textDocumentShows and the information messages
+test('in Cursor, the first Application preparation of a reloaded window whose proof focuses the leftover at column 1 shows no learner file with the keyboard, gives the chat its keyboard back and says once that closing the leftover moved it', async () => {
+  // Arrange: three stacked rows: the earlier window's empty locked Application group, login-form.tsx and auth.ts; the record still describes this grid, and Cursor's chat tab has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 219 }, { size: 219 }, { size: 219 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 219 }, { size: 219 }, { size: 219 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('login-form.tsx', 2)
+    chat.focusTab()
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    try {
+      // Assert: the leftover is gone, Codebook showed no learner file with the keyboard, the chat has the keyboard again, and the leftovers' sentence was told once before the arrangement's.
+      assert.deepEqual(
+        {
+          leftoverStands: harness.groups.includes(leftover),
+          learnerFilesShownWithKeyboard: harness
+            .textDocumentShows()
+            .slice(showsBefore)
+            .filter(
+              (shown) =>
+                !shown.preserveFocus && !shown.name.startsWith('Captured-'),
+            ),
+          chatHasKeyboard: chat.focused(),
+          messages: harness.informationMessages.map(
+            (message) => message.message,
+          ),
+        },
+        {
+          leftoverStands: false,
+          learnerFilesShownWithKeyboard: [],
+          chatHasKeyboard: true,
+          messages: [
+            'Codebook gave the keyboard back to the chat after it closed the editor groups an earlier window had left, which moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+          ],
+        },
+      )
+    } finally {
+      viewport.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent's first run in Cursor right after Developer: Reload Window, before any Study select: the earlier window's proven leftover is retired, the Application stands alone in its own locked group, the run's preparation answers, and the chat gets its keyboard back; fails_when=the reader gives the chat its keyboard back with Focus Agent between the leftover's retirement and the Application's allocation, Cursor's chat input takes the keyboard only after that command answered (workbench.desktop.main.js 17914:19364, 18566:8949, 18566:8198), so the chat's part has the focus again while the allocation reads its layout and the preparation fails ("The dedicated Application layout could not be confirmed.", C57 c57-cursor-1f2; "Native pane, group or focus changed while presentation waited; …", c57-cursor-1f); why_new=Cycle 0046 row 646; seam=useNativeLayout (three stacked rows), applicationGroupMarkers (a record the grid still equals), leaveEmptyLockedGroup, focusMutableDraft, addSeparateEditorPart with focusTab, leavePaneFocusUnreportedBesideChat, focusAgentLater, presentation.createViewport (the MCP-first preparation)
 for (const landing of [
   // Before the reservation's first command: C57 c57-cursor-1f failed with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."
