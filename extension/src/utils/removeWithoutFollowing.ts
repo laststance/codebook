@@ -2,23 +2,11 @@ import { lstat, readdir, rmdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isFolderOfItsOwn } from './isFolderOfItsOwn'
+import { passIfMissing } from './passIfMissing'
 import { systemErrorCode } from './systemErrorCode'
 
 /** What a system answers when it is asked to remove a directory that still holds entries: `ENOTEMPTY` on Linux, macOS and Windows, `EEXIST` on the systems that say it that way. */
 const NOT_EMPTY_CODES = ['ENOTEMPTY', 'EEXIST']
-
-/**
- * Lets only the failure "nothing is there" pass; called by {@link removeWithoutFollowing} and its helpers for each of their file system calls, because an entry another window removed in the same moment is removed.
- * @param error - What the look, the unlink or the removal of the emptied directory threw.
- * @returns `undefined` for `ENOENT`.
- * @throws The given error itself for every other failure.
- * @example
- * await lstat(path).catch(passIfMissing) // => undefined when nothing stands at the path
- */
-function passIfMissing(error: unknown): undefined {
-  if (systemErrorCode(error) !== 'ENOENT') throw error
-  return undefined
-}
 
 /**
  * Asks the system to remove a directory as it is, before anything in it is listed; called by {@link removeWithoutFollowing} for every entry its look calls a directory.

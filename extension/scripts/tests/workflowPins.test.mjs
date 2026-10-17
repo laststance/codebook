@@ -851,6 +851,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/modifiedAtMsOf.ts',
     'extension/src/utils/namesMachineInClear.ts',
     'extension/src/utils/openWithoutFollowing.ts',
+    'extension/src/utils/passIfMissing.ts',
     'extension/src/utils/placeStorageLock.ts',
     'extension/src/utils/preparedLockSuffix.ts',
     'extension/src/utils/processStartFormHere.ts',

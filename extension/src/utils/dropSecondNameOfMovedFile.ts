@@ -1,6 +1,7 @@
 import { link, lstat } from 'node:fs/promises'
 
 import { dropSecondNameOfOneFile } from './dropSecondNameOfOneFile'
+import { passIfMissing } from './passIfMissing'
 import { systemErrorCode } from './systemErrorCode'
 
 /** The codes with which a link that puts a moved file back does nothing, as wanted: the place is taken (`EEXIST`), or there is no moved file (`ENOENT`). */
@@ -8,23 +9,6 @@ const NOTHING_TO_PUT_BACK_CODES: ReadonlySet<string> = new Set([
   'EEXIST',
   'ENOENT',
 ])
-
-/**
- * Says whether anything is at a path, without following a link; for {@link dropSecondNameOfMovedFile}.
- * @param path - The path.
- * @returns `true` for any entry; `false` when the path holds nothing.
- * @throws Every failure of the look but a missing path.
- * @example await holdsAnEntry('/private/cursor-mcp-catalog/retired-1.mcp.json') // => false
- */
-async function holdsAnEntry(path: string): Promise<boolean> {
-  return lstat(path).then(
-    () => true,
-    (error: unknown) => {
-      if (systemErrorCode(error) === 'ENOENT') return false
-      throw error
-    },
-  )
-}
 
 /**
  * How {@link dropSecondNameOfMovedFile} ended.
@@ -63,5 +47,6 @@ export async function dropSecondNameOfMovedFile(
   // The second name goes only as a name of the file that stands at its own path now.
   const drop = await dropSecondNameOfOneFile(ownPath, secondPath)
   if (drop !== 'not-one-file') return drop
-  return (await holdsAnEntry(secondPath)) ? 'kept' : 'dropped'
+  // Any entry under the second name is kept; one that holds nothing is dropped already.
+  return (await lstat(secondPath).catch(passIfMissing)) ? 'kept' : 'dropped'
 }

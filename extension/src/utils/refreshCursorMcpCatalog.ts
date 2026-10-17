@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as fileFlags, type BigIntStats, type Stats } from 'node:fs'
+import { constants as fileFlags, type BigIntStats } from 'node:fs'
 import {
   link,
   lstat,
@@ -35,6 +35,7 @@ import {
 import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
+import { passIfMissing } from './passIfMissing'
 import { recordedFileId, type RecordedFileId } from './recordedFileId'
 import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './startOverBy'
 import {
@@ -108,8 +109,9 @@ async function regularDirectory(
   path: string,
   commandToRunAgain: string,
 ): Promise<void> {
+  // A path that holds nothing is an answer, which the refusal words, and not the file system's own text.
   const step = stepPastNoRealFolder(
-    await lookAtFolder(path),
+    await lstat(path).catch(passIfMissing),
     PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
     commandToRunAgain,
   )
@@ -117,22 +119,6 @@ async function regularDirectory(
     throw new Error(
       `Cursor MCP directory is not a regular directory: ${path}. Codebook left its settings unchanged. ${step}`,
     )
-}
-
-/**
- * Looks at Cursor's settings folder without following a link, for {@link regularDirectory}: a path that holds nothing is an answer, which the refusal words, and not the file system's own text.
- * @param path - Cursor's settings folder.
- * @returns What stands at the path, or `undefined` when nothing does.
- * @throws Every failure of the look but a missing path.
- * @example await lookAtFolder('/home/user/.cursor') // => undefined in a home without Cursor's settings folder
- */
-async function lookAtFolder(path: string): Promise<Stats | undefined> {
-  try {
-    return await lstat(path)
-  } catch (error) {
-    if (isMissing(error)) return undefined
-    throw error
-  }
 }
 
 /**
@@ -648,23 +634,6 @@ async function setTimesOfOpenConfig(
 }
 
 /**
- * Says whether a path holds nothing, without following a link, for {@link whyNothingIsRetired} (the config's path) and {@link captureOwnedCursorMcpCatalogGeneration} (Cursor's settings folder).
- * @param path - The path.
- * @returns `true` when nothing is there; `false` for any entry.
- * @throws Every failure of the look but a missing path.
- * @example await holdsNothing('/home/user/.cursor/mcp.json') // => true after the learner deleted the config
- */
-async function holdsNothing(path: string): Promise<boolean> {
-  return lstat(path).then(
-    () => false,
-    (error: unknown) => {
-      if (isMissing(error)) return true
-      throw error
-    },
-  )
-}
-
-/**
  * Says why a removal retires nothing for a receipt whose config is not the unchanged file Codebook created at its path, for {@link whyNoConfigIsOwned} and {@link removeOwnedCursorMcpCatalog}; the removal's notice words the answer ({@link cursorRemovalNotice}).
  * @param owner - The catalog's receipt.
  * @param targetPath - The config's path.
@@ -679,7 +648,10 @@ async function whyNothingIsRetired(
   targetPath: string,
 ): Promise<UnretiredCatalogCleanup> {
   if (!owner.installed) return 'already-retired'
-  return (await holdsNothing(targetPath)) ? 'not-owned' : 'preserved'
+  // Looked at without following a link: any entry at the path is preserved.
+  return (await lstat(targetPath).catch(passIfMissing))
+    ? 'preserved'
+    : 'not-owned'
 }
 
 /**
@@ -1073,7 +1045,7 @@ export async function captureOwnedCursorMcpCatalogGeneration(
       const targetPath = join(cursorDirectory, 'mcp.json'),
         receiptPath = join(storageDirectory, 'receipt.json')
       // Without Cursor's settings folder no config stands in it: nothing is recovered or reserved, and that is no refusal.
-      if (await holdsNothing(cursorDirectory))
+      if (!(await lstat(cursorDirectory).catch(passIfMissing)))
         return {
           unowned: await whyNoConfigIsOwned(
             receiptPath,

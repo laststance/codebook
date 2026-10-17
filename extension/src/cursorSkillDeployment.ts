@@ -38,6 +38,7 @@ import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
 import { isRecordedFileId } from './utils/isRecordedFileId'
 import { isSameFileId } from './utils/isSameFileId'
 import { openWithoutFollowing } from './utils/openWithoutFollowing'
+import { passIfMissing } from './utils/passIfMissing'
 import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
 import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './utils/startOverBy'
 import {
@@ -199,14 +200,9 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty. @param path - Exact file or directory path. @returns Its status with exact numbers (an inode number can be more than a number holds), or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
-async function inspectedPath(path: string): Promise<BigIntStats | undefined> {
-  try {
-    return await lstat(path, { bigint: true })
-  } catch (error) {
-    if (isMissing(error)) return undefined
-    throw error
-  }
+/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty ({@link passIfMissing}). @param path - Exact file or directory path. @returns Its status with exact numbers (an inode number can be more than a number holds), or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
+function inspectedPath(path: string): Promise<BigIntStats | undefined> {
+  return lstat(path, { bigint: true }).catch(passIfMissing)
 }
 
 /** A file of the skill setup as one open file showed it: its bytes, and its status with exact numbers. Both are of one file, also when the path comes to name another file meanwhile. */
