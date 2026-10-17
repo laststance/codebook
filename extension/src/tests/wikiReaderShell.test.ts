@@ -585,6 +585,82 @@ test('an entry whose address has no query gets no target', () => {
   )
 })
 
+// Value: protects=the learner whose Wiki page, published before the publisher refused such addresses or written straight into the Wiki folder, links to a file or another extension in the editor; fails_when=the reader serves a `vscode://file/…` or `cursor://another.extension/…` address as a link again, so a click opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's links, or it takes the link from Codebook's own citation too; why_new=Cycle 0046 /ship repeat code review OC5: the reader rebound Codebook's addresses and served every other editor address as published; seam=none, the served page is compared as text
+test('a served page keeps the text of a link to a file or another extension in the editor but not its link, and Codebook’s citation still opens in the serving editor', () => {
+  // Arrange: a link to a file through VS Code, a link to another extension through Cursor, and a Codebook citation.
+  const page =
+    '<p><a href="vscode://file/etc/hosts">hosts</a> ' +
+    '<a href="cursor://other.extension/run?task=1">run</a> ' +
+    '<a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a.ts:1</a></p>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert: the two foreign links keep their text and their address as a value no browser follows; the citation gets Cursor's scheme.
+  assert.equal(
+    servedByCursor,
+    '<p><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ' +
+      '<a data-codebook-unlinked="cursor://other.extension/run?task=1">run</a> ' +
+      '<a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a.ts:1</a></p>',
+  )
+})
+
+// Value: protects=the same learner against a page that writes such an address the way a browser still reads it, or in another attribute a browser follows; fails_when=the reader compares the attribute's name or the scheme with case, reads no character reference, tab or leading space as a browser does, or looks at href alone, so `HREF=VSCode://file/…`, `vs&#99;ode:`, `vscode&colon;` or an image's `src` and `srcset` still reach the editor; why_new=Cycle 0046 /ship repeat code review OC5 (the attributes of SC4); seam=none, the served page is compared as text
+test('every attribute a browser follows and every way it reads an editor address loses the link, while web, mail and relative links stay', () => {
+  // Arrange: the attributes of the publisher's address rule, then the forms a browser reads as vscode:, then links that stay.
+  const page =
+    '<img src="vscode://file/a.png" alt="a">' +
+    '<img srcset="b.png 1x, cursor://other.extension/c.png 2x" alt="c">' +
+    '<form action="vscode://file/f"><button formaction="cursor://other.extension/g">Go</button></form>' +
+    '<svg><a xlink:href="vscode://file/h"><text>h</text></a></svg>' +
+    '<a HREF=VSCode://file/i>i</a>' +
+    '<a href=" vs&#99;ode://file/j">j</a>' +
+    '<a href="vs\tcode://file/k">k</a>' +
+    '<a href="&#x76;scode://file/l">l</a>' +
+    '<a href="vscode&colon;//file/m">m</a>' +
+    '<a href="https://example.com/n">n</a>' +
+    '<a href="mailto:o@example.com">o</a>' +
+    '<a href="pages/p&amp;q.html#r">p</a>'
+
+  // Act
+  const servedByVsCode = rebindDeepWikiEditorLinks(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    servedByVsCode,
+    '<img data-codebook-unlinked="vscode://file/a.png" alt="a">' +
+      '<img data-codebook-unlinked="b.png 1x, cursor://other.extension/c.png 2x" alt="c">' +
+      '<form data-codebook-unlinked="vscode://file/f"><button data-codebook-unlinked="cursor://other.extension/g">Go</button></form>' +
+      '<svg><a data-codebook-unlinked="vscode://file/h"><text>h</text></a></svg>' +
+      '<a data-codebook-unlinked=VSCode://file/i>i</a>' +
+      '<a data-codebook-unlinked=" vs&#99;ode://file/j">j</a>' +
+      '<a data-codebook-unlinked="vs\tcode://file/k">k</a>' +
+      '<a data-codebook-unlinked="&#x76;scode://file/l">l</a>' +
+      '<a data-codebook-unlinked="vscode&colon;//file/m">m</a>' +
+      '<a href="https://example.com/n">n</a>' +
+      '<a href="mailto:o@example.com">o</a>' +
+      '<a href="pages/p&amp;q.html#r">p</a>',
+  )
+})
+
+// Value: protects=an escaped code example or a sentence of a page that shows an editor address; fails_when=the reader changes an address it reads in the page's text, where a browser follows nothing, so the example shows another text than its author wrote; why_new=Cycle 0046 /ship repeat code review OC5 (the rule of row 135 that the page's text is served as published); seam=none, the served page is compared as text
+test('an editor address shown in the text of a page is served as written', () => {
+  // Arrange
+  const page =
+    '<pre><code>&lt;a href="vscode://file/etc/hosts"&gt;</code></pre>' +
+    '<p>Write href="cursor://other.extension/run" into the link.</p>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<pre><code>&lt;a href="vscode://file/etc/hosts"&gt;</code></pre>' +
+      '<p>Write href="cursor://other.extension/run" into the link.</p>',
+  )
+})
+
 test('the open control is printed only where the publisher puts a page’s first citation, never as a fixed link of the shell', async () => {
   // Arrange / Act
   const shell = await readShell()

@@ -77,6 +77,11 @@ const PAGE_WITH_PLANTED_SCRIPT = 'pages/chapter-2.html'
 /** The planted script of {@link PAGE_WITH_PLANTED_SCRIPT}, after the chapter's content; when it runs, it notes itself in `window.contentScriptRuns`. */
 const PLANTED_SCRIPT =
   "<p>Explained from source.</p><script>(window.contentScriptRuns = window.contentScriptRuns || []).push('planted')</script>"
+/** The chapter that gets links to a file and to another extension in the editor, written straight into its file after the publish, which no publisher prints since it refused them. */
+const PAGE_WITH_FOREIGN_EDITOR_LINKS = 'pages/chapter-3.html'
+/** The links of {@link PAGE_WITH_FOREIGN_EDITOR_LINKS}, after the chapter's content: a link to a file through VS Code, a link to another extension through Cursor, and an image whose address is a file through VS Code. */
+const FOREIGN_EDITOR_LINKS =
+  '<p>Explained from source.</p><p><a id="foreign-file-link" href="vscode://file/etc/hosts">The hosts file</a> <a id="foreign-extension-link" href="cursor://other.extension/run?task=1">Run the task</a> <img id="foreign-image" src="vscode://file/etc/a.png" alt="An image"></p>'
 /** The rail entry of a page after its link, as this publisher prints it and as the earlier builds printed it: what {@link withEntryAfterItsLink} replaces. */
 const ENTRY_AFTER_ITS_LINK =
   / aria-describedby="codebook-open-target">Open in VS Code<\/a> .*?<\/p>/
@@ -489,6 +494,18 @@ async function publishSampleWiki() {
       (await readFile(withContentScript, 'utf8')).replace(
         '<p>Explained from source.</p>',
         CONTENT_SCRIPT,
+      ),
+    )
+    // One chapter gets links to a file and to another extension in the editor, written straight into its file.
+    const withForeignEditorLinks = join(
+      outputDirectory,
+      PAGE_WITH_FOREIGN_EDITOR_LINKS,
+    )
+    await writeFile(
+      withForeignEditorLinks,
+      (await readFile(withForeignEditorLinks, 'utf8')).replace(
+        '<p>Explained from source.</p>',
+        FOREIGN_EDITOR_LINKS,
       ),
     )
     await appendFile(
@@ -2109,6 +2126,47 @@ async function check(page, options, collected) {
       },
     )
   }
+  const usePageWithForeignEditorLinks = async () => {
+    // Arrange: a chapter whose file got links to a file and to another extension in the editor after the publish.
+    await page.setViewportSize({ width: 1200, height: 720 })
+    await page.goto(`${options.url}${options.pageWithForeignEditorLinks}`)
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-codebook-freshness]').textContent ===
+        'Source changed · Update available',
+    )
+    // Act: what the browser holds as the page's links and the image's address, and the text of the two links.
+    const used = await page.evaluate(() => ({
+      links: [...document.links].map((link) => link.href),
+      fileLinkText: document.querySelector('#foreign-file-link').textContent,
+      extensionLinkText: document.querySelector('#foreign-extension-link')
+        .textContent,
+      imageAddress: document.querySelector('#foreign-image').currentSrc,
+      entryAddress: document
+        .querySelector('.open-in-editor a')
+        .getAttribute('href'),
+    }))
+    // Assert
+    record(
+      'a page whose file got links to a file and to another extension in the editor is served with their text but without their links, and the rail entry still opens its source in the editor through Codebook',
+      used,
+      {
+        hasNoLinkToAFileInTheEditor: !used.links.some((address) =>
+          address.startsWith('vscode://file/'),
+        ),
+        hasNoLinkToAnotherExtension: !used.links.some((address) =>
+          address.startsWith('cursor://other.extension/'),
+        ),
+        doesImageLoadNothing: used.imageAddress === '',
+        doLinksKeepTheirText:
+          used.fileLinkText === 'The hosts file' &&
+          used.extensionLinkText === 'Run the task',
+        doesEntryOpenItsSource: used.entryAddress.startsWith(
+          'vscode://laststance.codebook/source?',
+        ),
+      },
+    )
+  }
   const useWikiPublishedFromCrlfShell = async () => {
     // Arrange: a Wiki the shipped publisher rendered from a reader shell with CRLF line endings, served by a reader of its own and opened from disk.
     await page.setViewportSize({ width: 1200, height: 720 })
@@ -2205,6 +2263,7 @@ async function check(page, options, collected) {
     usePageWithContentScript,
     useOfflinePageWithContentScript,
     usePageWithPlantedScript,
+    usePageWithForeignEditorLinks,
     useWikiPublishedFromCrlfShell,
   ])
     await step()
@@ -2314,6 +2373,7 @@ try {
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
       pageWithContentScript: PAGE_WITH_CONTENT_SCRIPT,
       pageWithPlantedScript: PAGE_WITH_PLANTED_SCRIPT,
+      pageWithForeignEditorLinks: PAGE_WITH_FOREIGN_EDITOR_LINKS,
       // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
       offlinePageWithContentScript: pathToFileURL(
         join(wiki.outputDirectory, PAGE_WITH_CONTENT_SCRIPT),

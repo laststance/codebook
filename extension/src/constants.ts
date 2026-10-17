@@ -735,6 +735,8 @@ export const WIKI_ENTRY_FILE = 'index.html'
 export const WIKI_SHELL_SCRIPT_HASHES: readonly string[] = [
   'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
 ]
+/** The last code point of Unicode. A browser reads a numeric character reference past it as the replacement character; the Wiki reader reads it as this one. Neither is a letter or a colon of a scheme. */
+export const UNICODE_LAST_CODE_POINT = 0x10ffff
 /** Route of the Wiki reader that answers the update run's state; the reader hands it to its page script, so both sides take the name from here. */
 export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
 /** Route of the Wiki reader that answers how the Wiki stands against the source; handed to the page script like {@link WIKI_UPDATE_STATUS_ROUTE}. */
