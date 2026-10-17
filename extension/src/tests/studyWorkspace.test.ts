@@ -6314,6 +6314,73 @@ test("the chat that had the keyboard gets it back at a pause of a live run when 
   }
 })
 
+// Value: protects=the pause's own rules for the chat's return when the learner's sign of work in a text editor changed after the chat's record was taken: a learner in Cursor who went from the Agent chat's tab to a file and clicked into it half a second before the debugger opened the paused file is, by PAUSE_FOCUS_LOOKBACK_MS, taken as the debugger's own opening (the price that bound names), so the chat still gets its keyboard back at the pause and the learner is told once; fails_when=the chat return (the function retainForeignTabFocus answers) applies row 741's rule for arrangements to the pause's return as well, so the click's sign since the record was taken stops the return and the keyboard stays in the paused file; why_new=Cycle 0046 row 741 (the coverage audit of /ship: the toldCause !== 'pause' exception had no test); seam=workspace harness with the controlled runtime, addSeparateEditorPart, focusMutableDraft, workInActiveTextEditor('mouse'), pauseDebugger, the clock of performance.now held for the editor events; no_claim=whether that price is the best rule for a learner who clicked into a file just before a pause; this test pins the rule as it stands
+test("the chat that had the keyboard still gets it back at a pause of a live run when the learner went to a file and clicked into it half a second before the debugger opened the paused file, by the pause's own bound", async (t) => {
+  // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader follows a live run and the learner types in the chat.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    // On a held clock: the learner goes to learner-notes.ts and clicks into it; 500 ms later the debugger opens the paused file with the keyboard and Run and Debug names the stack item.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.workInActiveTextEditor('mouse')
+    clockMs += 500
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.pauseDebugger()
+    clock.mock.restore()
+
+    // Act: the run reaches its stop and the reader shows the stop's captured source over the paused file.
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+
+    // Assert: the chat has the keyboard again through Cursor's own command, and the learner is told once where it went.
+    assert.deepEqual(
+      {
+        chatHasKeyboard: chat.focused(),
+        focusAgentCommands: harness.commands.filter(
+          (command) => command === 'composer.focusComposer',
+        ),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        chatHasKeyboard: true,
+        focusAgentCommands: ['composer.focusComposer'],
+        messages: [
+          'Codebook gave the keyboard back to the chat editor tab after the editor moved it to another group (at a pause, to the paused file the debugger opened). The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner in Cursor who left the Agent chat's tab for a file shortly before a live run paused: it stays in the editor, and the chat does not take it; fails_when=the bound that tells the debugger's opening of the paused file from a learner's own move to a file is lengthened or dropped, so that a learner who went from the chat to a file is thrown back into the chat input at the next pause; why_new=Cycle 0046 row 5, Cursor half: the far side of PAUSE_FOCUS_LOOKBACK_MS; seam=workspace harness with the controlled runtime, addSeparateEditorPart, focusMutableDraft, pauseDebugger, the clock of performance.now held for the editor events
 test("a learner in Cursor who left the chat for a file 1.001 seconds before Run and Debug named a pause of a live run keeps the keyboard in the editor, and the chat's tab does not take it", async (t) => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader follows a live run and the learner types in the chat.
