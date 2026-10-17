@@ -488,3 +488,56 @@ test('a save queued behind an append that fails keeps the append’s failure as 
     await rm(parent, { recursive: true })
   }
 })
+
+// Value: protects=the cause a caller quotes when the evidence refuses a save after an earlier write failed (ConfiguredBrowserRun's final persistence, a snapshot's save): the refusal names that failure once, as the flush does, so the run's failure reads "Final evidence persistence failed: Error: Evidence write failed: Error: ENOENT: …" and not "… Error: Error: ENOENT: …"; fails_when=the save refuses with the stored failure as its message, which already begins with its error's name, so every caller's text repeats it (N6, Cycle 0046 /ship review of the fixes); why_new=no test read the text of a save's refusal; seam=the recorder's directory, removed after its first event so that the next append fails, with one save queued behind that append and one made after it failed
+test('a save the evidence refuses after a failed write names that failure once, as the flush does', async () => {
+  // Arrange: the evidence directory is gone, so the queued append fails.
+  const parent = await mkdtemp(join(tmpdir(), 'codebook-evidence-test-')),
+    directory = join(parent, 'run')
+  const evidence = new Evidence(directory, {
+    maxEvents: 100,
+    retainedBytes: 10_000,
+    queuedBytes: 10_000,
+  })
+  try {
+    evidence.record('first')
+    await evidence.flush()
+    await rm(directory, { recursive: true })
+    evidence.record('unwritten')
+
+    // Act: one save queued behind the failing append, and one made after it failed.
+    const refusalOf = (saving: Promise<void>): Promise<string | undefined> =>
+      saving.then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    const queuedSaveRefusal = await refusalOf(
+      evidence.save('manifest.json', { status: 'completed' }),
+    )
+    const laterSaveRefusal = await refusalOf(
+      evidence.save('runtime.json', { status: 'completed' }),
+    )
+    const flushFailure = await refusalOf(evidence.flush())
+
+    // Assert: each text with the evidence directory's path replaced, which the system's error names.
+    const withoutPath = (text: string | undefined): string | undefined =>
+      text?.replace(directory, '<evidence directory>')
+    assert.deepEqual(
+      {
+        queuedSaveRefusal: withoutPath(queuedSaveRefusal),
+        laterSaveRefusal: withoutPath(laterSaveRefusal),
+        flushFailure: withoutPath(flushFailure),
+      },
+      {
+        queuedSaveRefusal:
+          "Error: Evidence write failed: Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
+        laterSaveRefusal:
+          "Error: Evidence write failed: Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
+        flushFailure:
+          "Error: Evidence write failed: Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
+      },
+    )
+  } finally {
+    await rm(parent, { recursive: true })
+  }
+})

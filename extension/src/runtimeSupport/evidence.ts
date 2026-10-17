@@ -171,7 +171,12 @@ export class Evidence {
     await this.flush()
   }
 
-  /** Saves fixed-name evidence supplied by the implementation, never by an HTTP file parameter. @example await evidence.save('snapshot.json', snapshot) */
+  /**
+   * Saves fixed-name evidence supplied by the implementation, never by an HTTP file parameter.
+   * A bounded evidence refuses the save once it has failed, or when the save would pass its queued bound; the refusal names the evidence's failure as {@link Evidence.flush} does ("Evidence write failed: <failure>"), so a caller that quotes the error names that failure once.
+   * @throws The refusal, or the file system's error of the write.
+   * @example await evidence.save('snapshot.json', snapshot)
+   */
   async save(name: string, contents: unknown): Promise<void> {
     const bytes =
       typeof contents === 'string' || Buffer.isBuffer(contents)
@@ -183,13 +188,15 @@ export class Evidence {
       (this.failure || this.queuedBytes + byteCount > this.limits.queuedBytes)
     ) {
       this.failure ??= 'Evidence queued write limit exceeded'
-      throw new Error(this.failure)
+      throw new Error(`Evidence write failed: ${this.failure}`)
     }
     this.queuedBytes += byteCount
     // Share the event queue so an older manifest cannot finish after a newer one.
     const saving = this.pending
       .then(async () => {
-        if (this.limits && this.failure) throw new Error(this.failure)
+        // The failure is kept as the string form of its error ("Error: ENOENT: …"): it is quoted, never made the message itself, which would repeat its error name.
+        if (this.limits && this.failure)
+          throw new Error(`Evidence write failed: ${this.failure}`)
         const temporaryPath = join(this.directory, `${name}.tmp`)
         await writeFile(temporaryPath, bytes)
         await rename(temporaryPath, join(this.directory, name))

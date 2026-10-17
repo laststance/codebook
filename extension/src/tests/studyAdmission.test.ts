@@ -1007,7 +1007,9 @@ test('a run whose final evidence write fails after its release freed every resou
     nextStartRefusal = error
   }
 
-  // Assert: the terminal reason up to the evidence folder's path, which the system's error names, and the opening of the error's cause.
+  // Assert: the terminal reason and the error's cause with the evidence folder's path replaced, which the system's error names.
+  const withoutPath = (text: string): string =>
+    text.replace(evidenceDirectory, '<evidence directory>')
   assert.ok('text' in resource)
   const state = z
     .object({
@@ -1026,14 +1028,11 @@ test('a run whose final evidence write fails after its release freed every resou
       stopped: started.record.stopped,
       cleanupError: started.record.cleanupError,
       state: state.state,
-      terminalReason: state.terminalReason.split(evidenceDirectory)[0],
+      terminalReason: withoutPath(state.terminalReason),
       error: {
         code: state.error.code,
         message: state.error.message,
-        causeOpening: state.error.cause.slice(
-          0,
-          'Final evidence persistence failed: '.length,
-        ),
+        cause: withoutPath(state.error.cause),
       },
       nextStartRefusal,
     },
@@ -1042,11 +1041,13 @@ test('a run whose final evidence write fails after its release freed every resou
       stopped: true,
       cleanupError: undefined,
       state: 'stopped',
-      terminalReason: "Error: ENOENT: no such file or directory, open '",
+      terminalReason:
+        "Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
       error: {
         code: 'RUNTIME_FAILED',
         message: 'The run failed in its runtime.',
-        causeOpening: 'Final evidence persistence failed: ',
+        cause:
+          "Final evidence persistence failed: Error: Evidence write failed: Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
       },
       nextStartRefusal: undefined,
     },
