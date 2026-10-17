@@ -836,10 +836,14 @@ export class RepositoryReader {
   /**
    * Closes the read-only cited-source tabs this reader showed once its Wiki closes, so the learner's own front tab of their groups comes back; called by {@link close} (Close Repository Wiki) and when the Wiki's tab is closed by hand ({@link ensurePanel}), Cycle 0046 row 641.
    * The reader shows a citation in front of the first group without preview (`openSource`), over the learner's own file, also for an agent's open the learner never chose; it serves the Wiki beside it, whose article, refresh and navigation no longer reach it once the Wiki is gone, and the learner's current file stays one Open Current File away. The editor brings the group's most recently active other tab to the front with its view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141, 988:96536; Cursor 3.23.12 17264:12900, 11678:22600). A tab the learner pinned stays, and so does every cited source of a group that holds nothing else: its close would remove that group under `closeEmptyGroups` (VS Code 1106:79878). Only the copies this reader showed go ({@link shownCitedSources}, row 662): a copy an earlier reader left was settled when this reader was made ({@link retireCopiesOfEarlierReaders}), and one that stayed then, because the learner read in it, stays. A close the editor refuses leaves the tabs as they are.
+   * The closing Wiki's own tab is no other tab of its group: the editor still lists it right after the panel's disposal, which reaches the editor after this call (VS Code 1.140.0 `extensionHostProcess.js` 295:115246; Cursor 3.23.12 203:121183), and it leaves with the Wiki, so a copy the learner moved beside the Wiki is its group's only tab once the Wiki is gone and stays (Cycle 0046 row 687).
    * @example this.retireCitedSourceTabs() // the learner's login-form.tsx is in front of the first group again
    */
   private retireCitedSourceTabs(): void {
-    this.closeCitedSourceTabs((uri) => !this.shownCitedSources.has(uri))
+    this.closeCitedSourceTabs(
+      (uri) => !this.shownCitedSources.has(uri),
+      (tab) => this.isWikiTab(tab),
+    )
   }
 
   /**
@@ -926,13 +930,15 @@ export class RepositoryReader {
   /**
    * Closes the cited-source tabs of every group that {@link retirableCitedSources} picks; called by {@link retireCitedSourceTabs} when the Wiki closes, by {@link retireStaleCitedSources} and by {@link retireCopiesOfEarlierReaders}. A close the editor refuses leaves the tabs as they are.
    * @param isKept - Says whether a copy stays, by its URI and its group.
+   * @param isLeaving - Says whether a tab leaves its group with this retirement, so it counts as no other tab there (the closing Wiki's own, {@link retireCitedSourceTabs}); none by default.
    * @example this.closeCitedSourceTabs((uri) => !this.shownCitedSources.has(uri)) // every unpinned copy this reader showed beside another tab leaves
    */
   private closeCitedSourceTabs(
     isKept: (uri: string, group: vscode.TabGroup) => boolean,
+    isLeaving: (tab: vscode.Tab) => boolean = () => false,
   ): void {
     const retired = vscode.window.tabGroups.all.flatMap((group) =>
-      this.retirableCitedSources(group, isKept),
+      this.retirableCitedSources(group, isKept, isLeaving),
     )
     if (retired.length)
       void vscode.window.tabGroups.close(retired, true).then(
@@ -945,14 +951,16 @@ export class RepositoryReader {
    * Picks the cited-source tabs of one group that {@link closeCitedSourceTabs} closes. Every `codebook-repository-source` tab of the window counts, whichever workspace's reader showed it, unless the caller keeps it: a copy of another workspace is one no reader serves any more ({@link sourceText} refuses its authority), and the callers keep what is not theirs to retire ({@link shownCitedSources}).
    * @param group - An editor group of the window.
    * @param isKept - Says whether a copy stays, by its URI and its group.
+   * @param isLeaving - Says whether a tab leaves the group with this retirement, so it is no other tab of the group.
    * @returns
-   * - The group's unpinned cited-source tabs that are not kept, while the group holds another tab too.
-   * - No tab for a group that holds only such tabs, and for a group without them.
-   * @example this.retirableCitedSources(firstGroup, () => false) // => [the order.ts citation tab] beside the learner's login-form.tsx
+   * - The group's unpinned cited-source tabs that are not kept, while the group holds another tab too that is not leaving.
+   * - No tab for a group that holds only such tabs and leaving ones, and for a group without them.
+   * @example this.retirableCitedSources(firstGroup, () => false, () => false) // => [the order.ts citation tab] beside the learner's login-form.tsx
    */
   private retirableCitedSources(
     group: vscode.TabGroup,
     isKept: (uri: string, group: vscode.TabGroup) => boolean,
+    isLeaving: (tab: vscode.Tab) => boolean,
   ): vscode.Tab[] {
     const cited = group.tabs.filter(
       (tab) =>
@@ -961,8 +969,9 @@ export class RepositoryReader {
         tab.input.uri.scheme === REPOSITORY_SOURCE_SCHEME &&
         !isKept(tab.input.uri.toString(), group),
     )
-    // A group the retirement would empty keeps its tabs.
-    return cited.length < group.tabs.length ? cited : []
+    const staying = group.tabs.filter((tab) => !isLeaving(tab))
+    // A group the retirement would empty, its leaving tabs gone too, keeps its tabs.
+    return cited.length < staying.length ? cited : []
   }
   /**
    * Drains publication and shared learner writes while disposing only this reader's UI ownership; called when the window closes and when a change of the workspace's folders replaces the reader.

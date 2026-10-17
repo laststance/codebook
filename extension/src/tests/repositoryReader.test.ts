@@ -1619,6 +1619,66 @@ test('a cited-source copy the learner moved beside the Wiki and types in keeps i
   )
 })
 
+// Value: protects=the learner's group arrangement and reading when the Wiki closes while a cited-source copy the learner moved beside it stands alone with it in its group: the closing Wiki's tab is no other tab of that group, so the copy is the group's only tab and stays, and the group stays with it; fails_when=RepositoryReader.retirableCitedSources counts the closing Wiki's tab, which the editor still lists right after the panel's disposal, as another tab of the group, so Close Repository Wiki closes the copy the learner reads in and the editor removes the emptied group (closeEmptyGroups); why_new=Cycle 0046 row 687 (the 652 and 662 forks' finding 3, probe: open, moveFrontSourceTabToWikiGroup, close closes module.ts); seam=readerHarness, focusUnrelatedDraft, open, moveFrontSourceTabToWikiGroup (the learner's drag and click), close (Close Repository Wiki), deliverTabEvents, firstGroupTabs, wikiGroupTabs, focusedSource and the fake tabGroups.close's record
+test('Close Repository Wiki keeps a cited-source copy the learner moved beside the Wiki when it is the only other tab of the Wiki’s group', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx; the learner drags that copy into the Wiki's group and clicks into it.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.moveFrontSourceTabToWikiGroup()
+
+  // Act
+  harness.reader.close()
+  await harness.deliverTabEvents()
+
+  // Assert: the Wiki's tab left its group; the module.ts copy is that group's only tab, in front, with the keyboard, and nothing was closed by the reader.
+  assert.deepEqual(
+    {
+      firstGroup: harness.firstGroupTabs(),
+      wikiGroup: harness.wikiGroupTabs(),
+      keyboard: harness.focusedSource()?.document.uri.path,
+      closedTabs: harness.closedTabs,
+    },
+    {
+      firstGroup: {
+        tabs: ['file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
+      wikiGroup: {
+        tabs: ['codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      keyboard: '/architecture/1/module/0/module.ts',
+      closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=the same group as Close Repository Wiki's case when the learner closes the Wiki's tab by hand instead: the Wiki's own close (its panel's disposal) counts its tab as no other tab of its group, so the copy the learner moved beside the Wiki stays as that group's only tab; fails_when=the retirement on the panel's disposal counts the Wiki's tab and closes the copy, so the group goes too; why_new=Cycle 0046 row 687 (the Wiki's other close, row 641); seam=readerHarness, focusUnrelatedDraft, open, moveFrontSourceTabToWikiGroup, closeWikiTabByHand (the panel's disposal), deliverTabEvents, wikiGroupTabs and the fake tabGroups.close's record
+test('the Wiki’s tab closed by hand keeps a cited-source copy the learner moved beside the Wiki when it is the only other tab of the Wiki’s group', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx; the learner drags that copy into the Wiki's group and clicks into it.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+  harness.moveFrontSourceTabToWikiGroup()
+
+  // Act
+  harness.closeWikiTabByHand()
+  await harness.deliverTabEvents()
+
+  // Assert
+  assert.deepEqual(
+    { wikiGroup: harness.wikiGroupTabs(), closedTabs: harness.closedTabs },
+    {
+      wikiGroup: {
+        tabs: ['codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: [],
+    },
+  )
+})
+
 // Value: protects=the learner's first group after the workspace's folders change while the Wiki is open: the extension disposes that reader (its Wiki goes) and makes another, and the cited-source copy the reader before showed leaves with it, so no copy that no reader serves covers the learner's file; fails_when=the copy stays in front of the learner's file after the reader that showed it is gone (a dispose leaves the editor's tabs as they are), as it also does when a change of the first folder restarts the extension host; why_new=Cycle 0046 row 652; seam=readerHarness, a reader of its own (createReader), focusUnrelatedDraft, open, dispose (the folder change's), createReader (the reader made in its place), firstGroupTabs
 test('the reader made after the workspace folders change retires the cited-source copy the reader before it left in front of the learner’s file', async (context) => {
   // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx; then the workspace's folders change and the extension disposes that reader.
