@@ -6,7 +6,6 @@ import * as vscode from 'vscode'
 import type { z } from 'zod'
 
 import {
-  LEARNER_SELECTION_KINDS,
   REPOSITORY_FIXED_READING_SECTIONS,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_READER_READY_TIMEOUT_MS,
@@ -32,9 +31,11 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { repositoryHtml } from './ui/repositoryHtml'
+import { adoptLateNameOfAcquiredGroup } from './utils/adoptLateNameOfAcquiredGroup'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isLearnersSelectionIn } from './utils/isLearnersSelectionIn'
 import { isStaleGroupNameOfCitation } from './utils/isStaleGroupNameOfCitation'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { showPlainNotice } from './utils/showPlainNotice'
@@ -1493,15 +1494,7 @@ export class RepositoryReader {
         activeEditor = vscode.window.activeTextEditor,
         selectionEvent = typeof event === 'object' ? event : undefined
       // Explicit learner selection never proves ownership, even when it happens to match the requested range.
-      if (
-        selectionEvent &&
-        activeEditor &&
-        selectionEvent.textEditor.document.uri.toString() ===
-          activeEditor.document.uri.toString() &&
-        selectionEvent.textEditor.viewColumn === activeEditor.viewColumn &&
-        LEARNER_SELECTION_KINDS.has(selectionEvent.kind)
-      )
-        changed = true
+      if (isLearnersSelectionIn(selectionEvent, activeEditor)) changed = true
       if (initial === undefined && acquire) {
         const editorMatches = acquire.matchesEditor(),
           groupMatches = acquire.matchesGroup()
@@ -1571,19 +1564,12 @@ export class RepositoryReader {
         wikiSelectedBesideTextEditor(),
       )
       // The editor naming the acquired target's own group late, once, after the receipt took its stale name of another group (Cursor names its chat part's group until its tab model is rebuilt), is no newer input either (row 660).
-      if (
-        initial &&
-        acquire &&
-        staleNameAccepted &&
-        current.editor === initial.editor &&
-        current.group !== initial.group &&
-        acquire.matchesEditor() &&
-        acquire.matchesGroup() &&
-        !acquire.namesStaleGroup?.()
-      ) {
-        initial = { ...initial, group: current.group }
-        staleNameAccepted = false
-      }
+      ;({ retained: initial, staleNameAccepted } = adoptLateNameOfAcquiredGroup(
+        initial,
+        current,
+        acquire,
+        staleNameAccepted,
+      ))
       changed ||=
         current.editor !== initial?.editor || current.group !== initial?.group
     }
