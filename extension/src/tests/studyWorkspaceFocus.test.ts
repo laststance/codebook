@@ -3073,3 +3073,49 @@ test("reading every group's front tab, its label and its input in the fake edito
     await harness.close()
   }
 })
+
+// Value: protects=reader tests beside Cursor's chat part meeting the stale group name as Cursor keeps it: after the first editor group took the keyboard the editor goes on naming the chat's group through a tab notification that is a tab operation (the learner's typing made the file dirty: Cursor 3.23.12 `workbench.desktop.main.js` 17269:29781 sends it as a tab operation, which leaves the named group as it is, `extensionHostProcess.js` 131:34068), and a whole tab-model rebuild (17269:31013, 131:33177), as for a group's lock, names the active group again; fails_when=the fake clears the stale name at any tab notification, and only while a listener is subscribed, so a product told of a tab change reads the first group as the named one where Cursor still names the chat's; why_new=Cycle 0046 row 673; seam=the workspace harness's Cursor model: addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, the first-group focus command, reportActiveTextTab and the group lock command
+test("the fake editor goes on naming Cursor's chat group after the first group took the keyboard when the learner's file there turns dirty, and names the first group after a whole tab-model rebuild", async () => {
+  // Arrange: the learner's file in the first group, Cursor's chat part with the keyboard; the first-group focus command leaves the chat's group named.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  const draft = harness.focusMutableDraft('login-form.tsx', 1)
+  harness.leavePaneFocusUnreportedBesideChat()
+  chat.focusTab()
+  const tabGroups = harness.editor.window.tabGroups
+  const changedTabs: string[] = []
+  const subscription = tabGroups.onDidChangeTabs((event) => {
+    changedTabs.push(...event.changed.map((tab) => tab.label))
+  })
+  try {
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    const afterFocus = {
+      namedColumn: tabGroups.activeTabGroup.viewColumn,
+      activeTextEditor:
+        harness.editor.window.activeTextEditor?.document.uri.toString(),
+    }
+
+    // Act
+    harness.reportActiveTextTab({ isPreview: false, isDirty: true })
+    const namedAfterTabOperation = tabGroups.activeTabGroup.viewColumn
+    await harness.editor.commands.executeCommand(
+      'workbench.action.lockEditorGroup',
+    )
+    const namedAfterRebuild = tabGroups.activeTabGroup.viewColumn
+
+    // Assert
+    assert.deepEqual(afterFocus, {
+      namedColumn: 3,
+      activeTextEditor: draft.document.uri.toString(),
+    })
+    assert.deepEqual(changedTabs, ['login-form.tsx'])
+    assert.equal(namedAfterTabOperation, 3)
+    assert.equal(namedAfterRebuild, 1)
+  } finally {
+    subscription.dispose()
+    await harness.close()
+  }
+})
