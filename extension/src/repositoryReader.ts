@@ -1171,19 +1171,44 @@ export class RepositoryReader {
         })
     // Native editors may normalize BOM/CRLF in getText; the provider/hash seal retains original bytes.
     try {
-      // Noted before the display: a copy the editor shows although a later check refuses the citation is this reader's too (row 662).
-      this.shownCitedSources.add(uri.toString())
-      const editor = await vscode.window.showTextDocument(document, {
-        viewColumn: vscode.ViewColumn.One,
-        preview: false,
-        preserveFocus,
-        selection: requestedSelection,
-      })
+      const editor = await this.showCitedSourceCopy(uri, () =>
+        vscode.window.showTextDocument(document, {
+          viewColumn: vscode.ViewColumn.One,
+          preview: false,
+          preserveFocus,
+          selection: requestedSelection,
+        }),
+      )
       this.assertCurrent(generation)
       focus?.assertRetained()
       return { uri, editor, focus, namedColumnBefore }
     } catch (error) {
       focus?.dispose()
+      throw error
+    }
+  }
+
+  /**
+   * Shows a citation's copy and notes its URI as one this reader showed ({@link shownCitedSources}); called by {@link openSource} for every display of a citation.
+   * The URI is noted before the display, so a copy the editor shows although a later check refuses the citation is this reader's too (row 662). A show the editor itself refuses put no copy on screen: the URI is forgotten again unless this reader had shown it before, so a copy of that URI an earlier reader left, which the learner reads in, is not retired with this reader's Wiki (row 683).
+   * @param uri - The citation's copy.
+   * @param show - The display, `vscode.window.showTextDocument` with the citation's options.
+   * @returns The editor the display answered.
+   * @throws The display's refusal, once the URI is forgotten again where this display alone noted it.
+   * @example const editor = await this.showCitedSourceCopy(uri, () => vscode.window.showTextDocument(document, options))
+   */
+  private async showCitedSourceCopy(
+    uri: vscode.Uri,
+    show: () => Thenable<vscode.TextEditor>,
+  ): Promise<vscode.TextEditor> {
+    const key = uri.toString(),
+      shownBefore = this.shownCitedSources.has(key)
+    this.shownCitedSources.add(key)
+    try {
+      return await show()
+    } catch (error) {
+      // Only a URI this display noted goes; one an earlier display noted stays the reader's.
+      if (!shownBefore) this.shownCitedSources.delete(key)
       throw error
     }
   }

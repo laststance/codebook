@@ -183,6 +183,8 @@ async function readerHarness(context: TestContext) {
   const notices: string[] = []
   let sourceDocumentGate: { entered(): void; wait: Promise<void> } | undefined
   let sourceDisplayGate: { entered(): void; wait: Promise<void> } | undefined
+  /** The editor's refusal of the next document show, once; see `rejectNextSourceDisplay`. */
+  let sourceDisplayRefusal: Error | undefined
   let arrangementGate: { entered(): void; wait: Promise<void> } | undefined
   let layoutResponseGate: { entered(): void; wait: Promise<void> } | undefined
   let nativeCitationActivation = false
@@ -401,6 +403,10 @@ async function readerHarness(context: TestContext) {
               selection?: Range
             },
           ) => {
+            // A show the editor refuses puts no tab on screen and changes no focus.
+            const refusal = sourceDisplayRefusal
+            sourceDisplayRefusal = undefined
+            if (refusal) throw refusal
             shown.push({ uri: document.uri, text: document.getText() })
             const editor = {
                 document,
@@ -861,6 +867,14 @@ async function readerHarness(context: TestContext) {
         })
       sourceDocumentGate = { entered, wait }
       return { started, release }
+    },
+    /**
+     * Makes the editor refuse the next `showTextDocument`, once, before it opens or activates any tab, as it does for a document it cannot show: the call rejects with the given error.
+     * @param message - The refusal's message.
+     * @example harness.rejectNextSourceDisplay('Could not open the document.')
+     */
+    rejectNextSourceDisplay(message: string): void {
+      sourceDisplayRefusal = new Error(message)
     },
     holdSourceDisplay() {
       let entered!: () => void, release!: () => void
@@ -1689,6 +1703,80 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
         },
       },
       closedTabs: ['order.ts'],
+    },
+  )
+})
+
+// Value: protects=a cited-source copy an earlier reader showed that the learner kept reading after the workspace's folders changed, when the new reader's display of the same citation is refused by the editor: the refused show put no copy of this reader on screen, so Close Repository Wiki leaves the earlier copy where the learner reads it; fails_when=the reader notes the URI as its own before the show and keeps it after the refusal, so the Close takes the earlier reader's copy for this reader's and closes it; why_new=Cycle 0046 row 683 (CodeRabbit's review of 465a6834..5f9e8f05, row 662's note before the display); seam=readerHarness, a reader of its own (createReader), focusUnrelatedDraft, open, moveFrontSourceTabToWikiGroup, dispose (the folder change's), createReader, rejectNextSourceDisplay (the editor's refusal of the show), open of the same citation, close, wikiGroupTabs and the fake tabGroups.close's record
+test("a cited-source copy an earlier reader showed and the learner reads in stays at Close Repository Wiki after the new reader's display of the same citation was refused", async (context) => {
+  // Arrange: the learner's Wiki showed module.ts; the learner dragged that copy beside the Wiki and reads in it; then the workspace's folders change and the reader made in its place keeps the copy with the keyboard.
+  const harness = await readerHarness(context),
+    replaced = harness.createReader()
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await replaced.open(harness.selection)
+  harness.moveFrontSourceTabToWikiGroup()
+  await replaced.dispose()
+  await harness.deliverTabEvents()
+  const fresh = harness.createReader()
+  context.after(() => fresh.dispose())
+
+  // Act: the new reader's Wiki is opened on the same citation, module.ts, whose display the editor refuses; then the learner closes the Wiki.
+  harness.rejectNextSourceDisplay('Could not open the document.')
+  const refusal = await fresh.open(harness.selection).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
+  fresh.close()
+  await harness.deliverTabEvents()
+
+  // Assert: the open reported the editor's refusal, and the earlier reader's module.ts copy stayed through the Close; no tab was closed.
+  assert.deepEqual(
+    {
+      refusal,
+      wikiGroup: harness.wikiGroupTabs(),
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      refusal: 'Error: Could not open the document.',
+      wikiGroup: {
+        tabs: ['codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: [],
+    },
+  )
+})
+
+// Value: protects=the bound of row 683: a copy this reader showed stays its own when a later display of the same citation is refused, so Close Repository Wiki still retires it and the learner's file comes to the front of the first group again; fails_when=a refused show forgets every URI it touched, so the reader's own earlier copy stays behind after the Wiki closed; why_new=Cycle 0046 row 683 (its bound); seam=readerHarness, focusUnrelatedDraft, open, rejectNextSourceDisplay, open of the same citation, close, firstGroupTabs and the fake tabGroups.close's record
+test('a cited-source copy the reader showed itself still leaves with Close Repository Wiki after a later display of the same citation was refused', async (context) => {
+  // Arrange: the learner's Wiki shows module.ts in front of login-form.tsx in the first group.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+
+  // Act: the same citation is shown again and the editor refuses that display; then the learner closes the Wiki.
+  harness.rejectNextSourceDisplay('Could not open the document.')
+  const refusal = await harness.reader.open(harness.selection).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
+  harness.reader.close()
+  await harness.deliverTabEvents()
+
+  // Assert: the reader's own module.ts copy was closed with the Wiki, and login-form.tsx is in front of the first group again.
+  assert.deepEqual(
+    {
+      refusal,
+      firstGroup: harness.firstGroupTabs(),
+      closedTabs: harness.closedTabs.map((uri) => basename(uri.split('?')[0]!)),
+    },
+    {
+      refusal: 'Error: Could not open the document.',
+      firstGroup: {
+        tabs: ['file:login-form.tsx'],
+        front: 'file:login-form.tsx',
+      },
+      closedTabs: ['module.ts'],
     },
   )
 })
