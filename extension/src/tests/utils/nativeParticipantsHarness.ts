@@ -1141,9 +1141,16 @@ export async function nativeParticipantsHarness(
     },
     /**
      * Pauses the page at a server stop's breakpoint in its stub of the server module, as js-debug does when the editor sent that breakpoint to the browser session too and the stub's map holds its line: the runtime pause at the stub's first line, then the `stopped` whose breakpoint ids name the server breakpoint's id in the browser session. The run's next browser `continue` resumes only this pause.
-     * @example harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+     * @param serverBreakpoint - The server stop's editor breakpoint, whose adapter id the `stopped` names first.
+     * @param otherHitIds - Adapter ids of further breakpoints the same pause hit (a breakpoint of the page's own at the same place), named after the server breakpoint's; none by default.
+     * @example
+     * harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)        // hitBreakpointIds: [12]
+     * harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!, [999]) // hitBreakpointIds: [12, 999]
      */
-    pauseBrowserAtServerBreakpoint(serverBreakpoint: { id: string }): void {
+    pauseBrowserAtServerBreakpoint(
+      serverBreakpoint: { id: string },
+      otherHitIds: readonly number[] = [],
+    ): void {
       stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
         scriptId: 'server-module-stub',
@@ -1166,7 +1173,7 @@ export async function nativeParticipantsHarness(
         body: {
           reason: 'breakpoint',
           threadId: 1,
-          hitBreakpointIds: [adapterId(serverBreakpoint)],
+          hitBreakpointIds: [adapterId(serverBreakpoint), ...otherHitIds],
         },
       })
     },

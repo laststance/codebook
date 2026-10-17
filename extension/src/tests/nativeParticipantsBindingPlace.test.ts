@@ -697,6 +697,47 @@ test('a page pause at a server stop’s breakpoint whose resume the adapter refu
   )
 })
 
+// Value: protects=a breakpoint of the page's own that a page pause hits together with a server stop's breakpoint in the page's stub of the server module: the run resumes a page pause only when every breakpoint it hit is a server stop's, so the page's own pause is never resumed past (T8, Cycle 0046 /ship review); fails_when=the run resumes the pause when some of its breakpoints name a server stop (`every` read as `some` in serverStopOfEveryBreakpoint); why_new=every test of such a pause named the server breakpoint alone; seam=nativeParticipantsHarness's pauseBrowserAtServerBreakpoint with a further hit id (999, a breakpoint of the page's own), the run's journal and the harness's log of adapter requests
+test('a page pause whose breakpoints are a server stop’s and one of the page’s own is not resumed by the run: no resume is requested, no continue reaches the page, and the action ends for the unowned page stop', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  // Act: the page pauses in its stub of the server module, naming the server breakpoint and a breakpoint of its own (adapter id 999).
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!, [999])
+  await waitUntil(
+    () =>
+      harness.run.view().status === 'failed' ||
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run ended for the page pause or resumed it',
+  )
+  // Assert: the failures, kept by the run's own loaded module, are copied into this test's realm.
+  assert.deepEqual(
+    {
+      failures: [...harness.run.view().failures],
+      resumeRequested: journaled(
+        harness,
+        'dap.server-breakpoint-browser-resume-requested',
+      ),
+      continuesSentToThePage: harness.commands.filter(
+        (command) =>
+          command.participant === 'browser' && command.method === 'continue',
+      ).length,
+    },
+    {
+      failures: ['Unowned browser DAP stop invalidated the declared operation'],
+      resumeRequested: [],
+      continuesSentToThePage: 0,
+    },
+  )
+})
+
 // Cycle 0046 (row 271): the order the help states for the entries of a page pause the run resumes itself. Red if the request were journaled after the page's resume, or the answered entry before the debugger answered: here the debugger resumes the page first and answers the request afterwards, so the answered entry follows the page's resume.
 test('the journal of a page pause at a server stop’s breakpoint holds Codebook’s resume request before the page’s resume, and the answered entry only after the debugger’s answer, which follows the page’s resume here', async (context) => {
   // Arrange: the action is accepted and the server stop has not paused yet; the debugger answers the run's resume at once, after it resumed the page.
