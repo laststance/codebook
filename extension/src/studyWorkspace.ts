@@ -14073,8 +14073,12 @@ export class StudyWorkspace {
     /** Latches a change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it. */
     const check = (): void => {
       const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
-      // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's.
-      if (editorNow !== editorBefore && isEditorShownByMove())
+      // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's; the report of a text editor the new group kept ends with the pane in front of it (row 710).
+      if (
+        editorNow !== editorBefore &&
+        (isEditorShownByMove() ||
+          (editorNow === noEditor && this.isApplicationInFrontOfActiveGroup()))
+      )
         editorBefore = editorNow
       changed ||=
         editorNow !== editorBefore ||
@@ -14097,6 +14101,20 @@ export class StudyWorkspace {
         for (const subscription of subscriptions) subscription.dispose()
       },
     }
+  }
+
+  /**
+   * Says whether the Application pane's tab stands in front of the active group, its new group at column 1, so that no text editor is active because the pane is; asked by {@link watchLearnerViewDuringApplicationMove} when the active text editor is reported as none during the pane's move.
+   * The editor goes on reporting the text editor that was active before `workbench.action.newGroupAbove` while the new group is empty, and reports none only once the moved pane stands in front of it: Cursor 3.23.12 reported none 43 ms after the lock of the Application's group, while the parked Application moved into it, in a Repository Wiki recording visit after the article Return (C61 c61-cu-695c), so the watch refused the visit as if the learner had left that file, and VS Code 1.140.0 refused the same visit (c61-vs-695; Cycle 0046 row 710). That end of the report is the move's own effect.
+   * @returns `true` while the active group is at column 1 and the Application pane's tab is the one it shows; `false` otherwise.
+   * @example this.isApplicationInFrontOfActiveGroup() // => true once the parked Application stands in front of its new group
+   */
+  private isApplicationInFrontOfActiveGroup(): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup
+    return (
+      group.viewColumn === vscode.ViewColumn.One &&
+      this.isCodebookPaneInput(group.activeTab?.input, 'codebook.scopedBrowser')
+    )
   }
 
   /**

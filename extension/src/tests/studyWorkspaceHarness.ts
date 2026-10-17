@@ -948,6 +948,11 @@ export async function workspaceHarness(
   let keepsNamingGroupAfterFrameNavigation = false
   // Cursor 3.23.12: the learner's click into a file of the main editor keeps the chat part's group named; see `keepChatPartNameAtLearnersFileClick`.
   let keepsChatPartNameAtLearnersFileClick = false
+  /** Set by `keepTextEditorReportAfterNewGroup`: `workbench.action.newGroupAbove` leaves the text editor reported before it as the active text editor until a pane's tab stands in front of the new group (Cycle 0046 row 710). */
+  let keepsTextEditorReportAfterNewGroup = false
+  /** The text editor reported as the active one while the new empty group at this column is the active group, in the model of `keepTextEditorReportAfterNewGroup`; ended by {@link endTextEditorReportKeptAtNewGroup}. */
+  let textEditorKeptAtNewGroup:
+    { column: number; editor: SourceEditor } | undefined
   let deferMovedFocusEcho = false,
     pendingMovedFocusEcho: typeof activeTabGroup | undefined
   let deferKeptFocusEcho = false,
@@ -1168,11 +1173,15 @@ export async function workspaceHarness(
       current.viewColumn = groups.find((group) =>
         group.tabs.includes(current.nativeTab),
       )?.viewColumn
-    const previouslyFocusedGroup = activeTabGroup
+    const previouslyFocusedGroup = activeTabGroup,
+      reportedBefore = focusedSourceEditor()
     activeTabGroup = created
     innerFocusedPanel = undefined
     // The new empty group's own element takes the keyboard from the editor area, which this model counts as the page body.
     if (!keyboardInView && !keyboardInSideBar) keyboardOnBody = true
+    // Cursor 3.23.12 went on reporting the text editor of before until the Application's tab stood in front of the new group (row 710).
+    if (keepsTextEditorReportAfterNewGroup && reportedBefore)
+      textEditorKeptAtNewGroup = { column: 1, editor: reportedBefore }
     if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([], created)
     else
       changedGroups({
@@ -1180,8 +1189,20 @@ export async function workspaceHarness(
         closed: [],
         changed: groups.filter((group) => group !== created),
       })
-    activeTextEditorChanged(undefined)
+    if (!textEditorKeptAtNewGroup) activeTextEditorChanged(undefined)
     groupFocusedBeforeInsertion = previouslyFocusedGroup
+  }
+  /**
+   * Ends the report of the text editor that `keepTextEditorReportAfterNewGroup` keeps while the new empty group is the active one, once a pane's tab stands in front of that group: the active text editor is then reported as none, as Cursor 3.23.12 reported it while the Application pane moved into its new group (C61 c61-cu-695c, Cycle 0046 row 710); called by a pane's reveal and registration.
+   * @param group - The group a pane's tab now stands in front of.
+   * @example endTextEditorReportKeptAtNewGroup(group) // the cited copy kept as the active text editor since newGroupAbove is reported as gone
+   */
+  function endTextEditorReportKeptAtNewGroup(
+    group: (typeof groups)[number],
+  ): void {
+    if (textEditorKeptAtNewGroup?.column !== group.viewColumn) return
+    textEditorKeptAtNewGroup = undefined
+    activeTextEditorChanged(focusedSourceEditor())
   }
   /**
    * Names the group of the tab `activateGroupOfTabAfterNextLock` chose as the active one, once, right after a lock answered: a group's activation, which both editors send alone (Cursor 3.23.12 `workbench.desktop.main.js` 17269:28244, `extensionHostProcess.js` 131:33740); called by the fake `workbench.action.lockEditorGroup`.
@@ -2036,6 +2057,13 @@ export async function workspaceHarness(
   /** Models the active-text receipt independently of native tab focus for workspace handoff regressions. @example focusedSourceEditor() // prior source until its native clear arrives */
   function focusedSourceEditor(): SourceEditor | undefined {
     if (partialFocusEditor) return partialFocusEditor.value
+    // The new empty group the editor activated still reports the text editor of before (`keepTextEditorReportAfterNewGroup`, row 710).
+    if (
+      textEditorKeptAtNewGroup &&
+      activeTabGroup.viewColumn === textEditorKeptAtNewGroup.column &&
+      !activeTabGroup.tabs.length
+    )
+      return textEditorKeptAtNewGroup.editor
     // The active part's active editor is the chat while that part is the active one, whether its input or a view has the keyboard.
     if (separateEditorPart?.lastActive) return undefined
     const input = activeTabGroup.activeTab?.input
@@ -2412,6 +2440,7 @@ export async function workspaceHarness(
           }
           group.tabs.push(nativeTab)
           group.activeTab = nativeTab
+          endTextEditorReportKeptAtNewGroup(group)
           if (column !== undefined && previousColumn !== column)
             nativeTab.isPreview = true
           // Normal editors remove a vacated last-tab group and renumber later main and foreign columns.
@@ -2682,6 +2711,7 @@ export async function workspaceHarness(
             listener({ opened: [nativeTab], closed: [], changed: [] })
       }
       group.activeTab = nativeTab
+      endTextEditorReportKeptAtNewGroup(group)
       // The new pane is the editor its group shows now, with or without the keyboard focus.
       returnHiddenEditorArea()
       replaceGroupObjects()
@@ -5786,6 +5816,13 @@ export async function workspaceHarness(
      * harness.useNativeLayout({ orientation: 1, groups: [{ size: 524 }, { size: 163 }] })
      * harness.modelVsCodeStackedRowSizing()
      */
+    /**
+     * Makes `workbench.action.newGroupAbove` leave the text editor reported before it as the active text editor until a pane's tab stands in front of the new empty group, as Cursor 3.23.12 reported it in a Repository Wiki recording visit (C61 c61-cu-695c: the first-group focus made the Wiki's cited copy the active text editor, the insertion and the lock of the Application's group left it so, and the active text editor was reported as none only 43 ms after the lock, while the parked Application pane moved into the new group; Cycle 0046 row 710). Off by default: the other tests keep the fake editor's report of no active text editor at the insertion.
+     * @example harness.keepTextEditorReportAfterNewGroup()
+     */
+    keepTextEditorReportAfterNewGroup(): void {
+      keepsTextEditorReportAfterNewGroup = true
+    },
     modelVsCodeStackedRowSizing(): void {
       modelsVsCodeStackedRowSizing = true
     },
