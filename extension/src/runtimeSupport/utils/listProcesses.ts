@@ -24,7 +24,7 @@ export type ProcessListingInputs = {
   run?: BoundedQueryRunner
   /** How long the listing may run, in milliseconds; {@link PROCESS_LISTING_TIMEOUT_MS} unless a test shortens it. */
   timeoutMs?: number
-  /** The environment the Windows system root is read from (`SystemRoot`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
+  /** The environment the Windows system root is read from (`SystemRoot`, then `windir`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
   environment?: SystemRootEnvironment
 }
 
@@ -78,7 +78,8 @@ const WINDOWS_LISTING: Omit<ProcessListingForm, 'file'> = {
  * Chooses the listing of a system; called by {@link listProcesses}.
  * @param platform - The system whose listing is used.
  * @param environment - Where the Windows system root is read from.
- * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` in the current directory or earlier in the search path is started in its place; `ps` on every other system.
+ * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` of another folder is started in its place; `ps` on every other system.
+ * @throws On Windows when neither `SystemRoot` nor `windir` names an absolute folder: the listing is refused and no program is started, since a program searched for in other folders could be another one of that name.
  * @example
  * listingFormOf('darwin', {}).file                         // => 'ps'
  * listingFormOf('win32', { SystemRoot: 'C:\\Windows' }).file // => 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -87,9 +88,14 @@ function listingFormOf(
   platform: NodeJS.Platform,
   environment: SystemRootEnvironment | undefined,
 ): ProcessListingForm {
-  return platform === 'win32'
-    ? { ...WINDOWS_LISTING, file: windowsPowerShellPath(environment) }
-    : UNIX_LISTING
+  if (platform !== 'win32') return UNIX_LISTING
+  const file = windowsPowerShellPath(environment)
+  // Without a system root PowerShell's folder is unknown; no other folder is searched for it.
+  if (file === undefined)
+    throw new Error(
+      'The process listing was not started: neither SystemRoot nor windir names the Windows folder, and Codebook starts Windows PowerShell only from it.',
+    )
+  return { ...WINDOWS_LISTING, file }
 }
 
 /** Says whether a failed listing was ended because it ran longer than its time bound: Node.js marks the error of a child it ended itself. @example isEndedAtTimeBound(Object.assign(new Error('Command failed: ps'), { killed: true, signal: 'SIGKILL' })) // => true */
@@ -160,7 +166,7 @@ async function printedListing(
  * The listing is bounded: it is ended with a signal it cannot ignore after {@link PROCESS_LISTING_TIMEOUT_MS}, and when it prints more than {@link PROCESS_LISTING_MAX_BYTES}. Its input is closed ({@link runBoundedQuery}).
  * @param inputs - The platform, the runner, the time bound and the environment that names the Windows system root of {@link ProcessListingInputs}; the real ones when left out.
  * @returns Every process the listing printed with a command line, in its order; a line that names no process id or no command line is left out.
- * @throws What running the listing throws, for example on a machine without the command; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}). A caller that removes by the listing removes nothing then.
+ * @throws What running the listing throws, for example on a machine without the command; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}); on Windows without a system root, the refusal of {@link listingFormOf}, before any program is started. A caller that removes by the listing removes nothing then.
  * @example
  * await listProcesses() // => [{ pid: 1, command: '/sbin/launchd' }, { pid: 4242, command: '/Applications/Google Chrome --user-data-dir=/tmp/codebook-browser-a1b2c3' }, …]
  * await listProcesses({ platform: 'win32' }) // => [{ pid: 4242, command: '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir=C:\\Temp\\codebook-browser-a1b2c3' }, …]

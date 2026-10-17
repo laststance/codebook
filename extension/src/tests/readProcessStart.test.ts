@@ -262,34 +262,47 @@ test('reads a Windows start as UTC ISO text with a fixed command line, from the 
   ])
 })
 
-// Value: protects=the Windows query still runs where the system root is not known, and never from a path that is looked up from the current directory; fails_when=a missing, empty or relative SystemRoot makes the query fail or builds a relative path to PowerShell, or a root on another drive or with a trailing separator is refused (Cycle 0046 row 107); why_new=the program was started by its bare name alone; seam=the injected platform, environment and query runner
-test('starts PowerShell by its bare name only where the system root is missing, empty or no absolute path, and by its full path for every root that is', async () => {
+// Value: protects=the Windows start query never starts a program found by a search: PowerShell is started from SystemRoot, else from windir, and with neither naming an absolute folder no program is started and the start reads as unknown (CX8, /ship Codex adversarial review; row 107 before it); fails_when=a missing, empty or relative system root makes the query start the bare `powershell.exe`, which Windows looks up in the current directory and the search path, where another program of that name can run with the user's rights, or builds a relative path to PowerShell, or a root on another drive or with a trailing separator is refused; why_new=the fallback to the bare name was pinned as the rule; seam=the injected platform, environment and query runner
+test('starts PowerShell from SystemRoot or windir only, and starts no program and reads no start where neither names an absolute folder', async () => {
   // Arrange
-  const programStartedWith = async (environment: {
+  const outcomeWith = async (environment: {
     SystemRoot?: string
-  }): Promise<string | undefined> => {
+    windir?: string
+  }): Promise<{ started: string[]; start?: string }> => {
     const query = answeringQuery({ stdout: '2026-10-05T09:12:33.1234567Z\r\n' })
-    await readProcessStart(ID_OF_NO_PROCESS, {
+    const start = await readProcessStart(ID_OF_NO_PROCESS, {
       platform: 'win32',
       environment,
       run: query.run,
     })
-    return query.calls[0]?.file
+    return {
+      started: query.calls.map((call) => call.file),
+      ...(start !== undefined && { start }),
+    }
   }
   // Act
-  const programs = {
-    noSystemRoot: await programStartedWith({}),
-    emptySystemRoot: await programStartedWith({ SystemRoot: '' }),
-    relativeSystemRoot: await programStartedWith({ SystemRoot: 'Windows' }),
-    rootOfAnotherDrive: await programStartedWith({ SystemRoot: 'D:\\WINNT\\' }),
+  const outcomes = {
+    noSystemRoot: await outcomeWith({}),
+    emptySystemRoot: await outcomeWith({ SystemRoot: '' }),
+    relativeSystemRoot: await outcomeWith({ SystemRoot: 'Windows' }),
+    windirOnly: await outcomeWith({ windir: 'C:\\Windows' }),
+    rootOfAnotherDrive: await outcomeWith({ SystemRoot: 'D:\\WINNT\\' }),
   }
   // Assert
-  assert.deepEqual(programs, {
-    noSystemRoot: 'powershell.exe',
-    emptySystemRoot: 'powershell.exe',
-    relativeSystemRoot: 'powershell.exe',
-    rootOfAnotherDrive:
-      'D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  assert.deepEqual(outcomes, {
+    noSystemRoot: { started: [] },
+    emptySystemRoot: { started: [] },
+    relativeSystemRoot: { started: [] },
+    windirOnly: {
+      started: [
+        'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ],
+      start: 'win:2026-10-05T09:12:33.1234567Z',
+    },
+    rootOfAnotherDrive: {
+      started: ['D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'],
+      start: 'win:2026-10-05T09:12:33.1234567Z',
+    },
   })
 })
 
@@ -301,10 +314,12 @@ test('a start query runs for as long as its caller allows, on macOS and on Windo
     queryTimeoutMs?: number,
   ): Promise<object | undefined> => {
     const query = answeringQuery({ stdout: 'Mon Oct  5 09:12:33 2026\n' })
+    // The Windows query starts PowerShell only from a named system root; macOS reads no environment.
     await readProcessStart(ID_OF_NO_PROCESS, {
       platform,
       run: query.run,
       queryTimeoutMs,
+      environment: { SystemRoot: 'C:\\Windows' },
     })
     return query.calls[0]?.options
   }
@@ -340,7 +355,7 @@ test('a start query runs for as long as its caller allows, on macOS and on Windo
 
 // Value: protects=a failed run of the real-process tests says what failed: the read of a start, by which query; fails_when=a start the system did not name within the tests' bound is handed on as no start, so the tests that follow fail as wrong judgements ("Learning storage is locked …", "false !== true") with no word about the read (Cycle 0046 row 105); why_new=the tests read real starts under the product's bound and said nothing when it failed; seam=the injected platform and query runner
 test('a real start that the system does not name fails the test that needs it with a sentence that names the query, and one it names is handed on', async () => {
-  // Arrange: a PowerShell that runs into its bound, a ps that fails, a stat that cannot be read, a platform without a query, and a PowerShell that answers.
+  // Arrange: a PowerShell that runs into its bound, a ps that fails, a stat that cannot be read, a platform without a query, and a PowerShell that answers; the Windows queries name their system root, from which alone PowerShell is started.
   const ranTooLong = Object.assign(new Error('Command failed'), {
     killed: true,
     signal: 'SIGKILL',
@@ -357,6 +372,7 @@ test('a real start that the system does not name fails the test that needs it wi
   const outcomes = {
     windows: await messageOf({
       platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
       run: answeringQuery(ranTooLong).run,
     }),
     mac: await messageOf({
@@ -370,7 +386,11 @@ test('a real start that the system does not name fails the test that needs it wi
       },
     }),
     anotherPlatform: await messageOf({ platform: 'freebsd' }),
-    answered: await messageOf({ platform: 'win32', run: answering.run }),
+    answered: await messageOf({
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answering.run,
+    }),
   }
   // Assert
   assert.deepEqual(outcomes, {

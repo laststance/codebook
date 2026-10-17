@@ -127,30 +127,55 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
   ])
 })
 
-// Value: protects=the Windows listing still runs where the system root is not known: it never builds a relative path to PowerShell, and falls back to the bare name only where the system root is missing, empty or relative; fails_when=a missing, empty or relative SystemRoot makes the listing fail or builds a relative path to PowerShell (F4, Cycle 0046 /ship review; the same lookup as the start query's, row 107); why_new=the listing named its program by its bare name alone; seam=the injected platform, environment and runner
-test('the Windows listing starts PowerShell by its bare name only where the system root is missing, empty or no absolute path', async () => {
+// Value: protects=the Windows listing never starts a program found by a search: PowerShell is started from SystemRoot, else from windir, and with neither naming an absolute folder the listing is refused before any program is started, so the sweep that waits for it removes nothing (CX8, /ship Codex adversarial review; F4 and row 107 before it); fails_when=a missing, empty or relative system root makes the listing start the bare `powershell.exe`, which Windows looks up in the current directory and the search path, where another program of that name can run with the user's rights, or builds a relative path to PowerShell; why_new=the fallback to the bare name was pinned as the rule; seam=the injected platform, environment and runner
+test('the Windows listing starts PowerShell from SystemRoot or windir only, and is refused without starting a program where neither names an absolute folder', async () => {
   // Arrange
-  const programStartedWith = async (environment: {
+  const outcomeWith = async (environment: {
     SystemRoot?: string
-  }): Promise<string | undefined> => {
+    windir?: string
+  }): Promise<{ started: string[]; refusal?: string }> => {
     const listing = answeringListing({ stdout: '' })
-    await listProcesses({ platform: 'win32', run: listing.run, environment })
-    return listing.calls[0]?.file
+    const refusal = await listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment,
+    }).then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+    return {
+      started: listing.calls.map((call) => call.file),
+      ...(refusal !== undefined && { refusal }),
+    }
+  }
+  const refused = {
+    started: [],
+    refusal:
+      'Error: The process listing was not started: neither SystemRoot nor windir names the Windows folder, and Codebook starts Windows PowerShell only from it.',
   }
   // Act
-  const programs = {
-    noSystemRoot: await programStartedWith({}),
-    emptySystemRoot: await programStartedWith({ SystemRoot: '' }),
-    relativeSystemRoot: await programStartedWith({ SystemRoot: 'Windows' }),
-    rootOfAnotherDrive: await programStartedWith({ SystemRoot: 'D:\\WINNT\\' }),
+  const outcomes = {
+    noSystemRoot: await outcomeWith({}),
+    emptySystemRoot: await outcomeWith({ SystemRoot: '' }),
+    relativeSystemRoot: await outcomeWith({ SystemRoot: 'Windows' }),
+    relativeWindir: await outcomeWith({ windir: 'WINNT' }),
+    windirOnly: await outcomeWith({ windir: 'C:\\Windows' }),
+    rootOfAnotherDrive: await outcomeWith({ SystemRoot: 'D:\\WINNT\\' }),
   }
   // Assert
-  assert.deepEqual(programs, {
-    noSystemRoot: 'powershell.exe',
-    emptySystemRoot: 'powershell.exe',
-    relativeSystemRoot: 'powershell.exe',
-    rootOfAnotherDrive:
-      'D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  assert.deepEqual(outcomes, {
+    noSystemRoot: refused,
+    emptySystemRoot: refused,
+    relativeSystemRoot: refused,
+    relativeWindir: refused,
+    windirOnly: {
+      started: [
+        'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ],
+    },
+    rootOfAnotherDrive: {
+      started: ['D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'],
+    },
   })
 })
 

@@ -45,7 +45,7 @@ export type ProcessStartInputs = ProcessStartFormInputs & {
   now?: () => number
   /** How long one start query may run before it is ended (milliseconds); {@link PROCESS_START_QUERY_TIMEOUT_MS} unless a caller names its own, as a test does that waits for a real PowerShell that starts cold. */
   queryTimeoutMs?: number
-  /** The environment the Windows system root is read from (`SystemRoot`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
+  /** The environment the Windows system root is read from (`SystemRoot`, then `windir`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
   environment?: SystemRootEnvironment
 }
 
@@ -164,11 +164,11 @@ async function macStartOf(
 
 /**
  * Asks PowerShell when a process was created; the query of {@link START_QUERIES} on Windows.
- * PowerShell is started by its full path under the system root ({@link windowsPowerShellPath}).
+ * PowerShell is started by its full path under the system root ({@link windowsPowerShellPath}); without a system root no program is started and the start is unknown.
  * @param pid - A positive safe integer; it is the only part of the arguments that varies.
  * @param inputs - The runner, the time bound and the environment of {@link ProcessStartInputs}.
  * @returns `win:<text>` for a UTC time in round-trip form; `undefined` for any other answer, for example the localized error text PowerShell prints for a process id that names no process.
- * @throws What the runner rejects with: PowerShell is missing or blocked, ended with an error, ran too long or printed too much.
+ * @throws What the runner rejects with: PowerShell is missing or blocked, ended with an error, ran too long or printed too much; and the refusal when neither `SystemRoot` nor `windir` names the Windows folder.
  * @example
  * await windowsStartOf(4242, {}) // => 'win:2026-10-05T09:12:33.1234567Z'
  */
@@ -176,8 +176,14 @@ async function windowsStartOf(
   pid: number,
   inputs: ProcessStartInputs,
 ): Promise<string | undefined> {
+  const powerShell = windowsPowerShellPath(inputs.environment)
+  // Without a system root PowerShell's folder is unknown; no other folder is searched for it, and the start stays unknown.
+  if (powerShell === undefined)
+    throw new Error(
+      'The start query was not started: neither SystemRoot nor windir names the Windows folder.',
+    )
   const { stdout } = await (inputs.run ?? runBoundedQuery)(
-    windowsPowerShellPath(inputs.environment),
+    powerShell,
     [
       '-NoProfile',
       '-NonInteractive',
