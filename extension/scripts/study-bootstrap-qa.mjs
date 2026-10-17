@@ -241,15 +241,33 @@ async function check(page, options, collected) {
     text: '',
     isRendered: true,
   })
-  /** Says whether the pane is laid out and painted the same with one of its parts in place as with that part taken out by the `hidden` attribute: `moved` names the page (its scroll size) and every rendered element outside the part whose box differs, and `samePixels` compares a screenshot of the whole page. Nothing moves and the pixels are equal only for a part that shows nothing and takes no room. Two frames pass before each reading, so the pane's resize observers have answered, and each screenshot is repeated until the picture stands still. */
+  /**
+   * Says whether the pane is laid out and painted the same with one of its parts in place as with that part taken out by the `hidden` attribute: `moved` names the page (its scroll size) and every rendered element outside the part whose box differs, and `samePixels` compares a screenshot of the whole page. Nothing moves and the pixels are equal only for a part that shows nothing and takes no room. Two frames pass before each reading, so the pane's resize observers have answered, and each screenshot is repeated until the picture stands still.
+   * Both readings are taken in one settled state (row 730). A full-page screenshot of a page taller than the viewport lays the page out again at the page's height while it is taken (CI's video of the failed run shows those frames), and the pane answers a resize (vh units, its resize handlers and observers) at a time the runner decides, so one reading could catch another layout than the other. The viewport is therefore made as tall as the page once, before the readings, and given back with the scroll position afterwards. The pointer rests where the flow's last press left it, and the browser updates the hover state of what moved under it only with its next pointer event (`button:hover` brightens a button), so a real move to the page's top-left corner sets that state before the readings.
+   */
   const looksAsWithout = async (selector) => {
-    const reading = async () => {
-      await page.evaluate(
+    /** Waits two frames, so the pane's resize observers and handlers have answered. */
+    const twoFrames = () =>
+      page.evaluate(
         () =>
           new Promise((resolve) =>
             requestAnimationFrame(() => requestAnimationFrame(resolve)),
           ),
       )
+    await page.mouse.move(0, 0)
+    const viewport = page.viewportSize(),
+      scroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }))
+    // A page whose height grows with the viewport (vh units) is measured again; five rounds are more than the pane's growth needs.
+    for (let round = 0; round < 5; round++) {
+      const height = await page.evaluate(
+        () => document.documentElement.scrollHeight,
+      )
+      if (height <= page.viewportSize().height) break
+      await page.setViewportSize({ width: viewport.width, height })
+      await twoFrames()
+    }
+    const reading = async () => {
+      await twoFrames()
       const boxes = await page.evaluate((selector) => {
         const part = document.querySelector(selector),
           root = document.documentElement
@@ -293,6 +311,10 @@ async function check(page, options, collected) {
     const takenOut = await reading()
     await setHidden(false)
     await setCaretColor('')
+    // The flow goes on in the viewport and at the scroll position it had.
+    await page.setViewportSize(viewport)
+    await page.evaluate(({ x, y }) => scrollTo(x, y), scroll)
+    await twoFrames()
     return {
       moved: inPlace.boxes.flatMap(([name, box], index) =>
         box === takenOut.boxes[index]?.[1]
