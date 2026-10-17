@@ -384,8 +384,14 @@ async function readerHarness(context: TestContext) {
                   },
                 ],
               },
-              tab = { input: new TabInputText(document.uri) }
-            sourceGroup.tabs.push(tab)
+              // Both editors bring the tab of a document already open in the target group to the front instead of opening another one: a resource has one editor input (VS Code 1.140.0 `workbench.desktop.main.js` 990:44441; Cursor 3.23.12 17388:52352), and the group's model finds an open editor of that input before it adds one (VS Code 705:21932, 705:28547; Cursor 17264:10648, 17264:17400), Cycle 0046 row 675.
+              openTab = sourceGroup.tabs.find(
+                (value) =>
+                  value.input instanceof TabInputText &&
+                  value.input.uri.toString() === document.uri.toString(),
+              ),
+              tab = openTab ?? { input: new TabInputText(document.uri) }
+            if (!openTab) sourceGroup.tabs.push(tab)
             sourceGroup.activeTab = tab
             // A foreground native source display activates its main group before its text-editor receipt; Cursor keeps naming its chat part's group instead, since a tab that opens in the main editor's active group is no group activation for its tab model (Cursor 3.23.12 17269:31013).
             if (
@@ -1329,6 +1335,34 @@ test('following a second citation in the open Wiki leaves one cited-source copy 
         front: 'codebook-repository-source:order.ts',
       },
       closedTabs: ['module.ts'],
+    },
+  )
+})
+
+// Value: protects=the fidelity of the reader harness's showTextDocument, on which every cited-source tab verdict of this file rests: showing a document that is already open in the target group brings its tab to the front, as both editors do, so the learner's first group keeps one copy of the citation on screen; fails_when=the fake adds a second tab of the same URI, which neither editor does, so a test can pass or fail on a copy no editor makes; why_new=Cycle 0046 row 675 (the 652 and 662 forks' finding 1); seam=readerHarness, focusUnrelatedDraft, open of the same citation twice, firstGroupTabs, the fake's record of shown documents and of closed tabs
+test('following the citation on screen again in the open Wiki brings its one copy to the front of the first group, as the editors do', async (context) => {
+  // Arrange: the learner works in login-form.tsx and opens the Repository Wiki on the module article's first citation, module.ts.
+  const harness = await readerHarness(context)
+  harness.focusUnrelatedDraft('login-form.tsx')
+  await harness.reader.open(harness.selection)
+
+  // Act: the learner follows the same citation again.
+  await harness.reader.open(harness.selection)
+
+  // Assert: the reader showed module.ts twice, and the first group holds one copy of it, in front of the learner's file; nothing was closed.
+  assert.deepEqual(
+    {
+      shownCitations: harness.shown.map((value) => basename(value.uri.path)),
+      firstGroup: harness.firstGroupTabs(),
+      closedTabs: harness.closedTabs,
+    },
+    {
+      shownCitations: ['module.ts', 'module.ts'],
+      firstGroup: {
+        tabs: ['file:login-form.tsx', 'codebook-repository-source:module.ts'],
+        front: 'codebook-repository-source:module.ts',
+      },
+      closedTabs: [],
     },
   )
 })
