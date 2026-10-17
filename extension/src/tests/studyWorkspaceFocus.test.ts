@@ -3496,6 +3496,55 @@ test("a layout read that borrows the main editor's first group gives the keyboar
   }
 })
 
+// Value: protects=the learner's keyboard in a diff editor of VS Code's floating window when a layout read borrows the main editor's first group: both editors report a diff's text editors with no view column (row 709), and the diff's group, beyond the measured main editor, is placed by the one group that shows the diff in front, so the read gives the keyboard back through that group's numbered focus (row 708's path), the diff stays in front with the keyboard and the floating window is the focused one again; fails_when=a diff's side is placed only among the measured columns, so no give-back reaches the floating window's diff and the keyboard stays in the main editor's first group with nothing told; why_new=Cycle 0046 row 720 (the fixer's proposal after rows 708 and 709); seam=useNativeLayout with one main group, addFloatingEditorWindow (two groups), focusDiffEditor in the floating window's second group, readerSeams' measureMainEditorGrid, the native commands, focusedSource and a layout read after the measurement
+test("a layout read that borrows the main editor's first group gives the keyboard back to the learner's diff editor in VS Code's floating window through its group's focus", async () => {
+  // Arrange: the main editor shows login-form.tsx; the learner works in the diff of auth.ts in front of the second group of a floating window of two groups (columns 2 and 3).
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.addFloatingEditorWindow(['notes.ts', 'readme.md'])
+  harness.focusDiffEditor('auth.ts', 3)
+  const commandsBefore = harness.commands.length
+  try {
+    // Act
+    const measured = await readerSeams(harness).measureMainEditorGrid()
+    const layoutAfter = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Assert: the borrow measured the main editor; the third group's focus gave the diff the keyboard back, the diff is still in front, and a layout read answers the floating window again.
+    assert.deepEqual(
+      {
+        measured,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+          ),
+        keyboardAfter: harness
+          .focusedSource()
+          ?.document.uri.path.split('/')
+          .at(-1),
+        thirdGroupFront: harness.groups.find((group) => group.viewColumn === 3)
+          ?.activeTab?.label,
+        layoutAfter,
+      },
+      {
+        measured: [1],
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusThirdEditorGroup',
+        ],
+        keyboardAfter: 'auth.ts',
+        thirdGroupFront: 'auth.ts (Working Tree)',
+        layoutAfter: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the presentation state's confirmation beside VS Code's floating window of text editors: a passive layout read while that window's text editor has the keyboard answers the floating window's grid, and the reader does not take it for the main editor's, so it reads the scope as unknown; fails_when=StudyWorkspace.hasMainEditorFocus takes the text editor of any column within the read's count for the main editor's focus and readPassivePresentationLayout answers the floating window's two groups as the main editor's layout; why_new=Cycle 0046 row 689 (the passive reads' half); seam=useNativeLayout with one main group, addFloatingEditorWindow and its focus, readerSeams' readPassiveLayout
 test("a passive layout read while a text editor of VS Code's floating window with two groups has the keyboard reads no main editor's layout", async () => {
   // Arrange: as above; the learner works in notes.ts in the floating window's first group.

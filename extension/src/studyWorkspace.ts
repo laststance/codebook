@@ -17589,10 +17589,10 @@ export class StudyWorkspace {
     )
       return
     const uri = editor.document.uri.toString()
-    /** Tells that the editor that had the keyboard is the active text editor in its column again. */
+    /** Tells that the editor that had the keyboard is the active text editor in its column again, a side of a diff placed by its diff's group (row 720). */
     const editorFocused = (): boolean =>
       vscode.window.activeTextEditor?.document.uri.toString() === uri &&
-      vscode.window.activeTextEditor.viewColumn === column
+      this.textEditorColumnOf(vscode.window.activeTextEditor) === column
     beforeScopeFocus?.({
       matchesEditor: editorFocused,
       matchesGroup: () =>
@@ -17608,15 +17608,15 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the view column of a text editor among the first `groupCount` columns, also of a side of a diff editor, which both editors report with no view column ({@link textEditorColumn}, Cycle 0046 row 709); asked by {@link hasMainEditorFocus}, {@link isActiveTextEditorInFrontOfGroup}, {@link readMainEditorGrid}'s give-back and {@link showBorrowedTextEditorAgain}.
+   * Names the view column of a text editor among the first `groupCount` columns, also of a side of a diff editor, which both editors report with no view column ({@link textEditorColumn}, Cycle 0046 row 709); asked by {@link hasMainEditorFocus}, {@link isActiveTextEditorInFrontOfGroup}, {@link readMainEditorGrid}'s give-back, {@link showBorrowedTextEditorAgain} and {@link giveKeyboardBackBeyondMainEditor}.
    * @param editor - The text editor, if any.
-   * @param groupCount - The number of groups a layout read counted, which bounds the diff's group.
+   * @param groupCount - The number of groups a layout read counted, which bounds the diff's group; left out, every group counts, for a diff of VS Code's floating window beyond the measured main editor (row 720).
    * @returns The editor's own column, the column of the one counted group that shows it in a diff in front, or `undefined`.
    * @example this.textEditorColumnOf(vscode.window.activeTextEditor, 2) // => 2 while the learner's diff of auth.ts in front of the second group has the keyboard
    */
   private textEditorColumnOf(
     editor: vscode.TextEditor | undefined,
-    groupCount: number,
+    groupCount?: number,
   ): number | undefined {
     return textEditorColumn(
       editor,
@@ -17972,8 +17972,10 @@ export class StudyWorkspace {
       count = editorLayoutGroupCount(layout)
       if (count === undefined || count > vscode.window.tabGroups.all.length)
         throw new Error('The primary editor grid could not be measured safely.')
-      // The column the borrowed editor is given back in: its own, or its diff's group's (row 709).
-      const editorColumn = this.textEditorColumnOf(editor, count)
+      // The column the borrowed editor is given back in: its own, or its diff's group's (row 709), within the measured columns or else beyond them, in VS Code's floating window (row 720).
+      const editorColumn =
+        this.textEditorColumnOf(editor, count) ??
+        this.textEditorColumnOf(editor)
       // Return only to a captured editor now proven to belong to this part; never guess a foreign chat/floating focus.
       if (
         !useCitation &&

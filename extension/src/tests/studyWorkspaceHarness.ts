@@ -5896,7 +5896,7 @@ export async function workspaceHarness(
       }
     },
     /**
-     * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's; both sides are visible text editors, and both editors report them with no view column (C61 c61-688-diffprobe, Cycle 0046 row 709). `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (row 688).
+     * Opens a learner's file as a diff editor in front of a group and gives it the keyboard, as the Source Control view's Open Changes does: the tab's input is a `TabInputTextDiff` of the file's original and its working copy, and the active text editor is the modified side's; both sides are visible text editors, and both editors report them with no view column (C61 c61-688-diffprobe, Cycle 0046 row 709). `showTextDocument` of that document opens a plain text tab of it in front of the diff, as both editors do for a resource shown in a diff (row 688). A group of VS Code's floating window (`addFloatingEditorWindow`) takes the diff too, and the floating window is the focused one then (row 720).
      * @param filename - The learner's file.
      * @param column - The group's view column.
      * @returns The modified document, the diff tab and the modified side's text editor.
@@ -5931,6 +5931,11 @@ export async function workspaceHarness(
         }),
       )
       activeTabGroup = opened.group
+      // The click into a diff of VS Code's floating window makes that window the focused one, and one of the main window the main window (row 720).
+      if (floatingEditorWindow)
+        floatingEditorWindow.active = floatingEditorWindow.groups.includes(
+          opened.group,
+        )
       leaveChatForMainEditor()
       keyboardOnBody = false
       keyboardInView = false
