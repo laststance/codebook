@@ -1,5 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, join, parse, relative, sep } from 'node:path'
+import { isAbsolute, join, parse, relative, sep } from 'node:path'
 
 import { systemErrorCode } from './systemErrorCode'
 
@@ -23,30 +23,30 @@ function isInProject(realRoot: string, realPath: string): boolean {
 }
 
 /**
- * Finds the first entry on the Wiki folder's path inside the project that is a link, or no folder of the project's own, as the publisher refuses it; called by {@link findWikiUpdateStartBlock} before an update starts and by {@link readDeepWikiManifest} before the reader reads the Wiki.
+ * Finds the first entry on a path inside the project that is a link, or no folder of the project's own, as the publisher refuses it: every folder from where the path enters the project up to and including `folder`; called by {@link findWikiUpdateStartBlock} for the Wiki folder's parent before an update starts, and by {@link assertNoLinkOnWikiPath} for the Wiki folder itself before the reader or the open command reads the Wiki.
  *
- * Why: the publisher writes its stage, journal and backup beside the Wiki folder, so a cloned repository that carries `.codebook`, or another folder on that path, as a link would have it write outside the project. The publisher (`skills/codebook/publish-wiki.mjs`) refuses such a path before it writes anything, and Codebook reads no Wiki through it either.
- * The path is walked the way the publisher walks it: from the file system's root to the Wiki folder's parent. The folders before the path enters the project (a folder whose real path is the project or lies in it) are followed, and so is every folder of an output outside the project: they are the learner's choice. From there on, each folder must be a folder (no link, no file) whose real path stays in the project, which also refuses a junction on Windows that a look without following calls a directory. The Wiki folder itself is looked at by the caller's own check.
+ * Why: the publisher writes its stage, journal and backup beside the Wiki folder, so a cloned repository that carries `.codebook`, or another folder on that path, as a link would have it write outside the project, and a Wiki folder that is itself such a link would have Codebook read and serve a Wiki from outside the project. The publisher (`skills/codebook/publish-wiki.mjs`) refuses such a path before it writes anything, and Codebook reads no Wiki through it either.
+ * The path is walked the way the publisher walks it: from the file system's root to `folder`. The folders before the path enters the project (a folder whose real path is the project or lies in it) are followed, and so is every folder of a path outside the project: they are the learner's choice. From there on, each entry must be a folder (no link, no file) whose real path stays in the project, which also refuses a junction on Windows that a look without following calls a directory.
  *
  * @param projectRoot - The opened project.
- * @param outputDirectory - Resolved Wiki output folder.
+ * @param folder - The last folder of the path to look at: the Wiki folder's parent, or the Wiki folder itself.
  * @returns
- * - The path, as the output's path writes it, of the first folder after the path entered the project that is a link, a file or a folder whose real path leaves the project
- * - `undefined` when there is none, when the Wiki folder lies outside the project, and from the first folder on the path that is missing (the publisher creates it as a folder of its own)
+ * - The path, as `folder` writes it, of the first entry after the path entered the project that is a link, a file or a folder whose real path leaves the project
+ * - `undefined` when there is none, when the path lies outside the project, and from the first entry on the path that is missing (the publisher creates it as a folder of its own)
  * @throws What the file system throws for an entry on the path that cannot be looked at, other than a missing one.
  * @example
- * await findLinkOnWikiPath('/repo', '/repo/.codebook/wiki') // => '/repo/.codebook' while the repository carries `.codebook` as a link
- * await findLinkOnWikiPath('/repo', '/srv/wiki')            // => undefined
+ * await findLinkOnWikiPath('/repo', '/repo/.codebook')      // => '/repo/.codebook' while the repository carries `.codebook` as a link
+ * await findLinkOnWikiPath('/repo', '/repo/.codebook/wiki') // => '/repo/.codebook/wiki' while the Wiki folder itself is a link
+ * await findLinkOnWikiPath('/repo', '/srv')                 // => undefined
  */
 export async function findLinkOnWikiPath(
   projectRoot: string,
-  outputDirectory: string,
+  folder: string,
 ): Promise<string | undefined> {
   const realRoot = await realpath(projectRoot)
-  const parent = dirname(outputDirectory)
-  let path = parse(parent).root
+  let path = parse(folder).root
   let hasEnteredProject = false
-  for (const part of relative(path, parent).split(sep).filter(Boolean)) {
+  for (const part of relative(path, folder).split(sep).filter(Boolean)) {
     path = join(path, part)
     const entry = await lstat(path).catch((error: unknown) => {
       if (['ENOENT', 'ENOTDIR'].includes(systemErrorCode(error)))

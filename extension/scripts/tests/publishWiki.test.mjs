@@ -13,6 +13,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { register } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -2078,6 +2079,42 @@ test('a recovery whose output lies behind a link at its parent in the project is
 })
 
 // Value: protects=the learner who chose an output folder outside the project and reaches it through a link of their own; fails_when=the check of the folders on the way to the output refuses a link outside the project too, so a configured output outside it can no longer be prepared; why_new=Cycle 0046 /ship finding F1: the fix refuses links only once the path is inside the project; seam=none
+// Value: protects=the folder outside the project that a `.codebook` junction to a volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher's walk trusts lstat and no longer compares a folder's real path with the project, so it prepares its stage beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of requireOwnFolder had no test); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, by a loader hook (scripts/tests/utils/wrongLookHooks.mjs)
+test('the publisher refuses a folder on the output’s path in the project that lstat calls a directory although its real path leaves the project, names it and writes nothing there', async () => {
+  // Arrange: a copy of the publisher whose lstat answers for a link what stat answers, and a project whose `.codebook` is a link to a folder outside it.
+  register(new URL('./utils/wrongLookHooks.mjs', import.meta.url))
+  const { prepareWikiStage: prepareWhereTheLookIsWrong } = await import(
+    new URL(
+      '../../skills/codebook/publish-wiki.mjs?wrong-look',
+      import.meta.url,
+    ).href
+  )
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-wrong-look-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(root, '.codebook'), 'junction')
+
+    // Act / Assert
+    await assert.rejects(
+      prepareWhereTheLookIsWrong({
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      },
+    )
+    assert.deepEqual(await readdir(outside), [])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('an output outside the project reached through a link outside it is still prepared, in the folder the link leads to', async () => {
   // Arrange
   const directory = await realpath(

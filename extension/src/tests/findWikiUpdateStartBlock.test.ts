@@ -17,6 +17,7 @@ import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+import type * as linkWalkModule from '../utils/findLinkOnWikiPath'
 import type * as startBlockModule from '../utils/findWikiUpdateStartBlock'
 import { findWikiUpdateStartBlock } from '../utils/findWikiUpdateStartBlock'
 import type * as lookModule from '../utils/isFolderOfItsOwn'
@@ -429,6 +430,53 @@ test('a link at a folder on the Wiki folder’s path in the project refuses the 
 })
 
 // Value: protects=the learner who set the Wiki output to a folder outside the project and reaches it through a link of their own; fails_when=the start check refuses every link on the Wiki folder's path, also outside the project, so a configured outside output can no longer be updated; why_new=Cycle 0046 /ship finding F1: only the part of the path inside the project is held to folders of its own; seam=none (a junction on Windows)
+// Value: protects=the learner on Windows whose repository carries `.codebook` as a junction to a volume, which the file system layer of Node.js calls a directory; fails_when=the start check's walk trusts lstat and no longer compares the folder's real path with the project, so it asks an agent whose publisher would write beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of F1's walk had no test); seam=a file system whose lstat calls a link a directory
+test('a folder on the Wiki folder’s path in the project that lstat calls a directory although its real path leaves the project refuses the update at its start and is named', async () => {
+  // Arrange: the published Wiki's `.codebook` folder is moved out of the project and a link to it stands in its place, on a file system whose look is wrong about links.
+  const wiki = await publishedWikiFixture()
+  const outside = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-')),
+  )
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const walk = await loadModule<typeof linkWalkModule>(
+    resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const { findWikiUpdateStartBlock: findBlockWhereTheLookIsWrong } =
+    await loadModule<typeof startBlockModule>(
+      resolve(__dirname, '../utils/findWikiUpdateStartBlock.js'),
+      { './findLinkOnWikiPath': walk },
+    )
+  try {
+    await rename(
+      join(wiki.projectRoot, '.codebook'),
+      join(outside, 'codebook-moved-out'),
+    )
+    await symlink(
+      join(outside, 'codebook-moved-out'),
+      join(wiki.projectRoot, '.codebook'),
+      'junction',
+    )
+
+    // Act
+    const block = await findBlockWhereTheLookIsWrong(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+    )
+
+    // Assert: the block comes from a module loaded apart, so it is compared by its text.
+    assert.equal(
+      JSON.stringify(block),
+      '{"cause":"linked-parent","paths":[".codebook"]}',
+    )
+  } finally {
+    await wiki.cleanup()
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
 test('an output outside the project reached through a link outside it does not block the start', async () => {
   // Arrange
   const directory = await realpath(

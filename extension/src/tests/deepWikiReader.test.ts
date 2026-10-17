@@ -14,16 +14,20 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { readDeepWikiManifest, startDeepWikiReader } from '../deepWikiReader'
+import type * as linkGuardModule from '../utils/assertNoLinkOnWikiPath'
+import type * as linkWalkModule from '../utils/findLinkOnWikiPath'
 
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { loadModule } from './utils/loadModule'
 import { writeMinimalWiki } from './utils/writeMinimalWiki'
 
 test('generated Wiki reader serves published pages and answers an explicit same-origin question', async () => {
@@ -685,8 +689,100 @@ test('the reader refuses a Wiki whose `.codebook` folder in the project is a lin
   // Assert
   assert.equal(
     refusal,
-    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project`,
+    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder, or set codebook.wikiOutputDirectory to a folder outside the project`,
   )
+})
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook/wiki` link leads to, when the learner opens the Wiki; fails_when=the reader looks only at the folders above the Wiki folder, so a Wiki folder that is itself a link is read and served from outside the project, while the publisher and the update start refuse it; why_new=Cycle 0046 /ship repeat review SC2 (critical; the rest of F1); seam=none (a junction on Windows, which needs no right)
+test('the reader refuses a Wiki whose folder `.codebook/wiki` in the project is itself a link to a folder outside it, names the folder and opens nothing behind it', async (context) => {
+  // Arrange: a one-page Wiki whose Wiki folder is moved out of the project, with a link to it left in its place.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-linked-folder-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const projectRoot = join(directory, 'project')
+  await mkdir(projectRoot)
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await rename(outputDirectory, join(directory, 'wiki-moved-out'))
+  await symlink(join(directory, 'wiki-moved-out'), outputDirectory, 'junction')
+
+  // Act
+  const refusal = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  ).then(
+    async (reader) => {
+      await reader.close()
+      return 'opened'
+    },
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    refusal,
+    `The Wiki folder ${outputDirectory} is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+  )
+})
+
+// Value: protects=the reader on Windows, where the file system layer of Node.js calls a junction whose target is a volume a directory, at the Wiki folder or at a folder above it; fails_when=the reader's look trusts lstat and no longer compares the entry's real path with the project, so a Wiki behind such a junction is read and served from outside the project; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch had no test) with SC2's folder-itself case; seam=a file system whose lstat calls a link a directory
+test('the reader’s look refuses a Wiki folder, and a folder above it, that lstat calls a directory although its real path leaves the project', async (context) => {
+  // Arrange: two one-page Wikis, the first with its `.codebook` folder and the second with its Wiki folder moved out of the project and a link left in its place, read by a guard whose lstat answers for a link what stat answers.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-wrong-look-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const walk = await loadModule<typeof linkWalkModule>(
+    resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const { assertNoLinkOnWikiPath: assertWhereTheLookIsWrong } =
+    await loadModule<typeof linkGuardModule>(
+      resolve(__dirname, '../utils/assertNoLinkOnWikiPath.js'),
+      { './findLinkOnWikiPath': walk },
+    )
+  const withLinkedParent = join(directory, 'parent')
+  const withLinkedFolder = join(directory, 'folder')
+  await mkdir(withLinkedParent)
+  await mkdir(withLinkedFolder)
+  const parentWiki = await writeMinimalWiki(withLinkedParent)
+  const folderWiki = await writeMinimalWiki(withLinkedFolder)
+  await rename(
+    join(withLinkedParent, '.codebook'),
+    join(directory, 'codebook-moved-out'),
+  )
+  await symlink(
+    join(directory, 'codebook-moved-out'),
+    join(withLinkedParent, '.codebook'),
+    'junction',
+  )
+  await rename(folderWiki.outputDirectory, join(directory, 'wiki-moved-out'))
+  await symlink(
+    join(directory, 'wiki-moved-out'),
+    folderWiki.outputDirectory,
+    'junction',
+  )
+
+  // Act
+  const refusalOf = (outputDirectory: string, projectRoot: string) =>
+    assertWhereTheLookIsWrong(outputDirectory, projectRoot).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+  const refusals = [
+    await refusalOf(parentWiki.outputDirectory, withLinkedParent),
+    await refusalOf(folderWiki.outputDirectory, withLinkedFolder),
+  ]
+
+  // Assert
+  assert.deepEqual(refusals, [
+    `The Wiki folder ${parentWiki.outputDirectory} lies behind a link or a file in the project (${join(withLinkedParent, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder, or set codebook.wikiOutputDirectory to a folder outside the project`,
+    `The Wiki folder ${folderWiki.outputDirectory} is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+  ])
 })
 
 // Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them), against a script written straight into a page file of the Wiki folder, and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or gives its nonce to any script of a page file instead of its own script alone; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; repeat review SC1 (critical): every script of a page file got the nonce; seam=none (the reader's real responses)

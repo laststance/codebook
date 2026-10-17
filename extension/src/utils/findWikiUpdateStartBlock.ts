@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
-import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { setTimeout as sleepFor } from 'node:timers/promises'
 
 import {
@@ -112,9 +112,10 @@ async function findLinkedParentBlock(
   projectRoot: string,
   outputDirectory: string,
 ): Promise<WikiUpdateStartBlock | undefined> {
+  // The Wiki folder itself is the next look's ({@link findFolderBlock}), with a cause of its own.
   const linkedEntry = await findLinkOnWikiPath(
     projectRoot,
-    outputDirectory,
+    dirname(outputDirectory),
   ).catch(() => undefined)
   return linkedEntry === undefined
     ? undefined

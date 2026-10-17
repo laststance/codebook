@@ -403,7 +403,35 @@ test('Open LLM Wiki on a Wiki whose `.codebook` folder in the project is a link 
     { errors: window.errors, readersStarted: window.readers.length },
     {
       errors: [
-        `Codebook could not open DeepWiki: Error: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it by a real folder, or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
+        `Codebook could not open DeepWiki: Error: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}), and Codebook reads no Wiki through it: replace it with a real folder, or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
+      ],
+      readersStarted: 0,
+    },
+  )
+})
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook/wiki` link leads to, when the learner runs "Open LLM Wiki"; fails_when=the open command looks only at the folders above the Wiki folder, so a Wiki folder that is itself a link is read and opened from outside the project, while the publisher and the update start refuse it; why_new=Cycle 0046 /ship repeat review SC2 (critical; the rest of F1); seam=none (a junction on Windows, which needs no right)
+test('Open LLM Wiki on a Wiki whose folder `.codebook/wiki` in the project is itself a link to a folder outside it refuses before it reads anything behind the link, names the folder, and starts no reader', async (context) => {
+  // Arrange: the one-page Wiki's folder is moved out of the project, and a link to it stands in its place.
+  const window = await openWikiOpeningWindow()
+  context.after(() => window.close())
+  const outside = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-opening-outside-')),
+  )
+  context.after(() => rm(outside, { recursive: true, force: true }))
+  const wikiFolder = join(window.projectRoot, '.codebook', 'wiki')
+  await rename(wikiFolder, join(outside, 'wiki-moved-out'))
+  await symlink(join(outside, 'wiki-moved-out'), wikiFolder, 'junction')
+
+  // Act
+  await window.open().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    { errors: window.errors, readersStarted: window.readers.length },
+    {
+      errors: [
+        `Codebook could not open DeepWiki: Error: The Wiki folder ${wikiFolder} is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
       ],
       readersStarted: 0,
     },
