@@ -18027,6 +18027,15 @@ export class StudyWorkspace {
           vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn,
         )
       }
+      /**
+       * Cursor reports the captured source the borrow showed with the keyboard as the active text editor and keeps naming the group it named before (its chat part's) until a tab or group changes, as after the focus command (rows 673 and 674): that report under the stale name is the measurement's focus too, so a focus watch that waits for the source's group to be named does not take it for the learner's change (Cycle 0046 row 739). Asked by the borrow's announced target below.
+       * @returns `true` when the captured source the borrow showed is the active text editor and the editor still names the other group it named before the borrow.
+       * @example sourceEditorReportedUnderStaleName() // => true right after an agent's restore beside Cursor's chat part showed the captured source with the keyboard
+       */
+      const sourceEditorReportedUnderStaleName = (): boolean =>
+        sourceEditorReported() &&
+        namedColumn !== sourceBorrow?.viewColumn &&
+        vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn
       const emptyFirstGroup = vscode.window.tabGroups.all.some(
         (group) =>
           group.viewColumn === vscode.ViewColumn.One && !group.tabs.length,
@@ -18045,6 +18054,8 @@ export class StudyWorkspace {
             ? {
                 matchesEditor: sourceEditorReported,
                 matchesGroup: () => {
+                  // Cursor names the chat part's group over the source the borrow focused until a tab or group changes (row 739), as for the primary focus below.
+                  if (sourceEditorReportedUnderStaleName()) return true
                   const group = vscode.window.tabGroups.activeTabGroup,
                     input = group.activeTab?.input
                   return (

@@ -5484,6 +5484,112 @@ test('beside VS Code’s floating window, an agent’s Study selection refused r
   }
 })
 
+/**
+ * Opens the workspace harness as Cursor beside its Agent chat part with a run paused, and has an agent's cold Study selection arrange the live panes from the chat tab, which gets its keyboard back (rows 718 and 732's setup); then the chat tab has the keyboard again. The Application pane stands in front of the first group, so a later measurement borrows through the captured source in the second group (readMainEditorGrid's sourceBorrow), for rows 738 and 739.
+ * @returns The harness and its chat part.
+ * @example const { harness, chat } = await cursorConfirmedLiveArrangementFromChat()
+ */
+async function cursorConfirmedLiveArrangementFromChat() {
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  harness.focusMutableDraft('auth.ts', 2)
+  await pauseLiveRun(harness)
+  chat.focusTab()
+  const selection = harness.reader.presentationState()
+  const selected = await harness.service.selectPresentation({
+    instanceId: harness.service.instanceId,
+    presentationId: selection.presentationId,
+    expectedRevision: selection.presentationControlRevision,
+    mode: 'study-workspace',
+    action: 'select',
+  })
+  assert.equal(selected.layoutConfirmed, true)
+  chat.focusTab()
+  return { harness, chat }
+}
+
+/**
+ * Makes an agent's restore of the confirmed live arrangement (codebook_presentation restore) and reads where the keyboard went, for rows 738 and 739.
+ * @param harness - The harness {@link cursorConfirmedLiveArrangementFromChat} opened.
+ * @param chat - Its chat part.
+ * @returns The restore's answer or refusal with its cause, the documents shown with the keyboard, the commands that move the keyboard, the chat's keyboard and the sentences told.
+ * @example const outcome = await restoredLiveArrangementOutcome(harness, chat)
+ */
+async function restoredLiveArrangementOutcome(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  chat: ReturnType<
+    Awaited<ReturnType<typeof workspaceHarness>>['addSeparateEditorPart']
+  >,
+) {
+  const restore = harness.reader.presentationState()
+  const commandsBefore = harness.commands.length,
+    showsBefore = harness.textDocumentShows().length,
+    messagesBefore = harness.informationMessages.length
+  const answer = await harness.service
+    .selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: restore.presentationId,
+      expectedRevision: restore.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+    .then(
+      (state) => ({
+        layoutConfirmed: state.layoutConfirmed,
+        refusal: undefined,
+      }),
+      (error: unknown) => ({
+        layoutConfirmed: undefined,
+        refusal:
+          error instanceof StudyError ? error.causeDetail : String(error),
+      }),
+    )
+  return {
+    ...answer,
+    shownWithKeyboard: harness
+      .textDocumentShows()
+      .slice(showsBefore)
+      .filter((shown) => !shown.preserveFocus)
+      .map((shown) => `${shown.name}@${shown.viewColumn}`),
+    keyboardCommands: harness.commands
+      .slice(commandsBefore)
+      .filter((command) =>
+        /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+          command,
+        ),
+      ),
+    chatHasKeyboard: chat.focused(),
+    messages: harness.informationMessages
+      .slice(messagesBefore)
+      .map((message) => message.message),
+  }
+}
+
+// Value: protects=an agent's restore of the confirmed live arrangement (codebook_presentation restore) made from Cursor's chat tab: the measurement borrows through the captured source in the second group (the Application pane stands in front of the first), Cursor reports that source as the active text editor while it goes on naming its chat part's group (rows 673 and 674), the arrangement is confirmed and the chat gets its keyboard back; fails_when=the borrow's announced target accepts only the source's own group as the named one, so the Study pane's focus watch (trackFocusedStudyPane) reads the measurement's own borrow as the learner's change and refuses the restore with "The learner changed native tab focus while the Study layout command was pending …", and the chat gets nothing back; why_new=Cycle 0046 row 739 (the fixer of rows 725 to 737, found beside row 736); seam=workspaceHarness's Cursor model, addSeparateEditorPart and its focusTab, leavePaneFocusUnreportedBesideChat, the agent's cold selection and restore through the service's selectPresentation, textDocumentShows, the command log and the information messages
+test('in Cursor beside its chat part, an agent’s restore of the confirmed live arrangement from the chat tab borrows through the captured source, is confirmed and gives the chat its keyboard back', async () => {
+  // Arrange: the agent's cold selection arranged the live panes from the chat tab, and the chat tab has the keyboard again.
+  const { harness, chat } = await cursorConfirmedLiveArrangementFromChat()
+  try {
+    // Act
+    const outcome = await restoredLiveArrangementOutcome(harness, chat)
+
+    // Assert: the measurement showed the captured source with the keyboard, the restore is confirmed, and Focus Agent gave the chat its keyboard back; the arrangement's sentence was told at the selection already.
+    assert.deepEqual(outcome, {
+      layoutConfirmed: true,
+      refusal: undefined,
+      shownWithKeyboard: ['Captured-theme.ts@2'],
+      keyboardCommands: ['composer.focusComposer'],
+      chatHasKeyboard: true,
+      messages: [],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application pane's keyboard and the truth of what the learner is told when an agent's Study selection beside VS Code's floating window is refused right after its measurement borrowed the main editor's first group, while the Application pane had the keyboard (the learner clicked its tab after typing in the floating window's file, which VS Code goes on reporting as the active text editor; the pane's document took the keyboard with its frame): the Application pane gets its keyboard back and the sentence names the Application pane, whose page reports no keyboard, so an agent's selection always tells it; fails_when=the refusal's record does not ask the Application pane's active flag first and counts the reported text editor as a file with the keyboard, so "the file you had open has the keyboard again" is told while the Application pane has it; why_new=Cycle 0046 row 726's gap (root, 2026-10-17: the `application` branch had no test); seam=useNativeLayout, the learner's Living book (the saved layout that puts the Application pane in the second group), addFloatingEditorWindow, focusWebviewTabKeepingTextEditorReport on the Application pane's tab with its document taking the keyboard, holdNextCommand on workbench.action.focusFirstEditorGroup with failNextCommand on the layout read after it, the service's selectPresentation, the command log, focusedPanel, keyboardOnBody and the information messages
 test('beside VS Code’s floating window, an agent’s Study selection refused right after its borrow while the Application pane had the keyboard gives the Application pane its keyboard back and names that pane, not a file', async () => {
   // Arrange: the learner reads in the Living book, whose Application pane stands in the second group; the learner typed in notes.ts of the floating window, then clicked the Application pane's tab; VS Code still reports notes.ts. The layout read after the borrow will fail.
