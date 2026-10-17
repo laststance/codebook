@@ -1861,12 +1861,6 @@ export async function workspaceHarness(
     for (const listener of [...activeStackItemListeners]) listener()
   }
   /**
-   * Opens a stop's paused file in front of its group preserving the focus, as both editors' stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23), and reports the active text editor: when the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). The file step of `showStopKeepingFocus` and `openPausedFileKeepingFocus`.
-   * @param filename - The paused file.
-   * @param column - The group the editor opens it in.
-   * @example openPausedFileKeepingFocus('login-form.tsx', 2)
-   */
-  /**
    * Answers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for the stop the fake historical debugger presented with values, as both editors do: the command focuses the session's frame and opens its source preserving the focus (`stackFrame.openInEditor(editorService, true)`: `revealIfOpened`, the active group preferred), and an editor opened preserving the focus in a group that is not the active one makes that group the active one without giving it the keyboard (VS Code 1.140.0's `handleGroupActivation`, `EditorActivation.ACTIVATE`). So the captured source comes to the front of the group that holds it, that group is the active one, and the editor reports its text editor as the active text editor, while the keyboard stays where it was. C60's c60-vs-567 read it natively at a Repository Wiki recording visit: after the visit's focus return to the Wiki's group (`workbench.action.focusThirdEditorGroup`), `workbench.action.debug.focusProcess` named the learner's first group, with Captured-source.mts in front, and reported that file as the active text editor (ext-observer.json, 3-recording-open.json); c60-cu-567 read the same in Cursor (Cycle 0046 row 721).
    * Not modelled: a source no group holds, which the editor would open in the active group, the active stack item the command focuses, and the command beside Cursor's chat part while that part is the active one, for which no native receipt exists.
    * @example revealHistoricalStopSource() // the learner's first group, with Captured-source.mts in front, is the active group
@@ -1898,6 +1892,12 @@ export async function workspaceHarness(
       changed: previousGroup === group ? [group] : [previousGroup, group],
     })
   }
+  /**
+   * Opens a stop's paused file in front of its group preserving the focus, as both editors' stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23), and reports the active text editor: when the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). The file step of `showStopKeepingFocus` and `openPausedFileKeepingFocus`.
+   * @param filename - The paused file.
+   * @param column - The group the editor opens it in.
+   * @example openPausedFileKeepingFocus('login-form.tsx', 2)
+   */
   function openPausedFileKeepingFocus(filename: string, column: number): void {
     const pausedColumn = nativeDebugColumn(column)
     // The editor in front of the active group keeps no keyboard once another file covers it there: the keyboard is on no element.
