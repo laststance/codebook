@@ -781,7 +781,7 @@ test('closing a managed browser again after its profile folder was removed succe
   )
 })
 
-// Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
+// F7, Cycle 0046 /ship review: a managed browser's wait for its profile's processes lists them every 500 ms on Windows, where each listing is a PowerShell scan, and every 50 ms on Linux and macOS.
 for (const { system, platform, intervalMs } of [
   { system: 'Windows', platform: 'win32', intervalMs: 500 },
   { system: 'Linux', platform: 'linux', intervalMs: 50 },
@@ -865,6 +865,7 @@ test('on Windows a managed browser creates its profile folder in the user’s ow
   )
 })
 
+// Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
   // Arrange: three folders lie in the profile root when the next run starts. The killed editor's marker names an id no process can have: the id of a child that just exited could be given to another process before the sweep judges it.
   const cancellation = new AbortController()

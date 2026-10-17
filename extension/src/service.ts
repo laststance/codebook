@@ -1474,7 +1474,7 @@ export class StudyService {
   }
 
   /**
-   * Gives the failure of a stopped run's evidence, which refuses every further explanation of the run: the evidence keeps its first failure, so a later write fails at the same failure (Evidence.flush); read by {@link StudyService.explain} before it reserves a key and by {@link StudyService.state} for the run resource's advice.
+   * Gives the failure of a stopped run's evidence, which refuses every further explanation of the run: the evidence keeps its first failure, so a later write fails at the same failure ({@link Evidence.flush}); read by {@link StudyService.explain} before it reserves a key and by {@link StudyService.state} for the run resource's advice.
    * @param record - The run.
    * @returns
    * - The evidence's failure for a stopped run whose evidence failed, at its stop or after it (an explanation's save after the result)

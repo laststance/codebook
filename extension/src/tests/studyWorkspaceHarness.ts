@@ -5792,7 +5792,7 @@ export async function workspaceHarness(
       reportFrameOf(session.id)
     },
     /**
-     * Lets a debug adapter tell the editor that the stacks of a session whose stop the editor keeps in the background are no longer valid: the session's trackers see the `invalidated` event, and the editor drops the stale stack and asks for it again (`answerStackTraceOf`). The editor handles the stop again from what it stored of the adapter's `stopped` event (both editors keep its details per thread, with its `preserveFocusHint`), so a stop it did not bring to the front stays in the background: no file opens and no frame is reported (Cycle 0046 R5).
+     * Lets a debug adapter tell the editor that the stacks of a session whose stop the editor keeps in the background are no longer valid. It does two things only: the session's trackers see the `invalidated` event, and the stack the editor asks for again is answered with the given top frame (`answerStackTraceOf`). It opens no file and reports no frame. What the editor then does with the stop (both editors handle it again from what they stored of the adapter's `stopped` event, its `preserveFocusHint` among it) is not modelled here: a test models it with its next step, for example `showStopKeepingFocus` for a stop the editor shows (Cycle 0046 R5).
      * @param sessionId - The session whose stacks are declared invalid.
      * @param top - The top frame the adapter answers again: its file and whether it is deemphasized.
      * @example

@@ -127,7 +127,7 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
   ])
 })
 
-// Value: protects=the Windows listing still runs where the system root is not known, and never from a path that is looked up from the current directory; fails_when=a missing, empty or relative SystemRoot makes the listing fail or builds a relative path to PowerShell (F4, Cycle 0046 /ship review; the same lookup as the start query's, row 107); why_new=the listing named its program by its bare name alone; seam=the injected platform, environment and runner
+// Value: protects=the Windows listing still runs where the system root is not known: it never builds a relative path to PowerShell, and falls back to the bare name only where the system root is missing, empty or relative; fails_when=a missing, empty or relative SystemRoot makes the listing fail or builds a relative path to PowerShell (F4, Cycle 0046 /ship review; the same lookup as the start query's, row 107); why_new=the listing named its program by its bare name alone; seam=the injected platform, environment and runner
 test('the Windows listing starts PowerShell by its bare name only where the system root is missing, empty or no absolute path', async () => {
   // Arrange
   const programStartedWith = async (environment: {
