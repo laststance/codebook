@@ -728,6 +728,8 @@ export class StudyWorkspace {
   private learnerWorkedInEditorAtMs?: number
   /** The moment a confirmed presentation change last ended with the captured source as the active text editor ({@link noteSourceKeyboardPlacement}): Codebook's own placement, not the learner, gave it the keyboard then. {@link isCodebooksSourceKeyboard} compares it with the learner's last sign (row 642). */
   private sourceKeyboardPlacedAtMs?: number
+  /** Says that the learner's last move the editor reported, while Codebook moved no focus, made the captured source the active text editor ({@link endSourceKeyboardPlacementAtLearnersMove}): a known place for {@link knowsLearnersPlace} while that source stays the active text editor (row 654). */
+  private learnerMovedToSource = false
   /** The file and the editor group of the preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. The tab is known by its document and view column, never by its object: Cursor's extension host builds every tab object anew whenever the editor sends its whole tab model, and an object taken before then keeps answering what it answered last. */
   private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
@@ -3243,6 +3245,7 @@ export class StudyWorkspace {
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         sample()
         this.noteLearnersSignAtFrame(this.isLearnersEditor(editor))
+        this.endSourceKeyboardPlacementAtLearnersMove(editor)
       }),
       vscode.window.onDidChangeTextEditorSelection((change) =>
         this.noteLearnersSelection(change),
@@ -12082,7 +12085,29 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the captured source has the keyboard by Codebook's own placement: a confirmed presentation change left it there ({@link noteSourceKeyboardPlacement}) and the learner has not clicked or typed in the active text editor since ({@link noteLearnersSelection}); asked by {@link retireMovedSourceCopies}, which keeps a copy the learner works in (row 642).
+   * Ends the note that Codebook's own placement gave the captured source the keyboard ({@link noteSourceKeyboardPlacement}) once the editor reports another active text editor while no presentation change, Return or arrangement of Codebook's runs, and notes whether that move landed on the captured source; called by the active-text-editor listener of {@link watchKeyboardOutsideEditors} (row 654).
+   * Such a change is the learner's move: a click, a key, or a command such as the editor's numbered group focus, which moves no caret and so leaves no sign for {@link noteLearnersSelection}. A copy of the captured source the learner moved to is then the learner's place ({@link knowsLearnersPlace}): an agent's Return gives it the keyboard back and {@link retireMovedSourceCopies} keeps it. The editor reports nothing when the keyboard goes from a file to the terminal or a view and back, so a move it does not report cannot be told.
+   * @param editor - The active text editor the editor reports now, `undefined` for none (the chat, a pane).
+   * @example this.endSourceKeyboardPlacementAtLearnersMove(vscode.window.activeTextEditor) // after the learner's numbered group focus onto the captured source: the placement is the learner's now
+   */
+  private endSourceKeyboardPlacementAtLearnersMove(
+    editor: vscode.TextEditor | undefined,
+  ): void {
+    // Codebook's own focus changes while it places or returns are no move of the learner's.
+    if (
+      this.presentationTransition !== undefined ||
+      this.presentationOperation !== undefined ||
+      this.returningCurrent !== undefined ||
+      this.arranging !== undefined ||
+      this.placingPresentation
+    )
+      return
+    this.sourceKeyboardPlacedAtMs = undefined
+    this.learnerMovedToSource = editorShowsDocument(editor, this.sourceUri)
+  }
+
+  /**
+   * Says whether the captured source has the keyboard by Codebook's own placement: a confirmed presentation change left it there ({@link noteSourceKeyboardPlacement}), the learner has not clicked or typed in the active text editor since ({@link noteLearnersSelection}), and the editor reported no other active text editor of the learner's since ({@link endSourceKeyboardPlacementAtLearnersMove}, row 654); asked by {@link retireMovedSourceCopies}, which keeps a copy the learner works in (row 642).
    * @returns `true` after such a placement with no sign of the learner's since; `false` without a placement, and once the learner gave a sign after it.
    * @example this.isCodebooksSourceKeyboard() // => true right after an agent's selection left the keyboard on the captured source
    */
@@ -13419,18 +13444,21 @@ export class StudyWorkspace {
 
   /**
    * Says whether the learner is known to work where the keyboard is; asked by {@link captureApplicationPreparationReturn} and {@link performPresentation} before any native effect of an agent's request.
-   * Beside a chat view the active text editor stays the active one and a pane stays `active`, so only the learner's own sign tells: a click or a key press in the active text editor a moment ago ({@link learnerWorksInActiveEditor}), or the Study pane's own report that it has the keyboard ({@link reportsKeyboard}).
+   * Beside a chat view the active text editor stays the active one and a pane stays `active`, so only the learner's own sign tells: a click or a key press in the active text editor a moment ago ({@link learnerWorksInActiveEditor}), the learner's own reported move onto the captured source that is still the active text editor ({@link endSourceKeyboardPlacementAtLearnersMove}, row 654), or the Study pane's own report that it has the keyboard ({@link reportsKeyboard}).
    * @param focusedPanel - The Codebook pane that is the active editor, if any.
-   * @returns `true` for such a sign or report; `false` otherwise, also for the Application pane, whose page sends no report.
+   * @returns `true` for such a sign, move or report; `false` otherwise, also for the Application pane, whose page sends no report.
    * @example this.knowsLearnersPlace(undefined) // => true one second after the learner's last key press in the active file
    */
   private knowsLearnersPlace(
     focusedPanel: vscode.WebviewPanel | undefined,
   ): boolean {
-    return focusedPanel
-      ? this.reportsKeyboard(focusedPanel)
-      : vscode.window.activeTextEditor !== undefined &&
-          this.learnerWorksInActiveEditor()
+    if (focusedPanel) return this.reportsKeyboard(focusedPanel)
+    // The captured source the learner's own reported move reached is a known place too (row 654).
+    return (
+      vscode.window.activeTextEditor !== undefined &&
+      (this.learnerWorksInActiveEditor() ||
+        (this.learnerMovedToSource && this.isCapturedSourceActiveEditor()))
+    )
   }
 
   /**

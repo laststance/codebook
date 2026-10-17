@@ -6219,6 +6219,78 @@ test('an agent’s Return Current keeps the Study’s copy of the captured sourc
   }
 })
 
+// Value: protects=a copy of the captured source the learner reached by the editor's numbered group focus command after Codebook's selection had left the keyboard on it and the learner had gone to the chat: the editor reported the learner's move away and back as changes of the active text editor that Codebook did not make, so the copy's keyboard is the learner's and the agent's Return Current keeps that copy with its keyboard, as for a click (row 642's learner half); fails_when=only a click or a key press in the copy counts as the learner's sign, so the Return takes the keyboard placed by Codebook's selection for still Codebook's and closes the copy the learner chose; why_new=Cycle 0046 row 654; seam=useNativeLayout with two learner groups, addSeparateEditorPart and failNextCommand on Cursor's Focus Agent (the select leaves the keyboard on the source), the chat's focusTab, workbench.action.focusSecondEditorGroup, the service's selectPresentation and returnToCurrent, harness.groups and the active text editor
+test('an agent’s Return Current keeps the Study’s copy of the captured source the learner reached by its group’s numbered focus command after going to the chat, with its keyboard', async () => {
+  // Arrange: as for the learner's click in Cursor; after the selection the learner types in the chat, then focuses the copy's group, the second, with the editor's numbered command.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.leavePaneFocusUnreportedBesideChat()
+    chat.focusTab()
+    harness.failNextCommand('composer.focusComposer')
+    const selection = harness.reader.presentationState()
+    await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: selection.presentationId,
+      expectedRevision: selection.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    const copyColumnAfterSelect =
+      harness.editor.window.tabGroups.activeTabGroup.viewColumn
+    chat.focusTab()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusSecondEditorGroup',
+    )
+    const keyboardAfterCommand = {
+      name: harness.editor.window.activeTextEditor?.document.uri.path
+        .split('/')
+        .at(-1),
+      column: harness.editor.window.activeTextEditor?.viewColumn,
+    }
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.service.returnToCurrent({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.reader.contentRevision,
+    })
+
+    // Assert: the copy the learner reached by the command stays in front of the second learner group with the keyboard.
+    assert.deepEqual(
+      {
+        copyColumnAfterSelect,
+        keyboardAfterCommand,
+        thirdColumn: harness.groups
+          .find((group) => group.viewColumn === 3)
+          ?.tabs.map((tab) =>
+            'uri' in tab.input ? tab.input.uri.path.split('/').at(-1) : 'other',
+          ),
+        activeTextEditor: {
+          name: harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+          column: harness.editor.window.activeTextEditor?.viewColumn,
+        },
+      },
+      {
+        copyColumnAfterSelect: 2,
+        keyboardAfterCommand: { name: 'Captured-overview.mts', column: 2 },
+        thirdColumn: ['auth.ts', 'Captured-overview.mts'],
+        activeTextEditor: { name: 'Captured-overview.mts', column: 3 },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the chat input's keyboard in VS Code when an agent starts a run right after its own Study selection, without Return Current: the reader's next refresh (every 250 ms, well before the run's Application viewport) enters the Live arrangement as the agent's run, so no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=that entry prepares the Application as the learner's and its focus return shows the captured source, the active text editor, with the keyboard, and nothing tells the learner; why_new=Cycle 0046 finding on codebook_start (the reader's own Live entry of a run); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), the reader's refresh as its timer runs it, textDocumentShows and the information messages
 test('an agent’s run started right after its own Study selection, while the chat view has the keyboard, enters Live with no file given the keyboard and says once that the Application’s group has it', async () => {
   // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again.
