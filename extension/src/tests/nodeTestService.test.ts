@@ -747,3 +747,128 @@ test('a failed advance to the next Node stop releases the test and seals its rec
     await harness.close()
   }
 })
+
+// Value: protects=the cause an agent and the learner read for a Node test run whose advance to the next stop failed: the continuation's error message and the run resource's terminalReason name the advance's failure; fails_when=both say only "The study operation failed." while the failure stays in error.cause alone; why_new=Cycle 0046 row 653 (the Node continuation's catch in StudyService.continue); seam=environment.createNodeTestRun, whose advance rejects
+test('a failed advance to the next Node stop names that failure in the continuation error and in the run terminal reason', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    { service } = harness
+  service.nodeHistoryStore = new NodeTestHistoryStore(
+    join(harness.directory, '.learning'),
+    '0'.repeat(64),
+  )
+  service.environment.build.sourceHash = 'f'.repeat(64)
+  const base = harness.configuration
+  const configuration: NodeTestConfiguration = {
+    version: 1,
+    adapter: 'vitest-node',
+    book: base.book,
+    testFile: 'src/theme.test.ts',
+    testTitles: ['theme', 'selects the dark theme'],
+    testHash: 'a'.repeat(64),
+    source: base.source,
+    inspections: base.inspections.slice(0, 1),
+    additionalStops: [
+      {
+        ...base.source,
+        anchorIndex: 0,
+        inspections: base.inspections.slice(0, 1),
+      },
+    ],
+  }
+  const firstStop = {
+    index: 0,
+    runId: 'node-run',
+    sessionId: 'owned-session',
+    threadId: 7,
+    elapsedMs: 10,
+    worker: {},
+    source: configuration.source,
+    frame: { id: 10, name: 'notifyManager', line: 1, column: 1 },
+    variables: [{ name: 'listener', value: '() => undefined' }],
+    facts: [
+      { path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' },
+    ],
+    debuggerSnapshot: {
+      version: 1,
+      frames: [
+        {
+          name: 'notifyManager',
+          line: 1,
+          column: 1,
+          scopes: [{ name: 'Local', variables: [0] }],
+        },
+      ],
+      variables: [{ name: 'listener', value: '() => undefined', children: [] }],
+      limitations: [],
+    },
+  } as unknown as NodeTestSourceStop
+  const runtime: NodeTestRuntime = {
+    id: 'node-run',
+    async prepare() {
+      return firstStop
+    },
+    hasNextStop() {
+      return true
+    },
+    async advance() {
+      throw new Error(
+        'Owned Node source pause was resumed before the next declared stop.',
+      )
+    },
+    async complete() {
+      throw new Error(
+        'The final result must not be requested before the second stop.',
+      )
+    },
+    async stop() {},
+  }
+  service.environment.createNodeTestRun = async () => runtime
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: NODE_TEST_PROFILE,
+    key: 'node-advance-failure-cause',
+    configuration,
+  })
+  const record = service.record(receipt)
+  try {
+    await record.preparation
+    const paused = service.state(record)
+
+    // Act
+    const continuing = service.continue(
+      paused.participants.server!.continueArguments!,
+    )
+    const rejection = await continuing.then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await waitUntil(() => record.stopped, 'Node failure cleanup', 1_000)
+    const state = service.state(record)
+
+    // Assert
+    assert.ok(rejection instanceof StudyError)
+    assert.deepEqual(
+      {
+        rejection: rejection.describe(),
+        terminalReason: state.terminalReason,
+      },
+      {
+        rejection: {
+          code: 'RUNTIME_FAILED',
+          message:
+            'The study operation failed. Cause: Owned Node source pause was resumed before the next declared stop.',
+          cause:
+            'Error: Owned Node source pause was resumed before the next declared stop.',
+          recovery:
+            'Read the terminal reason and captured history. Stop owned resources; do not retry the click automatically.',
+          docs: 'codebook://help/errors',
+        },
+        terminalReason:
+          'The study operation failed. Cause: Owned Node source pause was resumed before the next declared stop.',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})

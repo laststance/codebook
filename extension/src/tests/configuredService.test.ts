@@ -717,6 +717,152 @@ test('a run whose preparation fails with an error that is no StudyError names th
   )
 })
 
+// Value: protects=the cause an agent and the learner read for a run whose preparation failed when the release that follows fails as well: the run resource's terminalReason and error still name the preparation's cause, and the release's failure is the cleanupError; fails_when=the failed release replaces the run's error with "The study operation failed.", so the run resource no longer says why the start failed; why_new=Cycle 0046 row 653 (the release's catch in StudyService.prepare); seam=runtime.prepare and runtime.stop, both made to reject
+test('a run whose preparation fails and whose release then fails keeps the preparation cause as its terminal reason', async (context) => {
+  // Arrange
+  const { service, configuration, environment } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime,
+    restoreStops: (() => void)[] = []
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    const stopRuntime = runtime.stop.bind(runtime)
+    restoreStops.push(() => {
+      runtime.stop = stopRuntime
+    })
+    runtime.prepare = async () => {
+      throw new Error(
+        'The dedicated Application layout could not be confirmed.',
+      )
+    }
+    runtime.stop = async () => {
+      throw new Error('Owned process still alive')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'failed-preparation-and-release',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+
+  // Act
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the failed release after the failed preparation',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // The harness's own shutdown releases the run once the test has read it.
+  for (const restoreStop of restoreStops) restoreStop()
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+      cleanupError: z.object({ message: z.string(), cause: z.string() }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      cleanupError: state.cleanupError,
+    },
+    {
+      terminalReason:
+        'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+      error: {
+        code: 'RUNTIME_FAILED',
+        message:
+          'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
+        cause:
+          'Error: The dedicated Application layout could not be confirmed.',
+      },
+      cleanupError: {
+        message: 'The study operation failed.',
+        cause: 'Error: Owned process still alive',
+      },
+    },
+  )
+})
+
+// Value: protects=the cause an agent and the learner read for a run that the maintenance turn ends because its evidence could not be written: the run resource's terminalReason and error.message, and the reason the runtime journals as run.failed, name the write's failure, also after the release failed on the same storage; fails_when=they say only "Evidence buffering or persistence failed." while the failure stays in error.cause alone, or the failed release replaces the run's error with "The study operation failed."; why_new=Cycle 0046 row 653 (StudyService.maintain); seam=runtime.evidence.failure, set as Evidence sets it after a failed append, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed, configuredBrowserRun.ts fail)
+test('a run that the maintenance turn ends for an evidence write failure names that failure in its terminal reason and in the reason it journals as run.failed', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'failed-evidence-write',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  runtime.evidence.failure = 'Error: ENOSPC: no space left on device, write'
+
+  // Act
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+    },
+    {
+      terminalReason:
+        'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
+        cause: 'Error: ENOSPC: no space left on device, write',
+      },
+      journaledReasons: [
+        'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
+      ],
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange
@@ -2491,6 +2637,88 @@ test('a run whose whole-run deadline expires while a continuation waits answers 
   assert.equal(
     answer.state.terminalReason,
     'Study wall deadline expired; history only.',
+  )
+})
+
+// Value: protects=the cause an agent and the learner read for a run whose explanation was not committed and whose whole-run deadline passes before the maintenance turn released it: the run resource's terminalReason and error.message, and the reason the deadline journals as run.failed, name why the explanation's write failed; fails_when=they say only "Explanation was not committed." while the write's failure stays in error.cause alone; why_new=Cycle 0046 row 653 (StudyService.expireAtDeadline journals the run's error message); seam=the service's clock, moved by the test, its maintenance turn, switched off and then called once, runtime.evidence.save, made to reject, and runtime.fail (ConfiguredBrowserRun journals the reason it is given as run.failed)
+test('a run whose explanation was not committed and whose whole-run deadline then passes names the write failure in its terminal reason and in the reason it journals as run.failed', async (context) => {
+  // Arrange: a run is paused at its first stop; the maintenance turn is switched off so that the deadline, not an earlier turn, ends the run.
+  let nowMs = CLOCK_START_MS
+  const { service, configuration, runtimes } = await configuredServiceHarness(
+    context,
+    () => nowMs,
+  )
+  const maintenanceTurn = service.maintain.bind(service)
+  service.maintain = (): void => {}
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'deadline-after-uncommitted-explanation',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  runtime.evidence.save = async () => {
+    throw new Error("EACCES: permission denied, open 'agent-explanation.json'")
+  }
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+  await assert.rejects(
+    service.explain({
+      ...receipt,
+      key: 'explain',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    }),
+    { code: 'EVIDENCE_UNAVAILABLE' },
+  )
+  nowMs = record.deadlineAt
+
+  // Act
+  maintenanceTurn()
+  const resource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      terminalReason: state.terminalReason,
+      error: state.error,
+      journaledReasons,
+    },
+    {
+      terminalReason:
+        "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+        cause:
+          "Error: EACCES: permission denied, open 'agent-explanation.json'",
+      },
+      journaledReasons: [
+        "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      ],
+    },
   )
 })
 

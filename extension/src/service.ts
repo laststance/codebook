@@ -107,7 +107,6 @@ import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import { isStudyRemovalExclusion } from './utils/isStudyRemovalExclusion'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
-import { messageNamingCause } from './utils/messageNamingCause'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
@@ -115,6 +114,7 @@ import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { thrownMessage } from './utils/thrownMessage'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 
@@ -1213,7 +1213,7 @@ export class StudyService {
           record.nodePhase = 'completed'
         }
       } catch (error) {
-        record.error = domainError(error)
+        record.error = studyErrorNamingCause(domainError(error))
         record.nodePhase = 'failed'
         queueMicrotask(() => {
           void this.stopRecord(record).catch(() => undefined)
@@ -1425,10 +1425,12 @@ export class StudyService {
           valuePaths,
         }
       } catch (error) {
-        record.error = new StudyError(
-          'EVIDENCE_UNAVAILABLE',
-          'Explanation was not committed.',
-          String(error),
+        record.error = studyErrorNamingCause(
+          new StudyError(
+            'EVIDENCE_UNAVAILABLE',
+            'Explanation was not committed.',
+            String(error),
+          ),
         )
         throw record.error
       }
@@ -2289,10 +2291,12 @@ export class StudyService {
       if (record.stopped || record.stopping || record.cleanupError) continue
       const evidenceFailure = record.runtime?.evidence.failure
       if (evidenceFailure) {
-        record.error = new StudyError(
-          'EVIDENCE_UNAVAILABLE',
-          'Evidence buffering or persistence failed.',
-          evidenceFailure,
+        record.error = studyErrorNamingCause(
+          new StudyError(
+            'EVIDENCE_UNAVAILABLE',
+            'Evidence buffering or persistence failed.',
+            evidenceFailure,
+          ),
         )
         record.runtime?.fail(record.error.message)
       }
@@ -2306,7 +2310,8 @@ export class StudyService {
         record.nodePhase === 'failed'
       )
         void this.stopRecord(record).catch((error) => {
-          record.error = domainError(error)
+          // A run that failed keeps its own error, with its cause; the release's failure is its cleanupError. A run that ended without one fails by its release (Cycle 0046 row 653).
+          record.error ??= studyErrorNamingCause(domainError(error))
         })
     }
   }
@@ -2314,6 +2319,7 @@ export class StudyService {
   /**
    * Ends a run whose whole-run deadline has passed with the deadline's error, so every reader names the same end; called by {@link StudyService.maintain} at each maintenance turn and by {@link StudyService.nextRunState} while a continuation waits, which must not answer past the run's own deadline.
    * It releases nothing itself: the next maintenance turn stops the run it marked. A run that already ended on its own ({@link StudyService.hasRunEnded}) is left as it is, whichever caller asks.
+   * The reason it journals as `run.failed` is the run's error message, which names its cause whichever path set an earlier error ({@link studyErrorNamingCause}, Cycle 0046 row 653); the deadline's own message is its cause.
    * @param record - The run whose deadline is compared with the clock.
    * @example this.expireAtDeadline(record) // record.error?.message === 'Study wall deadline expired; history only.' once now() >= record.deadlineAt
    */
@@ -2697,11 +2703,10 @@ export class StudyService {
       if (record.nodePhase) record.nodePhase = 'failed'
     }
     // Schedule cleanup after preparation settles to avoid awaiting this promise from itself.
+    // A release that fails keeps its own error as cleanupError; the run's error stays the preparation's, with its cause (Cycle 0046 row 653).
     if (record.error)
       queueMicrotask(() => {
-        void this.stopRecord(record).catch((error) => {
-          record.error = domainError(error)
-        })
+        void this.stopRecord(record).catch(() => undefined)
       })
   }
 
@@ -2710,7 +2715,7 @@ export class StudyService {
    * A runtime that ends itself during preparation (a pause it did not declare, such as a learner's breakpoint on a line the page load runs) closes its own transport, and the preparation then rejects with that closure ("CDP disconnected"). The reason the runtime recorded first is the one an agent can act on, so it becomes the message and the cause.
    * @param record - The run whose preparation rejected.
    * @param error - What the preparation rejected with.
-   * Whatever the failure, its message names its cause ({@link messageNamingCause}): the message becomes the run's terminal reason and the reason its runtime journals as `run.failed`, and an error that is no {@link StudyError} would otherwise say only "The study operation failed." there, its own words staying in the cause alone (Cycle 0046 row 645).
+   * Whatever the failure, its message names its cause ({@link studyErrorNamingCause}): the message becomes the run's terminal reason and the reason its runtime journals as `run.failed`, and an error that is no {@link StudyError} would otherwise say only "The study operation failed." there, its own words staying in the cause alone (Cycle 0046 row 645).
    * @returns
    * - The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, when `error` is no {@link StudyError}.
    * - Otherwise {@link domainError} of `error`, whose message names its cause where it did not.
@@ -2726,12 +2731,7 @@ export class StudyService {
       .failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
     if (runtimeFailure && !(error instanceof StudyError))
       return new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
-    const failure = domainError(error)
-    const message = messageNamingCause(failure.message, failure.causeDetail)
-    // A message that names its cause already keeps its own error, its class among it.
-    return message === failure.message
-      ? failure
-      : new StudyError(failure.code, message, failure.causeDetail)
+    return studyErrorNamingCause(domainError(error))
   }
 
   /**
