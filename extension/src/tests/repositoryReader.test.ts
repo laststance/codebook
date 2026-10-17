@@ -134,6 +134,11 @@ async function readerHarness(context: TestContext) {
     }
   }
   let activeGroup = sourceGroup
+  /** The group of Cursor's Agent chat part at column 3, once `focusCursorChatPart` added it; Cursor gives its composer tab no input, which the reader does not read on these paths, so a webview input stands in for it. */
+  let chatPartGroup: typeof sourceGroup | undefined
+  /** Says that the editor names the group of Cursor's chat part, which a foreground display in the main editor keeps named. @example namesChatPartGroup() // => true after focusCursorChatPart */
+  const namesChatPartGroup = (): boolean =>
+    chatPartGroup !== undefined && activeGroup === chatPartGroup
   let windowFocused = true
   let activateWikiPanel = (): void => {}
   let blurWikiPanel = (): void => {}
@@ -283,7 +288,11 @@ async function readerHarness(context: TestContext) {
             return activeEditor
           },
           tabGroups: {
-            all: [sourceGroup, otherGroup],
+            get all() {
+              return chatPartGroup
+                ? [sourceGroup, otherGroup, chatPartGroup]
+                : [sourceGroup, otherGroup]
+            },
             get activeTabGroup() {
               return activeGroup
             },
@@ -378,11 +387,12 @@ async function readerHarness(context: TestContext) {
               tab = { input: new TabInputText(document.uri) }
             sourceGroup.tabs.push(tab)
             sourceGroup.activeTab = tab
-            // A foreground native source display activates its main group before its text-editor receipt.
+            // A foreground native source display activates its main group before its text-editor receipt; Cursor keeps naming its chat part's group instead, since a tab that opens in the main editor's active group is no group activation for its tab model (Cursor 3.23.12 17269:31013).
             if (
               !options?.preserveFocus &&
               (!nativeCitationActivation ||
-                nativeCitationOrder === 'group-first')
+                nativeCitationOrder === 'group-first') &&
+              !namesChatPartGroup()
             )
               activeGroup = sourceGroup
             if (!options?.preserveFocus && nativeCitationActivation) {
@@ -862,6 +872,21 @@ async function readerHarness(context: TestContext) {
       blurWikiPanel()
       for (const listener of focusListeners) listener()
     },
+    /**
+     * Gives Cursor's Agent chat, a tab of its own editor part at column 3, the keyboard: the editor names the chat's group and no text editor is active. A citation shown with the keyboard in the first group afterwards is reported as the active text editor while the editor goes on naming the chat's group (row 660).
+     * @example harness.focusCursorChatPart()
+     */
+    focusCursorChatPart(): void {
+      const chatTab = { input: new TabInputWebview('cursor.composer') }
+      chatPartGroup ??= { viewColumn: 3, tabs: [chatTab], activeTab: chatTab }
+      activeEditor = undefined
+      activeGroup = chatPartGroup
+      blurWikiPanel()
+      for (const listener of groupListeners) listener()
+      for (const listener of focusListeners) listener()
+    },
+    /** Names the group the editor names as active, by its view column. @example harness.namedColumn() // => 3 while Cursor names its chat part's group */
+    namedColumn: (): number => activeGroup.viewColumn,
     setWindowFocus(focused: boolean): void {
       windowFocused = focused
       for (const listener of windowFocusListeners) listener({ focused })
@@ -1508,6 +1533,67 @@ test('a cited-source copy an earlier reader showed and the learner reads in stay
         },
       },
       closedTabs: ['order.ts'],
+    },
+  )
+})
+
+// Value: protects=the learner's Open Repository Wiki command run while Cursor's Agent chat part has the keyboard and no Wiki is open: the cited source takes the keyboard in the first group, Cursor reports it as the active text editor while it goes on naming the chat's group (a tab opened in the main editor's active group is no group activation for its tab model, Cursor 3.23.12 17269:31013), and the reader takes that stale name for its citation's group, so the Wiki opens; fails_when=the citation's focus receipt and its check wait for the first group to be named, which Cursor does not do, so the open is refused with "Native focus changed during repository navigation; the newer learner focus was preserved." (C58 c58-cu-567 and c58-cu-567-probe, the command run from the extension host); why_new=Cycle 0046 row 660; seam=readerHarness with useColdLayout and focusCursorChatPart (the chat part's group named, kept named by a foreground display)
+test("the learner's cold Open Repository Wiki run while Cursor's chat part has the keyboard opens the Wiki after the citation took the keyboard under the chat's group name", async (context) => {
+  // Arrange: no Wiki is open; Cursor's chat part has the keyboard and its group is the named one.
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.focusCursorChatPart()
+
+  // Act
+  const refusal = await harness.reader.open(harness.selection).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
+
+  // Assert: the open answered with the article loaded, the citation has the keyboard in the first group while Cursor still names the chat's group, and the Wiki was then given the keyboard.
+  assert.deepEqual(
+    {
+      refusal,
+      loading: harness.reader.inspect().view.loading,
+      article: harness.reader.inspect().view.selection?.nodeId,
+      shownCitations: harness.shown.length,
+      wikiReveals: harness.revealFocus,
+    },
+    {
+      refusal: undefined,
+      loading: false,
+      article: 'module',
+      shownCitations: 1,
+      wikiReveals: [false],
+    },
+  )
+})
+
+// Value: protects=the learner's newer choice during a cold Open Repository Wiki beside Cursor's chat part: a click into another group while the citation takes the keyboard is still the learner's change, which the reader refuses, also though it accepts Cursor's stale name of the chat's group for its own citation (row 660); fails_when=the stale name is accepted for any group or any editor, so a learner who went elsewhere loses the keyboard to the Wiki; why_new=Cycle 0046 row 660 (its bound); seam=readerHarness with useColdLayout, focusCursorChatPart, holdSourceDisplay (the learner's change while the citation's display answers) and switchTabGroup
+test("a learner's change of group while a cold Open Repository Wiki beside Cursor's chat part shows its citation is still refused as the learner's newer focus", async (context) => {
+  // Arrange: as above, with the citation's display held so the learner can change the group meanwhile.
+  const harness = await readerHarness(context)
+  harness.useColdLayout()
+  harness.focusCursorChatPart()
+  const held = harness.holdSourceDisplay()
+  const opening = harness.reader.open(harness.selection).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
+  await held.started
+
+  // Act: the learner selects the second group before the citation's display answers.
+  harness.switchTabGroup()
+  held.release()
+  const refusal = await opening
+
+  // Assert
+  assert.deepEqual(
+    { refusal, namedColumn: harness.namedColumn() },
+    {
+      refusal:
+        'Error: Native focus changed during repository navigation; the newer learner focus was preserved.',
+      namedColumn: 2,
     },
   )
 })

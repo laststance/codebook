@@ -35,6 +35,7 @@ import { repositoryHtml } from './ui/repositoryHtml'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isStaleGroupNameOfCitation } from './utils/isStaleGroupNameOfCitation'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { showPlainNotice } from './utils/showPlainNotice'
 
@@ -46,6 +47,8 @@ export interface RepositoryFocusTarget {
   matchesEditorIdentity?: () => boolean
   /** Confirms the requested citation tab before its group activates; used only by {@link RepositoryReader.openSource}'s native focus receipt. @example target.matchesPreparedTab?.() */
   matchesPreparedTab?: () => boolean
+  /** Says that {@link matchesGroup} holds only through the group the editor still names from before the target took the keyboard, as Cursor names its chat part's group until its tab model is rebuilt (Cycle 0046 row 660); the receipt then follows the editor's later name of the target's own group once. @example target.namesStaleGroup?.() // => true right after the measurement focused the first group beside Cursor's chat part */
+  namesStaleGroup?: () => boolean
 }
 
 /** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
@@ -325,11 +328,22 @@ export class RepositoryReader {
               this.assertCurrent(generation)
               const editor = vscode.window.activeTextEditor,
                 group = vscode.window.tabGroups.activeTabGroup,
-                nativeInput = group.activeTab?.input
+                nativeInput = vscode.window.tabGroups.all.find(
+                  (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
+                )?.activeTab?.input
+              // The citation's group is the first one, or the group Cursor still names from before the citation took the keyboard there (row 660).
               if (
                 editor !== opened.editor ||
                 editor.viewColumn !== vscode.ViewColumn.One ||
-                group.viewColumn !== vscode.ViewColumn.One ||
+                (group.viewColumn !== vscode.ViewColumn.One &&
+                  !isStaleGroupNameOfCitation(
+                    {
+                      namedBefore: opened.namedColumnBefore,
+                      namedNow: group.viewColumn,
+                      citation: vscode.ViewColumn.One,
+                    },
+                    true,
+                  )) ||
                 !(nativeInput instanceof vscode.TabInputText) ||
                 nativeInput.uri.toString() !== opened.uri.toString()
               )
@@ -1067,6 +1081,18 @@ export class RepositoryReader {
         input.uri.toString() === uri.toString()
       )
     }
+    // Cursor keeps naming the group it named before (its chat part's) while the citation takes the keyboard in the first group: tab opens are no group activation for its tab model (Cursor 3.23.12 `workbench.desktop.main.js` 17269:31013), so that unchanged name is the citation's own group too (row 660).
+    const namedColumnBefore = vscode.window.tabGroups.activeTabGroup.viewColumn
+    /** Tells that the editor still names its group from before while the citation is in front of the first group with the keyboard. */
+    const namesStaleGroup = (): boolean =>
+      isStaleGroupNameOfCitation(
+        {
+          namedBefore: namedColumnBefore,
+          namedNow: vscode.window.tabGroups.activeTabGroup.viewColumn,
+          citation: vscode.ViewColumn.One,
+        },
+        matchesPreparedTab() && matchesEditorIdentity(),
+      )
     // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
     const focus = preserveFocus
       ? undefined
@@ -1086,9 +1112,11 @@ export class RepositoryReader {
               )
             )
           },
+          namesStaleGroup,
           matchesGroup: () => {
             const group = vscode.window.tabGroups.activeTabGroup,
               input = group.activeTab?.input
+            if (namesStaleGroup()) return true
             return (
               group.viewColumn === vscode.ViewColumn.One &&
               input instanceof vscode.TabInputText &&
@@ -1108,7 +1136,7 @@ export class RepositoryReader {
       })
       this.assertCurrent(generation)
       focus?.assertRetained()
-      return { uri, editor, focus }
+      return { uri, editor, focus, namedColumnBefore }
     } catch (error) {
       focus?.dispose()
       throw error
@@ -1445,6 +1473,8 @@ export class RepositoryReader {
     let selectedEditorRetained: (() => boolean) | undefined
     let initial = acquire ? undefined : pending,
       changed = false,
+      // The target was acquired under the editor's stale name of another group (row 660).
+      staleNameAccepted = false,
       groupSelectionAccepted = false,
       editorAcquired = false,
       groupAcquired = false
@@ -1510,7 +1540,10 @@ export class RepositoryReader {
           (!groupMatches && (groupAcquired || current.group !== pending.group))
         editorAcquired ||= editorMatches
         groupAcquired ||= groupMatches
-        if (editorMatches && groupMatches) initial = current
+        if (editorMatches && groupMatches) {
+          initial = current
+          staleNameAccepted = Boolean(acquire.namesStaleGroup?.())
+        }
         return
       }
       // A quiet reveal selects its tab before the native editor-loss event; earlier departures remain sticky.
@@ -1537,6 +1570,20 @@ export class RepositoryReader {
         current,
         wikiSelectedBesideTextEditor(),
       )
+      // The editor naming the acquired target's own group late, once, after the receipt took its stale name of another group (Cursor names its chat part's group until its tab model is rebuilt), is no newer input either (row 660).
+      if (
+        initial &&
+        acquire &&
+        staleNameAccepted &&
+        current.editor === initial.editor &&
+        current.group !== initial.group &&
+        acquire.matchesEditor() &&
+        acquire.matchesGroup() &&
+        !acquire.namesStaleGroup?.()
+      ) {
+        initial = { ...initial, group: current.group }
+        staleNameAccepted = false
+      }
       changed ||=
         current.editor !== initial?.editor || current.group !== initial?.group
     }

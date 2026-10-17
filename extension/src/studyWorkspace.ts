@@ -6640,10 +6640,12 @@ export class StudyWorkspace {
 
   /**
    * Arranges the Wiki's layout for {@link RepositoryReader.open} ({@link arrangeRepositoryLayout}) and answers how to give back the keyboard its measurement may borrow, captured before any effect.
+   * A cold arrangement refused for another cause than a learner's change gives that keyboard back itself before it throws, since the reader gets no return to ask then: beside Cursor's chat part the measurement left the keyboard in the learner's file of the first group (C58 c58-cu-2c, row 660); a newer choice of the learner keeps its keyboard ({@link arrangeRepositoryLayout}).
    * @param signal - Cancellation of the Wiki entry.
    * @param returnSelection - The article of an actual Return, whose saved native arrangement is restored.
    * @param focus - The reader's focus receipts for the layout work.
    * @returns The keyboard return the reader asks after an agent's Wiki is shown (codebook_open_book, row 620).
+   * @throws What the arrangement refused with, once the borrowed keyboard is given back.
    * @example const keyboardReturn = await workspace.arrangeRepository(signal) // await keyboardReturn() => true
    */
   async arrangeRepository(
@@ -6652,7 +6654,12 @@ export class StudyWorkspace {
     focus?: RepositoryLayoutFocus,
   ): Promise<RepositoryKeyboardReturn | undefined> {
     const keyboardReturn = this.captureRepositoryKeyboardReturn()
-    await this.arrangeRepositoryLayout(signal, returnSelection, focus)
+    await this.arrangeRepositoryLayout(
+      signal,
+      returnSelection,
+      focus,
+      keyboardReturn,
+    )
     return keyboardReturn
   }
 
@@ -6690,11 +6697,20 @@ export class StudyWorkspace {
           editorStateBefore)
   }
 
-  /** Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. @example await this.arrangeRepositoryLayout(signal, selection) */
+  /**
+   * Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. A cold layout refused while the reader's focus receipt still holds (no learner's change caused the refusal) gives back the keyboard its measurement borrowed before it throws (row 660).
+   * @param signal - Cancellation of the Wiki entry.
+   * @param returnSelection - The article of an actual Return, whose saved native arrangement is restored.
+   * @param focus - The reader's focus receipts for the layout work.
+   * @param keyboardReturn - The return {@link arrangeRepository} captured before any effect.
+   * @throws What the layout refused with, once a borrowed keyboard is given back.
+   * @example await this.arrangeRepositoryLayout(signal, selection)
+   */
   private async arrangeRepositoryLayout(
     signal: AbortSignal,
     returnSelection?: RepositorySelection,
     focus?: RepositoryLayoutFocus,
+    keyboardReturn?: RepositoryKeyboardReturn,
   ): Promise<void> {
     this.assertPresentationIdle()
     if (returnSelection && this.repositoryLayoutOrigin) {
@@ -6713,50 +6729,101 @@ export class StudyWorkspace {
           assertCurrent()
           retainedFocus?.assertRetained()
         }
-        const grid = await this.readMainEditorGrid(
-          signal,
-          assertColdCurrent,
-          focus?.acquireSourceFocus,
-          (acquire) => {
-            // Scope may deliberately borrow primary focus; only its existing verified handoff can replace this receipt.
-            assertColdCurrent()
-            retainedFocus?.dispose()
-            retainedFocus = acquire
-              ? focus?.retainCurrentFocus?.(acquire)
-              : undefined
-          },
-        )
-        grid.assertUnchanged()
-        retainedFocus ??= focus?.retainCurrentFocus?.()
-        assertColdCurrent()
-        if (grid.groups.length >= REPOSITORY_MIN_EDITOR_GROUP_COUNT) return
-        const layout = {
-          orientation: HORIZONTAL_EDITOR_ORIENTATION,
-          groups: Array.from(
-            { length: REPOSITORY_MIN_EDITOR_GROUP_COUNT },
-            () => ({ size: 1 }),
-          ),
-        }
-        grid.assertUnchanged()
-        await vscode.commands.executeCommand('vscode.setEditorLayout', layout)
-        assertColdCurrent()
-        grid.assertFocused()
-        const actual = await vscode.commands.executeCommand<unknown>(
-          'vscode.getEditorLayout',
-        )
-        assertColdCurrent()
-        grid.assertFocused()
-        if (
-          !isProportionalEditorLayout(layout, actual) ||
-          !grid.preservesOtherParts(REPOSITORY_MIN_EDITOR_GROUP_COUNT)
-        )
-          throw new Error(
-            'The editor could not reserve separate Wiki/source panes; existing tabs were preserved.',
+        try {
+          await this.arrangeColdRepositoryGrid(
+            signal,
+            focus,
+            assertColdCurrent,
+            (acquire) => {
+              // Scope may deliberately borrow primary focus; only its existing verified handoff can replace this receipt.
+              assertColdCurrent()
+              retainedFocus?.dispose()
+              retainedFocus = acquire
+                ? focus?.retainCurrentFocus?.(acquire)
+                : undefined
+            },
+            () => {
+              retainedFocus ??= focus?.retainCurrentFocus?.()
+            },
           )
+        } catch (error) {
+          // A refusal no learner's change caused gives back the keyboard the measurement borrowed; a learner's newer focus keeps it (row 660).
+          if (keyboardReturn && !this.hasLearnerChange(retainedFocus))
+            await keyboardReturn().catch(() => false)
+          throw error
+        }
       })
       return
     }
     await this.arrange(signal, 'repository', true, focus)
+  }
+
+  /**
+   * Measures the main editor for a cold Wiki and splits it into the Wiki's two columns where it has fewer; the body of {@link arrangeRepositoryLayout}'s cold path, inside its layout queue.
+   * @param signal - Cancellation of the Wiki entry.
+   * @param focus - The reader's focus receipts, for the citation a measurement may acquire.
+   * @param assertColdCurrent - The queue's check together with the reader's current focus receipt.
+   * @param beforeScopeFocus - Hands the reader a measurement's announced focus target ({@link readMainEditorGrid}).
+   * @param retainFocusAfterMeasurement - Takes a receipt once the measurement ended, where none was handed over.
+   * @throws When the grid changed, or the editor could not reserve the Wiki's columns.
+   * @example await this.arrangeColdRepositoryGrid(signal, focus, assertColdCurrent, beforeScopeFocus, retainFocusAfterMeasurement)
+   */
+  private async arrangeColdRepositoryGrid(
+    signal: AbortSignal,
+    focus: RepositoryLayoutFocus | undefined,
+    assertColdCurrent: () => void,
+    beforeScopeFocus: (acquire?: RepositoryFocusTarget) => void,
+    retainFocusAfterMeasurement: () => void,
+  ): Promise<void> {
+    const grid = await this.readMainEditorGrid(
+      signal,
+      assertColdCurrent,
+      focus?.acquireSourceFocus,
+      beforeScopeFocus,
+    )
+    grid.assertUnchanged()
+    retainFocusAfterMeasurement()
+    assertColdCurrent()
+    if (grid.groups.length >= REPOSITORY_MIN_EDITOR_GROUP_COUNT) return
+    const layout = {
+      orientation: HORIZONTAL_EDITOR_ORIENTATION,
+      groups: Array.from({ length: REPOSITORY_MIN_EDITOR_GROUP_COUNT }, () => ({
+        size: 1,
+      })),
+    }
+    grid.assertUnchanged()
+    await vscode.commands.executeCommand('vscode.setEditorLayout', layout)
+    assertColdCurrent()
+    grid.assertFocused()
+    const actual = await vscode.commands.executeCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    assertColdCurrent()
+    grid.assertFocused()
+    if (
+      !isProportionalEditorLayout(layout, actual) ||
+      !grid.preservesOtherParts(REPOSITORY_MIN_EDITOR_GROUP_COUNT)
+    )
+      throw new Error(
+        'The editor could not reserve separate Wiki/source panes; existing tabs were preserved.',
+      )
+  }
+
+  /**
+   * Says whether the reader's focus receipt saw a learner's change; asked by {@link arrangeRepositoryLayout} when its cold layout was refused, before it gives back a borrowed keyboard (row 660).
+   * @param receipt - The reader's current focus receipt, `undefined` when it holds none.
+   * @returns `true` when the receipt refuses (the learner changed the focus, the window lost it); `false` while it holds, and without a receipt.
+   * @example this.hasLearnerChange(retainedFocus) // => true after the learner clicked into another file during the measurement
+   */
+  private hasLearnerChange(
+    receipt: { assertRetained(): void } | undefined,
+  ): boolean {
+    try {
+      receipt?.assertRetained()
+      return false
+    } catch {
+      return true
+    }
   }
 
   /** Opens exact validated book evidence and its recorded time without dispatching input or borrowing a live pause. @example await workspace.openRepositoryEvidence(binding, true) */
@@ -16943,9 +17010,12 @@ export class StudyWorkspace {
                         JSON.stringify(focused.selections) === primarySelections
                     : firstFocused()
                 },
+                // Cursor reports the first group's text editor and still names the group it named before (the chat's) until its tab model is rebuilt: that is this measurement's focus too, as for the wait below (row 660).
+                namesStaleGroup: primaryEditorReported,
                 matchesGroup: () => {
                   const group = vscode.window.tabGroups.activeTabGroup,
                     input = group.activeTab?.input
+                  if (primaryEditorReported()) return true
                   return (
                     group.viewColumn === vscode.ViewColumn.One &&
                     (firstInput instanceof vscode.TabInputText
