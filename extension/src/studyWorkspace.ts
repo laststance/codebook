@@ -9368,11 +9368,19 @@ export class StudyWorkspace {
   private learnersTabKeysOf(group: vscode.TabGroup): string[] {
     return group.tabs
       .filter((tab) => !this.isOwnPaneOrSourceTab(tab))
-      .map((tab) =>
-        tab.input instanceof vscode.TabInputText
-          ? tab.input.uri.toString()
-          : `${tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : 'tab'}:${String(tab.label)}`,
-      )
+      .map((tab) => this.learnerTabKey(tab))
+  }
+
+  /**
+   * Names a tab by a key that outlives the editor's tab objects, for {@link learnersTabKeysOf} and {@link learnerViewOfGroup}.
+   * @param tab - A tab of an editor group.
+   * @returns A text tab's document URI; for any other tab its webview's view type, or `tab`, with its label.
+   * @example this.learnerTabKey(tab) // => 'file:///work/login-form.tsx', or 'tab:Cursor Settings'
+   */
+  private learnerTabKey(tab: vscode.Tab): string {
+    return tab.input instanceof vscode.TabInputText
+      ? tab.input.uri.toString()
+      : `${tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : 'tab'}:${String(tab.label)}`
   }
 
   /**
@@ -13150,23 +13158,13 @@ export class StudyWorkspace {
       if (!existingPanel) createdPanel = panel
       const groupsRemovedByMove = this.watchGroupLeftByApplication(panel)
       // Move only the owned panel; none of the original groups or their lock states is modified.
-      if (panel.viewColumn !== vscode.ViewColumn.One) {
-        panel.reveal(vscode.ViewColumn.One, true)
-        // The editor reports the move later; a placement guard taken before that report reads this own move as a learner change.
-        await waitUntil(
-          () => panel.viewColumn === vscode.ViewColumn.One,
-          'prepared application main pane',
-          PRESENTATION_READY_TIMEOUT_MS,
-          signal,
-        )
-        assertCurrent()
-        // VS Code removes the group the move emptied only a moment later; a placement guard taken before that removal reads it as a learner change (row 658).
-        await this.followRemovalOfGroupLeftByApplication(
+      if (panel.viewColumn !== vscode.ViewColumn.One)
+        await this.moveApplicationIntoItsGroup(
+          panel,
           groupsRemovedByMove.identity,
           signal,
+          assertCurrent,
         )
-        assertCurrent()
-      }
       await this.settleInitialApp(signal, lifetime)
       // Move Source only after App leaves its old group, so native preview replacement cannot dispose the retained renderer.
       const retiredSource = await this.retireSourceDerivedGroup(
@@ -13741,6 +13739,134 @@ export class StudyWorkspace {
         )
           ? 1
           : 0,
+    }
+  }
+
+  /**
+   * Moves the Application pane into its new group at column 1 and follows the editor's late removal of the group the move emptied, refusing a learner's focus or tab change meanwhile; called once by {@link reserveApplicationGroup}, for a pane that stands elsewhere.
+   * The editor reports the move later, and VS Code removes the emptied group only a moment after that ({@link followRemovalOfGroupLeftByApplication}, row 658), so the placement guard of the layout read is taken only after both; a click into a file or a tab the learner brings to the front of a group meanwhile would be taken into that guard and arranged over. {@link watchLearnerViewDuringApplicationMove} sees such a change from the move on and refuses the Return as a group change does (row 670).
+   * @param panel - The Application pane, before its move.
+   * @param emptiedIdentity - The group the pane stood alone in before its move ({@link watchGroupLeftByApplication}); `undefined` when it shared its group.
+   * @param signal - The reservation's cancellation.
+   * @param assertCurrent - The preparation's lifetime and cancellation guard.
+   * @returns Once the pane stands at column 1 and the emptied group is followed.
+   * @throws When the entry is cancelled or stale, and on a learner's change of the groups, of a group's tabs or of the active text editor: "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."
+   * @example await this.moveApplicationIntoItsGroup(panel, groupsRemovedByMove.identity, signal, assertCurrent)
+   */
+  private async moveApplicationIntoItsGroup(
+    panel: vscode.WebviewPanel,
+    emptiedIdentity: symbol | undefined,
+    signal: AbortSignal | undefined,
+    assertCurrent: () => void,
+  ): Promise<void> {
+    const learnerView = this.watchLearnerViewDuringApplicationMove()
+    try {
+      panel.reveal(vscode.ViewColumn.One, true)
+      // The editor reports the move later; a placement guard taken before that report reads this own move as a learner change.
+      await waitUntil(
+        () => panel.viewColumn === vscode.ViewColumn.One,
+        'prepared application main pane',
+        PRESENTATION_READY_TIMEOUT_MS,
+        signal,
+      )
+      assertCurrent()
+      // VS Code removes the group the move emptied only a moment later; a placement guard taken before that removal reads it as a learner change (row 658).
+      await this.followRemovalOfGroupLeftByApplication(emptiedIdentity, signal)
+      assertCurrent()
+      learnerView.assertUnchanged()
+    } finally {
+      learnerView.dispose()
+    }
+  }
+
+  /**
+   * Watches what the learner sees and works in while the Application pane moves into its group and the editor removes the group the move emptied: the active text editor (document, version, selections and column, {@link textEditorFocusState}) and, for every group that holds a learner's tab, those tabs ({@link learnersTabKeysOf}) and the learner's tab in front; asked by {@link moveApplicationIntoItsGroup} (row 670).
+   * The move's own effects change none of these: the pane's tab leaves its old group, which can bring the learner's tab behind it to the front (a group whose front was a Codebook tab is not compared there, and in the active group that file becomes the active text editor, which is taken as the move's), and stands in front of the new group, which holds no learner's tab; the emptied group holds none either. A change is latched when it is reported, so a learner who clicks away and back meanwhile is still seen.
+   * @returns `assertUnchanged`, which throws once the active text editor, a learner group's tabs or the learner's tab in front of a group changed since the watch began, and `dispose`, which ends the watch.
+   * @example const learnerView = this.watchLearnerViewDuringApplicationMove() // learnerView.assertUnchanged() throws after a click into auth.ts
+   */
+  private watchLearnerViewDuringApplicationMove(): {
+    assertUnchanged(): void
+    dispose(): void
+  } {
+    const noEditor = textEditorFocusState(undefined)
+    let editorBefore = textEditorFocusState(vscode.window.activeTextEditor)
+    const groupsBefore = new Map(
+      vscode.window.tabGroups.all.map((group) => [
+        this.editorGroupIdentities.get(group),
+        this.learnerViewOfGroup(group),
+      ]),
+    )
+    /** Says whether the active text editor is the learner's file the move brought to the front of the active group, whose front was the Application pane, while no text editor had the keyboard. */
+    const isEditorShownByMove = (): boolean => {
+      const editor = vscode.window.activeTextEditor
+      const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === editor?.viewColumn,
+      )
+      return Boolean(
+        editor &&
+        group &&
+        editorBefore === noEditor &&
+        groupsBefore.get(this.editorGroupIdentities.get(group))?.front ===
+          undefined &&
+        this.learnerViewOfGroup(group).front === editor.document.uri.toString(),
+      )
+    }
+    let changed = false
+    /** Latches a change of the active text editor, or of a learner group's tabs or of the learner's tab in front of it. */
+    const check = (): void => {
+      const editorNow = textEditorFocusState(vscode.window.activeTextEditor)
+      // The file the move uncovered in the active group is the active text editor from then on, and later changes to it are the learner's.
+      if (editorNow !== editorBefore && isEditorShownByMove())
+        editorBefore = editorNow
+      changed ||=
+        editorNow !== editorBefore ||
+        vscode.window.tabGroups.all.some((group) => {
+          const now = this.learnerViewOfGroup(group),
+            before = groupsBefore.get(this.editorGroupIdentities.get(group))
+          return (
+            (before?.tabs ?? '') !== now.tabs ||
+            (before?.front !== undefined && before.front !== now.front)
+          )
+        })
+    }
+    const subscriptions = [
+      vscode.window.tabGroups.onDidChangeTabs(check),
+      vscode.window.tabGroups.onDidChangeTabGroups(check),
+      vscode.window.onDidChangeActiveTextEditor(check),
+    ]
+    return {
+      assertUnchanged: (): void => {
+        check()
+        if (changed)
+          throw new Error(
+            'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+          )
+      },
+      dispose: (): void => {
+        for (const subscription of subscriptions) subscription.dispose()
+      },
+    }
+  }
+
+  /**
+   * Names the learner's part of an editor group, for {@link watchLearnerViewDuringApplicationMove}: its learner tabs and the learner's tab in front of it.
+   * @param group - An editor group.
+   * @returns `tabs`, the group's learner tabs as one key ({@link learnersTabKeysOf}, empty for a group without one); `front`, the key of the tab in front when it is a learner's tab, else `undefined`.
+   * @example this.learnerViewOfGroup(group) // => { tabs: '["file:///work/auth.ts"]', front: 'file:///work/auth.ts' }
+   */
+  private learnerViewOfGroup(group: vscode.TabGroup): {
+    tabs: string
+    front: string | undefined
+  } {
+    const front = group.activeTab
+    const learnerTabs = this.learnersTabKeysOf(group)
+    return {
+      tabs: learnerTabs.length ? JSON.stringify(learnerTabs) : '',
+      front:
+        front && !this.isOwnPaneOrSourceTab(front)
+          ? this.learnerTabKey(front)
+          : undefined,
     }
   }
 
