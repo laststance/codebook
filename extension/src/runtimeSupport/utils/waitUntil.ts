@@ -31,7 +31,13 @@ export async function waitUntil<Value>(
     const value = await read()
     signal?.throwIfAborted()
     if (value) return value
-    await setTimeout(pollIntervalMs, undefined, { signal })
+    await setTimeout(pollIntervalMs, undefined, { signal }).catch(
+      (error: unknown) => {
+        // The pause ends with an AbortError of its own; the wait rejects with the signal's reason, as before and after a read.
+        if (signal?.aborted) throw signal.reason
+        throw error
+      },
+    )
   }
   throw new WaitTimeoutError(waitTimeoutText(description))
 }
