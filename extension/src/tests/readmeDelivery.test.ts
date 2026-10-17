@@ -921,8 +921,8 @@ test('the packaged README says that Cursor setup does not go below a link, names
   )
 })
 
-// Value: protects=a learner whose Wiki output folder is a link, or is named by a Windows short name in the setting, reading why an update is refused and what to write instead, and that opening the Wiki is not refused; fails_when=the README loses the sentence of an output folder that is a link or a file, the limit of a short name with its step, or the statement that the Wiki still opens through a link; why_new=Cycle 0046 rows 185, 220 and 265: the refusal, the decision that opening stays and the limit of a short name stood in the cycle record alone; seam=none
-test('the packaged README quotes the refusal of an update whose output folder is a link or a file, says that the Wiki still opens through a link at its folder’s path, and states the limit of a folder named by a Windows short name with what to write instead', async () => {
+// Value: protects=a learner whose Wiki output folder, or a folder on its path inside the project, is a link, or whose output is named by a Windows short name in the setting, reading why an update, the publisher and the opening of the Wiki refuse it and what to do instead; fails_when=the README loses one of the refusals' sentences (the update start's two, the publisher's two, the reader's two), the limit of a short name with its step, or still says that the Wiki opens through a link; why_new=Cycle 0046 rows 185 and 265 (the refusal and the limit of a short name); row 220's decision that opening stays was superseded by /ship repeat review SC2, and maintainability review MT15 asked for the final behaviour; seam=none
+test('the packaged README quotes the refusals of a link or a file on the Wiki’s path inside the project, by the update start, the publisher and Open DeepWiki in Browser, the Wiki folder included, and states the limit of a folder named by a Windows short name with what to write instead', async () => {
   // Arrange
   const readme = await readPackagedReadme()
   const manifest = await readFile(
@@ -932,12 +932,20 @@ test('the packaged README quotes the refusal of an update whose output folder is
 
   // Act
   const delivered = heldSentences(readme, [
-    "An update refuses an output folder that is a link or a file (`Update not started (<time>): the Wiki folder itself (<name>) is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.`), while **Codebook: Open DeepWiki in Browser** still opens a Wiki through a link at its folder's path.",
+    "A link or a file on the Wiki's path inside the project, the Wiki folder included, is refused wherever Codebook reads or writes the Wiki.",
+    'An update does not start when the Wiki folder itself is one (`Update not started (<time>): the Wiki folder itself (<name>) is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.`) or when a folder above it is one (`Update not started (<time>): the Wiki folder’s path in the project passes through a link or a file (<path>), and the publisher writes only into the project’s own folders, so nothing was written. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then press Update LLM Wiki again.`).',
+    'The publisher refuses it too and writes nothing (`The Wiki directory must be regular: <path>` for the Wiki folder itself, and `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: <path>. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.` for a folder above it).',
+    "**Codebook: Open DeepWiki in Browser** and the Wiki reader read nothing through it (`The Wiki folder <folder> is itself a link or a file, or leads out of the project, and Codebook reads no Wiki through it: replace it with a real folder (if it is a link to your Wiki's folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`, and for a folder above it `The Wiki folder <folder> lies behind a link or a file in the project (<path>), and Codebook reads no Wiki through it: replace it with a real folder, or set codebook.wikiOutputDirectory to a folder outside the project`; the editor's notice adds `. Generate it through /codebook in this project, then retry.`).",
+    'An output folder outside the project stays your choice, and a link on its path there is followed.',
     "One limit: on Windows an output folder whose last name is written as a short name (`WIKI~1`) is taken for no folder of its own and gets that sentence too; write the folder's long name in `codebook.wikiOutputDirectory`.",
   ])
+  const retired = readme.includes(
+    'still opens a Wiki through a link at its folder',
+  )
 
-  // Assert: both sentences, and the setting and the command the README names are the manifest's.
-  assert.deepEqual(delivered, [true, true])
+  // Assert: every sentence, none of the retired statement, and the setting and the command the README names are the manifest's.
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  assert.equal(retired, false)
   assert.equal(manifest.includes('"codebook.wikiOutputDirectory": {'), true)
   assert.equal(
     manifest.includes('"title": "Codebook: Open DeepWiki in Browser"'),
