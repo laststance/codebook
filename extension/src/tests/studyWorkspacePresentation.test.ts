@@ -5473,6 +5473,85 @@ test('beside VS Code’s floating window, an agent’s Study selection refused r
   }
 })
 
+// Value: protects=the Application pane's keyboard and the truth of what the learner is told when an agent's Study selection beside VS Code's floating window is refused right after its measurement borrowed the main editor's first group, while the Application pane had the keyboard (the learner clicked its tab after typing in the floating window's file, which VS Code goes on reporting as the active text editor; the pane's document took the keyboard with its frame): the Application pane gets its keyboard back and the sentence names the Application pane, whose page reports no keyboard, so an agent's selection always tells it; fails_when=the refusal's record does not ask the Application pane's active flag first and counts the reported text editor as a file with the keyboard, so "the file you had open has the keyboard again" is told while the Application pane has it; why_new=Cycle 0046 row 726's gap (root, 2026-10-17: the `application` branch had no test); seam=useNativeLayout, the learner's Living book (the saved layout that puts the Application pane in the second group), addFloatingEditorWindow, focusWebviewTabKeepingTextEditorReport on the Application pane's tab with its document taking the keyboard, holdNextCommand on workbench.action.focusFirstEditorGroup with failNextCommand on the layout read after it, the service's selectPresentation, the command log, focusedPanel, keyboardOnBody and the information messages
+test('beside VS Code’s floating window, an agent’s Study selection refused right after its borrow while the Application pane had the keyboard gives the Application pane its keyboard back and names that pane, not a file', async () => {
+  // Arrange: the learner reads in the Living book, whose Application pane stands in the second group; the learner typed in notes.ts of the floating window, then clicked the Application pane's tab; VS Code still reports notes.ts. The layout read after the borrow will fail.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const initial = harness.reader.presentationState()
+    await harness.reader.changePresentation({
+      presentationId: initial.presentationId,
+      expectedRevision: initial.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+    harness.addFloatingEditorWindow(['notes.ts']).focus(0)
+    const applicationPane = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(applicationPane)
+    harness.focusWebviewTabKeepingTextEditorReport(
+      applicationPane.nativeTab,
+      true,
+    )
+    const borrow = harness.holdNextCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const selection = harness.reader.presentationState()
+
+    // Act: the agent selects the Study workspace; its borrow runs, and the layout read after it fails.
+    const selecting = harness.service
+      .selectPresentation({
+        instanceId: harness.service.instanceId,
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    await borrow.started
+    harness.failNextCommand('vscode.getEditorLayout')
+    borrow.release()
+    const refusal = await selecting
+
+    // Assert: refused after the borrow; the Application pane has the keyboard again, and the sentence names it.
+    assert.deepEqual(
+      {
+        refusal,
+        commands: harness.commands.slice(commandsBefore),
+        focusedPanel: harness.focusedPanel(),
+        keyboardOnBody: harness.keyboardOnBody(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal:
+          'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        commands: [
+          'vscode.getEditorLayout',
+          'workbench.action.focusFirstEditorGroup',
+          'vscode.getEditorLayout',
+        ],
+        focusedPanel: 'codebook.scopedBrowser',
+        keyboardOnBody: false,
+        messages: [
+          'Codebook could not finish the Study arrangement an agent asked for, and the Application pane has the keyboard now. This editor does not tell Codebook whether you were typing in a file, the terminal, a view or the chat before: click where you want to type.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's own change during a cold Study selection after a reload in Cursor: the leftover's issued removal lets only that one shift keep a group's identity, so a learner who closes the file the selection would give its focus back to while the layout command waits still has the selection refused instead of a guessed focus; fails_when=the issued removal stays in force after the leftover's close, or the identity follows any later move, so the selection gives a focus nobody had; why_new=Cycle 0046 row 643 (the bound of the issued shift); the selection is the learner's since row 656: an agent's selection beside Cursor's chat part gives no unproven file its focus back, so only the learner's own selection still makes that return; seam=applicationGroupMarkers, leaveEmptyLockedGroup, addSeparateEditorPart, replaceGroupObjectsOnTabChanges, holdNextCommand on vscode.setEditorLayout, closeTabByHand and the reader's changePresentation for the learner
 test('in Cursor, a learner’s cold Study selection after a reload is still refused when the learner closes the file it would give its focus back to while its layout command waits', async () => {
   // Arrange: as above in Cursor; the selection's layout command will wait until the learner closed auth.ts.
