@@ -958,7 +958,7 @@ export class StudyWorkspace {
     >
   }
   private presentationMovedFocus = false
-  /** Whether the running presentation change or Return to current pause was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732), and neither does {@link returnCurrentSelection} (row 735). Each of them clears it when it begins. */
+  /** Whether the running presentation change, Return to current pause or entry was refused for a learner's newer input ({@link yieldFocusToLearner}); {@link performPresentation} then gives no borrowed keyboard back (Cycle 0046 row 728), not even to a chat (row 732), and neither does {@link returnCurrentSelection} (row 735) nor an entry of {@link open} that owns its chat return (row 736). Each of them clears it when it begins. */
   private presentationYieldedToLearner = false
   private presentationPoseRequest?: PresentationPoseCapture
   private presentationPose?: PresentationPose
@@ -6889,14 +6889,17 @@ export class StudyWorkspace {
   /**
    * Captures, before a Wiki arrangement's first effect, how to give back the keyboard its measurement may borrow ({@link readMainEditorGrid} focuses the first group beside another editor part, Cursor's chat); {@link arrangeRepository} answers it to {@link RepositoryReader.open}, which asks it once an agent's Wiki is shown (codebook_open_book, row 620).
    * @returns The return: `true` when no measurement borrowed the keyboard, when the measurement gave every keyboard it borrowed back itself to the Study pane or the text editor that had it ({@link mainEditorFocusReturns}; the Wiki created in front of that editor afterwards hides it, and the reader's covered-editor settle decides then, row 719), when that pane or editor has the keyboard again, or when the foreign tab that had it (Cursor's chat tab) got it back ({@link retainForeignTabFocus}); `false` when it stays where the measurement left it.
+   * Its argument names why a chat gets its keyboard back, for its sentence ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}): {@link arrangeRepositoryLayout} passes `'refusedArrangement'` for a refused layout (Cycle 0046 row 736); left out, the return's own rule tells the arrangement's sentence after the measurement's borrow.
    * @example const keyboardReturn = this.captureRepositoryKeyboardReturn() // await keyboardReturn() => true after composer.focusComposer
    */
-  private captureRepositoryKeyboardReturn(): RepositoryKeyboardReturn {
+  private captureRepositoryKeyboardReturn(): (
+    toldCause?: ChatKeyboardReturnCause,
+  ) => Promise<boolean> {
     const borrowsBefore = this.mainEditorFocusBorrows,
       returnsBefore = this.mainEditorFocusReturns,
       giveBack = this.retainForeignTabFocus(undefined),
       isPlaceFocusedAgain = this.retainEditorKeyboardPlace()
-    return async (): Promise<boolean> => {
+    return async (toldCause?: ChatKeyboardReturnCause): Promise<boolean> => {
       if (this.mainEditorFocusBorrows === borrowsBefore) return true
       // The measurement gave each borrowed keyboard back itself, before the Wiki was created in front of the editor that got it (row 719).
       if (
@@ -6905,7 +6908,9 @@ export class StudyWorkspace {
       )
         return true
       // Without a foreign tab the learner had a Study pane or a text editor, which the measurement focuses again only in the main editor.
-      return giveBack ? giveBack().catch(() => false) : isPlaceFocusedAgain()
+      return giveBack
+        ? giveBack(false, undefined, toldCause).catch(() => false)
+        : isPlaceFocusedAgain()
     }
   }
 
@@ -6928,11 +6933,11 @@ export class StudyWorkspace {
   }
 
   /**
-   * Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. A cold layout refused while the reader's focus receipt still holds (no learner's change caused the refusal) gives back the keyboard its measurement borrowed before it throws (row 660).
+   * Restores the actual article's native layout on Return; ordinary {@link RepositoryReader.open} keeps the existing owned-entry policy. A cold layout refused while the reader's focus receipt still holds (no learner's change caused the refusal) gives back the keyboard its measurement borrowed before it throws (row 660), and a chat is told that nothing was arranged (row 736).
    * @param signal - Cancellation of the Wiki entry.
    * @param returnSelection - The article of an actual Return, whose saved native arrangement is restored.
    * @param focus - The reader's focus receipts for the layout work.
-   * @param keyboardReturn - The return {@link arrangeRepository} captured before any effect.
+   * @param keyboardReturn - The return {@link arrangeRepository} captured before any effect ({@link captureRepositoryKeyboardReturn}).
    * @throws What the layout refused with, once a borrowed keyboard is given back.
    * @example await this.arrangeRepositoryLayout(signal, selection)
    */
@@ -6940,7 +6945,9 @@ export class StudyWorkspace {
     signal: AbortSignal,
     returnSelection?: RepositorySelection,
     focus?: RepositoryLayoutFocus,
-    keyboardReturn?: RepositoryKeyboardReturn,
+    keyboardReturn?: ReturnType<
+      StudyWorkspace['captureRepositoryKeyboardReturn']
+    >,
   ): Promise<void> {
     this.assertPresentationIdle()
     if (returnSelection && this.repositoryLayoutOrigin) {
@@ -6979,7 +6986,7 @@ export class StudyWorkspace {
         } catch (error) {
           // A refusal no learner's change caused gives back the keyboard the measurement borrowed; a learner's newer focus keeps it (row 660).
           if (keyboardReturn && !this.hasLearnerChange(retainedFocus))
-            await keyboardReturn().catch(() => false)
+            await keyboardReturn('refusedArrangement').catch(() => false)
           throw error
         }
       })
@@ -7487,6 +7494,10 @@ export class StudyWorkspace {
       origin === 'presentation'
         ? undefined
         : this.retainForeignTabFocus(undefined, false, origin === 'repository')
+    // An entry that owns its return notes its own borrows and its own refusal for the learner's newer input; a presentation's entry leaves both to the presentation (row 736).
+    const borrowsBefore = this.focusBorrowCount(),
+      ownsLearnerRefusal = returnForeignFocus !== undefined
+    if (ownsLearnerRefusal) this.presentationYieldedToLearner = false
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.reserveSourceEntry(signal)
     const cancel = (): void => {
@@ -7916,9 +7927,19 @@ export class StudyWorkspace {
         this.app = undefined
         unarrangedApp.dispose()
       }
-      // A newer focus of the learner stays; the keyboard a measurement borrowed goes back to the editor part that held it.
-      if (!this.closing && lifetime === this.lifetime)
-        await returnForeignFocus?.().catch(() => undefined)
+      // A newer focus of the learner stays, also the one the refusal names; the keyboard a measurement borrowed goes back to the editor part that held it, told that nothing was arranged (rows 718, 731 and 736).
+      if (
+        !this.closing &&
+        lifetime === this.lifetime &&
+        !this.presentationYieldedToLearner
+      )
+        await returnForeignFocus?.(
+          false,
+          undefined,
+          this.focusBorrowCount() !== borrowsBefore
+            ? 'refusedArrangement'
+            : undefined,
+        ).catch(() => undefined)
       throw error
     } finally {
       // A first entry that ended without an open reader leaves no live or recording arrangement behind.
@@ -7926,6 +7947,7 @@ export class StudyWorkspace {
         this.forgetUnopenedComposition()
       if (request === this.readerOpenNumber) this.releaseSourceEntry()
       signal?.removeEventListener('abort', cancel)
+      if (ownsLearnerRefusal) this.presentationYieldedToLearner = false
     }
   }
 

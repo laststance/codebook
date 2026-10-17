@@ -482,6 +482,60 @@ test("an agent's cold Wiki layout beside Cursor's chat part that is refused afte
   }
 })
 
+// Value: protects=the truth of what the learner is told when an agent's cold Wiki layout beside Cursor's chat part is refused after its measurement borrowed the main editor: the chat gets its keyboard back, and the one sentence says that Codebook could not finish arranging its panes; fails_when=the refused layout's give-back (arrangeRepositoryLayout's keyboardReturn) passes no cause, so the return's own rule after a borrow tells "Codebook placed its panes and gave the keyboard back to the chat. …" for a Wiki that was never arranged; why_new=Cycle 0046 row 736 (the same gap as open's refusal, found by its check of every foreign-focus return after a borrow); seam=workspaceHarness with one main group, addSeparateEditorPart and focusTab, leavePaneFocusUnreportedBesideChat, failNextCommand('vscode.setEditorLayout'), the reader's own focus receipts, the native commands and the information messages
+test("an agent's cold Wiki layout beside Cursor's chat part refused after its measurement gives the chat its keyboard back and says that nothing was arranged", async () => {
+  // Arrange: as in row 660's refusal test; the editor refuses the split the Wiki needs.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  chat.focusTab()
+  harness.failNextCommand('vscode.setEditorLayout')
+  const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+  const focus = {
+    begin(): void {},
+    retainCurrentFocus(
+      acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+    ) {
+      const receipt = harness.retainRepositoryFocus(acquire)
+      receipts.push(receipt)
+      return receipt
+    },
+  }
+  const messagesBefore = harness.informationMessages.length
+  try {
+    // Act
+    const refusal = await harness.reader
+      .arrangeRepository(new AbortController().signal, undefined, focus)
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the split's refusal is reported, the chat has its keyboard again, and the one sentence says that nothing was arranged.
+    assert.deepEqual(
+      {
+        refusal,
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal: 'Error: Native layout command failed',
+        chatHasKeyboard: true,
+        messages: [
+          'Codebook could not finish arranging its panes and gave the keyboard back to the chat. Beside the chat the editor reads and changes the layout of its groups only while one of them has the focus, so a file or pane of the main editor had the keyboard for a moment. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    for (const receipt of receipts) receipt.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's newer choice during an agent's cold Wiki layout beside Cursor's chat part: once the measurement focused the first group, a click into the learner's file of the second group is a learner's change, which the reader's receipt still refuses, so the Wiki takes nothing from that file; fails_when=the acceptance of Cursor's stale group name (row 660) also takes a later learner change for the measurement's own focus; why_new=Cycle 0046 row 660 (its bound); seam=workspaceHarness with addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, holdNextPrimaryFocusResponse (the learner's click between the focus command's effect and its answer), focusMutableDraft and focusExistingSource (the learner's click, reported as a group activation), the reader's own focus receipts
 test("a learner's click into another file while an agent's cold Wiki layout beside Cursor's chat part measures is still refused as the learner's newer focus", async () => {
   // Arrange: as above, with the learner's notes.ts in the second group; the focus command's answer is held so the learner can click in between.
