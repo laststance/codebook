@@ -209,6 +209,11 @@ interface StudyRecordState {
   stopPromise?: Promise<void>
   cleanupError?: StudyError
   error?: StudyError
+  /** What the run's error was made of, when a write's raw failure or the release's became its cause ({@link StudyService.writeFailureError}, {@link StudyService.stopRecord}): {@link StudyService.excludeHistory} words it again once the study turns out removed, so the raw failure's storage path goes from every reader (Cycle 0046 row 700). */
+  errorSource?:
+    { kind: 'write'; message: string; failure: string } | { kind: 'release' }
+  /** What the run's last release threw as it threw it, before {@link StudyService.releaseFailure} worded it, for {@link StudyService.excludeHistory} (row 700). */
+  releaseError?: unknown
   action?: {
     signature: string
     receipt: { operationId: string; runUri: string; key: string }
@@ -1453,13 +1458,8 @@ export class StudyService {
    * // the run's journal ends with explanation.failed "Explanation was not committed. Cause: ENOSPC: no space left on device, write"; its outcome is as it was
    */
   private explanationFailure(record: StudyRecord, error: unknown): StudyError {
-    const failure = studyErrorNamingCause(
-      new StudyError(
-        'EVIDENCE_UNAVAILABLE',
-        'Explanation was not committed.',
-        this.evidenceFailureCause(record, String(error)),
-      ),
-    )
+    const message = 'Explanation was not committed.',
+      failure = this.writeFailureError(record, message, String(error))
     // A run that ended keeps its outcome; its journal keeps the failure as an event of its own (row 699).
     if (record.stopped) {
       record.runtime!.evidence.recordFailure(
@@ -1469,9 +1469,36 @@ export class StudyService {
       return failure
     }
     record.error = failure
+    // A study found removed later words this error by its removal (row 700).
+    record.errorSource = { kind: 'write', message, failure: String(error) }
     // The run fails with the write: its runtime journals the cause as run.failed, as every other failure path of a run does (Cycle 0046 row 665).
     record.runtime!.fail(record.error.message)
     return failure
+  }
+
+  /**
+   * Makes the error of a failed evidence write, the run's evidence failure at the maintenance turn or an explanation's save, whose message names its cause; called by {@link StudyService.maintain}, by {@link StudyService.explanationFailure} and, once the study turns out removed, by {@link StudyService.wordFailuresByRemoval}, so each words the same failure the same way.
+   * The cause is the write's own failure, or the removal's sentence for a run whose saved study was removed ({@link StudyService.evidenceFailureCause}, rows 667 and 700).
+   * @param record - The run whose write failed.
+   * @param message - What failed: `'Evidence buffering or persistence failed.'` or `'Explanation was not committed.'`.
+   * @param failure - The write's raw failure.
+   * @returns An `EVIDENCE_UNAVAILABLE` {@link StudyError} whose message names its cause ({@link studyErrorNamingCause}).
+   * @example
+   * this.writeFailureError(record, 'Evidence buffering or persistence failed.', 'Error: ENOSPC: no space left on device, write').message
+   * // => 'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write'
+   */
+  private writeFailureError(
+    record: StudyRecord,
+    message: string,
+    failure: string,
+  ): StudyError {
+    return studyErrorNamingCause(
+      new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        message,
+        this.evidenceFailureCause(record, failure),
+      ),
+    )
   }
 
   /** Commits editor-agent learning after MCP submits it, binding every sequence link to the selected sealed Node journal.
@@ -1696,6 +1723,29 @@ export class StudyService {
   ): void {
     if (this.records.get(record.id) !== record) return
     record.historyExcluded = exclusion
+    this.wordFailuresByRemoval(record)
+  }
+
+  /**
+   * Words the run's error and the failure of its release again once its saved study turns out removed, for {@link StudyService.excludeHistory}: a removal by hand or by another window is found only at the learner's next Retry storage or refresh, usually after the run's next evidence write already failed with ENOENT on its gone directory, the maintenance turn made that raw error the run's error, which the run resource, the status resource and every caller read, and the release failed on its final write too. Built again with the exclusion set, the errors name the failed write and the removal ({@link StudyService.writeFailureError}, {@link StudyService.releaseFailure}) as when the exclusion came first (rows 667 and 686), not the internal storage path (Cycle 0046 row 700). The `run.failed` the runtime journaled stays; a removed study's events are no longer served ({@link StudyService.assertEvidenceAvailable}).
+   * @param record - The run whose study was removed.
+   * @example this.wordFailuresByRemoval(record) // record.error.message => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …"
+   */
+  private wordFailuresByRemoval(record: StudyRecord): void {
+    const source = record.errorSource
+    // An error a write's raw failure caused is made again, now naming the removal.
+    if (source?.kind === 'write')
+      record.error = this.writeFailureError(
+        record,
+        source.message,
+        source.failure,
+      )
+    // A failed release is worded again, and so is the error it gave a run that ended without one.
+    if (record.releaseError === undefined) return
+    const failure = this.releaseFailure(record, record.releaseError)
+    if (record.cleanupError) record.cleanupError = domainError(failure)
+    if (source?.kind === 'release')
+      record.error = studyErrorNamingCause(domainError(failure))
   }
 
   /**
@@ -2332,13 +2382,14 @@ export class StudyService {
       if (record.stopped || record.stopping || record.cleanupError) continue
       const evidenceFailure = record.runtime?.evidence.failure
       if (evidenceFailure) {
-        record.error = studyErrorNamingCause(
-          new StudyError(
-            'EVIDENCE_UNAVAILABLE',
-            'Evidence buffering or persistence failed.',
-            this.evidenceFailureCause(record, evidenceFailure),
-          ),
-        )
+        const message = 'Evidence buffering or persistence failed.'
+        record.error = this.writeFailureError(record, message, evidenceFailure)
+        // A study found removed later words this error by its removal (row 700).
+        record.errorSource = {
+          kind: 'write',
+          message,
+          failure: evidenceFailure,
+        }
         record.runtime?.fail(record.error.message)
       }
       this.expireAtDeadline(record)
@@ -2351,10 +2402,21 @@ export class StudyService {
         record.nodePhase === 'failed'
       )
         void this.stopRecord(record).catch((error) => {
-          // A run that failed keeps its own error, with its cause; the release's failure is its cleanupError. A run that ended without one fails by its release (Cycle 0046 row 653).
-          record.error ??= studyErrorNamingCause(domainError(error))
+          this.failByRelease(record, error)
         })
     }
+  }
+
+  /**
+   * Gives a run that ended without an error of its own its release's failure as its error, for {@link StudyService.maintain} when the release it started threw: a run that failed keeps its own error, with its cause, and the release's failure is its cleanupError (Cycle 0046 row 653). The error notes that the release made it, so {@link StudyService.wordFailuresByRemoval} words it again once the study turns out removed (row 700).
+   * @param record - The run whose release threw.
+   * @param error - What {@link StudyService.stopRecord} threw.
+   * @example this.failByRelease(completedRecord, new Error('owned browser close: timed out')) // record.error.message => 'The study operation failed. Cause: owned browser close: timed out'
+   */
+  private failByRelease(record: StudyRecord, error: unknown): void {
+    if (record.error) return
+    record.error = studyErrorNamingCause(domainError(error))
+    record.errorSource = { kind: 'release' }
   }
 
   /**
@@ -2948,10 +3010,13 @@ export class StudyService {
       record.evidenceFailureAtStop = record.runtime?.evidence.failure
       record.stopped = true
       record.cleanupError = undefined
+      record.releaseError = undefined
     })())
     try {
       await attempt
     } catch (error) {
+      // The raw failure stays for the wording of a removal found later (row 700).
+      record.releaseError = error
       const failure = this.releaseFailure(record, error)
       record.cleanupError = domainError(failure)
       record.stopPromise = undefined

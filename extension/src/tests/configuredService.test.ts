@@ -1022,6 +1022,90 @@ test('a run whose saved study was removed while it ran keeps a release failure t
   )
 })
 
+// Value: protects=what an agent and the learner read for a run whose saved study was removed while it ran, in the order the removal usually takes: the run's next evidence append fails first, the maintenance turn ends the run for it and its release fails too, and only the learner's later Retry storage finds the archive gone and excludes the run's history (StudyService.excludeHistory with 'archive-removed'); from then on the run resource and the status resource name the failed evidence write and the removal, without the internal storage path the write's error names; fails_when=the run's error and cleanupError keep the raw write error the maintenance turn and the release gave them before the exclusion ("Evidence buffering or persistence failed. Cause: Error: ENOENT: no such file or directory, open '<global storage>/…/events.jsonl'"), since rows 667 and 686 name the removal only when the exclusion came first; why_new=Cycle 0046 row 700 (open-code-review of cc231f08..e6a3daeb); seam=the run's evidence directory removed, an event recorded after that, maintain, the release's wait, then StudyService.excludeHistory as StudyWorkspace calls it, the run resource and StudyService.status
+test('a run whose saved study was found removed after its evidence write failed and its release ended names the failed write and the removal and no storage path', async (context) => {
+  // Arrange: a prepared run whose evidence directory is gone, so the next event's append fails; the maintenance turn ends the run and its release fails before anything knows that the study was removed.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'removed-after-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  const runtime = runtimes[0]!
+  await runtime.evidence.flush()
+  await rm(runtime.evidence.directory, { recursive: true, force: true })
+  runtime.evidence.record('late.event')
+  await runtime.evidence.flush().catch(() => undefined)
+  service.maintain()
+  await waitUntil(
+    () => Boolean(record.cleanupError) && !record.stopping,
+    'the release after the evidence failure',
+    1_000,
+  )
+  const errorNamedPathBefore = Boolean(
+    record.error?.message.includes(runtime.evidence.directory),
+  )
+
+  // Act: the learner's Retry storage finds the archive gone.
+  service.excludeHistory(record, 'archive-removed')
+  const resource = await readResource(service, receipt.runUri)
+  const status = await service.status()
+  // The harness's own shutdown releases the run once the test has read it.
+  runtime.evidence.failure = undefined
+
+  // Assert
+  assert.ok('text' in resource)
+  const failureSchema = z.object({
+    code: z.string(),
+    message: z.string(),
+    cause: z.string(),
+  })
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: failureSchema,
+      cleanupError: failureSchema,
+    })
+    .parse(JSON.parse(resource.text))
+  const statusRun = status.runs.find((run) => run.runId === record.id)
+  assert.deepEqual(
+    {
+      errorNamedPathBefore,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      cleanupError: state.cleanupError,
+      statusNamesPath: JSON.stringify(statusRun).includes(
+        runtime.evidence.directory,
+      ),
+      runNamesPath: resource.text.includes(runtime.evidence.directory),
+    },
+    {
+      errorNamedPathBefore: true,
+      terminalReason:
+        "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      error: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        cause:
+          "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      cleanupError: {
+        code: 'RUNTIME_FAILED',
+        message: 'The study operation failed.',
+        cause:
+          "Error: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      },
+      statusNamesPath: false,
+      runNamesPath: false,
+    },
+  )
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange
