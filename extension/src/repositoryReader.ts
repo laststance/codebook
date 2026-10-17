@@ -79,7 +79,7 @@ export interface RepositoryLayoutFocus {
  */
 export type RepositoryKeyboardReturn = () => Promise<boolean>
 
-/** The keyboard sentences of an agent's Wiki entry that {@link RepositoryReader} told in this editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}): kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells none of them a second time. */
+/** The keyboard sentences of an agent's Wiki entry that {@link RepositoryReader} told in this editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE}): kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells none of them a second time. */
 const toldAgentWikiKeyboardSentences = new Set<string>()
 
 /**
