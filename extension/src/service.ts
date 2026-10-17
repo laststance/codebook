@@ -204,6 +204,8 @@ interface StudyRecordState {
   preparation: Promise<void>
   stopping: boolean
   stopped: boolean
+  /** The evidence's failure when the run's release ended ({@link StudyService.stopRecord}), the one {@link StudyService.state} reads for a stopped run: a write that fails later, such as an explanation saved after the end, is no failure of the run (Cycle 0046 row 699). */
+  evidenceFailureAtStop?: string
   stopPromise?: Promise<void>
   cleanupError?: StudyError
   error?: StudyError
@@ -1425,16 +1427,7 @@ export class StudyService {
           valuePaths,
         }
       } catch (error) {
-        record.error = studyErrorNamingCause(
-          new StudyError(
-            'EVIDENCE_UNAVAILABLE',
-            'Explanation was not committed.',
-            String(error),
-          ),
-        )
-        // The run fails with the write: its runtime journals the cause as run.failed, as every other failure path of a run does (Cycle 0046 row 665).
-        record.runtime!.fail(record.error.message)
-        throw record.error
+        throw this.explanationFailure(record, error)
       }
     })
     const accepted: NonNullable<
@@ -1447,6 +1440,38 @@ export class StudyService {
     }
     void result.then(saveEnded, saveEnded)
     return result
+  }
+
+  /**
+   * Names and journals an explanation whose save failed, for the agent's `codebook_explain` answer; called by {@link StudyService.explain} when the explanation's evidence write or flush rejected.
+   * A running run fails with the write: its error is the explanation's, and its runtime journals that as `run.failed`, as every other failure path of a run does (Cycle 0046 row 665). A run that already stopped keeps its outcome and terminal reason: an explanation accepted after the end (a learning summary saved after the result) is no part of the run, and a stopped runtime's `fail` journals nothing (`ConfiguredBrowserRun.fail` returns at once while it cleans up), so the failure is journaled as `explanation.failed` instead, past a refusal of the evidence too ({@link Evidence.recordFailure}); a `run.failed` after the end would read as the end of a failed run (row 699). A removed study's write names its removal, not the storage path ({@link StudyService.evidenceFailureCause}).
+   * @param record - The run the explanation belongs to.
+   * @param error - What the save rejected with.
+   * @returns The `EVIDENCE_UNAVAILABLE` error the explanation is refused with, whose message names the cause.
+   * @example
+   * throw this.explanationFailure(stoppedRecord, new Error('ENOSPC: no space left on device, write'))
+   * // the run's journal ends with explanation.failed "Explanation was not committed. Cause: ENOSPC: no space left on device, write"; its outcome is as it was
+   */
+  private explanationFailure(record: StudyRecord, error: unknown): StudyError {
+    const failure = studyErrorNamingCause(
+      new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        'Explanation was not committed.',
+        this.evidenceFailureCause(record, String(error)),
+      ),
+    )
+    // A run that ended keeps its outcome; its journal keeps the failure as an event of its own (row 699).
+    if (record.stopped) {
+      record.runtime!.evidence.recordFailure(
+        failure.message,
+        'explanation.failed',
+      )
+      return failure
+    }
+    record.error = failure
+    // The run fails with the write: its runtime journals the cause as run.failed, as every other failure path of a run does (Cycle 0046 row 665).
+    record.runtime!.fail(record.error.message)
+    return failure
   }
 
   /** Commits editor-agent learning after MCP submits it, binding every sequence link to the selected sealed Node journal.
@@ -1806,13 +1831,27 @@ export class StudyService {
     }
   }
 
+  /**
+   * Names the evidence failure that is a failure of the run, for {@link StudyService.state}'s terminal reason and outcome.
+   * A write that failed because a removed run's evidence directory went to the Trash is no failure of the run, and its message names the storage path. A write that failed after the run's release ended is none either: the only evidence written then is an explanation accepted after the end (a learning summary saved after the result), whose failure its own answer and its `explanation.failed` event tell ({@link StudyService.explanationFailure}, Cycle 0046 row 699), so a stopped run reads the failure its evidence had when it stopped.
+   * @param record - The run.
+   * @returns
+   * - `undefined` for a removed run's study
+   * - For a stopped run: its evidence's failure at the stop, if any
+   * - Otherwise: its evidence's failure now, if any
+   * @example this.runEvidenceFailure(stoppedRecord) // => undefined after a learning summary's save failed with ENOSPC once the run had stopped
+   */
+  private runEvidenceFailure(record: StudyRecord): string | undefined {
+    if (isStudyRemovalExclusion(record.historyExcluded)) return undefined
+    return record.stopped
+      ? record.evidenceFailureAtStop
+      : record.runtime?.evidence.failure
+  }
+
   /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const runtime = record.runtime?.view()
-    // A write that failed because a removed run's evidence directory went to the Trash is no failure of the run, and its message names the storage path.
-    const evidenceFailure = isStudyRemovalExclusion(record.historyExcluded)
-      ? undefined
-      : record.runtime?.evidence.failure
+    const evidenceFailure = this.runEvidenceFailure(record)
     // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
     const runtimeFailure = runtime?.failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
     const terminalReason =
@@ -2905,6 +2944,8 @@ export class StudyService {
           record.nodeHistoryStatus = 'failed'
         }
       }
+      // What the evidence failed with by the end is the run's; a later write's failure is not (row 699).
+      record.evidenceFailureAtStop = record.runtime?.evidence.failure
       record.stopped = true
       record.cleanupError = undefined
     })())

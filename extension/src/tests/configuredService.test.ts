@@ -2941,6 +2941,101 @@ test('a run whose explanation cannot be written fails its runtime with the write
   )
 })
 
+// Value: protects=the journal and the outcome of a run whose explanation, accepted after the run stopped (a learning summary saved after the result), could not be written: the save's failure is journaled as explanation.failed, also past the refusal its own failed write leaves in the evidence, and the stopped run's state, terminal reason, error and final outcome stay as they were; fails_when=the explanation's catch sets the stopped run's error, which becomes its terminal reason and outcome, and leaves the journal without the cause, since a stopped ConfiguredBrowserRun's fail returns at once while it cleans up; why_new=Cycle 0046 row 699 (CodeRabbit's review of cc231f08..e6a3daeb); seam=service.stop, runtime.evidence.save, made to reject and set the evidence's failure as Evidence.save does, the run resource and runtime.evidence.events
+test('an explanation of a stopped run that cannot be written journals explanation.failed with its cause and leaves the run’s outcome as it was', async (context) => {
+  // Arrange: a run committed its stop and was stopped; its explanation write is made to fail as a full disk fails Evidence.save.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'explanation-after-stop',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+  await service.stop(receipt)
+  const runtime = runtimes[0]!
+  runtime.evidence.save = async () => {
+    runtime.evidence.failure ??= 'Error: ENOSPC: no space left on device, write'
+    throw new Error('ENOSPC: no space left on device, write')
+  }
+  /** Reads what an agent reads of the run's end in its run resource. */
+  const outcome = async () => {
+    const resource = await readResource(service, receipt.runUri)
+    assert.ok('text' in resource)
+    const state = JSON.parse(resource.text)
+    return {
+      state: state.state,
+      terminalReason: state.terminalReason,
+      error: state.error,
+      finalOutcome: state.finalOutcome,
+    }
+  }
+  const before = await outcome()
+
+  // Act
+  const refusal = await service
+    .explain({
+      ...receipt,
+      key: 'learning-summary-after-stop',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    })
+    .then(
+      () => undefined,
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : error,
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      lastJournaled: runtime.evidence.events
+        .map(({ type, detail }) => ({
+          type,
+          detail,
+        }))
+        .at(-1),
+      before,
+      after: await outcome(),
+    },
+    {
+      refusal: {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          'Explanation was not committed. Cause: ENOSPC: no space left on device, write',
+      },
+      lastJournaled: {
+        type: 'explanation.failed',
+        detail: {
+          reason:
+            'Explanation was not committed. Cause: ENOSPC: no space left on device, write',
+        },
+      },
+      before: {
+        state: 'stopped',
+        terminalReason: undefined,
+        error: undefined,
+        finalOutcome: 'not-demonstrated',
+      },
+      after: {
+        state: 'stopped',
+        terminalReason: undefined,
+        error: undefined,
+        finalOutcome: 'not-demonstrated',
+      },
+    },
+  )
+})
+
 // Value: protects=the result of a run that completed keeping its place when the whole-run deadline passes before the service released the run; fails_when=the continuation's wait applies the deadline to a completed run, answers failure and the run resource names the deadline as the run's end; why_new=Cycle 0045 local review (runtime-2 #3: the wait applied the deadline without the guard of the maintenance turn); seam=the service's clock, moved by the test, and its maintenance turn, switched off
 test('a run that completes in the turn in which its whole-run deadline passes answers the continuation with its result', async (context) => {
   // Arrange: a run is paused at its first stop, five seconds before its whole-run deadline. The maintenance turn is switched off, so the completed run is not released before the wait looks at it.

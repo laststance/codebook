@@ -21,6 +21,13 @@ interface EventReceipt {
   bytes: number
 }
 
+/**
+ * The failures {@link Evidence.recordFailure} journals, also past a refusal.
+ * - `run.failed`: the run's own failure, which ends its journal (row 666).
+ * - `explanation.failed`: an explanation whose save failed after its run ended, which leaves the run's outcome as it was (row 699).
+ */
+type JournaledFailureType = 'run.failed' | 'explanation.failed'
+
 export interface EvidenceLimits {
   maxEvents: number
   retainedBytes: number
@@ -61,17 +68,21 @@ export class Evidence {
   }
 
   /**
-   * Journals a run's failure as `run.failed`, also once the evidence refused further events or failed to write them, so the journal every reader reads (the run's events resource, the end of its recording, the replay's paused intervals) ends with the run's failure (Cycle 0046 row 666); called by {@link ConfiguredBrowserRun.fail}, which journals a run's failure once.
+   * Journals a run's failure as `run.failed`, also once the evidence refused further events or failed to write them, so the journal every reader reads (the run's events resource, the end of its recording, the replay's paused intervals) ends with the run's failure (Cycle 0046 row 666); called by {@link ConfiguredBrowserRun.fail}, which journals a run's failure once, and, as `explanation.failed`, by {@link StudyService.explain} for an explanation whose save failed after its run ended (row 699): a `run.failed` after the end would read as the end of a failed run.
    * Past a refusal the event is kept in {@link Evidence.events} and appended to `events.jsonl` while that file can still be written; the first failure stays the evidence's {@link Evidence.failure}, and only one failure is kept past a refusal. Its reason is cut so that its detail fits {@link EVENT_DETAIL_LIMIT_BYTES}, ending with {@link CUT_TEXT_MARKER} where it was cut ({@link cutTextToFit}): the journal's bounds are exceeded by one event at most, and that event by one line of bounded size, as long as a stack or an adapter's message may be (row 698). The same limit is the one the run's events resource shows an event's detail whole within.
-   * @param reason - The run's failure, as its runtime was given it.
+   * @param reason - The failure, as its caller was given it.
+   * @param type - The event's type: `run.failed` for the run's own failure, `explanation.failed` for an explanation of an ended run.
    * @returns The journaled event; an event that is not kept for a second failure past a refusal.
    * @example
    * evidence.failure // => 'Evidence buffering limit exceeded'
    * evidence.recordFailure('Selected debugger terminated')
    * evidence.events.at(-1) // => { sequence: 10001, type: 'run.failed', detail: { reason: 'Selected debugger terminated' }, … }
    */
-  recordFailure(reason: string): RecordedEvent {
-    const receipt = this.receiptOf('run.failed', { reason })
+  recordFailure(
+    reason: string,
+    type: JournaledFailureType = 'run.failed',
+  ): RecordedEvent {
+    const receipt = this.receiptOf(type, { reason })
     if (!this.refuses(receipt.bytes)) return this.retain(receipt)
     this.failure ??= 'Evidence buffering limit exceeded'
     // One failure past the refusal, so the journal's bounds are exceeded by one event at most.
@@ -84,7 +95,7 @@ export class Evidence {
         Buffer.byteLength(JSON.stringify({ reason: candidate })) <=
         EVENT_DETAIL_LIMIT_BYTES,
     )
-    return this.retain(this.receiptOf('run.failed', { reason: boundedReason }))
+    return this.retain(this.receiptOf(type, { reason: boundedReason }))
   }
 
   /**

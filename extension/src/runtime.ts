@@ -110,7 +110,13 @@ export interface StudyRuntime {
   readonly id: string
   readonly evidence: Pick<
     Evidence,
-    'save' | 'flush' | 'record' | 'failure' | 'directory' | 'elapsedMs'
+    | 'save'
+    | 'flush'
+    | 'record'
+    | 'recordFailure'
+    | 'failure'
+    | 'directory'
+    | 'elapsedMs'
   >
   prepare(): Promise<void>
   view(): RuntimeView
