@@ -1802,3 +1802,75 @@ test('a header written between the removal’s judgement and its lock keeps the 
     },
   )
 })
+
+// Value: protects=a study whose recording another window of this machine sealed between this window's judgement and its lock; fails_when=the removal reuses the verdict of a live writer found before the lock, so it refuses a study whose run has just ended, or a look under the lock that skips the seal keeps refusing it; why_new=Cycle 0046 testing review TC1: no test changed the disk between the judgement and the lock; seam=the storage lock of the loaded library, right before which the test writes the recording's seal
+test('a recording sealed between the removal’s judgement and its lock moves with the study', async (context) => {
+  // Arrange: a saved study whose recording a live window of this machine writes; that window seals it right before the removal's lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  const recording = await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const library = await libraryWithStepBeforeTheLock(storage, () =>
+    writeFile(join(recording, 'sealed.json'), '{}'),
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=a recording a window of this machine starts for a saved study between this window's judgement and its lock; fails_when=a recording the removal never judged counts as finished under the lock, so the removal moves the recording that window has just begun to write; why_new=Cycle 0046 testing review TC1; seam=the storage lock of the loaded library, right before which a recording store of this machine starts the study's recording
+test('a recording started between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study without a recording; a window of this machine starts one right before the removal's lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await storage.recordings.start(
+      {
+        workspaceKey: study.workspaceKey,
+        studyId: study.id,
+        instanceId: study.instanceId,
+        runId: study.runId,
+        runtimeId: randomUUID(),
+        profile: study.profile,
+        sourceBuild: {
+          revision: 'removal-test',
+          dirty: false,
+          sourceHash: '1'.repeat(64),
+        },
+      },
+      0,
+    )
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
