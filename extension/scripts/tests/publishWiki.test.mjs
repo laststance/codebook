@@ -26,6 +26,7 @@ import {
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
+import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
   swapBeforeMaking,
   swapBeforeWriting,
@@ -2070,8 +2071,9 @@ const markedCopies = new Map()
  * - `?swapped-folder`: a test's swap runs just before the `mkdir` of a folder ({@link swapBeforeMaking}) or the `writeFile` of a file ({@link swapBeforeWriting}) that the test names (`swappedFolderFileSystem.mjs`).
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
+ * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
- * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell'} mark - The mark of its stand-in.
+ * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids'} mark - The mark of its stand-in.
  * @returns {Promise<Record<string, Function>>} The copy's exports.
  * @example
  * const { prepareWikiStage } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
@@ -2630,6 +2632,55 @@ test('a recovery of an edited manifest whose .codebook is swapped for a link to 
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the folder the publisher resolved the Wiki's path in, on NTFS, whose file ids may lie above 2^53; fails_when=the publisher compares device and file ids as JavaScript numbers, which round above 2^53, so a folder that took the place of `.codebook` with an id that differs only in its low bits counts as the same and the preparation or the publish writes into it; why_new=Cycle 0046 /ship third review W8 (row 79's rule); seam=a copy of the shipped publisher whose `stat` gives `.codebook` ids above 2^53 that change in their low bits just before the candidate is made (scripts/tests/utils/markedCopyHooks.mjs, `?large-file-ids`)
+for (const step of ['--prepare', 'publish'])
+  test(`${step} whose .codebook gets another file id above 2^53, which differs from the first only in its low bits, just before it writes into the candidate is refused with the folder named`, async () => {
+    // Arrange: a published Wiki with a candidate for the publish, or a project with `.codebook` alone for the preparation; `.codebook`'s file id changes just before the candidate's folder is made.
+    const {
+      prepareWikiStage: prepareWithLargeIds,
+      publishWiki: publishWithLargeIds,
+    } = await loadMarkedCopy('publish-wiki.mjs', '?large-file-ids')
+    const wiki =
+      step === 'publish' ? await publishedWikiWithACandidate() : undefined
+    const root =
+      wiki?.root ??
+      (await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-wiki-large-ids-')),
+      ))
+    const next = join(root, '.codebook/next')
+    try {
+      await mkdir(join(root, '.codebook'), { recursive: true })
+      giveLargeFileIds(join(root, '.codebook'), next)
+
+      // Act
+      const refusal = await (
+        step === 'publish'
+          ? publishWithLargeIds({
+              projectRoot: root,
+              outputDirectory: join(root, '.codebook/wiki'),
+              stageDirectory: next,
+            })
+          : prepareWithLargeIds({
+              projectRoot: root,
+              outputDirectory: join(root, '.codebook/wiki'),
+              stageDirectory: next,
+            })
+      ).then(
+        () => 'written',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(
+        refusal,
+        `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      )
+    } finally {
+      giveLargeFileIds(undefined)
+      await rm(wiki?.directory ?? root, { recursive: true, force: true })
+    }
+  })
 
 // Value: protects=the learner who chose an output folder outside the project and reaches it through a link of their own; fails_when=the check of the folders on the way to the output refuses a link outside the project too, so a configured output outside it can no longer be prepared; why_new=Cycle 0046 /ship finding F1: the fix refuses links only once the path is inside the project; seam=none
 test('an output outside the project reached through a link outside it is still prepared, in the folder the link leads to', async () => {

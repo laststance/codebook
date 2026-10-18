@@ -239,14 +239,14 @@ async function requireNoJournal(journal) {
   if (await regularBytes(journal, true)) throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
 }
 
-/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
-const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([stat(parent), ...[parent, ...entries].map(path => realpath(path))]).then(
+/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. Both are compared as bigints: an NTFS file id may lie above 2^53, where two JavaScript numbers of different ids are equal. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
+const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([stat(parent, { bigint: true }), ...[parent, ...entries].map(path => realpath(path))]).then(
   ([now, ...realPaths]) => realPaths.every(real => isInProject(root, real)) && now.dev === identity.dev && now.ino === identity.ino,
   () => false);
 
 /** Takes the look at the output's parent once the paths are resolved, for a publish or a recovery, and answers the check that holds every later write to it: for an output inside the project, the parent and `entries` must still be where they were ({@link isWhereItWasResolved}), or the step is refused with the parent's sentence. The race left is the one {@link requireStageWhereItWasMade} names. Called by {@link publishWiki} and {@link recoverWikiPublication}. @returns The check, which resolves when the path still holds and throws otherwise. @example const requirePathHeld = await holdOfPath(paths, [paths.stage]); await requirePathHeld() // throws once .codebook was swapped for a link */
 async function holdOfPath(paths, entries) {
-  const parent = dirname(paths.output), identity = await stat(parent);
+  const parent = dirname(paths.output), identity = await stat(parent, { bigint: true });
   return async () => {
     if (!paths.isOutputInProject || await isWhereItWasResolved(parent, identity, entries, paths.root)) return;
     throw new Error(linkedPathRefusalOf(parent));
@@ -271,8 +271,8 @@ async function requireStageWhereItWasMade(paths, stage, parentIdentity) {
 export async function prepareWikiStage({ projectRoot, outputDirectory, stageDirectory, adoptExisting = false }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory, true);
   const { root, output, journal } = paths, stage = paths.stage ?? output + '.stage-' + randomUUID();
-  // The folder the paths were resolved in, by device and inode, so a swap on the path before the stage is written is seen.
-  const parentIdentity = await stat(dirname(output));
+  // The folder the paths were resolved in, by device and inode as bigints, which NTFS ids above 2^53 need, so a swap on the path before the stage is written is seen.
+  const parentIdentity = await stat(dirname(output), { bigint: true });
   await requireNoJournal(journal);
   const prior = await inspectOutput(output, root, { allowLegacy: adoptExisting });
   await mkdir(stage); // An existing candidate is never overwritten or silently reused.
