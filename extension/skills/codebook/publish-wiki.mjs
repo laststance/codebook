@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { renderWikiPages } from './render-wiki.mjs';
 
@@ -12,6 +12,39 @@ const reserved = path => [MANIFEST, RECEIPT].includes(path.split('/')[0].toLower
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const safePath = path => typeof path === 'string' && path !== '' && !isAbsolute(path) && !/[\\\x00-\x1f]/.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
 const isMissing = error => error.code === 'ENOENT';
+
+/** Whether bytes start with a signature, at an offset: a format's first bytes. Called by the tests of {@link RASTER_ASSET_FORMATS}. @example startsWith(Buffer.from('GIF89a'), 'GIF89a') // => true */
+const startsWith = (bytes, signature, at = 0) => bytes.subarray(at, at + signature.length).equals(Buffer.from(signature, 'latin1'));
+
+/** The brands an ISO media file names in its first box (`ftyp`): the major brand, then each compatible one, up to the box's end. Called by the AVIF test of {@link RASTER_ASSET_FORMATS}. @example brandsOf(Buffer.from('\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1avif', 'latin1')) // => ['mif1', 'mif1', 'avif'] */
+const brandsOf = bytes => {
+  const end = Math.min(bytes.length, bytes.length >= 4 ? bytes.readUInt32BE(0) : 0), brands = [bytes.toString('latin1', 8, 12)];
+  // The compatible brands follow the minor version, four bytes each.
+  for (let at = 16; at + 4 <= end; at += 4) brands.push(bytes.toString('latin1', at, at + 4));
+  return brands;
+};
+
+/** The formats an asset may have, by its extension in lower case, each with the test of the bytes it starts with: the raster images an article shows. Nothing else may be an asset: an HTML, SVG, script or style file would run or fetch in a page opened from disk, where no reader sends a policy. Read by {@link requireRasterAsset}. */
+const RASTER_ASSET_FORMATS = {
+  png: bytes => startsWith(bytes, '\x89PNG\r\n\x1a\n'),
+  jpg: bytes => startsWith(bytes, '\xff\xd8\xff'),
+  jpeg: bytes => startsWith(bytes, '\xff\xd8\xff'),
+  gif: bytes => startsWith(bytes, 'GIF87a') || startsWith(bytes, 'GIF89a'),
+  webp: bytes => startsWith(bytes, 'RIFF') && startsWith(bytes, 'WEBP', 8),
+  avif: bytes => startsWith(bytes, 'ftyp', 4) && brandsOf(bytes).some(brand => brand === 'avif' || brand === 'avis'),
+};
+
+/** The test of the bytes an asset must start with, by its extension in lower case ({@link RASTER_ASSET_FORMATS}); one that no bytes pass for any other extension. Called by {@link requireRasterAsset}. @example formatTestOf('assets/flow.PNG')(bytes) // => true for the bytes of a PNG image */
+const formatTestOf = path => {
+  const extension = extname(path).slice(1).toLowerCase();
+  return Object.hasOwn(RASTER_ASSET_FORMATS, extension) ? RASTER_ASSET_FORMATS[extension] : () => false;
+};
+
+/** Refuses an asset of a candidate that is no raster image ({@link RASTER_ASSET_FORMATS}) by its extension and by its first bytes, before anything is written; the asset is read as a regular file of the stage, never through a link ({@link regularBytes}). The learner's own files in the Wiki folder, which no manifest lists, are not judged. Called by {@link publishWiki} for every asset its manifest lists. @example await requireRasterAsset('/repo/.codebook/next', 'assets/notes.html') // throws: Wiki asset assets/notes.html must be a PNG, JPEG, GIF, WebP or AVIF image, … */
+async function requireRasterAsset(stage, path) {
+  if (!formatTestOf(path)(await regularBytes(join(stage, path))))
+    throw new Error('Wiki asset ' + path + ' must be a PNG, JPEG, GIF, WebP or AVIF image, named .png, .jpg, .jpeg, .gif, .webp or .avif and holding the bytes of that format.');
+}
 
 /** Parses inventory for {@link publishWiki} and recovery before any owned file can be replaced. @example parseManifest(bytes, '/repo') */
 function parseManifest(bytes, projectRoot) {
@@ -275,6 +308,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
   if (files.some(path => ![MANIFEST, RECEIPT].includes(path) && !owned.has(path))) throw new Error('The staged Wiki contains a file outside its published manifest.');
+  // An asset is a raster image or nothing; checked before anything is rendered or written.
+  for (const path of manifest.assets) await requireRasterAsset(stage, path);
   // Validate authored content without modifying either the stage or published output.
   const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
   const receipt = await readReceipt(stage, root, true);

@@ -32,6 +32,12 @@ import {
 } from './utils/swappedFolderFileSystem.mjs'
 import { failRealPathOf } from './utils/unnamedRealPathFileSystem.mjs'
 
+/** The bytes of a PNG asset as a test writes it: the PNG signature and the start of an image header; the publisher reads no more than the signature. */
+const PNG_ASSET_BYTES = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
+  0x48, 0x44, 0x52,
+])
+
 for (const legacy of [false, true]) {
   test(
     'stopped publication before its swap preserves the ' +
@@ -211,9 +217,9 @@ test('prepared updates retain exact published metadata and copy only owned asset
     const manifest = JSON.parse(
       await readFile(join(first, 'codebook-wiki.json'), 'utf8'),
     )
-    manifest.assets = ['assets/note.txt']
+    manifest.assets = ['assets/note.png']
     await mkdir(join(first, 'assets'))
-    await writeFile(join(first, 'assets/note.txt'), 'Owned asset')
+    await writeFile(join(first, 'assets/note.png'), PNG_ASSET_BYTES)
     await writeFile(join(first, 'codebook-wiki.json'), JSON.stringify(manifest))
     await publishWiki({
       projectRoot: root,
@@ -233,9 +239,9 @@ test('prepared updates retain exact published metadata and copy only owned asset
     assert.equal(result.stage, next)
     assert.equal(result.legacyAdopted, false)
     assert.deepEqual(await readFile(join(next, 'codebook-wiki.json')), before)
-    assert.equal(
-      await readFile(join(next, 'assets/note.txt'), 'utf8'),
-      'Owned asset',
+    assert.deepEqual(
+      await readFile(join(next, 'assets/note.png')),
+      PNG_ASSET_BYTES,
     )
     await assert.rejects(access(join(next, 'index.html')))
     await assert.rejects(access(join(next, 'manual.txt')))
@@ -2712,6 +2718,138 @@ test('an output outside the project reached through a link outside it is still p
   }
 })
 
+/**
+ * Prepares a candidate for a new project's `.codebook/wiki` with the real publisher and gives it one asset with the bytes a test asks for, named by its manifest.
+ * @param {string} assetPath - The asset's path in the Wiki, for example `assets/notes.html`.
+ * @param {Buffer | string} assetBytes - What the asset holds.
+ * @returns {Promise<{ root: string, output: string, stage: string, authoredPage: string }>} The project, the Wiki folder, the candidate, and the candidate's `index.html` as authored.
+ * @example
+ * const wiki = await candidateWithAnAsset('assets/flow.png', PNG_ASSET_BYTES)
+ */
+async function candidateWithAnAsset(assetPath, assetBytes) {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-asset-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    stage = join(root, '.codebook/next')
+  await writeStage(stage, root, '<h1>With an asset</h1>', undefined, output)
+  const manifest = JSON.parse(
+    await readFile(join(stage, 'codebook-wiki.json'), 'utf8'),
+  )
+  manifest.assets = [assetPath]
+  await mkdir(dirname(join(stage, assetPath)), { recursive: true })
+  await writeFile(join(stage, assetPath), assetBytes)
+  await writeFile(join(stage, 'codebook-wiki.json'), JSON.stringify(manifest))
+  return {
+    root,
+    output,
+    stage,
+    authoredPage: await readFile(join(stage, 'index.html'), 'utf8'),
+  }
+}
+
+// Value: protects=the learner who opens a published Wiki from disk, where no reader sends a policy, against an asset the agent wrote that runs script, acts on an event attribute or fetches a network path (`//host`, `\\host`) or another address, when its page links to it or it is opened itself; fails_when=the publisher checks only each page's content and publishes any file the manifest lists under `assets`, or trusts an asset's name and not its bytes; why_new=Cycle 0046 /ship finding AF9; seam=none (the shipped publisher)
+for (const [kind, assetPath, assetBytes] of [
+  [
+    'an HTML asset',
+    'assets/notes.html',
+    '<!doctype html><img src="\\\\host\\share\\x.png" onerror="run()">',
+  ],
+  [
+    'an SVG asset',
+    'assets/flow.svg',
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>run()</script></svg>',
+  ],
+  ['a script asset', 'assets/run.js', 'run()'],
+  [
+    'an asset named as a PNG image that holds HTML',
+    'assets/fake.png',
+    '<!doctype html><script>run()</script>',
+  ],
+])
+  test(`a publish whose manifest lists ${kind} is refused with the sentence that names the asset and the images it may be, before anything is written`, async () => {
+    // Arrange
+    const wiki = await candidateWithAnAsset(assetPath, assetBytes)
+    try {
+      // Act
+      const refusal = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.stage,
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+
+      // Assert: no Wiki folder stands, and the candidate's page is as authored, not rendered.
+      assert.deepEqual(
+        {
+          refusal,
+          beside: (await readdir(join(wiki.root, '.codebook'))).sort(),
+          // A publish would have moved the candidate into the Wiki's place.
+          candidatePage: await readFile(
+            join(wiki.stage, 'index.html'),
+            'utf8',
+          ).catch(() => 'no candidate'),
+        },
+        {
+          refusal: `Wiki asset ${assetPath} must be a PNG, JPEG, GIF, WebP or AVIF image, named .png, .jpg, .jpeg, .gif, .webp or .avif and holding the bytes of that format.`,
+          beside: ['next'],
+          candidatePage: wiki.authoredPage,
+        },
+      )
+    } finally {
+      await rm(wiki.root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the article images an agent lists under `assets`, which the refusal of other assets must not take; fails_when=the publisher refuses a raster image of one of the six formats, by a name in capitals or by bytes the format starts with; why_new=Cycle 0046 /ship finding AF9 (assets are raster images only); seam=none (the shipped publisher)
+for (const [format, assetPath, assetBytes] of [
+  ['PNG', 'assets/flow.png', PNG_ASSET_BYTES],
+  ['JPEG', 'assets/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00])],
+  ['JPEG', 'assets/photo.JPEG', Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00])],
+  ['GIF', 'assets/anim.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1')],
+  [
+    'WebP',
+    'assets/shot.webp',
+    Buffer.from('RIFF\x24\x00\x00\x00WEBPVP8 ', 'latin1'),
+  ],
+  [
+    'AVIF',
+    'assets/shot.avif',
+    Buffer.from(
+      '\x00\x00\x00\x1cftypmif1\x00\x00\x00\x00mif1avifmiaf',
+      'latin1',
+    ),
+  ],
+])
+  test(`a publish whose manifest lists a ${format} image ${assetPath} publishes it with its bytes`, async () => {
+    // Arrange
+    const wiki = await candidateWithAnAsset(assetPath, assetBytes)
+    try {
+      // Act
+      const published = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.stage,
+      }).then(
+        (result) => result.output,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          published,
+          asset: await readFile(join(wiki.output, assetPath)),
+        },
+        { published: wiki.output, asset: assetBytes },
+      )
+    } finally {
+      await rm(wiki.root, { recursive: true, force: true })
+    }
+  })
+
 // Value: protects=the learner who chose an output folder outside the project and updates the Wiki there again; fails_when=the publisher holds the Wiki folder itself to the rule of an output inside the project whatever its place, so an existing Wiki outside the project, whose real path of course leaves the project, is refused at the next preparation, publish or recovery; why_new=Cycle 0046 /ship repeat testing review TC5 (the real-path rule of the Wiki folder, AF3, had no test of an output outside the project that already exists); seam=none
 test('a Wiki published into an output folder outside the project is prepared, published and recovered there again, each without a refusal of its path', async () => {
   // Arrange: a first Wiki published into a folder outside the project.
@@ -2801,6 +2939,26 @@ test('the bundled skill tells the agent the publisher’s refusals of event attr
       ),
     ],
     [true, true],
+  )
+})
+
+// Value: protects=the editor agent that lists a Wiki's assets with the bundled skill; fails_when=the skill still lets any local file be an asset, so the agent learns that only raster images are accepted from a refused publish; why_new=Cycle 0046 /ship finding AF9 (the publisher accepts only raster images as assets); seam=none
+test('the bundled skill tells the agent that an asset is a PNG, JPEG, GIF, WebP or AVIF image and that the publisher refuses any other', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.deepEqual(
+    [
+      skill.includes(
+        '`assets` lists only the raster images the articles show: PNG, JPEG, GIF, WebP or AVIF files named `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` and holding the bytes of that format. The publisher refuses any other asset (HTML, SVG, scripts, styles or anything else), so do not retain old reader CSS/JS in the stage.',
+      ),
+      skill.includes('local non-diagram article assets'),
+    ],
+    [true, false],
   )
 })
 
