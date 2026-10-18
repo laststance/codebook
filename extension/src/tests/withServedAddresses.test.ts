@@ -668,6 +668,26 @@ test('a hidden input closes an open select in a table caption but not in the tab
   )
 })
 
+// Value: protects=a served page's text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is renamed; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a hidden input in a table body or a row, or written HIDDEN, leaves an open select open, so the style text after the select stays as written', () => {
+  // Arrange: the table rule takes each input, so </select> closes the select with the svg in it and the style holds text.
+  const pages = [
+    '<table><tbody><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select><input type=HIDDEN><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<table><tbody><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select><input type=HIDDEN><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ])
+})
+
 // Value: protects=a live editor link after a noscript that a browser with scripting reads as raw text; fails_when=the parser runs with scripting disabled, so the noscript's style swallows the link and it is served live, or the noscript's own text is renamed; why_new=no reader test wrote noscript (/ship coverage audit); seam=none; no_claim=native editor (Chrome 151 iframe srcdoc with scripting gave the result)
 test('a link after a noscript is judged as a browser with scripting reads it, and a link inside the noscript text is served as written', () => {
   // Arrange: with scripting a noscript holds raw text up to its end tag.
