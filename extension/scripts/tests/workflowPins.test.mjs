@@ -889,6 +889,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/stepPastNoRealFolder.ts',
     'extension/src/utils/storageLockHeldError.ts',
     'extension/src/utils/systemErrorCode.ts',
+    'extension/src/utils/trimMatchingEnds.ts',
     'extension/src/utils/unopenedFileCode.ts',
     'extension/src/utils/windowsPowerShellPath.ts',
     'extension/src/utils/withStorageLock.ts',
