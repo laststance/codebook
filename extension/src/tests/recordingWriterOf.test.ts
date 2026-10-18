@@ -262,13 +262,15 @@ test('a recording whose writer’s process id a process of another user has, who
  * @param storage - The test's storage.
  * @param studyId - The study id of a recording the store started in the other format.
  * @param folderName - The recording format's folder, `recordings.v2` or `recordings.v3`.
+ * @param createdAt - When the recording was created; the same time as the other recording's makes their folders alone tell them apart.
  * @returns The recording's folder.
- * @example const headerOnly = await headerOnlyRecordingBeside(storage, recording.studyId, 'recordings.v2')
+ * @example const headerOnly = await headerOnlyRecordingBeside(storage, recording.studyId, 'recordings.v2', createdAt)
  */
 async function headerOnlyRecordingBeside(
   storage: Awaited<ReturnType<typeof recordingStorage>>,
   studyId: string,
   folderName: 'recordings.v2' | 'recordings.v3',
+  createdAt: string,
 ): Promise<string> {
   const folder = join(storage.directory, folderName, studyId)
   await mkdir(folder, { recursive: true })
@@ -280,15 +282,15 @@ async function headerOnlyRecordingBeside(
         hostname: hostname(),
         sessionId: randomUUID(),
       },
-      createdAt: '2026-10-01T08:00:00.000Z',
+      createdAt,
     }),
   )
   return folder
 }
 
-// Value: protects=the recording of one study id in one recording format's folder that its own header judges, while a recording of the id in another format has the writer record; fails_when=the record, which is kept by the study id, judges every recording of the id, so the header-only recording takes the other recording's writer (here one of another machine) and is listed and refused as that writer's (AF10); why_new=Cycle 0046 review AF10: a record names the recording it was written for; seam=the record of the recordings.v3 recording, which the test makes name machine-b, and a recordings.v2 header of this host with a process id of no process, without a record
-test('a recording without its own writer record is judged by its header, although a recording of the same id in another format has a record', async (context) => {
-  // Arrange: recordings.v3/<id> has the record, which names machine-b; recordings.v2/<id> has its header alone, which names this host and a process id of no process.
+// Value: protects=the recording of one study id in one recording format's folder that its own header judges, while a recording of the id in another format has the writer record; fails_when=the record, which is kept by the study id, judges every recording of the id, so the header-only recording takes the other recording's writer (here one of another machine) and is listed and refused as that writer's (AF10); why_new=Cycle 0046 review AF10: a record names the recording it was written for; seam=the record of the recordings.v3 recording, which the test makes name machine-b, and a recordings.v2 header of this host with a process id of no process, without a record, created at the very same time, so that the folder alone tells the two recordings apart (TT38)
+test('a recording without its own writer record is judged by its header, although a recording of the same id in another format, created at the same time, has a record', async (context) => {
+  // Arrange: recordings.v3/<id> has the record, which names machine-b; recordings.v2/<id>, created at the same time, has its header alone, which names this host and a process id of no process.
   const storage = await recordingStorage(context)
   const recorded = await startRecording(storage, 3)
   await rewriteHeader(recorded.folder, {
@@ -298,10 +300,14 @@ test('a recording without its own writer record is judged by its header, althoug
     pid: ID_OF_NO_PROCESS,
     machineId: 'machine-b',
   })
+  const { createdAt } = JSON.parse(
+    await readFile(join(recorded.folder, 'header.json'), 'utf8'),
+  )
   const headerOnly = await headerOnlyRecordingBeside(
     storage,
     recorded.studyId,
     'recordings.v2',
+    createdAt,
   )
 
   // Act
