@@ -301,7 +301,7 @@ export class StudyService {
   readonly instanceId = randomUUID()
   readonly records = new Map<string, StudyRecord>()
   recordings?: RecordingStore
-  /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what its last removal told; written only by {@link recordStudyRemoval}. */
+  /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what the last removal that moved its study or met the Trash's refusal told; written only by {@link recordStudyRemoval}. */
   private removalAvailability: StudyRemovalAvailability
   playbackController?: PlaybackController
   presentationController?: Pick<
@@ -361,7 +361,7 @@ export class StudyService {
 
   /**
    * Tells whether this window can remove a saved study, so every full-library refusal names a removal only while one can work here; read by the run admission and, through {@link StudyWorkspace}, by the study library and the recording store.
-   * @returns `no-trash` in a window without a Trash, where no removal is started; otherwise `available` until a removal left its study in the library, then `trash-refused` until a later removal moves one.
+   * @returns `no-trash` in a window without a Trash, where no removal is started; otherwise `available` until the Trash refused a move in this session, then `trash-refused` until a later removal moves its study.
    * @example
    * service.studyRemovalAvailability // => 'available'
    */
@@ -370,16 +370,15 @@ export class StudyService {
   }
 
   /**
-   * Records once per removal whether the study left the library; called by {@link StudyWorkspace} when {@link LearningLibrary.removeStudy} has settled.
+   * Records what a removal told about the Trash; called by {@link StudyWorkspace} when {@link LearningLibrary.removeStudy} has settled, only for a removal that moved its study and for one the Trash itself refused (`trashRefused`). A refusal before any move (another window's recording, a held lock, the learner's choice still to come) tells nothing about the Trash and is not recorded.
    * A path the Trash rejected inside a removal that still moved the study does not count against the Trash.
-   * @param hasStudyLeftLibrary - `true` for a removal that ended `moved`, `false` for `nothing-moved` and `partly-moved`.
+   * @param movedToTrash - `true` when the study moved to the Trash; `false` when the Trash refused a move.
    * @example
-   * service.recordStudyRemoval(removal.outcome === 'moved')
+   * if (removal.outcome === 'moved') service.recordStudyRemoval(true)
+   * else if (removal.trashRefused) service.recordStudyRemoval(false)
    */
-  recordStudyRemoval(hasStudyLeftLibrary: boolean): void {
-    this.removalAvailability = hasStudyLeftLibrary
-      ? 'available'
-      : 'trash-refused'
+  recordStudyRemoval(movedToTrash: boolean): void {
+    this.removalAvailability = movedToTrash ? 'available' : 'trash-refused'
   }
 
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */

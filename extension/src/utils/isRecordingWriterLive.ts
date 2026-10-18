@@ -238,7 +238,7 @@ async function writerStateByHeader(
 }
 
 /**
- * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link isRecordingWriterLive} (what the library lists, the status {@link RecordingStore} gives a recording another session wrote) and the removal of a study ({@link LearningLibrary.removeStudy}), which tells a writer of this machine from one it cannot probe.
+ * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link recordingWriterOf}, through which the library's list ({@link LearningLibrary.entryWithoutArchive}) and the removal of a study ({@link LearningLibrary.writerVerdictsOf}, before its storage lock) tell a writer of this machine from one it cannot confirm, and {@link isRecordingWriterLive}, through which only the status {@link RecordingStore.ownerState} gives a recording another session wrote.
  * The record of the writer's full identity that this build keeps outside the recording decides when it exists ({@link writerStateByRecord}); a recording without one (made by 0.2.29.0) is judged by its header's host name and process id, a process id that a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}).
  * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
  * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
@@ -274,12 +274,12 @@ export async function recordingWriterState(
 }
 
 /**
- * Says whether the editor process that writes an unsealed recording may still run, on this machine or on another one ({@link recordingWriterState}); called by the status {@link RecordingStore} gives a recording another session wrote (`unfinalized` while its writer may run, `interrupted` once it is gone).
+ * Says whether the editor process that writes an unsealed recording may still run, on this machine or on another one ({@link recordingWriterState}); called only by the status {@link RecordingStore.ownerState} gives a recording another session wrote (`unfinalized` while its writer may run, `interrupted` once it is gone).
  * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
- * @returns `true` while the writer may still run, on this machine or on another one; `false` once it is gone from this machine, and with `ignored` for this process.
+ * @returns `true` while the writer may still run, on this machine or on another one; `false` once it is gone from this machine, for a writer this computer cannot confirm (`unconfirmed-here`), and with `ignored` for this process.
  * @example
  * await isRecordingWriterLive('/storage/learning/recording-owners/<id>.json', header) // => false for a crashed editor whose process id another process has now
  * await isRecordingWriterLive(path, header, 'counts', starts) // every recording of one list with one `starts`

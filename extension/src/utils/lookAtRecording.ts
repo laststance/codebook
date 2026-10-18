@@ -53,7 +53,7 @@ async function readHeaderOwner(
 }
 
 /**
- * Looks at one recording directory without asking the system about any process: its seal, its header's writer and creation time, and whether the record of its writer is there; called by {@link recordingWriterOf} before it judges the writer, and by {@link LearningLibrary.removeStudy}, which looks before its storage lock and again under it, where no slow question may run.
+ * Looks at one recording directory without asking the system about any process: its seal, its header's writer and creation time, and whether the record of its writer is there; called by {@link recordingWriterOf} before it judges the writer, and by the removal of {@link LearningLibrary.removeStudy}, which looks before its storage lock ({@link LearningLibrary.writerVerdictsOf}) and again under it ({@link LearningLibrary.verdictUnderLock}), where no slow question may run.
  * @param directory - The directory of one recording, `<learning directory>/recordings.vN/<study id>`.
  * @returns What is there ({@link RecordingLook}).
  * @example await lookAtRecording('/…/recordings.v2/<study id>') // => { isSealed: false, header: { owner: { pid: 4242, hostname: 'workstation', sessionId }, createdAt }, hasWriterRecord: true }

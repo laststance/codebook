@@ -978,7 +978,7 @@ export class RecordingStore {
   }
 
   /**
-   * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id, with a process id that went to a later process counted as gone).
+   * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id). A writer this computer cannot confirm (`unconfirmed-here`: a process id that a later process or one of another user has) reads `interrupted` here as well; only the removal's dialog treats it apart.
    * @param header - The recording's header.
    * @param writer - This session's writer of the recording, if any.
    * @param starts - The process starts of the caller's list ({@link list}); one for this recording alone when left out ({@link read}).

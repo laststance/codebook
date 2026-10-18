@@ -21243,7 +21243,7 @@ export class StudyWorkspace {
 
   /**
    * Tells whether this window can remove a saved study: what the attached service recorded, or what the window itself says while no service is attached; read for every full-library refusal, every delete request and every Study message.
-   * @returns `no-trash` in a WSL remote window, `trash-refused` after a removal of this session left its study in the library, otherwise `available`.
+   * @returns `no-trash` in a WSL remote window, `trash-refused` after the Trash refused a move in this session (until a later removal moves its study), otherwise `available`.
    * @example if (this.studyRemovalAvailability() === 'no-trash') return
    */
   private studyRemovalAvailability(): StudyRemovalAvailability {

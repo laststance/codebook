@@ -7,8 +7,8 @@ export type FullLibraryRefusal = 'run' | 'save' | 'recording'
 
 /**
  * Whether this window can remove a saved study, as {@link StudyService} holds it for the session.
- * - `available`: no removal failed, or the last removal moved its study to the Trash.
- * - `trash-refused`: the last removal of this session left its study in the library.
+ * - `available`: the Trash refused no move in this session, or a later removal moved its study to the Trash.
+ * - `trash-refused`: the Trash refused a move in this session, and no removal moved its study since.
  * - `no-trash`: the window has no Trash (a WSL remote window); no removal is started there.
  */
 export type StudyRemovalAvailability =
