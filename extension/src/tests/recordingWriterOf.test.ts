@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { closeSync, constants as fsConstants, openSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  openSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -1312,6 +1318,27 @@ test('a recording’s header larger than a header may be is refused by its size,
   )
 })
 
+/**
+ * Lets every open that waits on a named pipe through and puts a regular file in the pipe's place, so that no later open waits on it; called by the named-pipe test once its library calls returned or timed out, before its storage is removed.
+ * Why: a product that opens the pipe as a file that may block holds one thread of the test's process per open for good, and the process would never end.
+ * @param pipePath - The pipe's path.
+ * @example releaseThePipe('/tmp/…/recordings.v2/<id>/header.json')
+ */
+function releaseThePipe(pipePath: string): void {
+  // An open for reading and writing never waits on a pipe, and as its writer it lets every waiting open through.
+  let writer: number | undefined
+  try {
+    writer = openSync(pipePath, fsConstants.O_RDWR | fsConstants.O_NONBLOCK)
+  } catch {
+    // No pipe is there any more.
+  }
+  // A regular file takes the pipe's place, so an open the product makes afterwards does not wait.
+  rmSync(pipePath, { force: true })
+  writeFileSync(pipePath, '')
+  // With its last writer closed, a read of the pipe that is under way ends.
+  if (writer !== undefined) closeSync(writer)
+}
+
 // Value: protects=every list of Saved studies and every removal while a named pipe stands at a recording's header.json (a damaged or hostile storage folder); fails_when=the header is opened as a file that may block, so the open waits for a writer of the pipe for good and holds the list, the removal and the editor's process; why_new=Cycle 0046 adversarial review AD11; seam=a named pipe made at the header's path; on Windows, which has no named pipes in a folder, the test is skipped
 test('a named pipe at a recording’s header neither holds the list of saved studies nor the removal of its study', async (context) => {
   if (process.platform === 'win32')
@@ -1322,23 +1349,20 @@ test('a named pipe at a recording’s header neither holds the list of saved stu
   const headerPath = join(recording.folder, 'header.json')
   await rm(headerPath)
   execFileSync('mkfifo', [headerPath])
-  // A read that waits on the pipe is let go at the end, so the test process can end in any case.
-  context.after(() => {
-    try {
-      closeSync(
-        openSync(headerPath, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK),
-      )
-    } catch {
-      // Nothing waits on the pipe.
-    }
-  })
-
   // Act
-  const listed = await withinBound(storage.library.list(), 5_000)
-  const removal = await withinBound(
-    storage.library.removeStudy(recording.studyId, async () => undefined),
-    5_000,
-  )
+  let listed: Awaited<ReturnType<typeof storage.library.list>> | 'timed out'
+  let removal:
+    Awaited<ReturnType<typeof storage.library.removeStudy>> | 'timed out'
+  try {
+    listed = await withinBound(storage.library.list(), 5_000)
+    removal = await withinBound(
+      storage.library.removeStudy(recording.studyId, async () => undefined),
+      5_000,
+    )
+  } finally {
+    // Every open that still waits on the pipe is let go, before the storage is removed, and no later open can wait on it: a regression fails here instead of holding the test's process.
+    releaseThePipe(headerPath)
+  }
 
   // Assert
   assert.deepEqual(
