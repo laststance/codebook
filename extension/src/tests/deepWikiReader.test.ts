@@ -1183,6 +1183,60 @@ test('a page file that grows past the limit after the reader looked at its size 
   )
 })
 
+// Value: protects=a page file of exactly the reader's limit, which the limit's doc names the largest page read and prepared; fails_when=the size check or the read's bound is off by one, so a page of exactly the limit is refused as too large; why_new=the P2P2 test's pages are 2,021 and 33 bytes, far from the limit; seam=the reader loaded with loadModule, a 1,000-byte limit and a counting page worker; no_claim=the real 8 MB limit (a smaller limit stands in)
+test('a page file of exactly the reader’s limit is read and served', async (context) => {
+  // Arrange: an overview of exactly 1,000 bytes and a reader that prepares pages of 1,000 bytes at most.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-limit-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    `<!doctype html><body>${'x'.repeat(972)}</body>`,
+  )
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithSmallPageLimit } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
+        './wikiPageWorker': countingWorker,
+      },
+      { URL },
+    )
+  const reader = await startReaderWithSmallPageLimit(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(reader.url)
+  const answer = { status: response.status, body: await response.text() }
+
+  // Assert
+  assert.deepEqual(
+    {
+      answer,
+      preparedPageCount,
+      pageBytes: (await lstat(join(outputDirectory, 'index.html'))).size,
+    },
+    {
+      answer: { status: 200, body: '<p>Prepared page</p>' },
+      preparedPageCount: 1,
+      pageBytes: 1_000,
+    },
+  )
+})
+
 // Value: protects=the editor's machine against a Wiki page that names a page of the Wiki many times as an image, media, a style sheet, a font, a track or a script (the page policy lets it load them from the reader's address), so that every such request starts a page worker that may keep a core busy until the deadline; fails_when=the reader prepares a page for a request the browser makes for anything but a page it opens (a Sec-Fetch-Dest other than document or iframe), or it refuses a page the browser opens as a document or in a frame, or one asked for by a client that names no destination; why_new=P2RT3; seam=the reader loaded with loadModule and a stand-in page-worker module that counts the pages it is asked to prepare; no_claim=a browser that sends no Sec-Fetch-Dest (it is served as before)
 test('a Wiki page asked for as an image, media, a style sheet, a font, a track, a script or by a fetch is refused with 403 before any page preparation starts, while a page opened as a document, in a frame or by a client that names no destination is served', async (context) => {
   // Arrange: the one-page Wiki and a reader whose page worker counts the pages it prepares.
