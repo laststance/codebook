@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { Worker } from 'node:worker_threads'
 
+import { addressAsBrowserReads } from '../utils/addressAsBrowserReads'
 import { browserAttributeText } from '../utils/browserAttributeText'
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
@@ -69,6 +70,11 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
     nestedTagStarts: `<p title="${'<b '.repeat(350_000)}">x</p>`,
     openingQuotes: `<a b="'${'<a b=\'"'.repeat(150_000)}`,
     refusedLinks: '<a href="vscode://file/x">x</a>'.repeat(35_000),
+    internalAddressSpaces: (
+      '<a href="x' +
+      ' '.repeat(40_000) +
+      'y">x</a>'
+    ).padEnd(1_000_001, ' '),
     svgStyles: '<svg><style><a href="javascript:x">'.repeat(30_000),
     unmatchedForeignEnds: (
       '<svg>' +
@@ -99,7 +105,7 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   // Assert: every page is over 1 MB, and each was filtered within the bound.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
-    [true, true, true, true, true, true, true],
+    [true, true, true, true, true, true, true, true],
   )
   assert.deepEqual(
     Object.entries(times).filter(
@@ -108,6 +114,33 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
     ),
     [],
   )
+})
+
+// Value: protects=the URL parser's exact edge character set and internal whitespace; fails_when=a generic trim removes Unicode space or keeps a C0 control at an edge; why_new=row 1052 replaces the trim algorithm; seam=none
+test('browser addresses trim every C0 control and ASCII space only at their ends and keep other spaces', () => {
+  // Arrange
+  const controls = String.fromCharCode(
+    ...Array.from({ length: 33 }, (_unused, index) => index),
+  )
+  const addresses = [
+    controls + 'vs\tcode://laststance.codebook/source?x=a b' + controls,
+    '\u0085\u00a0\u1680\u2000\u2028\u3000\ufeffx\ufeff\u3000\u2028\u2000\u1680\u00a0\u0085',
+    ' x\v\fy ',
+    controls,
+    '',
+  ]
+
+  // Act
+  const read = addresses.map(addressAsBrowserReads)
+
+  // Assert
+  assert.deepEqual(read, [
+    'vscode://laststance.codebook/source?x=a b',
+    '\u0085\u00a0\u1680\u2000\u2028\u3000\ufeffx\ufeff\u3000\u2028\u2000\u1680\u00a0\u0085',
+    'x\v\fy',
+    '',
+    '',
+  ])
 })
 
 // Value: protects=unknown character references in a source link when the reader binds it to the serving editor; fails_when=inherited Object properties replace unknown references with function text; why_new=the named-reference cases cover known names and numbers, not inherited property names; seam=none; no_claim=browser navigation (pure reader output)

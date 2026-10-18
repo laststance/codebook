@@ -1,4 +1,5 @@
 import { browserAttributeText } from './browserAttributeText'
+import { trimMatchingEnds } from './trimMatchingEnds'
 
 /**
  * Reads the address an attribute value holds as a browser follows it: its references read as a browser's tokenizer reads them ({@link browserAttributeText}), then without the spaces and control characters at its ends and without any tab or line break in it, as the URL parser drops them.
@@ -12,7 +13,8 @@ import { browserAttributeText } from './browserAttributeText'
  * addressAsBrowserReads(' vs&#99;o\tde://laststance.codebook/source?a=1&amp;b=2') // => 'vscode://laststance.codebook/source?a=1&b=2'
  */
 export function addressAsBrowserReads(written: string): string {
-  return browserAttributeText(written)
-    .replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '')
-    .replace(/[\t\n\r]/g, '')
+  return trimMatchingEnds(browserAttributeText(written), /[\x00-\x20]/).replace(
+    /[\t\n\r]/g,
+    '',
+  )
 }

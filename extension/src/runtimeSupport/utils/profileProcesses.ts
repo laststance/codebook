@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises'
 import { basename, dirname, join, posix, win32 } from 'node:path'
 
 import { systemErrorCode } from '../../utils/systemErrorCode'
+import { trimMatchingEnds } from '../../utils/trimMatchingEnds'
 
 import { linuxCommandLineArguments } from './linuxCommandLineArguments'
 import { listProcesses, type ListedProcess } from './listProcesses'
@@ -81,7 +82,7 @@ function namesProfileByText(command: string, folder: string): boolean {
 }
 
 /** The white space Chrome trims from both ends of each argument on macOS and Linux before it reads a switch (`TrimWhitespaceASCII` with `kWhitespaceASCII`). */
-const ASCII_WHITESPACE_AT_ENDS = /^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g
+const ASCII_WHITESPACE = /[\t\n\v\f\r ]/
 
 /** The prefixes by which Chrome reads a switch on macOS and Linux (`kSwitchPrefixes`), the longest first. */
 const POSIX_SWITCH_PREFIXES = ['--', '-']
@@ -98,7 +99,7 @@ function profileFolderOfArguments(
 ): string | undefined {
   let profileFolder: string | undefined
   for (const written of switchArguments) {
-    const argument = written.replace(ASCII_WHITESPACE_AT_ENDS, '')
+    const argument = trimMatchingEnds(written, ASCII_WHITESPACE)
     // Chrome reads no switch after the terminator.
     if (argument === SWITCH_TERMINATOR) break
     const prefix = POSIX_SWITCH_PREFIXES.find((candidate) =>
@@ -169,19 +170,19 @@ const WINDOWS_SWITCH_PREFIXES = ['--', '-', '/']
 const SWITCH_TERMINATOR = '--'
 
 /** The white space Chrome trims from both ends of each argument on Windows before it reads a switch: `kWhitespaceWide` of Chromium's base/strings/whitespace_constants.h, which `TrimWhitespace` uses. It differs from what `String.prototype.trim` removes: it holds NEXT LINE (U+0085) and not the byte order mark (U+FEFF). */
-const CHROME_WHITESPACE_AT_ENDS_ON_WINDOWS =
-  /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g
+const CHROME_WHITESPACE_ON_WINDOWS =
+  /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/
 
 /**
  * Trims an argument as Chrome trims each one on Windows before it reads a switch or the terminator (`AppendSwitchesAndArguments` of `base::CommandLine`: `TrimWhitespace(arg, TRIM_ALL)`); called by {@link namesProfileOnWindows} for each argument.
  * @param argument - One argument as `CommandLineToArgvW` gives it.
- * @returns The argument without Chrome's white space at either end ({@link CHROME_WHITESPACE_AT_ENDS_ON_WINDOWS}).
+ * @returns The argument without Chrome's white space at either end ({@link CHROME_WHITESPACE_ON_WINDOWS}).
  * @example
  * trimmedAsChrome(' --user-data-dir=C:\\x ') // => '--user-data-dir=C:\\x'
  * trimmedAsChrome('\ufeff--user-data-dir=C:\\x') // => '\ufeff--user-data-dir=C:\\x', which Chrome reads as no switch
  */
 function trimmedAsChrome(argument: string): string {
-  return argument.replace(CHROME_WHITESPACE_AT_ENDS_ON_WINDOWS, '')
+  return trimMatchingEnds(argument, CHROME_WHITESPACE_ON_WINDOWS)
 }
 
 /**

@@ -409,10 +409,18 @@ const firstClauseOf = (attributes, clauseOf) => {
 const REFUSED_IN_ANY_ADDRESS = /&#|^[/\\]{2}/;
 /** Whether {@link attributeScriptingClauseOf} accepts one address, its character references read by {@link attributeText}, as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Without a colon before its first slash, question mark or number sign it is a relative path or a fragment, unless a reference this publisher does not read stands there, which a browser may read as a colon or a tab: a named one with its semicolon (`&colon;`, `&Tab;`). A number without its semicolon (`&#58`) a browser reads too, wherever it stands, and its `#` would end the part the colon is looked for in, so an address that holds `&#` after its references were read is refused. A name without a semicolon a browser reads only from its short table of old names, none of which is a colon, a letter or a space, so `a&b.html` is a path. @example isAcceptedAddress('pages/flow.html#start') // => true; isAcceptedAddress('a&b.html') // => true; isAcceptedAddress('java\tscript:run()') // => false; isAcceptedAddress('javascript&colon;run()') // => false; isAcceptedAddress('javascript&#58run()') // => false; isAcceptedAddress('\\\\host\\share\\x.png') // => false */
 const isAcceptedAddress = address => {
-  const read = address.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '').replace(/[\t\n\r]/g, '');
+  const read = withoutAddressEdgeControls(address).replace(/[\t\n\r]/g, '');
   const [head] = read.split(/[/?#]/), schemeEnd = head.indexOf(':');
   if (REFUSED_IN_ANY_ADDRESS.test(read)) return false;
   return schemeEnd === -1 ? !/&[A-Za-z][A-Za-z0-9]*;/.test(head) : ADDRESS_SCHEMES.has(head.slice(0, schemeEnd).toLowerCase()) || isCodebookAddress(read);
+};
+/** Trims only the C0 controls and ASCII space at an address's ends for {@link isAcceptedAddress}, without rescanning an internal run. @example withoutAddressEdgeControls(' x  y ') // => 'x  y' */
+const withoutAddressEdgeControls = address => {
+  let start = 0, end = address.length;
+  // The URL parser removes these characters only at the edges.
+  while (start < end && /[\x00-\x20]/.test(address[start])) start++;
+  while (end > start && /[\x00-\x20]/.test(address[end - 1])) end--;
+  return address.slice(start, end);
 };
 /** The addresses one attribute value holds: for `srcset` the address of each candidate, split at every comma, so a comma inside an address can only add a refusal; the whole value otherwise. Called by {@link attributeScriptingClauseOf}. @example addressesOf('srcset', 'small.png 1x, large.png 2x') // => ['small.png', 'large.png'] */
 const addressesOf = (name, text) => name === 'srcset' ? text.split(',').map(candidate => candidate.trim().split(/[\t\n\f\r ]/)[0]) : [text];

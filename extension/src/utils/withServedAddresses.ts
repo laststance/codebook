@@ -4,6 +4,7 @@ import { addressAsBrowserReads } from './addressAsBrowserReads'
 import { browserAttributeText } from './browserAttributeText'
 import { escapeHtml } from './escapeHtml'
 import { type HtmlAttribute, readHtmlStartTags } from './readHtmlStartTags'
+import { trimMatchingEnds } from './trimMatchingEnds'
 
 /** The attributes a browser follows as an address: the ones the publisher holds to its schemes (`ADDRESS_ATTRIBUTES` of `render-wiki-diagrams.mjs`). */
 const ADDRESS_ATTRIBUTES = new Set([
@@ -116,9 +117,7 @@ function addressesOf(name: string, text: string): string[] {
  * isAcceptedAddress('\\\\host\\share\\x.png')                   // => false
  */
 function isAcceptedAddress(address: string): boolean {
-  const read = address
-    .replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '')
-    .replace(/[\t\n\r]/g, '')
+  const read = trimMatchingEnds(address, /[\x00-\x20]/).replace(/[\t\n\r]/g, '')
   const [head = ''] = read.split(/[/?#]/)
   const schemeEnd = head.indexOf(':')
   if (REFUSED_IN_ANY_ADDRESS.test(read)) return false

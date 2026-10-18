@@ -10,6 +10,82 @@ import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 import { windowsCommandLineArguments } from '../runtimeSupport/utils/windowsCommandLineArguments'
 
+// Value: protects=Chrome's different POSIX and Windows whitespace sets, including NEXT LINE and the byte order mark; fails_when=the linear trim changes the set or removes internal whitespace; why_new=row 1052 replaces both argument trims; seam=exact Linux arguments and Windows command text
+test('profile switches keep Chrome’s exact whitespace sets on Linux and Windows', async (context) => {
+  // Arrange
+  const profile = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-whitespace-')),
+  )
+  context.after(() => rm(profile, { recursive: true, force: true }))
+  const characters = [
+    '\t',
+    '\n',
+    '\v',
+    '\f',
+    '\r',
+    ' ',
+    '\u0085',
+    '\u00a0',
+    '\u1680',
+    '\u2000',
+    '\u2001',
+    '\u2002',
+    '\u2003',
+    '\u2004',
+    '\u2005',
+    '\u2006',
+    '\u2007',
+    '\u2008',
+    '\u2009',
+    '\u200a',
+    '\u2028',
+    '\u2029',
+    '\u202f',
+    '\u205f',
+    '\u3000',
+    '\u0001',
+    '\u001f',
+    '\u007f',
+    '\u180e',
+    '\u200b',
+    '\ufeff',
+  ]
+  const argumentsByPid = characters.map((character) => [
+    'chrome',
+    `${character}--user-data-dir=${profile}${character}`,
+  ])
+  const linuxListing = argumentsByPid.map((args, index) => ({
+    pid: index + 1,
+    command: args.join(' '),
+  }))
+  const windowsListing = argumentsByPid.map((args, index) => ({
+    pid: index + 1,
+    command: `chrome "${args[1]}"`,
+  }))
+
+  // Act
+  const linux = await profileProcesses(profile, linuxListing, {
+    platform: 'linux',
+    readArguments: async (pid) => argumentsByPid[pid - 1],
+  })
+  const windows = await profileProcesses(profile, windowsListing, {
+    platform: 'win32',
+  })
+
+  // Assert
+  assert.deepEqual(
+    linux.map(({ pid }) => pid),
+    [1, 2, 3, 4, 5, 6],
+  )
+  assert.deepEqual(
+    windows.map(({ pid }) => pid),
+    [
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      22, 23, 24, 25,
+    ],
+  )
+})
+
 test('a symlinked profile observes its canonical process and excludes a prefix-sharing profile', async () => {
   // Arrange: reproduce macOS /tmp -> /private/tmp normalization with an explicit portable symlink.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-process-test-'))
