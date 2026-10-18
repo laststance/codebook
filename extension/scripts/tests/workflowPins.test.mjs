@@ -791,6 +791,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/scripts/utils/readVsixBytes.mjs',
     'extension/src/runtimeSupport/utils/listProcesses.ts',
     'extension/src/runtimeSupport/utils/profileProcesses.ts',
+    'extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
     'extension/src/runtimeSupport/utils/windowsCommandLineArguments.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
@@ -814,6 +815,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/readRecordedOwner.test.ts',
     'extension/src/tests/readWikiRegularFile.test.ts',
     'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
+    'extension/src/tests/removeAbandonedProfiles.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/removeWithoutFollowing.test.ts',
@@ -841,6 +843,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/claimStorageLockTakeover.ts',
     'extension/src/utils/claimWikiUpdateMarker.ts',
     'extension/src/utils/currentStorageOwner.ts',
+    'extension/src/utils/currentUserName.ts',
     'extension/src/utils/deriveMachineKeys.ts',
     'extension/src/utils/describeNoStorageFolder.ts',
     'extension/src/utils/describeRefusedLinkBack.ts',
@@ -912,7 +915,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js',
     'node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs',
   ])
   assert.deepEqual(actionReferences, [
@@ -922,7 +925,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
 })
 
 // Review of Cycle 0045 (tests-1 #11): the pin knew npm, npx and pnpm only, so a job that added a tool with yarn, pip, corepack or a piped download stayed green.
-// Value: protects=a reader of a pull request's checks, who must see from a failed check's name what failed on Windows; fails_when=the workflow, its job or its test step is named after the storage lock again, the first of the ten kinds of test the job runs, or the guide gives another name for the check than the workflow has; why_new=Cycle 0046 row 264: a failed test of the Cursor MCP catalog or of the process listing showed as "Storage lock tests on Windows"; seam=none
+// Value: protects=a reader of a pull request's checks, who must see from a failed check's name what failed on Windows; fails_when=the workflow, its job or its test step is named after the storage lock again, the first of the eleven kinds of test the job runs, or the guide gives another name for the check than the workflow has; why_new=Cycle 0046 row 264: a failed test of the Cursor MCP catalog or of the process listing showed as "Storage lock tests on Windows"; seam=none
 test('the Windows workflow, its job and its test step are named after the file system and process tests they run, none after the storage lock alone, and the guide gives the check under the name a pull request shows', async () => {
   // Arrange
   const guide = await repositoryText('docs/qa/test-execution.md')
@@ -954,7 +957,7 @@ test('the Windows workflow, its job and its test step are named after the file s
   assert.deepEqual(
     names.filter((name) => /storage lock/i.test(name)),
     [],
-    'a name of the Windows workflow speaks of the storage lock alone, one of the ten kinds of test the job runs',
+    'a name of the Windows workflow speaks of the storage lock alone, one of the eleven kinds of test the job runs',
   )
   // The step of that name is the one that starts the tests.
   assert.equal(
@@ -1404,6 +1407,10 @@ const WINDOWS_JOB_TEST_KINDS = [
     kind: 'the folder listing',
     tests: ['listFolderTreeWithoutFollowing', 'isFolderOfItsOwn'],
   },
+  {
+    kind: 'the sweep of abandoned browser profiles',
+    tests: ['removeAbandonedProfiles'],
+  },
 ]
 
 /**
@@ -1452,7 +1459,7 @@ test('the test execution guide and the header of the Windows workflow name every
   // Assert: the kinds in both documents, in the same words; no file without a kind and no kind without a file.
   assert.equal(
     kindsSentence,
-    "the storage lock and its owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk and of the folder listing",
+    "the storage lock and its owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk, of the folder listing and of the sweep of abandoned browser profiles",
   )
   assert.deepEqual(
     kindsOfGuide,

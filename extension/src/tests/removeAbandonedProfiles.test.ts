@@ -102,7 +102,8 @@ test('a profile folder whose marker names a process that is gone is left while a
     [
       '-e',
       'process.stdout.write("ready"); setInterval(() => {}, 1000)',
-      '--',
+      // A loose argument ends Node's own options without a switch terminator (`--`): on Windows, Chrome and {@link profileProcesses} read no switch after one, so the sweep would take the folder for unused.
+      'chrome',
       `--user-data-dir=${folder}`,
     ],
     { stdio: ['ignore', 'pipe', 'ignore'] },
@@ -145,7 +146,8 @@ test('a link named like a profile folder is left, and the marked folder it point
     hostname: 'workstation',
   })
   const link = join(root, 'codebook-browser-link')
-  await symlink(target, link)
+  // A junction on Windows, which needs no right there; elsewhere the type is not read.
+  await symlink(target, link, 'junction')
   // Act
   const removed = await removeAbandonedProfiles(root, {
     hostname: 'workstation',
