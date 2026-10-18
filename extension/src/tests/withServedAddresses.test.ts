@@ -1054,6 +1054,38 @@ test('a block or list item start inside an open select leaves the paragraph or l
   ])
 })
 
+// Value: protects=the learner against an editor link in a CDATA start after an end tag that names the MathML or svg integration point an HTML element is open in (mi, mo, mn, ms, mtext, annotation-xml, desc, title); fails_when=the body rules' end of an unknown name matches the integration point by its tag id whatever its namespace, as the pinned parser's does, so the end closes it, the CDATA start is read as a CDATA section in MathML or svg and the link in it is hidden from the filter, while Chrome stops at the special foreign element, keeps the HTML element current, reads a bogus comment that ends at the first > and shows the link; why_new=Cycle 0046 second /ship pass 2 P2T2's random differential against Chrome (the one miss left in 35,115 pages); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('an end tag that names the MathML or svg integration point an HTML element is open in is ignored, so the link in a CDATA start after it loses its link', () => {
+  // Arrange
+  const pages = [
+    '<math><mi><span></mi><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><mo><span></mo><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><mn><span></mn><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><ms><span></ms><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><mtext><span></mtext><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><annotation-xml encoding="text/html"><span></annotation-xml><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><desc><span></desc><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><title><span></title><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<table><tr><td><svg><desc><span></desc><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<math><mi><span></mi><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><mo><span></mo><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><mn><span></mn><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><ms><span></ms><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><mtext><span></mtext><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<math><annotation-xml encoding="text/html"><span></annotation-xml><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><desc><span></desc><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><title><span></title><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<table><tr><td><svg><desc><span></desc><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+  ])
+})
+
 // Value: protects=a served page's text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is renamed; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
 test('a hidden input in a table body or a row, or written HIDDEN, leaves an open select open, so the style text after the select stays as written', () => {
   // Arrange: the table rule takes each input, so </select> closes the select with the svg in it and the style holds text.

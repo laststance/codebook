@@ -62,7 +62,7 @@ const BUTTON_SCOPE_END_TAG_IDS = new Set([
   ...SCOPE_END_TAG_IDS,
   htmlTree.TAG_ID.BUTTON,
 ])
-/** The svg and MathML elements that end every scope but the table scope. */
+/** The svg and MathML elements that end every scope but the table scope: the integration points, which the HTML standard also counts as special. */
 const FOREIGN_SCOPE_END_TAG_IDS = {
   [htmlTree.NS.SVG]: new Set([
     htmlTree.TAG_ID.DESC,
@@ -305,11 +305,46 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   override _endTagOutsideForeignContent(token: Parse5.Token.TagToken): void {
     // parse5 8.0.1 accepts either scope; HTML requires both before closing a row.
     if (this.shouldIgnoreTableSectionEnd(token)) return
+    if (this.isEndAtForeignSpecialElement(token)) return
     if (token.tagID === htmlTree.TAG_ID.SELECT && this.hasOpenSelect()) {
       this.closeSelect()
       return
     }
     super._endTagOutsideForeignContent(token)
+  }
+
+  /**
+   * Tells whether the body rules' end of an unknown name would close an svg or MathML integration point it names (`</mi>`, `</desc>`, `</foreignObject>` written in svg case), which the pinned parser matches by its tag id whatever the namespace; the HTML standard and Chrome match HTML elements only and stop at that special element, so the end is ignored. Called by {@link HtmlPageReader._endTagOutsideForeignContent} before the pinned rules.
+   * Only in the modes whose rules hand such an end to the body rules ({@link HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES}); the walk takes the pinned rule's own steps, from the current node down to the first element that matches or is special.
+   * @param token - The end token handled by HTML rules.
+   * @returns Whether the pinned rule would close a foreign element, so the end must be ignored instead.
+   * @example reader.isEndAtForeignSpecialElement(miEnd) // => true for '<math><mi><span></mi>'
+   */
+  private isEndAtForeignSpecialElement(token: Parse5.Token.TagToken): boolean {
+    if (
+      !HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES.has(this.insertionMode) ||
+      !(
+        FOREIGN_SCOPE_END_TAG_IDS[htmlTree.NS.SVG].has(token.tagID) ||
+        FOREIGN_SCOPE_END_TAG_IDS[htmlTree.NS.MATHML].has(token.tagID)
+      )
+    )
+      return false
+    const { items, tagIDs, stackTop } = this.openElements
+    for (let index = stackTop; index > 0; index -= 1) {
+      const element = items[index]
+      const tagID = tagIDs[index]
+      if (
+        element === undefined ||
+        tagID === undefined ||
+        !this.treeAdapter.isElementNode(element)
+      )
+        continue
+      // The pinned rule matches by tag id before it asks whether the element is special.
+      if (tagID === token.tagID)
+        return this.treeAdapter.getNamespaceURI(element) !== htmlTree.NS.HTML
+      if (this._isSpecialElement(element, tagID)) return false
+    }
+    return false
   }
 
   /**
