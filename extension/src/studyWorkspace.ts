@@ -9011,7 +9011,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Limits {@link closeOwnedEditorTabs} to captured source, a current panel's native group, and a Repository Wiki copy in a group Codebook created for this Study ({@link isWikiCopyInCreatedGroup}), so rebuilt inherited tabs cannot become owned by their view type alone.
+   * Limits {@link closeOwnedEditorTabs} to captured source, a current panel's native group, and a Repository Wiki copy in a group Codebook created for this Study ({@link isWikiCopyInCreatedGroup}), so rebuilt inherited tabs cannot become owned by their view type alone; {@link emptiesEditorGroupAtClose} predicts the groups that close empties by the same rule.
    * @param group - The current native group of the tab, reread after every awaited close.
    * @param tab - A current native tab, never a saved wrapper.
    * @returns Whether this reader owns the source, holds the pane in the tab's current column, or the tab is a Wiki copy in one of its created groups.
@@ -9407,16 +9407,17 @@ export class StudyWorkspace {
 
   /**
    * Says whether {@link close} leaves an editor group empty that the editor then removes; asked by {@link editorEndsReadMaximizationAtClose} before anything is closed.
-   * @returns `true` when the learner has not turned `workbench.editor.closeEmptyGroups` off and a group holds nothing but this reader's panes and captured sources; `false` when every such tab shares its group with a tab that stays, when the setting is off (an emptied group then stays), and for a group whose only tabs are panes of an earlier extension host, which this close does not close.
+   * @returns `true` when the learner has not turned `workbench.editor.closeEmptyGroups` off and a group holds nothing but tabs this close closes ({@link ownsClosingTab}, the rule {@link closeOwnedEditorTabs} closes by): this reader's panes in their own columns, its captured sources, and the Repository Wiki's copies in a group Codebook created; `false` when every such tab shares its group with a tab that stays, when the setting is off (an emptied group then stays), and for a group whose only tabs are panes of an earlier extension host, which this close does not close.
    * @example this.emptiesEditorGroupAtClose() // => true for the three-pane Study workspace, whose Study pane has a group of its own
    */
   private emptiesEditorGroupAtClose(): boolean {
+    // The prediction counts a tab by the same rule the close closes it by, so a group the close empties is never read as one that stays (OCR1-12).
     return (
       this.closesEmptyEditorGroups() &&
       vscode.window.tabGroups.all.some(
         (group) =>
           group.tabs.length > 0 &&
-          group.tabs.every((tab) => this.isOwnPaneOrSourceTab(tab)),
+          group.tabs.every((tab) => this.ownsClosingTab(group, tab)),
       )
     )
   }
@@ -9738,10 +9739,10 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a tab is one {@link close} closes: a pane this reader owns or one of its captured sources; asked by {@link emptiesEditorGroupAtClose} and {@link learnersTabKeysOf}.
+   * Says whether a tab is a pane this reader owns or one of its captured sources; the first test of {@link ownsClosingTab}, which {@link close} closes by and which also asks for the pane's column, and asked by {@link learnersTabKeysOf} and {@link learnerViewOfGroup} for the tabs that are not the learner's.
    * @param tab - A tab of an editor group.
    * @returns `true` for a captured source of this workspace's reader and for an Application or Study pane that is not left over from an earlier extension host; `false` for every other tab.
-   * @example group.tabs.every((tab) => this.isOwnPaneOrSourceTab(tab))
+   * @example group.tabs.filter((tab) => !this.isOwnPaneOrSourceTab(tab)) // => the learner's tabs of the group
    */
   private isOwnPaneOrSourceTab(tab: vscode.Tab): boolean {
     return (

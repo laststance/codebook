@@ -4418,6 +4418,89 @@ for (const host of ['VS Code', 'Cursor'] as const)
     }
   })
 
+// Value: protects=the sizes of the learner's group after Close Study Workspace during a Read, when a Repository Wiki citation copy stands in each group Codebook created for the Study (the Application's own group at column 1, where the Wiki shows its citations, and the Study pane's group): Close retires the copies with those groups (row 682), so the editor ends the maximization itself as the groups go, and the reader runs no command that resizes a group; fails_when=Close predicts the groups it empties by a rule that does not count a Wiki copy as closed, so it takes both created groups for ones that stay and ends the Read with the editor's Expand, which leaves the groups at the sizes it gives them; why_new=Cycle 0046 second /ship OCR review OCR1-12 (emptiesEditorGroupAtClose read isOwnPaneOrSourceTab while closeOwnedEditorTabs closes by ownsClosingTab); seam=presentation.createViewport (the MCP-first preparation, which gives the Application a group of its own), the Study workspace preference, codebook-repository-source copies shown into columns 1 and 3 as the Wiki shows its citation, the reader's Read Application, closeDisposedPanelTabsLater (an emptied group is removed, which ends a maximization as both editors' grids do), its maximized group and command log; no_claim=a pane tab outside its panel's column, the other case where the two rules differed
+test('Close Study Workspace during a Read, with a Wiki citation copy in each group Codebook created, leaves the end of the maximization to the editor and runs no command that resizes a group', async () => {
+  // Arrange: an MCP run prepared the Application in its own group at column 1 beside the learner's group; the Study workspace Open adds the Study pane's group at column 3; a Wiki citation copy was shown into each of those two groups, and the learner reads the Application enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  harness.closeDisposedPanelTabsLater()
+  harness.focusMutableDraft()
+  const learnersTabs = harness.groups[0]!.tabs.map((tab) => tab.label)
+  harness.presentationPreferences.set('codebook.presentation.v1', {
+    version: 1,
+    mode: 'study-workspace',
+  })
+  const reader = harness.createReader(),
+    viewport = await reader.presentation.createViewport(
+      'mcp-first-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+  try {
+    await reader.open()
+    const library = await reader.learningStorage()
+    const uri = harness.editor.Uri.from({
+      scheme: REPOSITORY_SOURCE_SCHEME,
+      authority: library.workspaceKey,
+      path: '/architecture/1/module/0/login-form.tsx',
+    })
+    for (const column of [1, 3])
+      await harness.editor.window.showTextDocument(
+        { uri, getText: () => 'export const total = 48;\n' },
+        { viewColumn: column, preview: false },
+      )
+    const beforeRead = harness.groups.map((group) =>
+      group.tabs.map((tab) => tab.label),
+    )
+    await reader.action('read-app')
+    const maximizedByRead = harness.maximizedEditorGroup()
+    viewport.close()
+    const commandsBefore = harness.commands.length
+
+    // Act: Close, and longer than the fake editor takes to close the disposed panes' tabs and remove the groups they left.
+    await reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // Assert
+    assert.deepEqual(
+      { beforeRead, maximizedByRead },
+      {
+        beforeRead: [
+          ['codebook · Application mcp-firs', 'login-form.tsx'],
+          [...learnersTabs, 'Captured-overview.mts'],
+          ['codebook · Study', 'login-form.tsx'],
+        ],
+        maximizedByRead: true,
+      },
+    )
+    assert.deepEqual(
+      {
+        resizingCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /minimizeOtherEditors|toggleMaximizeEditorGroup|maximizeEditorHideSidebar|evenEditorWidths|setEditorLayout/.test(
+              command,
+            ),
+          ),
+        maximized: harness.maximizedEditorGroup(),
+        groups: harness.groups.map((group) =>
+          group.tabs.map((tab) => tab.label),
+        ),
+      },
+      {
+        resizingCommands: [],
+        maximized: false,
+        groups: [learnersTabs],
+      },
+    )
+  } finally {
+    viewport.close()
+    await reader.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=a copy of a cited source the learner pinned: the learner chose to keep it, so Close Study Workspace leaves it, with the group it stands in; fails_when=row 682's retirement of the Wiki's copies in the groups Codebook created also closes a copy the learner pinned there; why_new=Cycle 0046 row 682 (its bound, as row 641's rule keeps a pinned copy); seam=articleRecordingLayoutHarness, a codebook-repository-source copy shown into column 1 and pinned, the reader's Close and the groups
 test('a Wiki citation copy the learner pinned in the recording Application’s own group stays at Close Study Workspace, with that group', async () => {
   // Arrange
