@@ -643,6 +643,30 @@ test('every attribute a browser follows and every way it reads an editor address
   )
 })
 
+// Value: protects=the learner in Cursor whose Wiki page links to Codebook with an address the publisher accepts in another case or form than it prints itself; fails_when=the reader rebinds only the lower-case, quoted form of the three routes, so `VSCode://LastStance.Codebook/…`, a bare value, an `HREF` or spaces around its `=` keep the scheme of VS Code, and a click in Cursor opens VS Code; why_new=Cycle 0046 /ship finding AF5 (the publisher compares Codebook's scheme and authority without case since TC7); seam=none, the served page is compared as text
+test('a Codebook address written in another case, with a bare value, an HREF in capitals or spaces around its =, gets the scheme of the editor that serves the page, its authority and route as written', () => {
+  // Arrange
+  const page =
+    '<a href="VSCode://LastStance.Codebook/source?path=a.ts">a</a>' +
+    "<a href='CURSOR://laststance.codebook/update?root=%2Frepo'>b</a>" +
+    '<a href=Vscode://laststance.codebook/settings?root=%2Frepo>c</a>' +
+    '<a HREF = "vscode://LASTSTANCE.CODEBOOK/source?path=d.ts">d</a>' +
+    '<a href="vscode://laststance.codebook/Source?path=e.ts">e</a>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<a href="cursor://LastStance.Codebook/source?path=a.ts">a</a>' +
+      "<a href='cursor://laststance.codebook/update?root=%2Frepo'>b</a>" +
+      '<a href=cursor://laststance.codebook/settings?root=%2Frepo>c</a>' +
+      '<a HREF = "cursor://LASTSTANCE.CODEBOOK/source?path=d.ts">d</a>' +
+      '<a href="cursor://laststance.codebook/Source?path=e.ts">e</a>',
+  )
+})
+
 // Value: protects=an escaped code example or a sentence of a page that shows an editor address; fails_when=the reader changes an address it reads in the page's text, where a browser follows nothing, so the example shows another text than its author wrote; why_new=Cycle 0046 /ship repeat code review OC5 (the rule of row 135 that the page's text is served as published); seam=none, the served page is compared as text
 test('an editor address shown in the text of a page is served as written', () => {
   // Arrange

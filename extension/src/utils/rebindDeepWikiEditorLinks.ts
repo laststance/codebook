@@ -20,9 +20,9 @@ type OpenTarget = { path: string; line: string }
 /** A comment or a start tag of a page: what {@link withEditorSchemeInLinks} tells apart from the page's text. A comment is passed over whole, up to what a browser takes for its end (`-->`, `--!>`, or at once for `<!-->` and `<!--->`); a start tag is where the address of a link stands, read up to the `>` that ends it as a browser reads it: a quoted attribute value in it may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). An escaped code example holds no `<` before a letter, so it is text. */
 const COMMENT_OR_START_TAG =
   /<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g
-/** The start of a Codebook address in the `href` of a start tag, with the scheme of either editor; the third group is the action the address names. The attribute stands after one of the five characters a browser separates attributes at (tab, line feed, form feed, carriage return, space): another white space of JavaScript, a no-break space for example, is a letter of the tag for a browser. */
+/** The start of a Codebook address in the `href` of a start tag, with the scheme of either editor, by the publisher's rule of a Codebook address (`isCodebookAddress` of `render-wiki-diagrams.mjs`): the scheme and the authority compare without case, as a browser compares them, and any route follows. The name `href` in any case, the white space a browser allows around its `=`, and a quoted or bare value are read; the second group is all of that up to the scheme, the third the authority, both kept as written. The attribute stands after one of the five characters a browser separates attributes at (tab, line feed, form feed, carriage return, space): another white space of JavaScript, a no-break space for example, is a letter of the tag for a browser. */
 const CODEBOOK_ADDRESS_START =
-  /([\t\n\f\r ])href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g
+  /([\t\n\f\r ])(href[\t\n\f\r ]*=[\t\n\f\r ]*["']?)(?:vscode|cursor)(:\/\/laststance\.codebook\/)/gi
 
 /**
  * Gives every Codebook address a link of the page opens the scheme of the editor that serves the page; called by {@link rebindDeepWikiEditorLinks} first.
@@ -31,7 +31,7 @@ const CODEBOOK_ADDRESS_START =
  *
  * @param html - The published page.
  * @param editorScheme - The scheme registered by the editor serving this request.
- * @returns The page with the scheme rewritten in the `href` of its start tags, and its text and comments unchanged.
+ * @returns The page with the scheme rewritten in the `href` of its start tags, whatever case the address's scheme and authority are written in, and its text and comments unchanged.
  * @example
  * withEditorSchemeInLinks('<a href="vscode://laststance.codebook/update?root=%2Frepo">Update</a><code>&lt;a href="vscode://laststance.codebook/update?root=%2Frepo"&gt;</code>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/update?root=%2Frepo">Update</a><code>&lt;a href="vscode://laststance.codebook/update?root=%2Frepo"&gt;</code>'
@@ -46,8 +46,8 @@ function withEditorSchemeInLinks(
       ? markup
       : markup.replace(
           CODEBOOK_ADDRESS_START,
-          (_match, whitespace: string, quote: string, route: string) =>
-            `${whitespace}href=${quote}${editorScheme}://laststance.codebook/${route}?`,
+          (_match, whitespace: string, attribute: string, authority: string) =>
+            `${whitespace}${attribute}${editorScheme}${authority}`,
         ),
   )
 }
