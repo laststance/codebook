@@ -307,3 +307,32 @@ test('the profile switch before a switch terminator decides on Linux and on Wind
     { linux: [51, 52, 53], windows: [51] },
   )
 })
+
+// Value: protects=a live profile on Windows whose Chrome was given its profile switch, or the switch terminator, with white space at an end of the argument (`" --user-data-dir=C:\\…\\codebook-browser-x "`): Chrome trims each argument with its own set of white space before it reads a switch, so it uses that folder, and the sweep must not take it for unused (R2, /ship third review, Codex B2); fails_when=the argument is read as it stands, so a trimmed switch is missed and the sweep removes the live profile, or a trimmed terminator is not seen and a loose switch after it hides the real one, or the arguments are trimmed by another set than Chrome's (`String.prototype.trim` keeps NEXT LINE and removes the byte order mark); why_new=every Windows row named arguments without white space at their ends; seam=the system the command lines are read for (`win32`) and a listing of the test's own, matched against a real profile folder
+test('on Windows a profile switch or a terminator with white space at its ends is read as Chrome trims it, by Chrome’s own set of white space', async (context) => {
+  // Arrange: 61 and 62 give the profile with a space and with NEXT LINE at an end; 63 starts with a byte order mark, which Chrome keeps; in 64 a terminator written with spaces ends the switches before a loose one that names the profile.
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-trim-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'codebook-browser-x')
+  await mkdir(profile)
+  const listing = [
+    { pid: 61, command: `chrome.exe " --user-data-dir=${profile} "` },
+    { pid: 62, command: `chrome.exe "--user-data-dir=${profile}\u0085"` },
+    { pid: 63, command: `chrome.exe "\ufeff--user-data-dir=${profile}"` },
+    {
+      pid: 64,
+      command: `chrome.exe --user-data-dir=${parent}/other " -- " --user-data-dir=${profile}`,
+    },
+  ]
+  // Act
+  const observed = await profileProcesses(profile, listing, {
+    platform: 'win32',
+  })
+  // Assert
+  assert.deepEqual(
+    observed.map((listed) => listed.pid),
+    [61, 62],
+  )
+})

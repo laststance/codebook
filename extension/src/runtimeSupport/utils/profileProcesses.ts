@@ -90,6 +90,22 @@ const WINDOWS_SWITCH_PREFIXES = ['--', '-', '/']
 /** The argument after which Chrome reads no more switches (`kSwitchTerminator`). */
 const SWITCH_TERMINATOR = '--'
 
+/** The white space Chrome trims from both ends of each argument on Windows before it reads a switch: `kWhitespaceWide` of Chromium's base/strings/whitespace_constants.h, which `TrimWhitespace` uses. It differs from what `String.prototype.trim` removes: it holds NEXT LINE (U+0085) and not the byte order mark (U+FEFF). */
+const CHROME_WHITESPACE_AT_ENDS_ON_WINDOWS =
+  /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g
+
+/**
+ * Trims an argument as Chrome trims each one on Windows before it reads a switch or the terminator (`AppendSwitchesAndArguments` of `base::CommandLine`: `TrimWhitespace(arg, TRIM_ALL)`); called by {@link namesProfileOnWindows} for each argument.
+ * @param argument - One argument as `CommandLineToArgvW` gives it.
+ * @returns The argument without Chrome's white space at either end ({@link CHROME_WHITESPACE_AT_ENDS_ON_WINDOWS}).
+ * @example
+ * trimmedAsChrome(' --user-data-dir=C:\\x ') // => '--user-data-dir=C:\\x'
+ * trimmedAsChrome('\ufeff--user-data-dir=C:\\x') // => '\ufeff--user-data-dir=C:\\x', which Chrome reads as no switch
+ */
+function trimmedAsChrome(argument: string): string {
+  return argument.replace(CHROME_WHITESPACE_AT_ENDS_ON_WINDOWS, '')
+}
+
 /**
  * Reads the profile folder an argument gives Chrome on Windows, as `base::CommandLine` reads a switch there: after one of its prefixes ({@link WINDOWS_SWITCH_PREFIXES}), by a name it compares in lower case, and the value after the first `=`; called by {@link namesProfileOnWindows} for each argument.
  * @param argument - One argument of the command line.
@@ -114,7 +130,7 @@ function profileSwitchValueOnWindows(argument: string): string | undefined {
 
 /**
  * Says whether a Windows command line names a profile folder as Chrome's `--user-data-dir`; called by {@link profileProcesses} on Windows.
- * The command line is split into its arguments as `CommandLineToArgvW` splits it ({@link windowsCommandLineArguments}), the arguments after the program name and before a switch terminator (`--`) are read as Chrome reads its switches ({@link profileSwitchValueOnWindows}), and the switch's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
+ * The command line is split into its arguments as `CommandLineToArgvW` splits it ({@link windowsCommandLineArguments}), each argument is trimmed as Chrome trims it ({@link trimmedAsChrome}), the arguments after the program name and before a switch terminator (`--`) are read as Chrome reads its switches ({@link profileSwitchValueOnWindows}), and the switch's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
  * @param command - The command line as Windows keeps it.
  * @param folder - The resolved profile folder.
  * @returns `true` when the last profile switch, the one Chrome takes, names this folder; `false` for a folder that only shares a prefix with it, and when a later switch names another folder.
@@ -123,7 +139,10 @@ function profileSwitchValueOnWindows(argument: string): string | undefined {
  */
 function namesProfileOnWindows(command: string, folder: string): boolean {
   const wanted = comparableWindowsPath(folder)
-  const switches = windowsCommandLineArguments(command).slice(1)
+  // Chrome trims each argument before it reads a switch or the terminator in it.
+  const switches = windowsCommandLineArguments(command)
+    .slice(1)
+    .map(trimmedAsChrome)
   const terminator = switches.indexOf(SWITCH_TERMINATOR)
   // Chrome reads no switch after the terminator: such an argument is a loose one; of several profile switches the last one is Chrome's.
   const profileFolder = (
