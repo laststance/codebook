@@ -874,6 +874,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/placeStorageLock.ts',
     'extension/src/utils/preparedLockSuffix.ts',
     'extension/src/utils/processStartFormHere.ts',
+    'extension/src/utils/psProgramPath.ts',
     'extension/src/utils/readBootIdentity.ts',
     'extension/src/utils/readLiveWikiUpdateMarker.ts',
     'extension/src/utils/readProcessStart.ts',

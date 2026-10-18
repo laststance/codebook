@@ -2,7 +2,7 @@ import {
   PROCESS_LISTING_MAX_BYTES,
   PROCESS_LISTING_TIMEOUT_MS,
 } from '../../constants'
-import { isProgramFile } from '../../utils/isProgramFile'
+import { psProgramPath } from '../../utils/psProgramPath'
 import {
   runBoundedQuery,
   type BoundedQueryOptions,
@@ -32,9 +32,6 @@ export type ProcessListingInputs = {
   /** Says whether a path is a program file this user may run; {@link isProgramFile} unless a test names its own. */
   isProgramFile?: (path: string) => Promise<boolean>
 }
-
-/** Where `ps` lies on macOS and Linux: `/bin/ps`, and `/usr/bin/ps` on a system whose `/bin` has none. It is started by one of these absolute paths, never looked up in the search path or the current folder. */
-const PS_PROGRAMS = ['/bin/ps', '/usr/bin/ps']
 
 /** The listing of one system: the command that prints every process on a line of its own, and the reader of such a line. */
 type ProcessListingForm = {
@@ -104,7 +101,7 @@ const WINDOWS_LISTING: Omit<ProcessListingForm, 'file'> = {
  * Chooses the listing of a system; called by {@link listProcesses}.
  * @param platform - The system whose listing is used.
  * @param inputs - Where the Windows system root is read from, and where `ps` may lie on other systems with the check of its file ({@link ProcessListingInputs}).
- * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` of another folder is started in its place; on every other system `ps` by the first of its absolute paths that holds it ({@link PS_PROGRAMS}), never one searched for in the search path or the current folder.
+ * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` of another folder is started in its place; on every other system `ps` by the first of its absolute paths that holds it ({@link psProgramPath}), never one searched for in the search path or the current folder.
  * @throws When the program's folder is unknown: on Windows when neither `SystemRoot` nor `windir` names a drive-letter folder, elsewhere when no path of `ps` holds it. The listing is refused then and no program is started, since a program searched for in other folders could be another one of that name.
  * @example
  * (await listingFormOf('darwin', {})).file                         // => '/bin/ps'
@@ -114,15 +111,12 @@ async function listingFormOf(
   platform: NodeJS.Platform,
   inputs: ProcessListingInputs,
 ): Promise<ProcessListingForm> {
-  if (platform !== 'win32') {
-    const isProgram = inputs.isProgramFile ?? isProgramFile
-    for (const candidate of inputs.psPrograms ?? PS_PROGRAMS)
-      if (await isProgram(candidate))
-        return { ...UNIX_LISTING, file: candidate }
-    throw new Error(
-      `The process listing was not started: no ps lies at ${(inputs.psPrograms ?? PS_PROGRAMS).join(' or ')}, and Codebook starts it only from there.`,
-    )
-  }
+  // ps is started from its absolute paths only, by the same lookup as the process group checks of the inspectors.
+  if (platform !== 'win32')
+    return {
+      ...UNIX_LISTING,
+      file: await psProgramPath('The process listing', inputs),
+    }
   const file = windowsPowerShellPath(inputs.environment)
   // Without a system root PowerShell's folder is unknown; no other folder is searched for it.
   if (file === undefined)

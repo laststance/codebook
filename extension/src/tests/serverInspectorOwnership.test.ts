@@ -8,6 +8,8 @@ import { Worker } from 'node:worker_threads'
 import { Cdp } from '../runtimeSupport/cdp'
 import { verifyServerInspectorOwnership } from '../utils/verifyServerInspectorOwnership'
 
+import { standInForPs } from './utils/standInForPs'
+
 test('a real worker inspector identifies its thread separately from the owned process', async (context) => {
   // Arrange: a Node worker shares the process PID, repository and launch marker.
   const processGroup = Number(
@@ -275,3 +277,36 @@ test('cancelled or retired launches cannot retain ownership after an inspector r
   assert.equal(checks, 2)
   inspector.close()
 })
+
+// Value: protects=the process group check that decides whether a server inspector belongs to the owned launch: it asks the system's ps at /bin/ps or /usr/bin/ps, never a ps the search path names; fails_when=the check starts the bare `ps`, so with an empty or relative PATH entry and the opened project as the editor's current folder a cloned repository's own ps answers the group and a foreign inspector gains debugger control; why_new=RT2; seam=`ps` itself, a stand-in of the test that is the whole search path and answers a foreign group; no_claim=a system whose /bin/ps and /usr/bin/ps are both missing
+test(
+  'a ps in the search path cannot vouch for a foreign process group of a server inspector',
+  { skip: process.platform === 'win32' && 'the stand-in for ps needs /bin/sh' },
+  async (context) => {
+    // Arrange: the real group is read before the stand-in takes the search path; the stand-in answers the group one above it.
+    const processGroup = Number(
+      execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], {
+        encoding: 'utf8',
+      }).trim(),
+    )
+    const foreignGroup = processGroup + 1
+    await standInForPs(context, `process.stdout.write('${foreignGroup}\\n')`)
+    const inspector = inspectorResponse({
+      pid: process.pid,
+      cwd: process.cwd(),
+      worker: '1',
+    })
+    // Act / Assert
+    await assert.rejects(
+      verifyServerInspectorOwnership(
+        inspector,
+        process.cwd(),
+        foreignGroup,
+        new AbortController().signal,
+        () => undefined,
+      ),
+      /different process group/,
+    )
+    inspector.close()
+  },
+)

@@ -2,7 +2,7 @@ import { constants as fileSystemConstants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 
 /**
- * Says whether a path is a regular file this user may run; the program check of {@link gitExecutablePath} and of {@link listProcesses} for `ps`, unless a test names its own.
+ * Says whether a path is a regular file this user may run; the program check of {@link gitExecutablePath} and of {@link psProgramPath} for `ps` (the process listing and the process group checks of the inspectors), unless a test names its own.
  * @param path - An absolute path.
  * @returns `true` for a regular file that is executable for this user (on Windows, which decides by the extension, any regular file); `false` for anything else, also a path that cannot be read.
  * @example

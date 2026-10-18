@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 import type { Cdp } from '../runtimeSupport/cdp'
 
+import { psProgramPath } from './psProgramPath'
+
 const workerIdentitySchema = z.strictObject({
   pid: z.number().int().positive(),
   cwd: z.string().min(1),
@@ -30,7 +32,7 @@ const threadIdentitySchema = z
  * @param signal - Revokes verification when that launch is abandoned.
  * @param assertRunning - Rechecks launch ownership around asynchronous replies.
  * @returns Owned PID, process group and canonical repository, plus Node's thread identity; threadId is not a DAP thread id.
- * @throws When a reply is malformed, the process/repository is foreign, or the launch is no longer owned.
+ * @throws When a reply is malformed, the process/repository is foreign, the launch is no longer owned, or no `ps` lies at an absolute path of {@link psProgramPath}.
  * @example await verifyServerInspectorOwnership(cdp, target, app.pid, signal, assertRunning)
  */
 export async function verifyServerInspectorOwnership(
@@ -61,8 +63,9 @@ export async function verifyServerInspectorOwnership(
   if (actualWorkspace !== expectedWorkspace)
     throw new Error('Server inspector belongs to a different repository')
   // Process arguments are separate and the inspector-supplied PID must first pass integer validation.
+  // ps is started by its absolute path: one of the search path could be the opened repository's own.
   const { stdout } = await promisify(execFile)(
-    'ps',
+    await psProgramPath('The process group check of the server inspector'),
     ['-o', 'pgid=', '-p', String(identity.pid)],
     { signal, timeout: ACTIVE_TIMEOUT_MS },
   )
