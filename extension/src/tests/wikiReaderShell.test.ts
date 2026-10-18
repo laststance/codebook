@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 
 import { startDeepWikiReader } from '../deepWikiReader'
 import { rebindDeepWikiEditorLinks } from '../utils/rebindDeepWikiEditorLinks'
+import { withServedAddresses } from '../utils/withServedAddresses'
 
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 
@@ -488,6 +489,52 @@ test('an entry as this build publishes it is served with its shown target and it
   assert.equal(
     servedByCursor,
     '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
+  )
+})
+
+// Value: protects=the rule that the page a learner receives is the address filter's output, also after the reader rewrites the rail's entry; fails_when=the reader edits the page after the filter read it again, so a served entry of any published shape still holds an attribute the filter changes when it reads the served page; why_new=SEC1; seam=none; no_claim=crafted pages whose rewritten or deleted text carries a quote are not part of this test
+test('a rail entry of each published shape is served as the address filter leaves it, so filtering the served page again changes nothing', () => {
+  // Arrange: one entry as 0.2.29.0 printed it, one as the builds of Cycle 0046 before finding 600 printed it, and one as this build prints it.
+  const ofTheFirstRelease =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=0f">Open in VS Code</a></p>'
+  const describedByItsShownTarget =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">package.json<wbr>:31</span></p>'
+  const publishedToday =
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>'
+
+  // Act
+  const served = [
+    ofTheFirstRelease,
+    describedByItsShownTarget,
+    publishedToday,
+  ].map((page) => rebindDeepWikiEditorLinks(page, 'cursor'))
+  const filteredAgain = served.map((page) =>
+    withServedAddresses(page, 'cursor'),
+  )
+
+  // Assert
+  const expected = [
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">src/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/a.ts:12</span></p>',
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=package.json&amp;line=31&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
+  ]
+  assert.deepEqual(served, expected)
+  assert.deepEqual(filteredAgain, expected)
+})
+
+// Value: protects=the rail entry of a page of 0.2.29.0 whose link the reader takes away; fails_when=the reader names a file and line beside a link that opens nothing, because it reads the entry's target before the filter judged the link's address; why_new=SEC1 (the filter now runs after the rail rewrites); seam=none
+test('an entry of 0.2.29.0 whose address the reader refuses keeps its text without a link and gets no file and line beside it', () => {
+  // Arrange: an entry in the shape of 0.2.29.0 whose link opens a file through another extension's address, with a path and a line in its query.
+  const page =
+    '<p class="open-in-editor"><a href="vscode://file/etc/hosts?path=a.ts&amp;line=1">Open in VS Code</a></p>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<p class="open-in-editor"><a data-codebook-unlinked="vscode://file/etc/hosts?path=a.ts&amp;line=1">Open in Cursor</a></p>',
   )
 })
 

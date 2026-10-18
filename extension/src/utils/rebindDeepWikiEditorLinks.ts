@@ -21,15 +21,22 @@ type OpenTarget = { path: string; line: string }
 
 /**
  * Reads the query of the address a published link opens, out of the link's attributes, as a browser reads its first `href` ({@link readHtmlStartTags}, {@link addressAsBrowserReads}): in any case of the name, quoted or bare, with its references read; called by {@link openTargetOf}.
+ *
+ * The link is read as the reader serves it ({@link withServedAddresses}), so a link whose address the reader takes away names no target.
+ *
  * @param linkAttributes - The attributes of the link as the page carries them, with the escaped `href`.
- * @returns The address's query; empty when the attributes hold no `href` or the address has no query.
+ * @param editorScheme - The scheme registered by the editor serving this request.
+ * @returns The address's query; empty when the attributes hold no `href` the reader keeps or the address has no query.
  * @example
- * publishedQueryOf('HREF=vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12').get('path') // => 'src/a.ts'
+ * publishedQueryOf('HREF=vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12', 'cursor').get('path') // => 'src/a.ts'
  */
-function publishedQueryOf(linkAttributes: string): URLSearchParams {
-  const href = readHtmlStartTags(`<a ${linkAttributes}>`)[0]?.attributes.find(
-    (attribute) => attribute.name === 'href',
-  )
+function publishedQueryOf(
+  linkAttributes: string,
+  editorScheme: 'vscode' | 'cursor',
+): URLSearchParams {
+  const href = readHtmlStartTags(
+    withServedAddresses(`<a ${linkAttributes}>`, editorScheme),
+  )[0]?.attributes.find((attribute) => attribute.name === 'href')
   const address = addressAsBrowserReads(href?.written ?? '')
   const queryStart = address.indexOf('?')
   // What follows the first question mark is the query; an address without one names no parameter this entry reads.
@@ -41,15 +48,19 @@ function publishedQueryOf(linkAttributes: string): URLSearchParams {
 /**
  * Reads the file and line a published source link opens; called by {@link rebindDeepWikiEditorLinks} for an entry published without a target beside its link.
  * @param linkAttributes - The attributes of the entry's link as the page carries them, with the escaped `href`.
+ * @param editorScheme - The scheme registered by the editor serving this request.
  * @returns
  * - The path and the line number the address names, as text
- * - `undefined` when the address names no path or no line number
+ * - `undefined` when the address names no path or no line number, or the reader takes the address away
  * @example
- * openTargetOf('href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…"')
+ * openTargetOf('href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…"', 'vscode')
  * // => { path: 'src/a.ts', line: '12' }
  */
-function openTargetOf(linkAttributes: string): OpenTarget | undefined {
-  const query = publishedQueryOf(linkAttributes)
+function openTargetOf(
+  linkAttributes: string,
+  editorScheme: 'vscode' | 'cursor',
+): OpenTarget | undefined {
+  const query = publishedQueryOf(linkAttributes, editorScheme)
   const path = query.get('path')
   // A missing line reads as the text "null", which is no line number either.
   const line = String(query.get('line'))
@@ -80,7 +91,7 @@ function openTargetHtml(target: OpenTarget, targetId: string): string {
  *
  * A page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article. The entry's link names its description by id, and an id that stands twice names the first element, which would be that heading. The page's ids are read once, as a browser reads them ({@link readHtmlStartTags}), so a page that carries many numbered ids takes no more than one reading.
  *
- * @param html - The page as the reader serves it, its entries without the target the reader adds.
+ * @param html - The page with the rail's label named after the serving editor, its entries without the target the reader adds.
  * @returns
  * - `codebook-open-target` when no element of the page carries it
  * - otherwise `codebook-open-target-2`, or the first higher number that is free
@@ -105,7 +116,9 @@ function freeOpenTargetIdIn(html: string): string {
 /**
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
  *
- * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. First, in one pass over the page, every address the publisher refuses today loses its link, a refresh its effect, and every Codebook address gets the serving editor's scheme, in the addresses of the page's tags and never in its text ({@link withServedAddresses}). The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
+ * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
+ *
+ * Last, in one pass over the page those edits made, every address the publisher refuses today loses its link, a refresh its effect, and every Codebook address gets the serving editor's scheme, in the addresses of the page's tags and never in its text ({@link withServedAddresses}). The edits above match raw text, and a match can start or end inside a quoted value, so they may change how a browser pairs the page's quotes; the filter reads the page they leave, so the page served is always the filter's output.
  *
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
@@ -122,7 +135,7 @@ export function rebindDeepWikiEditorLinks(
 ): string {
   // The published page says VS Code, its fallback; the served one names the editor that opens the source.
   const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}`
-  const servedPage = withServedAddresses(html, editorScheme)
+  const relabeledPage = html
     .replace(
       OPEN_ENTRY_LABEL,
       (_match, opening: string, closing: string) =>
@@ -135,9 +148,9 @@ export function rebindDeepWikiEditorLinks(
         `${opening}${linkEnd}${closing}`,
     )
   // The id of the added description is chosen once for the page, in one reading of its ids.
-  const targetId = freeOpenTargetIdIn(servedPage)
+  const targetId = freeOpenTargetIdIn(relabeledPage)
   // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
-  return servedPage.replace(
+  const editedPage = relabeledPage.replace(
     OPEN_ENTRY_WITHOUT_TARGET,
     (
       entry: string,
@@ -146,9 +159,11 @@ export function rebindDeepWikiEditorLinks(
       link: string,
       closing: string,
     ) => {
-      const target = openTargetOf(linkAttributes)
+      const target = openTargetOf(linkAttributes, editorScheme)
       if (target === undefined) return entry
       return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
     },
   )
+  // The filter reads the page as the edits above left it, so no tag or attribute they make reaches the learner unjudged.
+  return withServedAddresses(editedPage, editorScheme)
 }

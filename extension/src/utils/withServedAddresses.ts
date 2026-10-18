@@ -236,7 +236,7 @@ function editOf(
  *
  * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
  * How: the page is read once, as a browser reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The time grows with the page's size alone.
- * Called by {@link rebindDeepWikiEditorLinks} first, for every page the reader serves.
+ * Called by {@link rebindDeepWikiEditorLinks} last, for every page the reader serves, so the page served is this function's output.
  *
  * @param html - The page as the Wiki folder holds it.
  * @param editorScheme - The scheme registered by the editor serving this request.
