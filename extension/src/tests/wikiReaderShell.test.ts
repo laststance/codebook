@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 
 import { startDeepWikiReader } from '../deepWikiReader'
 import { rebindDeepWikiEditorLinks } from '../utils/rebindDeepWikiEditorLinks'
@@ -664,6 +665,161 @@ test('a Codebook address written in another case, with a bare value, an HREF in 
       '<a href=cursor://laststance.codebook/settings?root=%2Frepo>c</a>' +
       '<a HREF = "cursor://LASTSTANCE.CODEBOOK/source?path=d.ts">d</a>' +
       '<a href="cursor://laststance.codebook/Source?path=e.ts">e</a>',
+  )
+})
+
+// Value: protects=the learner whose Wiki page, published before the publisher's address rule or written straight into the Wiki folder, links to an address of another scheme; fails_when=the reader takes the link only from vscode: and cursor: addresses that are not Codebook's, so `vscode-insiders:`, another editor's scheme, `javascript:`, `data:`, `file:`, a network path or a scheme hidden by a reference still opens something from the reader's page; why_new=Cycle 0046 /ship finding AF6 (the reader keeps only what the publisher accepts today); seam=none, the served page is compared as text
+test('a served page keeps the text of every address the publisher refuses today but not its link, and keeps web, mail, relative and Codebook addresses as links', () => {
+  // Arrange: one link of each refused kind, then the kinds the publisher accepts.
+  const page =
+    '<a href="vscode-insiders://file/etc/hosts">a</a>' +
+    '<a href="windsurf://codeium.windsurf/run">b</a>' +
+    '<a href="javascript:run()">c</a>' +
+    '<img src="data:image/png;base64,AAAA" alt="d">' +
+    '<a href="file:///etc/hosts">e</a>' +
+    '<img src="//attacker.example/f.png" alt="f">' +
+    '<img src="\\\\attacker.example\\share\\g.png" alt="g">' +
+    '<a href="tel:+100">h</a>' +
+    '<a href="java\tscript:run()">i</a>' +
+    '<a href="javascript&colon;run()">j</a>' +
+    '<a href="javascript&#58run()">k</a>' +
+    '<a href="https://example.com/l">l</a>' +
+    '<a href="mailto:m@example.com">m</a>' +
+    '<a href="../n.html#o">n</a>' +
+    '<a href="#p">p</a>' +
+    '<a href="VSCode://LastStance.Codebook/source?path=q.ts">q</a>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<a data-codebook-unlinked="vscode-insiders://file/etc/hosts">a</a>' +
+      '<a data-codebook-unlinked="windsurf://codeium.windsurf/run">b</a>' +
+      '<a data-codebook-unlinked="javascript:run()">c</a>' +
+      '<img data-codebook-unlinked="data:image/png;base64,AAAA" alt="d">' +
+      '<a data-codebook-unlinked="file:///etc/hosts">e</a>' +
+      '<img data-codebook-unlinked="//attacker.example/f.png" alt="f">' +
+      '<img data-codebook-unlinked="\\\\attacker.example\\share\\g.png" alt="g">' +
+      '<a data-codebook-unlinked="tel:+100">h</a>' +
+      '<a data-codebook-unlinked="java\tscript:run()">i</a>' +
+      '<a data-codebook-unlinked="javascript&colon;run()">j</a>' +
+      '<a data-codebook-unlinked="javascript&#58run()">k</a>' +
+      '<a href="https://example.com/l">l</a>' +
+      '<a href="mailto:m@example.com">m</a>' +
+      '<a href="../n.html#o">n</a>' +
+      '<a href="#p">p</a>' +
+      '<a href="cursor://LastStance.Codebook/source?path=q.ts">q</a>',
+  )
+})
+
+// Value: protects=the learner whose Wiki page carries a refresh, written straight into the Wiki folder, that moves the reader's page to another address without a click, an editor address among them, which the page's policy does not stop; fails_when=the reader serves `<meta http-equiv="refresh">` as the file holds it, or takes the effect from another `http-equiv` (the page's own Content-Security-Policy); why_new=Cycle 0046 /ship finding AF6; seam=none, the served page is compared as text
+test('a refresh in a served page loses its effect in any case of its name and value, and the page’s own Content-Security-Policy stays', () => {
+  // Arrange
+  const page =
+    '<head><meta http-equiv="Content-Security-Policy" content="script-src \'self\'"></head>' +
+    '<body><meta http-equiv="refresh" content="0;url=vscode://file/etc/hosts">' +
+    '<META HTTP-EQUIV=Refresh CONTENT="5;url=pages/a.html"></body>'
+
+  // Act
+  const served = rebindDeepWikiEditorLinks(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<head><meta http-equiv="Content-Security-Policy" content="script-src \'self\'"></head>' +
+      '<body><meta data-codebook-unlinked="refresh" content="0;url=vscode://file/etc/hosts">' +
+      '<META data-codebook-unlinked=Refresh CONTENT="5;url=pages/a.html"></body>',
+  )
+})
+
+// Value: protects=a page that reads alike published today and served by the reader; fails_when=the reader's rule of an accepted address and the publisher's (`isAcceptedAddress` of render-wiki-diagrams.mjs) part, so the reader takes the link from an address the publisher prints or leaves one the publisher refuses; why_new=Cycle 0046 /ship finding AF6 (the reader keeps an address only if the publisher would accept it today); seam=none (the shipped publisher's check and the compiled reader)
+test('the reader keeps exactly the addresses the shipped publisher accepts in a page’s content', async () => {
+  // Arrange: the publisher's check of a page's content, and addresses on both sides of its rule.
+  const { scriptingClauseOf } = (await import(
+    pathToFileURL(
+      join(
+        __dirname,
+        '..',
+        '..',
+        'skills',
+        'codebook',
+        'render-wiki-diagrams.mjs',
+      ),
+    ).href
+  )) as { scriptingClauseOf: (html: string) => string | undefined }
+  const addresses = [
+    'pages/a.html',
+    '#start',
+    '../up.html?x=1',
+    'a&amp;b.html',
+    'https://example.com/',
+    'HTTP://example.com/',
+    'mailto:m@example.com',
+    ' https://example.com/',
+    'vscode://laststance.codebook/source?path=a.ts',
+    'CURSOR://LASTSTANCE.CODEBOOK/update',
+    'vscode://laststance.codebook.evil/x',
+    'vscode://file/etc/hosts',
+    'vscode-insiders://file/etc/hosts',
+    'javascript:run()',
+    'java&#x09;script:run()',
+    'javascript&colon;run()',
+    'javascript&#58run()',
+    'data:text/html,x',
+    'file:///etc/hosts',
+    '//host/x',
+    '\\\\host\\x',
+    '/\\host/x',
+    'tel:+1',
+  ]
+
+  // Act: for each address, whether the publisher accepts it in an href and whether the reader keeps it as one.
+  const verdicts = addresses.map((address) => ({
+    address,
+    publisherAccepts:
+      scriptingClauseOf(`<p><a href="${address}">x</a></p>`) === undefined,
+    readerKeeps: rebindDeepWikiEditorLinks(
+      `<a href="${address}">x</a>`,
+      'vscode',
+    ).startsWith('<a href='),
+  }))
+
+  // Assert: the two agree on every address, and the table holds both kinds.
+  assert.deepEqual(
+    verdicts.filter(
+      ({ publisherAccepts, readerKeeps }) => publisherAccepts !== readerKeeps,
+    ),
+    [],
+  )
+  assert.deepEqual(
+    verdicts.map(({ publisherAccepts }) => publisherAccepts),
+    [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ],
   )
 })
 

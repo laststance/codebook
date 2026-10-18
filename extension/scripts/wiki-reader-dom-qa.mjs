@@ -77,11 +77,13 @@ const PAGE_WITH_PLANTED_SCRIPT = 'pages/chapter-2.html'
 /** The planted script of {@link PAGE_WITH_PLANTED_SCRIPT}, after the chapter's content; when it runs, it notes itself in `window.contentScriptRuns`. */
 const PLANTED_SCRIPT =
   "<p>Explained from source.</p><script>(window.contentScriptRuns = window.contentScriptRuns || []).push('planted')</script>"
-/** The chapter that gets links to a file and to another extension in the editor, written straight into its file after the publish, which no publisher prints since it refused them. */
+/** The chapter that gets links to a file and to another extension in the editor, a link of another editor's scheme and a refresh, written straight into its file after the publish, which no publisher prints since it refused them. */
 const PAGE_WITH_FOREIGN_EDITOR_LINKS = 'pages/chapter-3.html'
-/** The links of {@link PAGE_WITH_FOREIGN_EDITOR_LINKS}, after the chapter's content: a link to a file through VS Code, a link to another extension through Cursor, and an image whose address is a file through VS Code. */
+/** The links of {@link PAGE_WITH_FOREIGN_EDITOR_LINKS}, after the chapter's content: a link to a file through VS Code, a link to another extension through Cursor, an image whose address is a file through VS Code, a link to a file through VS Code Insiders, and a refresh that moves the page to the first chapter after a second. */
 const FOREIGN_EDITOR_LINKS =
-  '<p>Explained from source.</p><p><a id="foreign-file-link" href="vscode://file/etc/hosts">The hosts file</a> <a id="foreign-extension-link" href="cursor://other.extension/run?task=1">Run the task</a> <img id="foreign-image" src="vscode://file/etc/a.png" alt="An image"></p>'
+  '<p>Explained from source.</p><p><a id="foreign-file-link" href="vscode://file/etc/hosts">The hosts file</a> <a id="foreign-extension-link" href="cursor://other.extension/run?task=1">Run the task</a> <img id="foreign-image" src="vscode://file/etc/a.png" alt="An image"> <a id="foreign-scheme-link" href="vscode-insiders://file/etc/hosts">The hosts file in Insiders</a></p><meta http-equiv="refresh" content="1;url=chapter-1.html">'
+/** How long the check waits on {@link PAGE_WITH_FOREIGN_EDITOR_LINKS} before it reads the page: past the second after which its refresh would move the page. */
+const REFRESH_WAIT_MS = 2_500
 /** A script file written into the Wiki folder after the publish and named by its manifest, as no publisher writes it; when it runs, it notes itself in `window.contentScriptRuns`. */
 const PLANTED_SCRIPT_FILE = 'assets/planted.js'
 /** The text of {@link PLANTED_SCRIPT_FILE}. */
@@ -2214,28 +2216,29 @@ async function check(page, options, collected) {
     )
   }
   const usePageWithForeignEditorLinks = async () => {
-    // Arrange: a chapter whose file got links to a file and to another extension in the editor after the publish.
+    // Arrange: a chapter whose file got links to a file and to another extension in the editor, a link of another editor's scheme and a refresh after the publish.
     await page.setViewportSize({ width: 1200, height: 720 })
     await page.goto(`${options.url}${options.pageWithForeignEditorLinks}`)
-    await page.waitForFunction(
-      () =>
-        document.querySelector('[data-codebook-freshness]').textContent ===
-        'Source changed · Update available',
-    )
-    // Act: what the browser holds as the page's links and the image's address, and the text of the two links.
+    // Act: past the second of the refresh, what the browser holds as the page's address, its links and the image's address, and the text of the three links; a page the refresh moved holds none of them.
+    await page.waitForTimeout(options.refreshWaitMs)
     const used = await page.evaluate(() => ({
+      address: location.pathname.split('/').at(-1),
       links: [...document.links].map((link) => link.href),
-      fileLinkText: document.querySelector('#foreign-file-link').textContent,
-      extensionLinkText: document.querySelector('#foreign-extension-link')
-        .textContent,
-      imageAddress: document.querySelector('#foreign-image').currentSrc,
+      fileLinkText:
+        document.querySelector('#foreign-file-link')?.textContent ?? null,
+      extensionLinkText:
+        document.querySelector('#foreign-extension-link')?.textContent ?? null,
+      schemeLinkText:
+        document.querySelector('#foreign-scheme-link')?.textContent ?? null,
+      imageAddress:
+        document.querySelector('#foreign-image')?.currentSrc ?? null,
       entryAddress: document
         .querySelector('.open-in-editor a')
         .getAttribute('href'),
     }))
     // Assert
     record(
-      'a page whose file got links to a file and to another extension in the editor is served with their text but without their links, and the rail entry still opens its source in the editor through Codebook',
+      'a page whose file got links to a file and to another extension in the editor, a link of another editor’s scheme and a refresh to another page is served with the links’ text but without their links and without the refresh, and the rail entry still opens its source in the editor through Codebook',
       used,
       {
         hasNoLinkToAFileInTheEditor: !used.links.some((address) =>
@@ -2244,10 +2247,15 @@ async function check(page, options, collected) {
         hasNoLinkToAnotherExtension: !used.links.some((address) =>
           address.startsWith('cursor://other.extension/'),
         ),
+        hasNoLinkOfAnotherEditorsScheme: !used.links.some((address) =>
+          address.startsWith('vscode-insiders:'),
+        ),
         doesImageLoadNothing: used.imageAddress === '',
         doLinksKeepTheirText:
           used.fileLinkText === 'The hosts file' &&
-          used.extensionLinkText === 'Run the task',
+          used.extensionLinkText === 'Run the task' &&
+          used.schemeLinkText === 'The hosts file in Insiders',
+        doesPageStay: used.address === 'chapter-3.html',
         doesEntryOpenItsSource: used.entryAddress.startsWith(
           'vscode://laststance.codebook/source?',
         ),
@@ -2463,6 +2471,7 @@ try {
       pageWithPlantedScript: PAGE_WITH_PLANTED_SCRIPT,
       pagesPointingAtThePlantedFile: PAGES_POINTING_AT_THE_PLANTED_FILE,
       pageWithForeignEditorLinks: PAGE_WITH_FOREIGN_EDITOR_LINKS,
+      refreshWaitMs: REFRESH_WAIT_MS,
       // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
       offlinePageWithContentScript: pathToFileURL(
         join(wiki.outputDirectory, PAGE_WITH_CONTENT_SCRIPT),

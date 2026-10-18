@@ -2,7 +2,7 @@ import { WIKI_OPEN_TARGET_ELEMENT_ID } from '../constants'
 
 import { escapeHtml } from './escapeHtml'
 import { unescapeHtml } from './unescapeHtml'
-import { withoutForeignEditorAddresses } from './withoutForeignEditorAddresses'
+import { withoutRefusedAddresses } from './withoutRefusedAddresses'
 
 /** The label of the rail's entry inside its link, the pattern of 0.2.29.0: every page since carries "Open in VS Code" as the link's whole text, so each reader can name its own editor there. */
 const OPEN_ENTRY_LABEL =
@@ -133,11 +133,11 @@ function freeOpenTargetIdIn(html: string): string {
 /**
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
  *
- * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. First, an address that opens an editor for something other than Codebook loses its link ({@link withoutForeignEditorAddresses}). The scheme is rewritten in the addresses of the page's links, never in its text ({@link withEditorSchemeInLinks}). The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
+ * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. First, every address the publisher refuses today loses its link, and a refresh its effect ({@link withoutRefusedAddresses}). The scheme is rewritten in the addresses of the page's links, never in its text ({@link withEditorSchemeInLinks}). The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
  *
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
- * @returns The page with no link to an editor but Codebook's, Codebook action links bound to the active editor, the rail's "Open in …" link named after it, and the file and line beside that link. An entry whose address names no path or line keeps its link alone.
+ * @returns The page with no link but those the publisher accepts today, Codebook action links bound to the active editor, the rail's "Open in …" link named after it, and the file and line beside that link. An entry whose address names no path or line keeps its link alone.
  * @example
  * rebindDeepWikiEditorLinks('<a href="vscode://laststance.codebook/settings?root=%2Frepo">Settings</a>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/settings?root=%2Frepo">Settings</a>'
@@ -151,7 +151,7 @@ export function rebindDeepWikiEditorLinks(
   // The published page says VS Code, its fallback; the served one names the editor that opens the source.
   const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}`
   const servedPage = withEditorSchemeInLinks(
-    withoutForeignEditorAddresses(html),
+    withoutRefusedAddresses(html),
     editorScheme,
   )
     .replace(
