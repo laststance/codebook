@@ -153,6 +153,7 @@ import {
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
 import { StopKeyboardHandOver } from './runtimeSupport/stopKeyboardHandOver'
+import { StoredDebugStops } from './runtimeSupport/storedDebugStops'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
 import { heldStopSessionOf } from './runtimeSupport/utils/heldStopSessionOf'
@@ -756,11 +757,8 @@ export class StudyWorkspace {
   private readonly stopHandOver = new StopKeyboardHandOver()
   /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet, each with what {@link noteStopOf} noted of that stop; {@link cameWithStop} takes a session out again, and so does {@link forgetSession}. */
   private readonly announcedStops = new Map<string, StopNote>()
-  /** The last stop each followed debug session's adapter reported ({@link debugStopOf}), as the editor stores it for its stop handling: an `invalidated` event makes the editor handle that stop again from it, its `preserveFocusHint`, thread and reason included, so {@link readAdaptersMessage} notes the stop again from it (Cycle 0046 R5). {@link noteSessionWentOn} and {@link forgetSession} drop it. */
-  private readonly storedStops = new Map<
-    string,
-    NonNullable<ReturnType<typeof debugStopOf>>
-  >()
+  /** The stops each followed debug session's adapter reported, per thread, as the editors store them for their stop handling ({@link StoredDebugStops}): an `invalidated` event makes the editor handle the stored stops again, its `preserveFocusHint`, thread and reason included, so {@link readAdaptersMessage} notes the stop again from them (Cycle 0046 R5); a thread's stop is dropped as the editors drop it, at its thread's `continued` or a successful resume or step of it (AD12). {@link forgetSession} drops a session's. */
+  private readonly storedStops = new StoredDebugStops()
   /** The moment each followed debug session was last seen to go on (the editor's resume or step request, or the adapter's `continued` event), kept while it runs: {@link noteSessionWentOn} sets it, the session's next stop and its end take it out. {@link cameBeforeFocusPass} reads from it how soon the editor can pass the focus on from that session. */
   private readonly sessionsWentOnAtMs = new Map<string, number>()
   /** The debug sessions that started while this reader existed and have not ended, whose adapter's messages it therefore sees ({@link followStopsOf}); {@link forgetSession} takes a session out when it ends. A session that started before the reader has none to tell a stop from a selected frame. */
@@ -3483,6 +3481,7 @@ export class StudyWorkspace {
       // An adapter need not send `continued` after the editor's own resume or step: the request says it too. The editor's stackTrace requests tell which frame it focuses for a stop.
       onWillReceiveMessage: (message: unknown): void => {
         this.stopHandOver.readEditorsMessage(session.id, message)
+        this.storedStops.readEditorsMessage(session.id, message)
         if (isDebugResumeMessage(message)) this.noteSessionWentOn(session.id)
       },
       // The editor stops the adapter, or the adapter exits by itself: either is the session's end, and both may come.
@@ -3494,7 +3493,7 @@ export class StudyWorkspace {
   /**
    * Reads one message of a debug adapter for what it says about the session's stops; called by the tracker of {@link followStopsOf} for every message the adapter sends.
    * - A `stopped` event is noted ({@link noteStopOf}).
-   * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle the stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it. The stop is noted again as the adapter reported it last ({@link storedStops}): the editor handles it again from the details it stored, so a stop whose adapter asked to keep the focus still arms no keyboard hand-over, and an armed one keeps its thread and reason (Cycle 0046 R5). Without a stored stop it is noted as a stop that does not keep the focus.
+   * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle the stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it. The stop is noted again as the adapter reported it last among the stops the editor still stores, per thread ({@link storedStops}): the editor handles it again from the details it stored, so a stop whose adapter asked to keep the focus still arms no keyboard hand-over, and an armed one keeps its thread and reason (Cycle 0046 R5). Without a stored stop it is noted as a stop that does not keep the focus.
    * - A `continued` event is noted as the moment the session went on, which puts its noted stop in doubt ({@link noteSessionWentOn}).
    * - An answer to the editor's `stackTrace` request goes to the stop's keyboard hand-over, which learns from it the frame the editor focuses for the stop ({@link StopKeyboardHandOver}).
    * @param sessionId - The session of the adapter.
@@ -3503,16 +3502,17 @@ export class StudyWorkspace {
    */
   private readAdaptersMessage(sessionId: string, message: unknown): void {
     this.stopHandOver.readAdaptersMessage(sessionId, message)
+    this.storedStops.readAdaptersMessage(sessionId, message)
     const stop = debugStopOf(message)
     if (stop) {
       // A session that stops runs no longer: its frame is focused until it goes on again.
       this.sessionsWentOnAtMs.delete(sessionId)
-      this.storedStops.set(sessionId, stop)
+      this.storedStops.noteStop(sessionId, stop)
       this.noteStopOf(sessionId, stop)
     } else if (isDebugStopsInvalidation(message))
       this.noteStopOf(
         sessionId,
-        this.storedStops.get(sessionId) ?? {
+        this.storedStops.lastStopOf(sessionId) ?? {
           reason: undefined,
           keepsFocus: false,
           threadId: undefined,
@@ -3529,8 +3529,6 @@ export class StudyWorkspace {
    */
   private noteSessionWentOn(sessionId: string): void {
     this.sessionsWentOnAtMs.set(sessionId, performance.now())
-    // The editor drops the details of a stop that went on; an invalidation no longer handles it again.
-    this.storedStops.delete(sessionId)
     this.doubtStopOf(sessionId)
     // A session that goes on ends its stop, so its next stop gets a keyboard hand-over of its own.
     this.stopHandOver.disarm(sessionId)
@@ -3545,7 +3543,7 @@ export class StudyWorkspace {
   private forgetSession(sessionId: string): void {
     this.followedSessions.delete(sessionId)
     this.announcedStops.delete(sessionId)
-    this.storedStops.delete(sessionId)
+    this.storedStops.forget(sessionId)
     this.sessionsWentOnAtMs.delete(sessionId)
     this.stopHandOver.disarm(sessionId)
     codebookStopLedger.forget(sessionId)

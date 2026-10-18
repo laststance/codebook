@@ -5842,9 +5842,10 @@ export async function workspaceHarness(
       for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
-     * Lets a paused session go on as the editor tells its adapter: the session's trackers see the `continue` request, or the `next` request of the learner's Step Over (F10). Run and Debug's active stack item stays as it is: the editor keeps the frame for about 200 ms (`resumeDebugger` is what it reports then).
+     * Lets a paused session go on as the editor tells its adapter: the session's trackers see the `continue` request, or the `next` request of the learner's Step Over (F10), and then the adapter's answer to it. Run and Debug's active stack item stays as it is: the editor keeps the frame for about 200 ms (`resumeDebugger` is what it reports then).
      * @param sessionId - The session; left out, the live run's server session.
      * @param command - `continue` (left out) or `next`, the request the editor sends.
+     * @param answer - `success` (left out): the adapter grants the request, after which both editors drop the stopped thread's details (a `continue` all threads', as the adapter's answer names no other); `refusal`: the adapter answers it with an error, and the editors keep every stop's details (VS Code 1.142.0 and Cursor 3.23.23: the simulated `continued` follows only a granted request; Cycle 0046 AD12).
      * @example
      * harness.pauseDebugger({ session: 'live-next-browser' })
      * harness.continueDebugSession('live-next-browser')
@@ -5852,12 +5853,55 @@ export async function workspaceHarness(
     continueDebugSession(
       sessionId = 'live-next-server',
       command: 'continue' | 'next' = 'continue',
+      answer: 'success' | 'refusal' = 'success',
     ): void {
+      const requestSeq = nextDebugMessageSeq++
       for (const tracker of trackersOf({ id: sessionId }))
         tracker?.onWillReceiveMessage?.({
           type: 'request',
+          seq: requestSeq,
           command,
           arguments: { threadId: 1 },
+        })
+      const responseSeq = nextDebugMessageSeq++
+      for (const tracker of trackersOf({ id: sessionId }))
+        tracker?.onDidSendMessage?.(
+          answer === 'success'
+            ? {
+                type: 'response',
+                seq: responseSeq,
+                request_seq: requestSeq,
+                success: true,
+                command,
+                body: {},
+              }
+            : {
+                type: 'response',
+                seq: responseSeq,
+                request_seq: requestSeq,
+                success: false,
+                command,
+                message: 'The thread cannot step from here.',
+              },
+        )
+    },
+    /**
+     * Lets the adapter of a paused session say that one of its threads goes on by itself: the session's trackers see its `continued` event for that thread. Both editors then drop that thread's stop details only, or every thread's unless the event says `allThreadsContinued: false` (VS Code 1.142.0 and Cursor 3.23.23 `onDidContinued`; Cycle 0046 AD12).
+     * @param sessionId - The session.
+     * @param threadId - The thread that goes on.
+     * @param allThreadsContinued - What the event says of the other threads.
+     * @example harness.reportThreadContinued('learner-node', 2, false) // thread 1's stop stays stored
+     */
+    reportThreadContinued(
+      sessionId: string,
+      threadId: number,
+      allThreadsContinued: boolean,
+    ): void {
+      for (const tracker of trackersOf({ id: sessionId }))
+        tracker?.onDidSendMessage?.({
+          type: 'event',
+          event: 'continued',
+          body: { threadId, allThreadsContinued },
         })
     },
     /**
