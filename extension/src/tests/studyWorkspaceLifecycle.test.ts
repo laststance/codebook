@@ -1546,7 +1546,7 @@ for (const dirty of [false, true])
     }
   })
 
-// Value: protects=closing the reader while learning storage holds a lock, and the learner's write that was accepted before the close still reaching the disk; fails_when=close() awaits the library queue without a bound and never finishes, or the close drops the write that was waiting for the storage lock; why_new=Cycle 0044 (0033-O4), and Cycle 0045 X7-E1.3: the landing was asserted on a promise of the test itself, so a close that dropped a pending save passed; seam=the storage lock of the library's directory, held by the test as another writer of this process
+// Value: protects=closing the reader while learning storage holds a lock, and the learner's write that was accepted before the close still reaching the disk; fails_when=close() awaits the library queue without a bound and never finishes, or the close drops the write that was waiting for the storage lock; why_new=Cycle 0044 (0033-O4), and Cycle 0045 X7-E1.3: the landing was asserted on a promise of the test itself, so a close that dropped a pending save passed; Cycle 0046 FL4: the faked clock moved after a fixed count of real turns, before a close slowed by load had armed its bound; seam=the storage lock of the library's directory, held by the test as another writer of this process, and a stand-in for the library's flush that notes the close's request, with both clocks faked
 test('closing the reader finishes after the storage bound while a library write is still held, and that write still lands', async (context) => {
   // Arrange: an opened reader, and a learner decision the library accepted but cannot write: another writer holds the storage lock of its directory.
   const harness = await workspaceHarness()
@@ -1585,39 +1585,50 @@ test('closing the reader finishes after the storage bound while a library write 
     }
     const written = library.decide(decision)
     void written.catch(() => undefined)
-    context.mock.timers.enable({ apis: ['setTimeout'] })
+    // The close's last storage wait arms its bound in the turn in which it asks the library to flush its writes (StudyWorkspace.close): the faked clock moves only once that happened.
+    let flushAsked = false
+    const flush = library.flush.bind(library)
+    context.mock.method(library, 'flush', () => {
+      flushAsked = true
+      return flush()
+    })
     let closed = false
 
-    // Act: time advances in 1 s steps until the reader has closed (at most 10 s).
+    // Act: the close asks the library to flush; then the faked clock moves, waiting for the real work before each of its steps, until the reader has closed (at most 10 s).
+    enableFakeClock(context)
     const closing = harness.reader.close().then(() => {
       closed = true
     })
-    let elapsedMs = 0
-    while (!closed && elapsedMs < 10_000) {
-      for (let turn = 0; turn < 20; turn++)
-        await new Promise<void>((resolve) => setImmediate(resolve))
-      if (closed) break
-      context.mock.timers.tick(1_000)
-      elapsedMs += 1_000
-    }
-    const closedWhileWriteHeld = closed
-    context.mock.timers.reset()
+    // With a limit of 0 the faked clock stands still: the wait lasts while the close's file work is pending, and a close that does not ask to flush without fake time fails here instead of hanging.
+    const flushAskedAfterMs = await advanceClockUntil(
+      context,
+      () => flushAsked,
+      0,
+    )
+    assert.equal(
+      flushAskedAfterMs,
+      0,
+      'The close did not ask the library to flush its writes before any fake time passed',
+    )
+    const closedAfterMs = await advanceClockUntil(context, () => closed, 10_000)
+    resetFakeClock(context)
     const savedWhenClosed = await savedDecisionIds()
+    // A close that did not end at the bound fails here instead of hanging on its end.
+    assert.notEqual(closedAfterMs, undefined)
     releaseLock()
     await lockHeld
     await written
     await closing
 
-    // Assert: the decision is read back from the file on disk.
-    assert.equal(closedWhileWriteHeld, true)
-    assert.equal(elapsedMs, 5_000)
+    // Assert: closed at the one 5 s bound while the write was held, and the decision is read back from the file on disk.
+    assert.equal(closedAfterMs, 5_000)
     assert.deepEqual(savedWhenClosed, [])
     assert.deepEqual(await savedDecisionIds(), [
       '0d0c1f6e-6f0b-4e0e-9f43-7f6f2f1c9a11',
     ])
     assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
-    context.mock.timers.reset()
+    resetFakeClock(context)
     releaseLock()
     await harness.close()
   }
