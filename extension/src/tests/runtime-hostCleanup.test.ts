@@ -23,6 +23,7 @@ import { runInNewContext } from 'node:vm'
 
 import type { BrowserViewportFactory } from '../runtimeSupport/browserViewport'
 import { Cdp } from '../runtimeSupport/cdp'
+import * as runtimeConstants from '../runtimeSupport/constants'
 import type * as HostModule from '../runtimeSupport/hostBrowser'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
@@ -86,6 +87,7 @@ async function loadHostBrowser(
  * @param options.processesOfProfile - The processes a look for the profile finds, by the look's number (1 for the first); none by default.
  * @param options.realpathOfProfileFails - Makes `realpath` of the loaded browser refuse every profile folder (`EISDIR`), as the system does on some Windows volumes; the refused paths are noted in `refusedRealpaths`.
  * @param options.ownerMarkerWriteFails - Makes the loaded browser's write of an owner marker fail (`EACCES`), as on a volume that refuses new files.
+ * @param options.activeTimeoutMs - The bound of the adapter's waits (`ACTIVE_TIMEOUT_MS` of its constants), for a test whose real wait must reach it; 20 s by default.
  * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot): its loaded context reads `LOCALAPPDATA` as the test's root then, and answers a home folder and a temp folder (`os.homedir`, `os.tmpdir`) that no system's root may be taken from. By default the browser is given the test's root.
  * @returns The browser, its root, every journal entry as plain data, every profile whose processes were asked for, the paths `realpath` refused, and `laterRun`, which makes the browser of a later run of the same editor (the same loaded adapter and root, a journal of its own). A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
@@ -106,6 +108,7 @@ async function managedBrowser(
     rootChosenByTheBrowser?: boolean
     realpathOfProfileFails?: boolean
     ownerMarkerWriteFails?: boolean
+    activeTimeoutMs?: number
   } = {},
 ) {
   const root = await realpath(
@@ -172,6 +175,12 @@ async function managedBrowser(
           return options.processesOfProfile?.(look) ?? []
         },
       },
+      ...(options.activeTimeoutMs !== undefined && {
+        './constants': {
+          ...runtimeConstants,
+          ACTIVE_TIMEOUT_MS: options.activeTimeoutMs,
+        },
+      }),
       ...(options.removeAbandonedProfiles && {
         './utils/removeAbandonedProfiles': {
           removeAbandonedProfiles: options.removeAbandonedProfiles,
@@ -1224,6 +1233,42 @@ test('a managed launch whose unresolved profile folder cannot be removed either 
       },
       markerNames: { pid: process.pid, hostname: hostname() },
       unmarkedHolds: [],
+    },
+  )
+})
+
+// Value: protects=the live profile of a run whose Chrome does not exit: the close's wait for the profile's processes ends at its bound with the processes still there, which is a failed release, so the close fails as an incomplete cleanup and keeps the folder a running Chrome still uses (AD22's other branch; TT9, the third testing review); fails_when=the wait's timeout is taken like a failed listing, journaled as an unverified exit, and the running browser's folder removed with cleanup-verified; why_new=every close test let the processes exit or the listing fail; seam=the stand-in for the profile's processes, which finds the browser at every look, the bound of the adapter's waits (ACTIVE_TIMEOUT_MS of its constants), cut to 100 ms so that the real wait reaches it, and the sweep's stand-in, which ends at once
+test('a managed close whose browser never exits fails as an incomplete cleanup at the wait’s bound and keeps the profile folder', async (context) => {
+  // Arrange: a launched managed browser whose Chrome is found at every look.
+  const managed = await managedBrowser(context, {
+    removeAbandonedProfiles: async () => [],
+    processesOfProfile: () => [
+      { pid: 4242, command: 'chrome --user-data-dir=x' },
+    ],
+    activeTimeoutMs: 100,
+  })
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const profile = profileOf(managed.events)
+  // Act
+  const failure = await managed.browser.close().then(
+    () => 'closed',
+    (error: Error) => error.message,
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      failure,
+      folderKept: await exists(profile),
+      journal: managed.events.map((event) => event.type),
+    },
+    {
+      failure:
+        'Browser cleanup incomplete: owned Chrome process exit: Error: Timed out waiting for owned Chrome profile processes exited',
+      folderKept: true,
+      journal: ['browser.managed-profile', 'host.debugger-started'],
     },
   )
 })
