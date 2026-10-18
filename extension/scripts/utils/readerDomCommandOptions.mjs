@@ -6,9 +6,9 @@ const FLOW_TIMEOUT_MS = 300_000
 const COMMAND_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
 
 /**
- * Gives the limits of one call of the browser CLI in the Reader DOM check, so the one call that runs the whole flow is not ended by the limit of a single browser command.
+ * Gives the limits of one call of the browser CLI in a Reader DOM check, so the one call that runs the whole flow is not ended by the limit of a single browser command.
  *
- * Called by `study-bootstrap-qa.mjs` for every `playwright-cli` call it starts; the result is the options object of `execFile`.
+ * Called by each of the five Reader DOM checks (`study-bootstrap-qa.mjs`, `wiki-reader-dom-qa.mjs`, `study-reading-pose-qa.mjs`, `understanding-focus-qa.mjs` and `repository-return-qa.mjs`) for every `playwright-cli` call it starts; the result is the options object of `execFile`.
  *
  * @param label - The script's name for the call (`open`, `video-start`, `flow`, `close`, …); it is also the name of the call's log file.
  * @returns `{ timeout, maxBuffer }`
