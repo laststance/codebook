@@ -5,6 +5,7 @@ import filesystem, {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   rename,
   rm,
   symlink,
@@ -742,5 +743,50 @@ test('source discovery on a machine whose PATH holds no Git fails with a missing
         'Repository source discovery requires Git, a working-tree root and a bounded readable index.',
       cause: 'spawn git ENOENT',
     },
+  )
+})
+
+// Value: protects=the learner's machine when source discovery runs in a repository whose own config and attributes name a clean filter, a textconv driver and an external diff: discovery's Git commands (rev-parse, ls-files --cached) read no file of the working tree, so none of them runs (BB2, the fixes of the third review); fails_when=discovery gains a Git command that hashes or diffs the working tree without switching those programs off; why_new=no discovery test named such programs; seam=none (real Git, real programs that note each start)
+test('source discovery runs no clean filter, textconv driver or external diff that the repository names', async (context) => {
+  // Arrange: a repository with one tracked source whose config and attributes name three programs, and a change to that source.
+  const { directory, sources, track } = await sourceHarness(context)
+  await track('src/module.ts')
+  const notes = await mkdtemp(join(tmpdir(), 'codebook-source-drivers-'))
+  context.after(() => rm(notes, { recursive: true, force: true }))
+  const programs: [configKey: string, name: string][] = [
+    ['filter.probe.clean', 'clean'],
+    ['diff.probe.textconv', 'textconv'],
+    ['diff.external', 'external-diff'],
+  ]
+  for (const [key, name] of programs) {
+    const program = join(notes, `${name}.sh`)
+    await writeFile(
+      program,
+      `#!/bin/sh\necho ran >> '${join(notes, `${name}-ran`)}'\ncat\n`,
+    )
+    await chmod(program, 0o755)
+    await executeFile('git', ['config', key, program], { cwd: directory })
+  }
+  await writeFile(
+    join(directory, '.gitattributes'),
+    '*.ts filter=probe diff=probe\n',
+  )
+  await writeFile(
+    join(directory, '.git', 'info', 'attributes'),
+    '*.ts filter=probe diff=probe\n',
+  )
+  await writeFile(
+    join(directory, 'src', 'module.ts'),
+    'export const price = 25;\n',
+  )
+  // Act
+  const page = await sources.list()
+  // Assert
+  assert.deepEqual(
+    {
+      files: [...page.files],
+      ran: (await readdir(notes)).filter((name) => name.endsWith('-ran')),
+    },
+    { files: ['src/module.ts'], ran: [] },
   )
 })

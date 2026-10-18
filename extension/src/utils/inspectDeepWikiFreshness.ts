@@ -189,8 +189,9 @@ function fullCommitHash(
 }
 
 /**
- * Picks, from the paths Git listed, the source files the Wiki neither indexes nor excludes; called by {@link findAddedSources} with the answers of both listing commands.
- * @param committedListing - Git's NUL-separated answer for the files committed since the generated revision.
+ * Picks, from the paths Git listed, the source files the Wiki neither indexes nor excludes; called by {@link findAddedSources} with the answers of its three listing commands.
+ * @param committedListing - Git's NUL-separated answer for the files the index holds and the generated revision does not (committed or staged since).
+ * @param deletedListing - Git's NUL-separated answer for the files of the index the working tree no longer holds, which are no added source.
  * @param untrackedListing - Git's NUL-separated answer for the untracked files.
  * @param projectRoot - Canonical opened folder, which the listed paths are relative to.
  * @param includedSources - The sources the Wiki indexes.
@@ -198,10 +199,11 @@ function fullCommitHash(
  * @param outputDirectory - Resolved Wiki output folder, whose own files are no added source; `undefined` when the caller named none.
  * @returns The uncovered paths, each once, sorted.
  * @example
- * uncoveredAddedPaths('src/new.ts\0', '', '/repo', [], [], '/repo/.codebook/wiki') // => ['src/new.ts']
+ * uncoveredAddedPaths('src/new.ts\0src/gone.ts\0', 'src/gone.ts\0', '', '/repo', [], [], '/repo/.codebook/wiki') // => ['src/new.ts']
  */
 function uncoveredAddedPaths(
   committedListing: string,
+  deletedListing: string,
   untrackedListing: string,
   projectRoot: string,
   includedSources: WikiIncludedSource[],
@@ -213,9 +215,11 @@ function uncoveredAddedPaths(
     outputDirectory === undefined
       ? ''
       : relative(projectRoot, outputDirectory).split(sep).join('/')
+  const deletedPaths = new Set(deletedListing.split('\0'))
   return [
     ...new Set([
-      ...committedListing.split('\0'),
+      // A file of the index the working tree no longer holds was added and removed again: no source of the folder.
+      ...committedListing.split('\0').filter((path) => !deletedPaths.has(path)),
       ...untrackedListing.split('\0'),
     ]),
   ]
@@ -274,25 +278,32 @@ async function findAddedSources(
   const revision = fullCommitHash(generatedRevision)
   if (!revision) return { kind: 'unverified', cause: 'no-revision' }
   try {
-    // Both commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
-    const [committed, untracked] = await Promise.all([
+    // The commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
+    const [committed, deleted, untracked] = await Promise.all([
+      // The index against the revision: no file of the working tree is read, so no filter, external diff or textconv driver of the repository's own config or attributes runs.
       gitInFolder([
-        'diff',
+        'diff-index',
+        '--cached',
         '--name-only',
         '--diff-filter=A',
         // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
         '--no-renames',
+        '--no-ext-diff',
+        '--no-textconv',
         '--relative',
         '-z',
         revision,
         '--',
       ]),
+      // What the working tree no longer holds, by a look at each path alone.
+      gitInFolder(['ls-files', '--deleted', '-z']),
       gitInFolder(['ls-files', '--others', '--exclude-standard', '-z']),
     ])
     return {
       kind: 'checked',
       addedPaths: uncoveredAddedPaths(
         committed.stdout,
+        deleted.stdout,
         untracked.stdout,
         projectRoot,
         includedSources,

@@ -6,6 +6,7 @@ import {
   access,
   chmod,
   mkdir,
+  readdir,
   mkdtemp,
   open,
   realpath,
@@ -874,11 +875,11 @@ test('the Wiki freshness check starts every Git command by the absolute path fou
       [],
     )
 
-    // Assert
+    // Assert: rev-parse, then diff-index, ls-files --deleted and ls-files --others.
     const git = await gitExecutablePath()
     assert.deepEqual(
       { started: noted.started, gitIsAbsolute: isAbsolute(git) },
-      { started: [git, git, git], gitIsAbsolute: true },
+      { started: [git, git, git, git], gitIsAbsolute: true },
     )
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -976,6 +977,108 @@ test('the Wiki freshness check on a machine whose PATH holds no Git answers unkn
       unknownCause: 'git-missing',
       reason:
         'Git is not installed, so added source files could not be checked.',
+    },
+  )
+})
+
+/**
+ * Writes a program for a test's repository config that notes each start in a folder of its own and passes its input through, as a clean filter, a textconv driver or an external diff would run.
+ * @param folder - The folder of the program and its notes.
+ * @param name - The program's name, also the name of its note.
+ * @returns The program's path.
+ * @example
+ * await notingProgram(folder, 'clean') // => '/tmp/x/clean.sh'; a start writes /tmp/x/clean-ran
+ */
+async function notingProgram(folder: string, name: string): Promise<string> {
+  const program = join(folder, `${name}.sh`)
+  await writeFile(
+    program,
+    `#!/bin/sh\necho ran >> '${join(folder, `${name}-ran`)}'\ncat\n`,
+  )
+  await chmod(program, 0o755)
+  return program
+}
+
+// Value: protects=the learner's machine when the opened folder is a repository that a clone did not make and whose own config and attributes name a clean filter, a textconv driver and an external diff, in .gitattributes and in .git/info/attributes (which no attribute source of Git replaces): the freshness check compares the index with the revision and reads no file of the working tree, so none of them runs, and the added files are still found, a file staged and then deleted from the working tree not among them (BB2, the fixes of the third review; probed with git 2.53.0); fails_when=the check compares the working tree with the revision, so Git hashes a changed file through the repository's clean filter, or a staged file the working tree no longer holds counts as added; why_new=R7 switched off the fsmonitor hook alone; seam=none (real Git, real programs that note each start)
+test('the Wiki freshness check runs no clean filter, textconv driver or external diff of the repository, and still finds the files added since the generation', async (context) => {
+  // Arrange: a committed repository with an indexed source and another tracked file; the repository's config and both of its attribute files name three programs; then the tracked file changes, one file is staged, one staged and deleted again, one left untracked.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-freshness-drivers-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const notes = join(await realpath(directory), 'notes')
+  await mkdir(notes)
+  const root = join(await realpath(directory), 'project')
+  await mkdir(root)
+  const source = 'export const answer = 1;\n'
+  await writeFile(join(root, 'source.ts'), source)
+  await writeFile(join(root, 'other.ts'), 'export const other = 1;\n')
+  const revision = await commitAll(root)
+  await runGit(
+    'git',
+    ['config', 'filter.probe.clean', await notingProgram(notes, 'clean')],
+    { cwd: root },
+  )
+  await runGit(
+    'git',
+    ['config', 'diff.probe.textconv', await notingProgram(notes, 'textconv')],
+    { cwd: root },
+  )
+  await runGit(
+    'git',
+    ['config', 'diff.external', await notingProgram(notes, 'external-diff')],
+    { cwd: root },
+  )
+  await writeFile(
+    join(root, '.gitattributes'),
+    '*.ts filter=probe diff=probe\n',
+  )
+  await writeFile(
+    join(root, '.git', 'info', 'attributes'),
+    '*.ts filter=probe diff=probe\n',
+  )
+  await writeFile(join(root, 'other.ts'), 'export const other = 2;\n')
+  await writeFile(join(root, 'staged.ts'), 'export const staged = 1;\n')
+  await writeFile(
+    join(root, 'staged-then-deleted.ts'),
+    'export const gone = 1;\n',
+  )
+  await runGit(
+    'git',
+    [
+      '-c',
+      'filter.probe.clean=cat',
+      'add',
+      'staged.ts',
+      'staged-then-deleted.ts',
+    ],
+    { cwd: root },
+  )
+  await rm(join(root, 'staged-then-deleted.ts'))
+  await writeFile(join(root, 'untracked.ts'), 'export const untracked = 1;\n')
+  // Act
+  const freshness = await inspectDeepWikiFreshness(
+    root,
+    [
+      {
+        path: 'source.ts',
+        sha256: createHash('sha256').update(source).digest('hex'),
+      },
+    ],
+    revision,
+    [],
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      status: freshness.status,
+      addedPaths: freshness.addedPaths,
+      ran: (await readdir(notes)).filter((name) => name.endsWith('-ran')),
+    },
+    {
+      status: 'changed',
+      addedPaths: ['staged.ts', 'untracked.ts'],
+      ran: [],
     },
   )
 })
