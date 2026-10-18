@@ -6,13 +6,14 @@ import { systemErrorCode } from './systemErrorCode'
 /**
  * Says whether a real path is the project's real root itself or lies below it; called by {@link findLinkOnWikiPath} for each folder on the way to the Wiki folder.
  * @param realRoot - The project's real path.
- * @param realPath - The real path of a folder on the way.
- * @returns `true` for the root and for a path below it; `false` for a path beside or above it and for one on another drive.
+ * @param realPath - The real path of a folder on the way; `undefined` when the system cannot name it ({@link realPathOf}).
+ * @returns `true` for the root and for a path below it; `false` for a path beside or above it, for one on another drive, and for a real path the system cannot name, which counts as one that leaves the project.
  * @example
  * isInProject('/repo', '/repo/.codebook') // => true
  * isInProject('/repo', '/elsewhere')      // => false
  */
-function isInProject(realRoot: string, realPath: string): boolean {
+function isInProject(realRoot: string, realPath: string | undefined): boolean {
+  if (realPath === undefined) return false
   const fromRoot = relative(realRoot, realPath)
   return (
     fromRoot === '' ||
@@ -20,6 +21,18 @@ function isInProject(realRoot: string, realPath: string): boolean {
       fromRoot !== '..' &&
       !fromRoot.startsWith('..' + sep))
   )
+}
+
+/**
+ * Asks the system for the real path of a folder on the way; called by {@link findLinkOnWikiPath}.
+ * Why: the system cannot name the real path of some folders: one of another user (`EACCES`), or some junctions on Windows (`EINVAL`). Such a folder counts as one that leaves the project ({@link isInProject}), so the walk refuses it inside the project as the publisher does, instead of throwing the system's error.
+ * @param path - The folder.
+ * @returns Its real path; `undefined` when the system cannot name it.
+ * @example
+ * await realPathOf('/repo/.codebook') // => '/repo/.codebook'
+ */
+function realPathOf(path: string): Promise<string | undefined> {
+  return realpath(path).catch(() => undefined)
 }
 
 /**
@@ -31,9 +44,9 @@ function isInProject(realRoot: string, realPath: string): boolean {
  * @param folder - The last folder of the path to look at: the Wiki folder's parent, or the Wiki folder itself.
  * @param projectRoot - The opened project.
  * @returns
- * - The path, as `folder` writes it, of the first entry after the path entered the project that is a link, a file or a folder whose real path leaves the project
+ * - The path, as `folder` writes it, of the first entry after the path entered the project that is a link, a file or a folder whose real path leaves the project or cannot be named
  * - `undefined` when there is none, when the path lies outside the project, and from the first entry on the path that is missing (the publisher creates it as a folder of its own)
- * @throws What the file system throws for an entry on the path that cannot be looked at, other than a missing one.
+ * @throws What the file system throws for an entry on the path that cannot be looked at without following (`lstat`), other than a missing one, and for a project whose real path cannot be named.
  * @example
  * await findLinkOnWikiPath('/repo/.codebook', '/repo')      // => '/repo/.codebook' while the repository carries `.codebook` as a link
  * await findLinkOnWikiPath('/repo/.codebook/wiki', '/repo') // => '/repo/.codebook/wiki' while the Wiki folder itself is a link
@@ -60,10 +73,10 @@ export async function findLinkOnWikiPath(
       hasEnteredProject &&
       (!entry.isDirectory() ||
         entry.isSymbolicLink() ||
-        !isInProject(realRoot, await realpath(path)))
+        !isInProject(realRoot, await realPathOf(path)))
     )
       return path
-    hasEnteredProject ||= isInProject(realRoot, await realpath(path))
+    hasEnteredProject ||= isInProject(realRoot, await realPathOf(path))
   }
   return undefined
 }

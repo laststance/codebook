@@ -27,6 +27,7 @@ import {
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
 import { loadModule } from './utils/loadModule'
 import { writeMinimalWiki } from './utils/writeMinimalWiki'
 
@@ -784,6 +785,46 @@ test('the reader’s look refuses a Wiki folder, and a folder above it, that lst
     `The Wiki folder ${folderWiki.outputDirectory} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
   ])
 })
+
+// Value: protects=the learner whose project holds a folder on the Wiki folder's path whose real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the reader's walk lets the system's error of `realpath` through, so the reader and the open command show that error instead of the refusal of a folder that leaves the project; why_new=Cycle 0046 /ship adversarial review AD17; seam=a file system whose realpath fails for one folder (src/tests/utils/fileSystemWhoseRealPathFails.ts)
+for (const code of ['EACCES', 'EINVAL'] as const)
+  test(`the reader refuses a Wiki whose .codebook folder has a real path the system cannot name (${code}) with the sentence of a folder above the Wiki folder, not the system’s error`, async (context) => {
+    // Arrange: a one-page Wiki read by a guard whose realpath fails for `.codebook`.
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-unnamed-real-path-')),
+    )
+    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    const { outputDirectory } = await writeMinimalWiki(projectRoot)
+    const walk = await loadModule<typeof linkWalkModule>(
+      resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
+      {
+        'node:fs/promises': fileSystemWhoseRealPathFails(
+          join(projectRoot, '.codebook'),
+          code,
+        ),
+      },
+    )
+    const { assertNoLinkOnWikiPath: assertWhereTheRealPathFails } =
+      await loadModule<typeof linkGuardModule>(
+        resolve(__dirname, '../utils/assertNoLinkOnWikiPath.js'),
+        { './findLinkOnWikiPath': walk },
+      )
+
+    // Act
+    const refusal = await assertWhereTheRealPathFails(
+      outputDirectory,
+      projectRoot,
+    ).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project`,
+    )
+  })
 
 // Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them), against a script written straight into a page file of the Wiki folder, and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or lets a script run by a secret its own tag carries, which a tag left open before it takes over; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; repeat review SC1 (critical): every script of a page file got the nonce; Codex review CX16: the reader's nonce went to a script tag a page file leaves open before the reader's own; seam=none (the reader's real responses)
 test('every page the reader serves lets only script files of its own origin and the shell’s script by its known hash run, and the reader’s own tag carries no secret: a script written into a page file or into an asset that is an HTML file runs nowhere', async (context) => {

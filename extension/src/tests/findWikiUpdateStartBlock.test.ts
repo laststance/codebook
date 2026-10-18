@@ -24,6 +24,7 @@ import type * as lookModule from '../utils/isFolderOfItsOwn'
 import type * as listingModule from '../utils/listFolderTreeWithoutFollowing'
 
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 
@@ -479,6 +480,42 @@ test('a folder on the Wiki folder’s path in the project that lstat calls a dir
     await rm(outside, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the learner whose project holds `.codebook` with a real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the start check swallows the walk's error of `realpath` and lets the update start, so an agent is asked, the publisher then refuses the path, and the run uses up its whole timeout; why_new=Cycle 0046 /ship adversarial review AD17; seam=a file system whose realpath fails for one folder (src/tests/utils/fileSystemWhoseRealPathFails.ts)
+for (const code of ['EACCES', 'EINVAL'] as const)
+  test(`a .codebook folder whose real path the system cannot name (${code}) refuses the update at its start and is named, as a folder that leads out of the project`, async () => {
+    // Arrange: the published Wiki, looked at by a start check whose walk's realpath fails for `.codebook`.
+    const wiki = await publishedWikiFixture()
+    const walk = await loadModule<typeof linkWalkModule>(
+      resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
+      {
+        'node:fs/promises': fileSystemWhoseRealPathFails(
+          join(wiki.projectRoot, '.codebook'),
+          code,
+        ),
+      },
+    )
+    const { findWikiUpdateStartBlock: findBlockWhereTheRealPathFails } =
+      await loadModule<typeof startBlockModule>(
+        resolve(__dirname, '../utils/findWikiUpdateStartBlock.js'),
+        { './findLinkOnWikiPath': walk },
+      )
+    try {
+      // Act
+      const block = await findBlockWhereTheRealPathFails(
+        wiki.outputDirectory,
+        wiki.projectRoot,
+      )
+
+      // Assert: the block comes from a module loaded apart, so it is compared by its text.
+      assert.equal(
+        JSON.stringify(block),
+        '{"cause":"linked-parent","paths":[".codebook"]}',
+      )
+    } finally {
+      await wiki.cleanup()
+    }
+  })
 
 test('an output outside the project reached through a link outside it does not block the start', async () => {
   // Arrange

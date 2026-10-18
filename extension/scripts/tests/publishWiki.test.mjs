@@ -27,6 +27,7 @@ import {
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
 import { swapBeforeMaking } from './utils/swappedFolderFileSystem.mjs'
+import { failRealPathOf } from './utils/unnamedRealPathFileSystem.mjs'
 
 for (const legacy of [false, true]) {
   test(
@@ -2339,6 +2340,63 @@ test('a recovery whose kept prior Wiki beside the Wiki folder is a folder that l
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+/** The load of the copy of the shipped publisher whose `node:fs/promises` fails `realpath` for the folder a test names, once it has begun. */
+let publisherWhoseRealPathFails
+/**
+ * Loads a copy of the shipped publisher whose `realpath` fails for the folder a test names with {@link failRealPathOf}: a loader hook (`scripts/tests/utils/unnamedRealPathHooks.mjs`), registered once, hands the copy `unnamedRealPathFileSystem.mjs`.
+ * @returns {Promise<typeof import('../../skills/codebook/publish-wiki.mjs')>} The copy's exports.
+ * @example
+ * const { prepareWikiStage } = await loadPublisherWhoseRealPathFails()
+ */
+function loadPublisherWhoseRealPathFails() {
+  if (!publisherWhoseRealPathFails) {
+    register(new URL('./utils/unnamedRealPathHooks.mjs', import.meta.url))
+    publisherWhoseRealPathFails = import(
+      new URL(
+        '../../skills/codebook/publish-wiki.mjs?unnamed-real-path',
+        import.meta.url,
+      ).href
+    )
+  }
+  return publisherWhoseRealPathFails
+}
+
+// Value: protects=the learner whose project holds `.codebook` with a real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the publisher lets the system's error of `realpath` through instead of its refusal of a folder that leads out of the project, so the agent and the learner read a system error and no step; why_new=Cycle 0046 /ship adversarial review AD17 (the start check, the reader and the publisher refuse such a folder with the same sentences); seam=a copy of the shipped publisher whose `realpath` fails for one folder (scripts/tests/utils/unnamedRealPathHooks.mjs)
+for (const code of ['EACCES', 'EINVAL'])
+  test(`a preparation whose .codebook has a real path the system cannot name (${code}) is refused with the folder named, as one that leads out of the project, and nothing is written there`, async () => {
+    // Arrange: a project with a real `.codebook`, met by a publisher whose realpath fails for it.
+    const { prepareWikiStage: prepareWhereTheRealPathFails } =
+      await loadPublisherWhoseRealPathFails()
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-unnamed-real-path-')),
+    )
+    try {
+      await mkdir(join(root, '.codebook'))
+      failRealPathOf(join(root, '.codebook'), code)
+
+      // Act
+      const refusal = await prepareWhereTheRealPathFails({
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }).then(
+        () => 'prepared',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { refusal, inCodebook: await readdir(join(root, '.codebook')) },
+        {
+          refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+          inCodebook: [],
+        },
+      )
+    } finally {
+      failRealPathOf(undefined)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
 /** The load of the copy of the shipped publisher whose `node:fs/promises` runs a test's swap before it makes a folder, once it has begun. */
 let publisherWhoseFolderIsSwapped
