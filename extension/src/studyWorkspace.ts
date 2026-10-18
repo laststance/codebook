@@ -696,9 +696,7 @@ export class StudyWorkspace {
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
   private answeredRunRefusalId?: string
   private readonly errors = new Map<ReaderErrorKind, string>()
-  /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. Asked through {@link isInheritedPaneTab}, which first follows a noted tab Cursor built anew. */
-  private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
-  /** The same notes, each tab with the key it is found again by ({@link learnerTabKey}) once Cursor built its object anew; {@link followRebuiltInheritedPanes} keeps them current (Cycle 0046 FX-D1-2). */
+  /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them, each with the key it is found again by ({@link learnerTabKey}) once Cursor built its object anew. {@link followRebuiltInheritedPanes} keeps them current: a tab that left the tab model drops out, and its successor is noted (Cycle 0046 FX-D1-2). Asked through {@link isInheritedPaneTab}, which follows them first, so a tab of the current tab model, the only kind any reader asks about, is found here alone (Cycle 0046 P2S2). */
   private readonly inheritedPaneKeys = new Map<vscode.Tab, string>()
   private readonly documents = new Map<string, string>()
   /** Public provider notifications retain the selected native input while {@link renderSelection} changes live or historical captured bytes. */
@@ -1373,12 +1371,11 @@ export class StudyWorkspace {
   }
 
   /**
-   * Notes one tab as a pane an earlier extension host left, by its object and by the key it is found again by; called by {@link rememberInheritedPanes} and {@link followRebuiltInheritedPanes}.
+   * Notes one tab as a pane an earlier extension host left, with the key it is found again by; called by {@link rememberInheritedPanes} and {@link followRebuiltInheritedPanes}.
    * @param tab - The dead pane's current tab.
    * @example this.noteInheritedPaneTab(tab)
    */
   private noteInheritedPaneTab(tab: vscode.Tab): void {
-    this.inheritedPaneTabs.add(tab)
     this.inheritedPaneKeys.set(tab, this.learnerTabKey(tab))
   }
 
@@ -1390,7 +1387,7 @@ export class StudyWorkspace {
    */
   private isInheritedPaneTab(tab: vscode.Tab): boolean {
     this.followRebuiltInheritedPanes()
-    return this.inheritedPaneTabs.has(tab)
+    return this.inheritedPaneKeys.has(tab)
   }
 
   /**
@@ -1417,7 +1414,7 @@ export class StudyWorkspace {
             'codebook.scopedBrowser',
             'codebook.studyContext',
           ) &&
-          !this.inheritedPaneTabs.has(tab) &&
+          !this.inheritedPaneKeys.has(tab) &&
           !this.mayBeOwnPaneTabOf(group, tab),
       ),
     )
