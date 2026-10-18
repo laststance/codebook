@@ -152,7 +152,39 @@ function commandsOf(
 }
 
 /**
- * Finds the folder each command runs in as far as the command line tells it: a `cd <folder>` changes it for the commands after `&&` or `;` ({@link OPERATOR_THAT_KEEPS_THE_FOLDER}); any other operator, a relative `cd` from a folder not known, or a `cd` with other words leaves it unknown. Called by {@link isUpdateCommandLine}.
+ * Reads the folder a command changes to when it is `cd <folder>`: `cd` and one word, no option and no second folder; called by {@link foldersOf}.
+ * @param words - The command's words.
+ * @returns The folder as the command writes it; `undefined` for any other command.
+ * @example
+ * cdTargetOf(['cd', '/repo'])       // => '/repo'
+ * cdTargetOf(['cd', '-P', '/repo']) // => undefined
+ */
+function cdTargetOf(words: string[]): string | undefined {
+  const [program, target, ...rest] = words
+  return program === 'cd' && rest.length === 0 ? target : undefined
+}
+
+/**
+ * Resolves the folder of a `cd` from the folder the command ran in; called by {@link foldersOf}.
+ * @param target - The folder the `cd` names.
+ * @param folder - The folder the `cd` ran in; `undefined` when not known.
+ * @param paths - The path rules of the platform.
+ * @returns An absolute folder as it is, a relative one in the known folder; `undefined` for a relative one from a folder not known.
+ * @example
+ * folderOfCd('skills', '/ext', posix)    // => '/ext/skills'
+ * folderOfCd('skills', undefined, posix) // => undefined
+ */
+function folderOfCd(
+  target: string,
+  folder: string | undefined,
+  paths: typeof posix,
+): string | undefined {
+  if (paths.isAbsolute(target)) return paths.resolve(target)
+  return folder === undefined ? undefined : paths.resolve(folder, target)
+}
+
+/**
+ * Finds the folder each command runs in as far as the command line tells it: a `cd <folder>` ({@link cdTargetOf}) changes it for the commands after `&&` or `;` ({@link OPERATOR_THAT_KEEPS_THE_FOLDER}); any other operator, or a relative `cd` from a folder not known ({@link folderOfCd}), leaves it unknown. Called by {@link isUpdateCommandLine}.
  * @param commands - The commands, as {@link commandsOf} split them.
  * @param platform - The platform whose paths the folders are resolved by.
  * @returns For each command, the absolute folder it runs in, or `undefined` when the command line does not tell it.
@@ -169,13 +201,9 @@ function foldersOf(
     // The folder a cd changed to holds only after `&&` or `;`.
     if (!OPERATOR_THAT_KEEPS_THE_FOLDER.test(operator)) folder = undefined
     const current = folder
-    const [program, target, ...rest] = words
-    // Only `cd <folder>` changes it; from a folder not known, a relative one stays unknown.
-    if (program === 'cd' && target !== undefined && rest.length === 0)
-      folder =
-        paths.isAbsolute(target) || current !== undefined
-          ? paths.resolve(current ?? '', target)
-          : undefined
+    const target = cdTargetOf(words)
+    // Only `cd <folder>` changes the folder for the commands after it.
+    if (target !== undefined) folder = folderOfCd(target, current, paths)
     return current
   })
 }
