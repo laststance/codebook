@@ -195,6 +195,7 @@ import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
 import {
   capturedSourceNotShownReason,
   type CapturedSourceStanding,
+  type CapturedSourceView,
 } from './utils/capturedSourceNotShownReason'
 import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
@@ -1032,11 +1033,11 @@ export class StudyWorkspace {
    * @example this.studyLayout()
    */
   private studyLayout() {
-    return this.usesPreparedApplicationLayout()
-      ? // An Application pane without a confirmed receipt stands in a populated grid the live layout does not describe (finding 591).
-        (this.applicationGroup?.layout ??
-          (this.app ? undefined : LIVE_EDITOR_LAYOUT))
-      : STUDY_PRESENTATIONS[this.presentationMode].layout
+    if (!this.usesPreparedApplicationLayout())
+      return STUDY_PRESENTATIONS[this.presentationMode].layout
+    // An Application pane without a confirmed receipt stands in a populated grid the live layout does not describe (finding 591).
+    const layoutWithoutReceipt = this.app ? undefined : LIVE_EDITOR_LAYOUT
+    return this.applicationGroup?.layout ?? layoutWithoutReceipt
   }
 
   /** Bounds layout effects to the current feature's main panes, never a separate chat part. @example this.studyGroupCount() // 2 during live explanation */
@@ -1097,12 +1098,11 @@ export class StudyWorkspace {
       if (!currentSourceReady) {
         const playback = this.playback?.state()
         // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again. Otherwise the reason says how the source stands (row 695).
-        reason =
-          playback?.readiness === 'loading'
-            ? 'The recorded source is opening in its native pane.'
-            : this.recordingActive && playback?.readiness === 'failed'
-              ? recordingNotShownReason(playback.reason)
-              : this.capturedSourceReason()
+        if (playback?.readiness === 'loading')
+          reason = 'The recorded source is opening in its native pane.'
+        else if (this.recordingActive && playback?.readiness === 'failed')
+          reason = recordingNotShownReason(playback.reason)
+        else reason = this.capturedSourceReason()
       } else if (!matchingColumns)
         reason =
           'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
@@ -7746,13 +7746,15 @@ export class StudyWorkspace {
             'The editor could not reserve separate Codebook panes. Existing editor parts were preserved; retry Open Study Workspace explicitly.',
           )
       }
+      // The reservation a composition change or a reentry from the Wiki made: the initial one, or the captured Wiki layout.
+      const reservationOfEntry = needsInitialReservation
+        ? this.layoutReceipt
+        : reentry
       const compositionReservation =
         !this.liveComposition &&
         (compositionChanged || !firstOpen) &&
         this.repositoryLayoutOrigin
-          ? needsInitialReservation
-            ? this.layoutReceipt
-            : reentry
+          ? reservationOfEntry
           : undefined
       // A cancelled reservation can already have created every main pane; finish its retained app move on explicit retry too.
       if (
@@ -7803,14 +7805,16 @@ export class StudyWorkspace {
       await this.refresh(signal)
       signal?.throwIfAborted()
       // Explicit entry fronts a covered source without queueing behind a still-loading Wiki selection.
-      const sourcePlacement =
-        compositionReservation && this.layoutReceipt?.mode === 'study-reentry'
+      const reentryReceipt =
+        this.layoutReceipt?.mode === 'study-reentry'
           ? this.layoutReceipt
-          : (reentry ??
-            (this.applicationGroup &&
-            this.layoutReceipt?.mode === 'study-reentry'
-              ? this.layoutReceipt
-              : undefined))
+          : undefined
+      let sourcePlacement = reentry
+      // A sealed composition reservation places the source by its reentry receipt; without the Wiki's captured layout, so does an Application group's.
+      if (compositionReservation && reentryReceipt)
+        sourcePlacement = reentryReceipt
+      else if (reentry === undefined && this.applicationGroup)
+        sourcePlacement = reentryReceipt
       await this.renderSelection(
         true,
         (origin === 'study' && !this.loading && !this.sourceReady()) ||
@@ -9088,13 +9092,13 @@ export class StudyWorkspace {
    */
   private assertUnambiguousClosingTabs(tabs: readonly vscode.Tab[]): void {
     // Native restored inputs can prefix the view type; compare the same normalized kinds ownership already accepts.
-    const kinds = tabs.flatMap((tab) =>
-      this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
-        ? ['application']
-        : this.isCodebookPaneInput(tab.input, 'codebook.studyContext')
-          ? ['context']
-          : [],
-    )
+    const kinds = tabs.flatMap((tab) => {
+      if (this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser'))
+        return ['application']
+      if (this.isCodebookPaneInput(tab.input, 'codebook.studyContext'))
+        return ['context']
+      return []
+    })
     if (new Set(kinds).size !== kinds.length)
       throw new Error(
         'Codebook cannot distinguish its current pane tab from another pane of the same kind. The remaining panes were left open. Keep the pane you need, close the duplicate Codebook pane tab, then try Close Study Workspace again.',
@@ -9731,9 +9735,11 @@ export class StudyWorkspace {
    * @example this.learnerTabKey(tab) // => 'file:///work/login-form.tsx', or 'tab:Cursor Settings'
    */
   private learnerTabKey(tab: vscode.Tab): string {
-    return tab.input instanceof vscode.TabInputText
-      ? tab.input.uri.toString()
-      : `${tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : 'tab'}:${String(tab.label)}`
+    if (tab.input instanceof vscode.TabInputText)
+      return tab.input.uri.toString()
+    const kind =
+      tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : 'tab'
+    return `${kind}:${String(tab.label)}`
   }
 
   /**
@@ -13131,14 +13137,10 @@ export class StudyWorkspace {
    * @example this.capturedSourceReason() // => "The Study is set aside since Return to Wiki, so its captured source is not in front of its native pane. Use View recording in the Repository Wiki, or Reload saved recording, to bring the Study back."
    */
   private capturedSourceReason(): string {
-    return capturedSourceNotShownReason(
-      this.capturedSourceStanding(),
-      this.recordingActive
-        ? 'recording'
-        : this.liveComposition
-          ? 'live'
-          : 'study',
-    )
+    let view: CapturedSourceView = 'study'
+    if (this.recordingActive) view = 'recording'
+    else if (this.liveComposition) view = 'live'
+    return capturedSourceNotShownReason(this.capturedSourceStanding(), view)
   }
 
   /**
@@ -18115,57 +18117,53 @@ export class StudyWorkspace {
           'PRESENTATION_UNAVAILABLE',
           emptyFirstGroupObstacle(),
         )
+      // The focus the borrow announces: the captured source it shows, or the first group's front tab.
+      const borrowedFocus = sourceBorrow
+        ? {
+            matchesEditor: sourceEditorReported,
+            matchesGroup: () => {
+              // Cursor names the chat part's group over the source the borrow focused until a tab or group changes (row 739), as for the primary focus below.
+              if (sourceEditorReportedUnderStaleName()) return true
+              const group = vscode.window.tabGroups.activeTabGroup,
+                input = group.activeTab?.input
+              return (
+                group.viewColumn === sourceBorrow.viewColumn &&
+                input instanceof vscode.TabInputText &&
+                input.uri.toString() === sourceBorrow.document.uri.toString()
+              )
+            },
+          }
+        : {
+            matchesEditor: () => {
+              const focused = vscode.window.activeTextEditor
+              // Latch the captured primary target before its command; an away-and-back event must survive the delayed response.
+              return primaryEditor
+                ? focused?.document.uri.toString() ===
+                    primaryEditor.document.uri.toString() &&
+                    focused.viewColumn === vscode.ViewColumn.One &&
+                    focused.document.version === borrowedVersion &&
+                    JSON.stringify(focused.selections) === borrowedSelections
+                : firstFocused()
+            },
+            // Cursor reports the first group's text editor and still names the group it named before (the chat's) until its tab model is rebuilt: that is this measurement's focus too, as for the wait below (row 660).
+            namesStaleGroup: primaryEditorReported,
+            matchesGroup: () => {
+              const group = vscode.window.tabGroups.activeTabGroup,
+                input = group.activeTab?.input
+              if (primaryEditorReported()) return true
+              return (
+                group.viewColumn === vscode.ViewColumn.One &&
+                (firstInput instanceof vscode.TabInputText
+                  ? input instanceof vscode.TabInputText &&
+                    input.uri.toString() === firstInput.uri.toString()
+                  : firstInput instanceof vscode.TabInputWebview &&
+                    input instanceof vscode.TabInputWebview &&
+                    input.viewType === firstInput.viewType)
+              )
+            },
+          }
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
-      beforeScopeFocus?.(
-        useCitation
-          ? undefined
-          : sourceBorrow
-            ? {
-                matchesEditor: sourceEditorReported,
-                matchesGroup: () => {
-                  // Cursor names the chat part's group over the source the borrow focused until a tab or group changes (row 739), as for the primary focus below.
-                  if (sourceEditorReportedUnderStaleName()) return true
-                  const group = vscode.window.tabGroups.activeTabGroup,
-                    input = group.activeTab?.input
-                  return (
-                    group.viewColumn === sourceBorrow.viewColumn &&
-                    input instanceof vscode.TabInputText &&
-                    input.uri.toString() ===
-                      sourceBorrow.document.uri.toString()
-                  )
-                },
-              }
-            : {
-                matchesEditor: () => {
-                  const focused = vscode.window.activeTextEditor
-                  // Latch the captured primary target before its command; an away-and-back event must survive the delayed response.
-                  return primaryEditor
-                    ? focused?.document.uri.toString() ===
-                        primaryEditor.document.uri.toString() &&
-                        focused.viewColumn === vscode.ViewColumn.One &&
-                        focused.document.version === borrowedVersion &&
-                        JSON.stringify(focused.selections) ===
-                          borrowedSelections
-                    : firstFocused()
-                },
-                // Cursor reports the first group's text editor and still names the group it named before (the chat's) until its tab model is rebuilt: that is this measurement's focus too, as for the wait below (row 660).
-                namesStaleGroup: primaryEditorReported,
-                matchesGroup: () => {
-                  const group = vscode.window.tabGroups.activeTabGroup,
-                    input = group.activeTab?.input
-                  if (primaryEditorReported()) return true
-                  return (
-                    group.viewColumn === vscode.ViewColumn.One &&
-                    (firstInput instanceof vscode.TabInputText
-                      ? input instanceof vscode.TabInputText &&
-                        input.uri.toString() === firstInput.uri.toString()
-                      : firstInput instanceof vscode.TabInputWebview &&
-                        input instanceof vscode.TabInputWebview &&
-                        input.viewType === firstInput.viewType)
-                  )
-                },
-              },
-      )
+      beforeScopeFocus?.(useCitation ? undefined : borrowedFocus)
       this.mainEditorFocusBorrows++
       this.firstGroupFrontAtBorrow = undefined
       if (useCitation) {
