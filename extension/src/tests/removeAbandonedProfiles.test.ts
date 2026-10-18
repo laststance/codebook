@@ -362,6 +362,38 @@ test('a marked profile folder whose marker names another user is left untouched 
   )
 })
 
+// Value: protects=this user's sweep on a profile root that holds many marked folders of other users (a root several users reach on Windows): those folders take none of the sweep's bound of 64 judged folders, so this user's folder listed after them is still judged and removed (CX7; TT11, the third testing review); fails_when=a folder of another user is counted before its user is compared, so 64 such folders use the bound up and this user's leftovers are never removed; why_new=the CX7 test named "not counted" but did not count; seam=the user name and the process lister the sweep is given, and a profile root of the test's own, whose listing order the test reads before it marks the folder listed last as this user's
+test('64 marked profile folders of other users listed before a folder of this user take none of the sweep’s bound, and this user’s folder is removed', async (context) => {
+  // Arrange: 65 folders whose markers name gone processes; the one the directory lists last is this user's, every other one another user's.
+  const root = await profileRoot(context)
+  for (let index = 0; index < 65; index += 1)
+    await profileFolder(join(root, `codebook-browser-${index}`))
+  const names = await readdir(root)
+  for (const name of names)
+    await writeFile(
+      join(root, name, 'codebook-owner.json'),
+      JSON.stringify({
+        pid: ID_OF_NO_PROCESS,
+        hostname: 'workstation',
+        user: name === names.at(-1) ? 'learner' : 'another-learner',
+      }),
+    )
+  const listedLast = join(root, names.at(-1)!)
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    countingLister().list,
+    readProcessStart,
+    'learner',
+  )
+  // Assert
+  assert.deepEqual(
+    { removed, left: (await readdir(root)).length },
+    { removed: [listedLast], left: 64 },
+  )
+})
+
 test('a marked profile folder of an earlier kernel boot is removed although a process with its id runs now, and a boot time alone removes nothing', async (context) => {
   // Arrange: both markers name the id of this running process; one was written under another kernel boot id, the other under a boot time far in the past.
   const root = await profileRoot(context)
