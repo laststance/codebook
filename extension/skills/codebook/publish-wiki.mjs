@@ -80,8 +80,8 @@ async function listFiles(directory, prefix = '') {
 /** Whether a real path is the project root itself or lies below it. Called by {@link requireOwnFolder} and {@link enteredProjectAt}. @example isInProject('/repo', '/repo/.codebook') // => true; isInProject('/repo', '/elsewhere') // => false */
 const isInProject = (root, path) => { const within = relative(root, path); return within === '' || !isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep); };
 
-/** Whether the real path of an entry lies in the project; an entry whose real path the system cannot name (`EACCES` for a folder of another user, `EINVAL` for some junctions on Windows) counts as one that leaves it, so it is refused inside the project with the sentence of a link instead of the system's error. Called by {@link isOwnFolder} and {@link enteredProjectAt}. @example await isRealPathInProject('/repo', '/repo/.codebook') // => true for a folder of the project's own */
-const isRealPathInProject = (root, path) => realpath(path).then(real => isInProject(root, real), () => false);
+/** Whether the real path of an entry lies in the project; an entry whose real path the system cannot name (`EACCES` for a folder of another user, `EINVAL` for some junctions on Windows) counts as one that leaves it, so it is refused inside the project with the sentence of a link instead of the system's error. Called by {@link isOwnFolder} and {@link enteredProjectAt}. @example await isRealPathInProject('/repo/.codebook', '/repo') // => true for a folder of the project's own */
+const isRealPathInProject = (path, root) => realpath(path).then(real => isInProject(root, real), () => false);
 
 /** Looks at one entry without following it; called by {@link enteredProjectAt} and {@link requireRegularFolder}. @returns The entry's status, or undefined when nothing stands there. @example await lookAt('/repo/.codebook') // => undefined in a project without it */
 const lookAt = path => lstat(path).catch(error => { if (isMissing(error)) return undefined; throw error; });
@@ -90,7 +90,7 @@ const lookAt = path => lstat(path).catch(error => { if (isMissing(error)) return
 const isRegularFolder = stat => stat.isDirectory() && !stat.isSymbolicLink();
 
 /** Whether an entry is a folder of the project's own: a directory as a look without following answers it and, where `mustStayInProject` holds, one whose real path stays in the project, so a junction on Windows to another volume, which lstat calls a directory, is none. Called by {@link requireOwnFolder} and {@link requireRegularFolder}. @example await isOwnFolder('/repo/.codebook', stat, '/repo', true) // => false while `.codebook` leads out of the project */
-const isOwnFolder = async (path, stat, root, mustStayInProject) => isRegularFolder(stat) && (!mustStayInProject || await isRealPathInProject(root, path));
+const isOwnFolder = async (path, stat, root, mustStayInProject) => isRegularFolder(stat) && (!mustStayInProject || await isRealPathInProject(path, root));
 
 /** The refusal of a Wiki folder that is no folder of its own, for {@link locations}; the same sentence for a link, a file and a junction that leads out of the project. @example outputRefusalOf('/repo/.codebook/wiki') // => 'The Wiki folder /repo/.codebook/wiki is a link, a file or a folder that leads out of the project. …' */
 const outputRefusalOf = path => 'The Wiki folder ' + path + ' is a link, a file or a folder that leads out of the project. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.';
@@ -114,7 +114,7 @@ async function enteredProjectAt(path, root, hasEntered) {
   const stat = await lookAt(path);
   if (!stat) return undefined;
   if (hasEntered) await requireOwnFolder(path, stat, root);
-  return hasEntered || isRealPathInProject(root, path);
+  return hasEntered || isRealPathInProject(path, root);
 }
 
 /** Refuses an output whose path, once it has entered the project, passes through a link or through an entry that is no folder of the project's own, before anything is created, read or written there: the stage, the journal and the backup lie beside the output, so a cloned repository that carries `.codebook` (or any folder on the way) as a link would have the publisher write outside the project. The folders up to the point where the path enters the project are the learner's choice, as is an output outside the project. Called by {@link locations} first. @returns Whether the output's folder lies inside the project, so the output itself is held to the same rule ({@link requireRegularFolder}); false when a folder on the path is missing, so no output stands there yet. @example await requireOwnFoldersToOutput('/repo/wiki-link/wiki', '/repo') // throws while /repo/wiki-link is a link; => true for /repo/.codebook/wiki */
@@ -239,8 +239,8 @@ async function requireNoJournal(journal) {
   if (await regularBytes(journal, true)) throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
 }
 
-/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example await isWhereItWasResolved('/repo', '/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1']) // => false once .codebook was swapped for a link */
-const isWhereItWasResolved = (root, parent, identity, entries) => Promise.all([stat(parent), ...[parent, ...entries].map(path => realpath(path))]).then(
+/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
+const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([stat(parent), ...[parent, ...entries].map(path => realpath(path))]).then(
   ([now, ...realPaths]) => realPaths.every(real => isInProject(root, real)) && now.dev === identity.dev && now.ino === identity.ino,
   () => false);
 
@@ -248,7 +248,7 @@ const isWhereItWasResolved = (root, parent, identity, entries) => Promise.all([s
 async function holdOfPath(paths, entries) {
   const parent = dirname(paths.output), identity = await stat(parent);
   return async () => {
-    if (!paths.isOutputInProject || await isWhereItWasResolved(paths.root, parent, identity, entries)) return;
+    if (!paths.isOutputInProject || await isWhereItWasResolved(parent, identity, entries, paths.root)) return;
     throw new Error(linkedPathRefusalOf(parent));
   };
 }
@@ -262,7 +262,7 @@ async function makeFolderHeld(folder, requirePathHeld) {
 /** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasResolved}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
 async function requireStageWhereItWasMade(paths, stage, parentIdentity) {
   const parent = dirname(paths.output);
-  if (!paths.isOutputInProject || await isWhereItWasResolved(paths.root, parent, parentIdentity, [stage])) return;
+  if (!paths.isOutputInProject || await isWhereItWasResolved(parent, parentIdentity, [stage], paths.root)) return;
   await removeMadeFolders([stage, ...paths.madeFolders]);
   throw new Error(linkedPathRefusalOf(parent));
 }
