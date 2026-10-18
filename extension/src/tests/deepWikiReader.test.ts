@@ -1197,6 +1197,61 @@ test('a Wiki page asked for as an image, media, a style sheet, a font, a track, 
   )
 })
 
+// Value: protects=the reader's own script and the Wiki's style sheets and images, which a browser asks for as a script, a style and an image; fails_when=the destination refusal of pages also covers files that are no page, so every browser gets 403 for the Q&A script, styles and images; why_new=the P2RT3 test asks for the overview alone; no test sends Sec-Fetch-Dest for a file that is no page; seam=none; no_claim=a real browser's headers (fetch sends the header by hand)
+test('the reader’s own script, a style sheet and an image of the Wiki are served to a browser that asks for them as a script, a style and an image', async (context) => {
+  // Arrange: the one-page Wiki with a style sheet and an image that its manifest names.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-subresource-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
+  await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['wiki.css', 'diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: each file asked for with the destination a browser names for it.
+  const answers: Record<string, { status: number; type: string | null }> = {}
+  for (const [file, destination] of [
+    ['codebook-qa.js', 'script'],
+    ['wiki.css', 'style'],
+    ['diagram.png', 'image'],
+  ] as const) {
+    const response = await fetch(new URL(file, reader.url), {
+      headers: { 'Sec-Fetch-Dest': destination },
+    })
+    await response.arrayBuffer()
+    answers[file] = {
+      status: response.status,
+      type: response.headers.get('content-type'),
+    }
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    'codebook-qa.js': {
+      status: 200,
+      type: 'text/javascript; charset=utf-8',
+    },
+    'wiki.css': { status: 200, type: 'text/css; charset=utf-8' },
+    'diagram.png': { status: 200, type: 'application/octet-stream' },
+  })
+})
+
 // Value: protects=the editor's machine against a crafted page that is reloaded or whose tab is closed: the page's worker must stop with the request instead of keeping a core busy until the deadline; fails_when=the reader no longer aborts the page's preparation when the response closes before it is finished, so the worker is abandoned and runs on; why_new=P2T5; seam=the reader loaded with loadModule and a stand-in page-worker module that keeps the signal it is handed and answers only when that signal aborts; no_claim=the real worker's stop at an abort (the page-worker tests cover it)
 test('a page whose browser tab goes while the page is prepared has its preparation stopped', async (context) => {
   // Arrange: the one-page Wiki and a reader whose page worker answers only when its request goes.
