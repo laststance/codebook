@@ -96,7 +96,7 @@ import {
 import {
   LearningLibrary,
   type UnconfirmedWriterRule,
-  type UnconfirmedWriter,
+  type UnconfirmedWriters,
   type StudyRemoval,
 } from './learningLibrary'
 import type {
@@ -283,6 +283,7 @@ import {
   type ChangedLayoutPart,
   unconfirmedLayoutReason,
 } from './utils/unconfirmedLayoutReason'
+import { unconfirmedWritersInLocalTime } from './utils/unconfirmedWritersInLocalTime'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
 import { untilAborted } from './utils/untilAborted'
 import { withoutEditorLayoutLeaves } from './utils/withoutEditorLayoutLeaves'
@@ -21725,7 +21726,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because a recording of the study names another host whose run may still write it, asks the learner whether to move it anyway ({@link askRemovalOfUnconfirmedWriter}); called by {@link moveSavedStudy}.
+   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because a recording of the study names another host whose run may still write it, asks the learner whether to move it anyway ({@link askRemovalOfUnconfirmedWriters}); called by {@link moveSavedStudy}.
    * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link UnconfirmedWriterRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
@@ -21739,29 +21740,34 @@ export class StudyWorkspace {
     const removal = await this.moveStudyFiles(studyId, evidenceDirectory)
     if (removal.outcome !== 'nothing-moved' || !removal.unconfirmedWriter)
       return removal
-    if (!(await this.askRemovalOfUnconfirmedWriter(removal.unconfirmedWriter)))
+    // Every recording whose writer this computer cannot confirm is named, so the learner agrees to each one that moves.
+    if (
+      !(await this.askRemovalOfUnconfirmedWriters([
+        removal.unconfirmedWriter,
+        ...(removal.otherUnconfirmedWriters ?? []),
+      ]))
+    )
       return undefined
     return this.moveStudyFiles(studyId, evidenceDirectory, 'move')
   }
 
   /**
-   * Asks the learner, in a modal dialog, whether to move a study whose recording has a writer this computer cannot confirm (on another computer, or in an editor window of this computer it cannot tell from another process): the dialog names the host the recording gives and the time it started, and offers "Move to Trash Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
-   * @param writer - The host the recording names, its start (an ISO time) and the place of its writer.
+   * Asks the learner, in a modal dialog, whether to move a study whose recordings have writers this computer cannot confirm (on another computer, or in an editor window of this computer it cannot tell from another process): the dialog names the host each recording gives and the time it started, and offers "Move to Trash Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
+   * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers; the first one's place words the title.
    * @returns `true` for "Move to Trash Anyway"; `false` for Cancel or a dismissed dialog.
-   * @example await this.askRemovalOfUnconfirmedWriter({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }) // => true after "Move to Trash Anyway"
+   * @example await this.askRemovalOfUnconfirmedWriters([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }]) // => true after "Move to Trash Anyway"
    */
-  private async askRemovalOfUnconfirmedWriter(
-    writer: UnconfirmedWriter,
+  private async askRemovalOfUnconfirmedWriters(
+    writers: UnconfirmedWriters,
   ): Promise<boolean> {
     const messages = studyRemovalMessages()
     const answer = await vscode.window.showWarningMessage(
-      messages.unconfirmedWriterTitle(writer.place),
+      messages.unconfirmedWriterTitle(writers[0].place),
       {
         modal: true,
-        detail: messages.unconfirmedWriterDetail({
-          ...writer,
-          startedAt: new Date(writer.startedAt).toLocaleString(),
-        }),
+        detail: messages.unconfirmedWriterDetail(
+          unconfirmedWritersInLocalTime(writers),
+        ),
       },
       messages.unconfirmedWriterButton,
     )
@@ -21773,7 +21779,7 @@ export class StudyWorkspace {
    * For a run of this window the removal runs inside {@link StudyService.withEvidenceHeld}, so no explanation is written into the evidence directory while it moves.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
-   * @param unconfirmedWriterRule - `move` only after the learner chose "Move to Trash Anyway" ({@link askRemovalOfUnconfirmedWriter}).
+   * @param unconfirmedWriterRule - `move` only after the learner chose "Move to Trash Anyway" ({@link askRemovalOfUnconfirmedWriters}).
    * @returns What the removal changed on disk.
    * @example await this.moveStudyFiles(studyId, evidenceDirectory) // => { outcome: 'moved' }
    */

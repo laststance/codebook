@@ -153,19 +153,23 @@ test('the dialog about a recording whose writer this computer cannot confirm nam
   const dialogs = {
     anotherComputer: {
       title: messages.unconfirmedWriterTitle('another-computer'),
-      detail: messages.unconfirmedWriterDetail({
-        host: 'old-laptop.local',
-        startedAt: '10/1/2026, 10:00:00 AM',
-        place: 'another-computer',
-      }),
+      detail: messages.unconfirmedWriterDetail([
+        {
+          host: 'old-laptop.local',
+          startedAt: '10/1/2026, 10:00:00 AM',
+          place: 'another-computer',
+        },
+      ]),
     },
     thisComputer: {
       title: messages.unconfirmedWriterTitle('this-computer'),
-      detail: messages.unconfirmedWriterDetail({
-        host: 'workstation',
-        startedAt: '10/1/2026, 10:00:00 AM',
-        place: 'this-computer',
-      }),
+      detail: messages.unconfirmedWriterDetail([
+        {
+          host: 'workstation',
+          startedAt: '10/1/2026, 10:00:00 AM',
+          place: 'this-computer',
+        },
+      ]),
     },
     button: messages.unconfirmedWriterButton,
     buttonOnWindows: onWindows.unconfirmedWriterButton,
@@ -186,5 +190,45 @@ test('the dialog about a recording whose writer this computer cannot confirm nam
     },
     button: 'Move to Trash Anyway',
     buttonOnWindows: 'Move to Recycle Bin Anyway',
+  })
+})
+
+// Value: protects=the learner reads every recording a removal would move although its writer may still run, before agreeing to it; fails_when=the detail names one recording of several, or words several as one (AD6); why_new=Cycle 0046 adversarial review AD6; seam=none
+test('the dialog about several recordings whose writers this computer cannot confirm names each host and start, and words them as several', () => {
+  // Arrange
+  const messages = studyRemovalMessages('Trash')
+  // Act
+  const details = {
+    anotherComputerFirst: messages.unconfirmedWriterDetail([
+      {
+        host: 'host-one',
+        startedAt: '10/1/2026, 10:00:00 AM',
+        place: 'another-computer',
+      },
+      {
+        host: 'workstation',
+        startedAt: '10/17/2026, 10:00:00 AM',
+        place: 'this-computer',
+      },
+    ]),
+    thisComputerOnly: messages.unconfirmedWriterDetail([
+      {
+        host: 'workstation',
+        startedAt: '10/1/2026, 10:00:00 AM',
+        place: 'this-computer',
+      },
+      {
+        host: 'workstation',
+        startedAt: '10/17/2026, 10:00:00 AM',
+        place: 'this-computer',
+      },
+    ]),
+  }
+  // Assert
+  assert.deepEqual(details, {
+    anotherComputerFirst:
+      'Its recordings were started on host-one at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell from this computer whether they are still recording. If an editor window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+    thisComputerOnly:
+      'Its recordings were started on workstation at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer is still recording them. If one still records one of them, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
   })
 })

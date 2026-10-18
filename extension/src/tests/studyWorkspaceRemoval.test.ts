@@ -12,7 +12,7 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
@@ -8092,6 +8092,78 @@ test('a saved study whose crashed recording names another host is moved with its
           studyId: study.id,
           text: `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
         },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's consent to each recording that the removal moves although its writer may still run on another computer; fails_when=the dialog names only one of the study's recordings and "Move to Trash Anyway" then moves the other too, unnamed (AD6, probe p3 E3); why_new=Cycle 0046 adversarial review AD6; seam=two recordings of the study (recordings.v2 by the helper, recordings.v3 by hand), each a header of another host without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recordings name two other hosts is moved with both after the learner chooses Move to Trash Anyway in a dialog that names both hosts and starts', async () => {
+  // Arrange: the recordings.v2 recording names old-laptop.local (2026-10-01); a recordings.v3 one names other-desktop.local (2026-10-17).
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    const secondRecording = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      study.id,
+    )
+    await mkdir(secondRecording, { recursive: true })
+    await writeFile(
+      join(secondRecording, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'other-desktop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-17T08:00:00.000Z',
+      }),
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) =>
+          join(basename(dirname(move.path)), basename(move.path)),
+        ),
+      },
+      {
+        dialogs: [
+          {
+            title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+            options: {
+              modal: true,
+              detail: `Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording. If an editor window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`,
+            },
+            items: [`Move to ${TRASH} Anyway`],
+          },
+        ],
+        moved: [
+          join('recordings.v3', study.id),
+          join('recordings.v2', study.id),
+          join(
+            basename(harness.reader.inspect().libraryDirectory!),
+            `${study.id}.study.meta.v3.json`,
+          ),
+          join(
+            basename(harness.reader.inspect().libraryDirectory!),
+            `${study.id}.study.v3.json`,
+          ),
+        ],
       },
     )
   } finally {

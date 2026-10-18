@@ -1529,6 +1529,126 @@ test('a recording that is still being written for a study that is not saved yet 
   )
 })
 
+/**
+ * Leaves a recording of a saved study in one recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming the writer's process and host and the time the recording was created.
+ * @param storage - The removal storage of the test.
+ * @param studyId - The saved study's id.
+ * @param recordingsRoot - The recording format's folder, `recordings.v2` or `recordings.v3`.
+ * @param writer - The process id and host name the header names, and when the recording was created.
+ * @example await headerOnlyRecording(storage, study.id, 'recordings.v3', { pid: ID_OF_NO_PROCESS, hostname: 'host-one', createdAt: '2026-10-01T08:00:00.000Z' })
+ */
+async function headerOnlyRecording(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  studyId: string,
+  recordingsRoot: 'recordings.v2' | 'recordings.v3',
+  writer: { pid: number; hostname: string; createdAt: string },
+): Promise<void> {
+  const folder = join(storage.directory, recordingsRoot, studyId)
+  await mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, 'header.json'),
+    JSON.stringify({
+      owner: {
+        pid: writer.pid,
+        hostname: writer.hostname,
+        sessionId: randomUUID(),
+      },
+      createdAt: writer.createdAt,
+    }),
+  )
+}
+
+// Value: protects=the learner's consent to each recording of a study that the removal moves although its writer may still run elsewhere; fails_when=the refusal names only the first such recording, so the dialog names one host and "Move to Trash Anyway" moves the recordings of every host (AD6, probe p3 E3); why_new=Cycle 0046 adversarial review AD6: no study had two such recordings; seam=two recordings of one study in two recording formats, each a header of another host without a record of its writer, and the injected mover
+test('a study whose recordings name two other hosts is refused with both hosts and both starts, and nothing moves', async (context) => {
+  // Arrange: a saved study with a recording of host-one (recordings.v3, 2026-10-01) and one of host-two (recordings.v2, 2026-10-17); no process here has their process id.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v3', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-one',
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-two',
+    createdAt: '2026-10-17T08:00:00.000Z',
+  })
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(
+    { removal, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording.`,
+        unconfirmedWriter: {
+          host: 'host-one',
+          startedAt: '2026-10-01T08:00:00.000Z',
+          place: 'another-computer',
+        },
+        otherUnconfirmedWriters: [
+          {
+            host: 'host-two',
+            startedAt: '2026-10-17T08:00:00.000Z',
+            place: 'another-computer',
+          },
+        ],
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=the dialog's title and warning about a study whose recordings have writers in both places, which must warn of the one on another computer; fails_when=the first recording found leads, so a writer of this computer gives the title "in another editor window" and the warning drops "on another computer"; why_new=Cycle 0046 adversarial review AD6: the refusal names several writers in an order; seam=a recording of this host whose header names a live child process begun after it (recordings.v3) and one of another host (recordings.v2), each a header without a record of its writer, and the injected mover
+test('a study whose recordings have a writer on another computer and one of this computer names the one on another computer first', async (context) => {
+  // Arrange: the recordings.v3 recording names a live process of this computer that began after it; the recordings.v2 recording names another host.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const laterProcess = await idleChild(context)
+  await headerOnlyRecording(storage, study.id, 'recordings.v3', {
+    pid: laterProcess.pid!,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-two',
+    createdAt: '2026-10-17T08:00:00.000Z',
+  })
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(
+    removal.outcome === 'moved'
+      ? removal
+      : {
+          unconfirmedWriter: removal.unconfirmedWriter,
+          otherUnconfirmedWriters: removal.otherUnconfirmedWriters,
+        },
+    {
+      unconfirmedWriter: {
+        host: 'host-two',
+        startedAt: '2026-10-17T08:00:00.000Z',
+        place: 'another-computer',
+      },
+      otherUnconfirmedWriters: [
+        {
+          host: hostname(),
+          startedAt: '2026-10-01T08:00:00.000Z',
+          place: 'this-computer',
+        },
+      ],
+    },
+  )
+})
+
 // Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so a removal of its id moves it away while the other editor writes it, without the learner's choice; why_new=Cycle 0046 /ship review T1: the "another machine" half of the rule that judges a recording's writer (now recordingWriterOf) had no test, and dropping it survived every test. Since AF2 such a recording is listed, so the learner can reach the dialog about it, and the removal waits for their choice; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
 test('a recording whose header names an editor of another machine is listed but not moved without the learner’s choice, although no process of its id runs on this machine', async (context) => {
   // Arrange: one reserved recording without a saved study, as a window of 0.2.29.0 makes it (a header, and no record of its writer beside the recordings); its header names an editor on another machine, with a process id no process here has.

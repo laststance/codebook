@@ -1,4 +1,4 @@
-import type { UnconfirmedWriter } from '../learningLibrary'
+import type { UnconfirmedWriter, UnconfirmedWriters } from '../learningLibrary'
 
 import { systemTrashName, type SystemTrashName } from './systemTrashName'
 import { unconfirmedWriterSentences } from './unconfirmedWriterSentences'
@@ -16,6 +16,20 @@ function libraryRoomSentence(usage: { count: number; limit?: number }): string {
   const holds = ` The library now holds ${usage.count} of ${usage.limit} saved studies`
   if (usage.count < usage.limit) return `${holds}.`
   return `${holds} and is still full; delete ${usage.count - usage.limit + 1} more before another study can be saved.`
+}
+
+/**
+ * Words what the answers of the dialog about recordings whose writers this computer cannot confirm do, after {@link unconfirmedWriterSentences}; called by {@link studyRemovalMessages} for the dialog's detail.
+ * @param writers - The recordings' writers; the first one's place words the warning (a writer on another computer comes first).
+ * @returns What is lost if a writer still records, that nothing is lost otherwise, and what Cancel keeps; for one recording or for several.
+ * @example unconfirmedWriterWarning([{ host: 'workstation', startedAt, place: 'this-computer' }]) // => 'If one still does, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.'
+ */
+function unconfirmedWriterWarning(writers: UnconfirmedWriters): string {
+  const [lead] = writers
+  // One recording is "it"; several are "one of them".
+  if (writers.length === 1)
+    return `${lead.place === 'another-computer' ? 'If an editor window still records it, on that computer or on this one, the recording is lost.' : 'If one still does, the recording is lost.'} If none does, nothing is lost. Cancel keeps the study and its recording as they are.`
+  return `${lead.place === 'another-computer' ? 'If an editor window still records one of them, on another computer or on this one, that recording is lost.' : 'If one still records one of them, that recording is lost.'} If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`
 }
 
 /**
@@ -55,13 +69,9 @@ export function studyRemovalMessages(
         ? `This study's recording may still be running on another computer. Move the study to the ${trashName} anyway?`
         : `This study's recording may still be running in another editor window. Move the study to the ${trashName} anyway?`,
     unconfirmedWriterButton: `Move to ${trashName} Anyway`,
-    /** The dialog's detail: the host the recording names and when it started ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does. */
-    unconfirmedWriterDetail: (writer: UnconfirmedWriter): string =>
-      `${unconfirmedWriterSentences(writer)} ${
-        writer.place === 'another-computer'
-          ? 'If an editor window still records it, on that computer or on this one, the recording is lost.'
-          : 'If one still does, the recording is lost.'
-      } If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+    /** The dialog's detail: the host each such recording names and when it started ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does; the first writer's place words the warning. */
+    unconfirmedWriterDetail: (writers: UnconfirmedWriters): string =>
+      `${unconfirmedWriterSentences(writers)} ${unconfirmedWriterWarning(writers)}`,
     nothingMoved: (cause: string): string =>
       `The saved study could not be moved to the ${trashName}. Nothing was deleted. ${cause}`,
     partlyMoved: (cause: string): string =>
