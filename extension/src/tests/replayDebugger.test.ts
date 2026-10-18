@@ -68,13 +68,13 @@ async function flushNative(): Promise<void> {
   for (let turn = 0; turn < 5; turn++)
     await new Promise<void>((resolve) => setImmediate(resolve))
 }
-/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, `disconnectBeforeTermination` models native Stop ordering, `configurationGate` delays the editor's configurationDone (and so the first stopped event), `refusalGate` delays each refused start's answer, `listeners` replaces the reader's notification handlers and `descriptorGate` delays the editor's request for the adapter of an accepted launch. @example harness().changes() */
+/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests (`'stack on stop'` keeps only native Call Stack's: the threads and the stack at each stop, with the values left to the test), `disconnectBeforeTermination` models native Stop ordering, `configurationGate` delays the editor's configurationDone (and so the first stopped event), `refusalGate` delays each refused start's answer, `listeners` replaces the reader's notification handlers and `descriptorGate` delays the editor's request for the adapter of an accepted launch. @example harness().changes() */
 function harness(
   startGate?: Promise<void>,
   terminationGate?: Promise<void>,
   refusedStarts = 0,
   disconnectBeforeTermination = false,
-  manualInspection = false,
+  manualInspection: boolean | 'stack on stop' = false,
   configurationGate?: Promise<void>,
   refusalGate?: Promise<void>,
   listeners?: { changed?: () => void; failed?: (error: unknown) => void },
@@ -112,11 +112,14 @@ function harness(
     assert.ok(response && 'request_seq' in response)
     return response
   }
+  /** Retrieves the selected stop's threads and stack as native Call Stack does after a stop, without its scopes or values. @example fetchStack().stackFrames[0] */
+  function fetchStack(): DebugProtocol.StackTraceResponse['body'] {
+    const thread = request('threads').body.threads[0]
+    return request('stackTrace', { threadId: thread.id }).body
+  }
   /** Retrieves the selected stop as native Variables does; automatic clients invoke it after stopped. @example inspect() */
   function inspect(): void {
-    const thread = request('threads').body.threads[0]
-    const frame = request('stackTrace', { threadId: thread.id }).body
-      .stackFrames[0]
+    const frame = fetchStack().stackFrames[0]
     // A gap has no scopes or values to retrieve.
     if (!frame) return
     const scope = request('scopes', { frameId: frame.id }).body.scopes[0]
@@ -140,12 +143,11 @@ function harness(
         const protocolMessage = message as
           DebugProtocol.Response | DebugProtocol.Event
         messages.push(protocolMessage)
-        if (
-          !manualInspection &&
-          'event' in protocolMessage &&
-          protocolMessage.event === 'stopped'
-        )
-          inspect()
+        if ('event' in protocolMessage && protocolMessage.event === 'stopped') {
+          // An automatic client loads the whole stop; a Call Stack-only client fetches its stack, and its values wait for the test.
+          if (!manualInspection) inspect()
+          else if (manualInspection === 'stack on stop') fetchStack()
+        }
       })
     }
   }
@@ -749,6 +751,84 @@ for (const ending of ['superseded', 'aborted'] as const)
       await fixture.owner.dispose()
     }
   })
+
+// Value: protects=one native model selection for two overlapping frames of one recorded stop, in every order of the first frame's answer and the next frame's steps; fails_when=the next frame asks only at its entry whether the stop's model was selected, so a first answer that settles the selection and clears it from flight between that question and the command makes the next frame run workbench.action.debug.focusProcess a second time, whose timeout could fail a frame whose model was selected; why_new=Cycle 0046 Q1 (round 3, Codex B1: two commands in an in-memory probe); seam=the editor's command port, whose first focusProcess the host holds until the test answers it (it resolves a promise once it holds it), a native client that fetches the stack at each stop, and each count of microtask turns between that answer and the next frame, in both orders, so the two frames' steps meet in every order; microtask turns hold no real work, so the orders do not depend on the machine's load
+test('two overlapping frames of one recorded stop select its native model once, in every order of the first frame’s answer and the next frame’s steps', async () => {
+  // Arrange
+  /** Presents two frames of one stop while the host holds the first frame's selection: one of the next frame and the host's answer comes first, the other `turns` microtask turns later; the model selections are counted once both frames ended. */
+  const selectionsInOrder = async (
+    nextFrameFirst: boolean,
+    turns: number,
+  ): Promise<number> => {
+    const fixture = harness(undefined, undefined, 0, false, 'stack on stop')
+    let selections = 0,
+      answerFirstSelection = (): void => {},
+      reportFirstSelectionHeld = (): void => {}
+    const firstSelectionHeld = new Promise<void>((resolve) => {
+      reportFirstSelectionHeld = resolve
+    })
+    fixture.editor.commands = {
+      getCommands: async () => ['workbench.action.debug.focusProcess'],
+      executeCommand: async () => {
+        selections += 1
+        if (selections === 1)
+          await new Promise<void>((resolve) => {
+            answerFirstSelection = resolve
+            reportFirstSelectionHeld()
+          })
+        fixture.inspect()
+        return undefined
+      },
+    }
+    /** Presents the stop's frame; a frame the next one superseded ends too. */
+    const presentFrame = (): Promise<unknown> =>
+      fixture.owner
+        .present(
+          inspectedSnapshot,
+          'Recorded pause · 1.00 s',
+          new AbortController().signal,
+        )
+        .catch(() => undefined)
+    /** Lets `turns` microtask turns pass. */
+    const turnsPass = async (): Promise<void> => {
+      for (let turn = 0; turn < turns; turn++) await Promise.resolve()
+    }
+    try {
+      const firstFrame = presentFrame()
+      await firstSelectionHeld
+      let nextFrame: Promise<unknown>
+      // The two orders: the next frame, then the answer; or the answer, then the next frame.
+      if (nextFrameFirst) {
+        nextFrame = presentFrame()
+        await turnsPass()
+        answerFirstSelection()
+      } else {
+        answerFirstSelection()
+        await turnsPass()
+        nextFrame = presentFrame()
+      }
+      await Promise.all([firstFrame, nextFrame])
+      return selections
+    } finally {
+      await fixture.owner.dispose()
+    }
+  }
+
+  // Act: each order, with 0 to 24 microtask turns between the next frame and the host's answer.
+  const ordersWithAnotherCount: string[] = []
+  for (const nextFrameFirst of [true, false])
+    for (let turns = 0; turns <= 24; turns++) {
+      const selections = await selectionsInOrder(nextFrameFirst, turns)
+      // Only an order that did not select once is listed.
+      if (selections !== 1)
+        ordersWithAnotherCount.push(
+          `${nextFrameFirst ? 'next frame' : 'answer'} first, the other ${turns} turns later: ${selections} selections`,
+        )
+    }
+
+  // Assert: one selection in every order.
+  assert.deepEqual(ordersWithAnotherCount, [])
+})
 
 test('a background native debugger cannot be selected by historical default-session resolution', async () => {
   // Arrange: the host resolver may choose any paused session when no explicit native model is supplied.

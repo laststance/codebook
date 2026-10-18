@@ -566,7 +566,7 @@ export class ReplayDebugger {
   ): Promise<void> {
     const selection = this.selected
     // A later frame of the same stop: its model was selected already, or the host has no command for it.
-    if (selection && this.modelSelectionSettledFor === selection) return
+    if (this.hasSettledModelSelection(selection)) return
     const commands = await this.nativeInspectionCommands(signal)
     signal.throwIfAborted()
     // Even an unsupported-command answer may arrive after another moment was selected.
@@ -584,6 +584,8 @@ export class ReplayDebugger {
     if (!stackRetrieved) return
     // Null means no explicit session and avoids older Cursor's undefined-parent match; only an unambiguous owned cohort may use the native default resolver.
     if (!this.canSelectNativeInspectionModel()) return
+    // Asked again after the last await: another frame's answer may have settled the selection, and cleared it from flight, while this frame waited (Cycle 0046 Q1).
+    if (this.hasSettledModelSelection(selection)) return
     // A selection the host still answers for this stop is this frame's too.
     const inFlight = this.modelSelectionInFlight
     const answer =
@@ -592,6 +594,20 @@ export class ReplayDebugger {
         : this.runNativeInspectionModelSelection(commands, selection)
     await untilAborted(answer, signal)
     this.assertInspectionOwnership(adapter, revision)
+  }
+
+  /**
+   * Says whether a selection's native model needs no more selecting, for {@link selectNativeInspectionModel} at a frame's entry and again right before it starts {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, with no await in between.
+   * @param selection - The selection the frame presents, or none.
+   * @returns `true` when {@link modelSelectionSettledFor} is this selection; `false` for no selection or one not settled yet.
+   * @example this.hasSettledModelSelection(this.selected) // => true once the host accepted the stop's focusProcess
+   */
+  private hasSettledModelSelection(
+    selection: ReplayDebugger['selected'],
+  ): boolean {
+    return (
+      selection !== undefined && this.modelSelectionSettledFor === selection
+    )
   }
 
   /**
