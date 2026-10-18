@@ -445,7 +445,7 @@ export function describeWikiUpdate(
    * @param named - The Wiki folder's own name for `not-a-folder`, the folder on its path as the learner reads it for `linked-parent`, as the sentence names it.
    * @returns The sentence after the time for `not-a-folder` and `linked-parent`, with the next step; undefined for every other cause.
    * @example
-   * describeFolderRefusal('not-a-folder', 'wiki')?.slice(0, 52)       // => 'the Wiki folder itself (wiki) is a link or a file, an'
+   * describeFolderRefusal('not-a-folder', 'wiki')?.slice(0, 52)       // => 'the Wiki folder itself (wiki) is a link or a file, o'
    * describeFolderRefusal('linked-parent', '.codebook')?.slice(0, 70) // => 'the Wiki folder’s path in the project passes through a link or a file'
    */
   const describeFolderRefusal = (
