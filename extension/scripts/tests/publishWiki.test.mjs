@@ -3505,7 +3505,7 @@ test('a page rendered from a reader shell with CRLF line endings is written with
   }
 })
 
-// Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; seam=none
+// Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a Codebook address whose scheme and authority are written in another case (a browser compares them without case), a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; repeat testing review TC7: no test held the comparison without case; seam=none
 test('a page that links to a relative path, a fragment, a web, mail or editor address, and shows an event attribute and a javascript: link only as escaped text or in a comment, is published as authored', async () => {
   // Arrange
   const root = await realpath(
@@ -3516,6 +3516,7 @@ test('a page that links to a relative path, a fragment, a web, mail or editor ad
     '<p><a href="pages/a&amp;b.html#start">A page</a> <a href="#flow">Up</a> <a href="../outside.html">Out</a> ' +
     '<a href="https://example.com/?a=1&amp;b=2#c">Web</a> <a href="mailto:team@example.com">Mail</a> ' +
     '<a href="vscode://laststance.codebook/source?root=%2Frepo">VS Code</a> <a href="cursor://laststance.codebook/source?root=%2Frepo">Cursor</a> ' +
+    '<a href="VSCode://LastStance.Codebook/source?path=a.ts">VS Code in another case</a> ' +
     '<img src="flow.png" srcset="flow.png 1x, flow@2x.png 2x" alt="Flow"></p>' +
     '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
     '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
@@ -3523,17 +3524,18 @@ test('a page that links to a relative path, a fragment, a web, mail or editor ad
     const manifest = await readerInput(root)
     manifest.pages[0].contentHtml = content
 
-    // Act
-    const pages = await renderWikiPages(manifest, {
+    // Act: the article as published, or the refusal.
+    const published = await renderWikiPages(manifest, {
       projectRoot: root,
       outputDirectory: join(root, '.codebook/wiki'),
-    })
+    }).then(
+      (pages) =>
+        /<\/details>(.*)<\/article>/.exec(pages.get('index.html'))?.[1],
+      (error) => error.message,
+    )
 
     // Assert
-    assert.equal(
-      /<\/details>(.*)<\/article>/.exec(pages.get('index.html'))?.[1],
-      content,
-    )
+    assert.equal(published, content)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
