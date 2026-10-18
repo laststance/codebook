@@ -1353,6 +1353,68 @@ for (const input of ['chat', 'file'] as const)
     assert.equal(harness.reader.inspect().view.loading, false)
   })
 
+// Value: protects=an agent's codebook_open_book while the learner works in another app or the editor misreports its window as unfocused (finding 586, VS Code under WSLg): the cold entry takes no keyboard, so the window's focus does not decide it, and the Wiki is shown with its article; fails_when=the cold entry's ready handoff still asserts the window-focus lease that only an activating reveal needs, so the open fails with "Native window focus changed while the Repository Wiki loaded" and the agent gets no article; why_new=OCR8-4; seam=readerHarness with setWindowFocus (vscode.window.state.focused and onDidChangeWindowState), holdRenderer, focusChat, openFromAgent, the created panels and the reveals' preserveFocus; no_claim=a window that misreports its focus in another way than state.focused
+for (const windowFocus of [
+  'without the focus from the start',
+  'that loses the focus while the Wiki loads',
+] as const)
+  test(`an agent's cold Wiki open in an editor window ${windowFocus} shows the article without taking the keyboard`, async (context) => {
+    // Arrange
+    const harness = await readerHarness(context)
+    harness.focusChat()
+    const originalInput = harness.focusedSource()
+    if (windowFocus === 'without the focus from the start')
+      harness.setWindowFocus(false)
+    const renderer = harness.holdRenderer()
+
+    // Act
+    const opening = harness.reader.openFromAgent({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      ...harness.selection,
+      nodeId: 'order',
+    })
+    try {
+      await renderer.started
+      if (windowFocus === 'that loses the focus while the Wiki loads')
+        harness.setWindowFocus(false)
+      renderer.release()
+      const openedArticle = await opening.then(
+        (receipt) => receipt.nodeId,
+        (error: unknown) => String(error),
+      )
+
+      // Assert: the article was opened and its receipt names it; the Wiki was created in column 2 without the keyboard, no reveal gave it the focus, and the learner's input is the one before.
+      assert.equal(openedArticle, 'order')
+      assert.equal(harness.reader.inspect().view.selection?.nodeId, 'order')
+      assert.equal(harness.reader.inspect().view.error, '')
+      assert.equal(harness.reader.inspect().view.loading, false)
+      assert.deepEqual(harness.panelColumns, [2])
+      assert.deepEqual(harness.revealFocus, [])
+      assert.equal(harness.focusedSource(), originalInput)
+    } finally {
+      renderer.release()
+      await opening.catch(() => undefined)
+    }
+  })
+
+// Value: protects=the learner's newer focus outside the editor window when the learner's own open activates the Wiki: the activating handoff still asks for the window's focus, so it does not take the keyboard into a window the learner left; fails_when=the fix for an agent's cold entry drops the window-focus lease of every reveal, so the Wiki is activated over the learner's other app; why_new=OCR8-4 (the activating half); seam=readerHarness with setWindowFocus, requireSourceFocus, open and the reveals' preserveFocus
+test('a learner’s own Wiki open in an editor window that does not have the focus is refused before it activates the Wiki', async (context) => {
+  // Arrange
+  const harness = await readerHarness(context)
+  harness.requireSourceFocus()
+  harness.setWindowFocus(false)
+
+  // Act
+  const opening = harness.reader.open(harness.selection)
+
+  // Assert: the open was refused for the window's focus, and no reveal gave the Wiki the keyboard.
+  await assert.rejects(
+    opening,
+    /Native window focus changed while the Repository Wiki loaded/,
+  )
+  assert.equal(harness.revealFocus.includes(false), false)
+})
+
 // Value: protects=Cursor's chat tab keyboard when an agent opens an article through codebook_open_book while no Wiki is open and the cold layout's measurement had to give the cited source the keyboard (the chat tab of Cursor's chat editor part had it, and the first group showed nothing the measurement could focus); fails_when=the entry activates the Wiki over the borrowed source and never asks the arrangement to give the chat tab its keyboard back; why_new=Cycle 0046 row 620; seam=readerHarness with useColdLayout, requireSourceFocus (the measurement's citation borrow), answerKeyboardReturn(true) (StudyWorkspace.arrangeRepository's give-back to the chat tab), focusChat, openFromAgent
 test("an agent's cold Wiki open whose layout borrowed the cited source's focus gives Cursor's chat tab its keyboard back", async (context) => {
   // Arrange

@@ -533,7 +533,7 @@ export class RepositoryReader {
    * @param generation - Rejects a Close or newer navigation instead of activating its old panel.
    * @param signal - Cancels the current navigation's bounded renderer wait.
    * @param assertSelectedInput - Retains an already-selected Wiki during deferred citation work without another quiet selection.
-   * @param activate - `false` for an agent's cold entry ({@link open} with `forAgent`): the Wiki is shown and rendered without the keyboard, and no activating reveal follows.
+   * @param activate - `false` for an agent's cold entry ({@link open} with `forAgent`): the Wiki is shown and rendered without the keyboard, no activating reveal follows, and the window's focus is not asked for ({@link retainWindowFocus} guards a keyboard handoff only).
    * @returns Completion of the current article's render acknowledgement and native handoff, not a pixel-paint guarantee.
    * @throws A renderer timeout, cancellation or newer native-input error; no activating reveal follows a failed wait.
    * @example await this.revealReadyPanel(generation, navigation.signal)
@@ -556,7 +556,8 @@ export class RepositoryReader {
         quietSelectionAccepted ||= expected
         return expected
       })
-    const windowFocus = this.retainWindowFocus(),
+    // Only an activating reveal takes the keyboard, so only it asks for the window's focus: an agent's cold entry shows the Wiki in a window the learner left too, and where the editor misreports its window as unfocused (finding 586, VS Code under WSLg).
+    const windowFocus = activate ? this.retainWindowFocus() : undefined,
       revealState = panel.onDidChangeViewState(() => {
         // A quiet display can be visible without keyboard focus; confirm its own native view-state notification.
         if (quietRevealIssued && panel.visible && this.hasNativeWikiFocus())
@@ -565,7 +566,7 @@ export class RepositoryReader {
       assertInputRetained = (): void => {
         assertSelectedInput?.()
         focus.assertRetained()
-        windowFocus.assertRetained()
+        windowFocus?.assertRetained()
       }
     try {
       assertInputRetained()
@@ -588,7 +589,7 @@ export class RepositoryReader {
       this.assertCurrent(generation)
       assertInputRetained()
       focus.dispose()
-      windowFocus.dispose()
+      windowFocus?.dispose()
       revealState.dispose()
       // An agent's cold entry leaves the keyboard where the learner had it; the learner selects the Wiki when ready.
       if (activate)
@@ -599,7 +600,7 @@ export class RepositoryReader {
         )
     } finally {
       focus.dispose()
-      windowFocus.dispose()
+      windowFocus?.dispose()
       revealState.dispose()
     }
   }
