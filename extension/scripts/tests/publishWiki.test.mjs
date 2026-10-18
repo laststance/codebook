@@ -26,6 +26,8 @@ import {
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
+import { swapBeforeMaking } from './utils/swappedFolderFileSystem.mjs'
+
 for (const legacy of [false, true]) {
   test(
     'stopped publication before its swap preserves the ' +
@@ -2270,6 +2272,110 @@ test('a publish whose candidate beside the Wiki in the project is a folder that 
         candidate: candidateBefore,
         wiki: wikiBefore,
         beside: ['next', 'wiki'],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+/** The load of the copy of the shipped publisher whose `node:fs/promises` runs a test's swap before it makes a folder, once it has begun. */
+let publisherWhoseFolderIsSwapped
+/**
+ * Loads a copy of the shipped publisher whose `node:fs/promises` runs the swap a test asks for with {@link swapBeforeMaking} before it makes the folder the swap waits for: a loader hook (`scripts/tests/utils/swappedFolderHooks.mjs`), registered once, hands the copy `swappedFolderFileSystem.mjs`.
+ * @returns {Promise<typeof import('../../skills/codebook/publish-wiki.mjs')>} The copy's exports.
+ * @example
+ * const { prepareWikiStage } = await loadPublisherWhoseFolderIsSwapped()
+ */
+function loadPublisherWhoseFolderIsSwapped() {
+  if (!publisherWhoseFolderIsSwapped) {
+    register(new URL('./utils/swappedFolderHooks.mjs', import.meta.url))
+    publisherWhoseFolderIsSwapped = import(
+      new URL(
+        '../../skills/codebook/publish-wiki.mjs?swapped-folder',
+        import.meta.url,
+      ).href
+    )
+  }
+  return publisherWhoseFolderIsSwapped
+}
+
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it made its stage; fails_when=the preparation trusts its first look at the path and makes the stage, its receipt and the prior Wiki's copy behind the link; why_new=Cycle 0046 /ship Codex review CX17 (the look at the path and the folders made after it were never compared); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` for a link just before the stage is made (scripts/tests/utils/swappedFolderHooks.mjs)
+test('a preparation whose .codebook is swapped for a link to a folder outside the project just before its stage is made is refused with the folder named, and nothing is left behind the link', async () => {
+  // Arrange: a project whose `.codebook` is a real folder when the publisher looks at the path, and a link to a folder outside it when the stage is made.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadPublisherWhoseFolderIsSwapped()
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-before-stage-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(join(root, '.codebook'), { recursive: true })
+    await mkdir(outside)
+    swapBeforeMaking(
+      (path) => basename(path).startsWith('wiki.stage-'),
+      async () => {
+        await rm(join(root, '.codebook'), { recursive: true })
+        await symlink(outside, join(root, '.codebook'), 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, behindTheLink: await readdir(outside) },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: [],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that a missing `.codebook` leads to when another process makes it a link after the publisher looked at the path and before the publisher made it; fails_when=the preparation takes the missing folder as the end of its look, makes the parent through the link and then holds the Wiki behind it for an output outside the project, so it prepares there; why_new=Cycle 0046 /ship Codex review CX17 (the path was never looked at again once its missing folders were made); seam=a copy of the shipped publisher whose `node:fs/promises` makes `.codebook` a link just before the publisher makes it (scripts/tests/utils/swappedFolderHooks.mjs)
+test('a preparation whose missing .codebook becomes a link to a folder outside the project just before the publisher makes it is refused with the folder named, and nothing is written behind the link', async () => {
+  // Arrange: a project without `.codebook` when the publisher looks at the path, and with a link of that name when the publisher makes the folder.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadPublisherWhoseFolderIsSwapped()
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-before-parent-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    swapBeforeMaking(
+      (path) => path === join(root, '.codebook'),
+      () => symlink(outside, join(root, '.codebook'), 'junction'),
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, behindTheLink: await readdir(outside) },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: [],
       },
     )
   } finally {

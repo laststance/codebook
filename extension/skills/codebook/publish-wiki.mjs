@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { renderWikiPages } from './render-wiki.mjs';
@@ -62,10 +62,12 @@ const outputRefusalOf = path => 'The Wiki folder ' + path + ' is a link, a file 
 /** The refusal of a stage beside the Wiki folder that is no folder of its own, for {@link locations}; its step is the stage's own. @example stageRefusalOf('/repo/.codebook/wiki.stage-1') // => 'The Wiki stage /repo/.codebook/wiki.stage-1 is a link, a file or a folder that leads out of the project. …' */
 const stageRefusalOf = path => 'The Wiki stage ' + path + ' is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.';
 
+/** The refusal of an output inside the project whose path passes through a folder that is no folder of the project's own, for the path it names; for {@link requireOwnFolder} and {@link requireStageWhereItWasMade}. @example linkedPathRefusalOf('/repo/.codebook') // => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: /repo/.codebook. …' */
+const linkedPathRefusalOf = path => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.';
+
 /** Refuses an entry on the output's path inside the project that is no folder of the project's own: a link, a file, or a folder whose real path leaves the project (a junction on Windows that lstat calls a directory). Called by {@link enteredProjectAt} for the folders above the output, and by {@link requireRegularFolder} for the output and its stage. @example await requireOwnFolder('/repo/wiki-link', stat, '/repo') // throws while wiki-link is a link */
 async function requireOwnFolder(path, stat, root) {
-  if (!(await isOwnFolder(path, stat, root, true)))
-    throw new Error('The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.');
+  if (!(await isOwnFolder(path, stat, root, true))) throw new Error(linkedPathRefusalOf(path));
 }
 
 /** Looks at one entry of the output's path, in the order {@link requireOwnFoldersToOutput} walks it: inside the project it must be a folder of the project's own ({@link requireOwnFolder}); before it, its real path says whether the project begins here. @returns Whether the path is inside the project from this entry on; undefined for a missing entry, below which nothing exists yet. @example await enteredProjectAt('/repo/.codebook', '/repo', true) // => true for a folder of the project's own */
@@ -96,12 +98,32 @@ async function requireRegularFolder(path, root, isOutputInProject, refusalOf) {
   if (stat && !(await isOwnFolder(path, stat, root, isOutputInProject))) throw new Error(refusalOf(path));
 }
 
+/** The folders one recursive mkdir made, deepest first: from the folder it was asked for up to the first one it created, which it answers; none when it created none. Called by {@link createParentOf}. @example madeFoldersOf('/repo/.codebook', '/repo/.codebook/sub') // => ['/repo/.codebook/sub', '/repo/.codebook'] */
+function madeFoldersOf(made, parent) {
+  const folders = [];
+  // From the folder asked for up to the first one made.
+  for (let folder = parent; made !== undefined && folder.length >= made.length; folder = dirname(folder)) folders.push(folder);
+  return folders;
+}
+
+/** Removes folders the preparation made, in the order given, each with rmdir: that removes only an empty folder and follows no link at its own name, so a folder that holds something now, or is gone, stays as it is. Called by {@link createParentOf} and {@link requireStageWhereItWasMade} before they refuse. @example await removeMadeFolders(['/repo/.codebook/wiki.stage-1', '/repo/.codebook']) */
+async function removeMadeFolders(folders) {
+  for (const folder of folders) await rmdir(folder).catch(() => undefined);
+}
+
+/** Makes the output's parent, then looks at the output's path again ({@link requireOwnFoldersToOutput}): a folder that was missing at the first look, or that another process swapped for a link since, is refused there, and the folders this call made are removed. The look also says for certain whether the output lies inside the project, since no folder on the path is missing now. Called by {@link locations} for a preparation. @returns Whether the output lies inside the project, and the folders made, deepest first. @example await createParentOf('/repo/.codebook/wiki', '/repo') // => { isOutputInProject: true, madeFolders: ['/repo/.codebook'] } */
+async function createParentOf(requested, root) {
+  const madeFolders = madeFoldersOf(await mkdir(dirname(requested), { recursive: true }), dirname(requested));
+  try { return { isOutputInProject: await requireOwnFoldersToOutput(requested, root), madeFolders }; }
+  catch (error) { await removeMadeFolders(madeFolders); throw error; }
+}
+
 /** Resolves paths for {@link prepareWikiStage}, {@link publishWiki} and recovery without following directory aliases. @example await locations('/repo', '/repo/.codebook/wiki') */
 async function locations(projectRoot, outputDirectory, stageDirectory, createParent = false) {
   const root = await realpath(projectRoot), requested = resolve(outputDirectory);
   // Checked before the parent is created: a missing folder behind a link would otherwise be made outside the project.
-  const isOutputInProject = await requireOwnFoldersToOutput(requested, root);
-  if (createParent) await mkdir(dirname(requested), { recursive: true });
+  const isInProjectBefore = await requireOwnFoldersToOutput(requested, root);
+  const { isOutputInProject, madeFolders } = createParent ? await createParentOf(requested, root) : { isOutputInProject: isInProjectBefore, madeFolders: [] };
   const output = join(await realpath(dirname(requested)), basename(requested));
   const within = relative(output, root);
   // An output inside the project (the default .codebook/wiki) is accepted; only the project root itself, or a folder that contains it, is refused.
@@ -111,7 +133,7 @@ async function locations(projectRoot, outputDirectory, stageDirectory, createPar
   // The output and the stage themselves are held to the rule of the folders above them: the prior Wiki is read and the new one written there.
   await requireRegularFolder(output, root, isOutputInProject, outputRefusalOf);
   if (stage !== undefined) await requireRegularFolder(stage, root, isOutputInProject, stageRefusalOf);
-  return { root, output, stage, journal: output + '.publish-journal.json' };
+  return { root, output, stage, journal: output + '.publish-journal.json', isOutputInProject, madeFolders };
 }
 
 /** Validates a captured ownership inventory used by candidate and published receipts. @example validHashes({ 'index.html': hash }) */
@@ -178,13 +200,29 @@ async function requireNoJournal(journal) {
   if (await regularBytes(journal, true)) throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
 }
 
+/** Whether the stage and the output's parent still lie where the preparation resolved them: both real paths inside the project, and the parent still the folder, by device and inode, it was when the paths were resolved. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade}. @example await isWhereItWasMade('/repo', '/repo/.codebook', '/repo/.codebook/wiki.stage-1', parentIdentity) // => false once .codebook was swapped for a link */
+const isWhereItWasMade = (root, parent, stage, identity) => Promise.all([realpath(parent), realpath(stage), stat(parent)]).then(
+  ([realParent, realStage, now]) => isInProject(root, realParent) && isInProject(root, realStage) && now.dev === identity.dev && now.ino === identity.ino,
+  () => false);
+
+/** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasMade}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
+async function requireStageWhereItWasMade(paths, stage, parentIdentity) {
+  const parent = dirname(paths.output);
+  if (!paths.isOutputInProject || await isWhereItWasMade(paths.root, parent, stage, parentIdentity)) return;
+  await removeMadeFolders([stage, ...paths.madeFolders]);
+  throw new Error(linkedPathRefusalOf(parent));
+}
+
 /** Handles the CLI preparation step before agent edits, retaining current output and an exact recovery baseline. @example await prepareWikiStage({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function prepareWikiStage({ projectRoot, outputDirectory, stageDirectory, adoptExisting = false }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory, true);
   const { root, output, journal } = paths, stage = paths.stage ?? output + '.stage-' + randomUUID();
+  // The folder the paths were resolved in, by device and inode, so a swap on the path before the stage is written is seen.
+  const parentIdentity = await stat(dirname(output));
   await requireNoJournal(journal);
   const prior = await inspectOutput(output, root, { allowLegacy: adoptExisting });
   await mkdir(stage); // An existing candidate is never overwritten or silently reused.
+  await requireStageWhereItWasMade(paths, stage, parentIdentity);
   const receipt = { schemaVersion: 1, kind: 'candidate', repositoryRoot: root, output, baseline: baselineOf(prior) };
   await writeFile(join(stage, RECEIPT), JSON.stringify(receipt), { flag: 'wx' });
   if (prior) {
