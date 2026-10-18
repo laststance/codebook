@@ -6,6 +6,7 @@ import {
   MILLISECONDS_PER_SECOND,
   PROCESS_START_QUERY_MAX_BYTES,
   PROCESS_START_QUERY_TIMEOUT_MS,
+  PROCESS_START_RETRY_AFTER_FAILURE_MS,
 } from '../constants'
 
 import type { BootIdentity } from './readRecordedOwner'
@@ -18,10 +19,10 @@ const MAC_SYSCTL_PATH = '/usr/sbin/sysctl'
 const BOOT_SESSION_UUID =
   /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i
 
-/** The boot session of this macOS, read once per runner and kept for as long as this window runs: it cannot change while the process runs. */
+/** The pending or completed macOS boot-session read per runner. A successful id stays for this window; a failed read stays only for {@link PROCESS_START_RETRY_AFTER_FAILURE_MS} from its end. */
 const bootSessions = new WeakMap<
   BoundedQueryRunner,
-  Promise<string | undefined>
+  { reading: Promise<string | undefined>; failedAtMs?: number }
 >()
 
 /** What {@link readBootIdentity} reads with: the system it runs on, and the runner of the macOS query; the real ones unless a test names its own. */
@@ -31,7 +32,7 @@ export type BootIdentityInputs = {
 }
 
 /**
- * Asks macOS for the id of its boot session (`kern.bootsessionuuid`), which names this start of the computer exactly and no clock moves; called by {@link readBootIdentity} on macOS, once per runner.
+ * Asks macOS for its exact boot-session id (`kern.bootsessionuuid`); called by {@link readBootIdentity} when no kept read answers or a failed read is due again.
  * The query is bounded as a process start's is ({@link PROCESS_START_QUERY_TIMEOUT_MS}, {@link PROCESS_START_QUERY_MAX_BYTES}).
  * @param run - The runner of the query.
  * @returns The session's UUID; `undefined` when the query fails, runs too long, prints too much or prints no UUID.
@@ -52,7 +53,7 @@ async function readMacBootSession(
 
 /**
  * Reads which start of this machine the process runs under, so that a storage owner recorded before a restart is recognised although its process id is in use again, and so that only an exact boot proves two records of one machine under two host names ({@link isSameStorageMachine}); called by {@link currentStorageOwner} each time an owner is recorded or judged.
- * The boot's id needs no clock: the kernel's boot id on Linux, the boot session on macOS ({@link readMacBootSession}, read once per window). Where the system names its boot by no id (Windows), and on macOS beside the id, the boot time is the wall clock minus the uptime, which a clock correction moves; {@link isFromEarlierBoot} compares it with a tolerance, for a record that names no boot id (one of 0.2.29.0), and it proves no machine.
+ * The boot's id needs no clock: the kernel's boot id on Linux, the boot session on macOS ({@link readMacBootSession}, kept after success; failed reads retry after {@link PROCESS_START_RETRY_AFTER_FAILURE_MS}). Where the system names its boot by no id (Windows), and on macOS beside the id, the boot time is the wall clock minus the uptime, which a clock correction moves; {@link isFromEarlierBoot} compares it with a tolerance, for a record that names no boot id (one of 0.2.29.0), and it proves no machine.
  * The boot time serves records without a process start: those a window of 0.2.29.0 wrote or reads, and those of a window whose start could not be read. Between two windows of this build the owner's process start decides ({@link readProcessStart}), and {@link currentStorageOwner} records no boot time while its own start is unknown.
  * @param kernelBootIdPath - The file that holds the kernel's boot id; tests name one of their own.
  * @param inputs - The system and the macOS query's runner ({@link BootIdentityInputs}).
@@ -78,12 +79,19 @@ export async function readBootIdentity(
     Date.now() - Math.round(uptime() * MILLISECONDS_PER_SECOND)
   if ((inputs.platform ?? process.platform) !== 'darwin') return { startedAtMs }
   const run = inputs.run ?? runBoundedQuery
-  // The session is read once per window: it cannot change while this process runs.
+  // Share pending reads and keep successful ids; only failed reads expire.
   let session = bootSessions.get(run)
-  if (!session) {
-    session = readMacBootSession(run)
+  if (
+    !session ||
+    (session.failedAtMs !== undefined &&
+      performance.now() - session.failedAtMs >=
+        PROCESS_START_RETRY_AFTER_FAILURE_MS)
+  ) {
+    session = { reading: readMacBootSession(run) }
     bootSessions.set(run, session)
   }
-  const id = await session
+  const id = await session.reading
+  // Start the delay at completion; reads of a cached failure must not extend it.
+  if (id === undefined) session.failedAtMs ??= performance.now()
   return id === undefined ? { startedAtMs } : { id, startedAtMs }
 }
