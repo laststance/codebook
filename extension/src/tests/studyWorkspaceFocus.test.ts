@@ -2163,6 +2163,38 @@ test("the fake editor of a closed harness does not report its active text editor
   assert.equal(owedAfterClose, 0)
 })
 
+// Value: protects=a finished reader test leaving nothing behind in its fake Cursor when it ended while the chat input still owed the keyboard of a Focus Agent the editor answered early: the owed change is among the fake editor's pending timers, and the chat does not take the keyboard after the harness's close; fails_when=the timer that gives the chat input that keyboard is a raw setTimeout outside the fake editor's pending timers, so pendingEditorTimerCount misses it and it changes the fake editor's keyboard after the test ended; why_new=Cycle 0046 second /ship OCR review OCR4-1; seam=the fake editor's pending timers, addSeparateEditorPart, focusAgentLater, focusMutableDraft, Cursor's Focus Agent command and the chat's keyboard
+test("the fake Cursor counts the chat input's late keyboard after Focus Agent among its pending timers, and a closed harness drops it: the chat does not take the keyboard after the harness's close", async () => {
+  // Arrange: Cursor's Agent chat is a tab of another editor part; Focus Agent answers before the chat input has the keyboard, which the chat takes at the next turn of the event loop when no further command comes; the learner's file has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  harness.focusAgentLater(2)
+  harness.focusMutableDraft('actions.ts', 1)
+
+  // Act: Focus Agent answers, and the harness closes while the chat input still owes the keyboard; longer than that turn then passes.
+  await harness.editor.commands.executeCommand('composer.focusComposer')
+  const owedAfterCommand = harness.pendingEditorTimerCount()
+  await harness.close()
+  const owedAfterClose = harness.pendingEditorTimerCount()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  // Assert
+  assert.deepEqual(
+    {
+      owedAfterCommand,
+      owedAfterClose,
+      chatHasKeyboard: chat.focused(),
+    },
+    {
+      owedAfterCommand: 1,
+      owedAfterClose: 0,
+      chatHasKeyboard: false,
+    },
+  )
+})
+
 for (const [hiding, owed] of [
   [
     'missed-the-stop',

@@ -2369,7 +2369,7 @@ export async function workspaceHarness(
   }
   /**
    * Gives Cursor's chat input the keyboard of an earlier Focus Agent that has not reached it yet; see `focusAgentLater`.
-   * @example setTimeout(focusChatInputOwed, 0)
+   * @example runEditorChangeLater(focusChatInputOwed, 0)
    */
   function focusChatInputOwed(): void {
     if (commandsUntilAgentFocus === 0) return
@@ -3919,8 +3919,8 @@ export async function workspaceHarness(
             // Cursor answers Focus Agent before its chat input has the keyboard; see `focusAgentLater`.
             if (commandsBeforeAgentFocus > 0) {
               commandsUntilAgentFocus = commandsBeforeAgentFocus
-              // Without further commands the chat input takes the keyboard a moment later all the same.
-              setTimeout(focusChatInputOwed, 0)
+              // Without further commands the chat input takes the keyboard a moment later all the same; the harness's close drops that change (OCR4-1).
+              runEditorChangeLater(focusChatInputOwed, 0)
             } else focusChatInput()
           }
           if (name === 'workbench.action.focusFirstEditorGroup') {
