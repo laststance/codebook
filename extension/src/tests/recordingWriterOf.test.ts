@@ -289,6 +289,28 @@ test('a recording whose record names another machine with this host name has a w
   assert.deepEqual(writer, { kind: 'on-another-host', host: hostname() })
 })
 
+// Value: protects=the recording another computer is writing into a storage folder of a home folder it shares with this one, and so the editor's machine id (VS Code keeps it in the user data folder); fails_when=an equal machine id alone makes the two one machine, so this machine probes the other's process id, finds no process, and lists the recording as interrupted, and its removal moves it with no dialog (a regression against 0.2.29.0, which compared host names); why_new=Cycle 0046 adversarial review AD3; seam=the header and the record of the writer, which name another host name, this editor's machine id, another kernel boot and a process id of no process
+test('a recording whose record names this editor’s machine id under another host name and another boot has a writer on another host, although no process of its id runs here', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, hostname: 'lab-18' },
+  })
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'lab-18',
+    machineId: 'machine-a',
+    boot: { id: 'boot-of-lab-18' },
+  })
+
+  // Act
+  const writer = await writerOf(recording.folder)
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'on-another-host', host: 'lab-18' })
+})
+
 // Value: protects=the recordings a window of 0.2.29.0 made (a header, no record of their writer), which keep the judgment they had; fails_when=a recording of another host, or of a live process that began before it, counts as no longer written (it is listed and removable while written), one of a gone process counts as written, or this window's own recording is not left to it on request; why_new=Cycle 0046 /ship review R10: the record of the writer is new, and a recording without it must behave as before but for the process start; seam=the headers, without records of their writers
 test('a recording made by 0.2.29.0 is judged by its header as before: its writer is on another host, may run when it is a live process begun before it, and is gone once its process is gone', async (context) => {
   // Arrange: four recordings without records of their writers; the live process of the third began before it.

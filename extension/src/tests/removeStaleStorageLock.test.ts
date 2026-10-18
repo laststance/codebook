@@ -151,3 +151,60 @@ test('a lock recorded in another pid namespace of this kernel boot is removed wh
     lock,
   )
 })
+
+// Value: protects=the lock of a live window on another computer that shares this editor's machine id (VS Code keeps it in the user data folder, which a network home shares), and the takeover of this machine's own killed window after its host name changed within one boot; fails_when=an equal machine id alone makes the two one machine, so the other computer's lock, whose process id names no process here and whose kernel boot id is another, counts as left behind and is taken over while its writer writes (a regression against 0.2.29.0, which compared host names); or the boot is not taken for proof, so a Mac's own killed window under a changed host name leaves its lock for good; why_new=Cycle 0046 adversarial review AD3; seam=the process probe, which finds no process 4194305, and the file read of the start reader
+test('the lock of another computer that shares this editor’s machine id stays, and the lock of this computer’s killed window whose host name changed within one boot is taken over', async (context) => {
+  // Arrange: this window is "lab-17" under the kernel boot "boot-1", with the editor's machine id "machine-a". One storage holds the lock of a window of "lab-18", which shares the home folder and so the machine id, under its own boot "boot-2". The other holds the lock of this computer's window that was killed under its earlier host name "lab-17.home-network". No process has the id 4194305 here.
+  const ofTheOtherComputer = await storageDirectory(context),
+    ofThisComputerRenamed = await storageDirectory(context)
+  const lockOfTheOtherComputer =
+    '{"pid":4194305,"hostname":"lab-18","machineId":"machine-a","boot":{"id":"boot-2"},"processStart":"linux@4026531836:100"}'
+  await writeFile(
+    join(ofTheOtherComputer, 'writer.lock'),
+    lockOfTheOtherComputer,
+  )
+  await writeFile(
+    join(ofThisComputerRenamed, 'writer.lock'),
+    '{"pid":4194305,"hostname":"lab-17.home-network","machineId":"machine-a","boot":{"id":"boot-1"},"processStart":"linux@4026531836:100"}',
+  )
+  context.mock.method(process, 'kill', (pid: number): true => {
+    if (pid === ID_OF_NO_PROCESS)
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+    return true
+  })
+  const thisWindow = {
+    hostname: 'lab-17',
+    machineId: 'machine-a',
+    boot: { id: 'boot-1' },
+    processStart: 'linux@4026531836:16362446',
+  }
+  // Act
+  const tookOverTheOtherComputersLock = await removeStaleStorageLock(
+    join(ofTheOtherComputer, 'writer.lock'),
+    thisWindow,
+    linuxStartReader(() => linuxStat(200)),
+  )
+  const tookOverTheRenamedWindowsLock = await removeStaleStorageLock(
+    join(ofThisComputerRenamed, 'writer.lock'),
+    thisWindow,
+    linuxStartReader(() => linuxStat(200)),
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      tookOverTheOtherComputersLock,
+      tookOverTheRenamedWindowsLock,
+      otherComputersLock: await readFile(
+        join(ofTheOtherComputer, 'writer.lock'),
+        'utf8',
+      ),
+      leftInTheRenamedWindowsStorage: await readdir(ofThisComputerRenamed),
+    },
+    {
+      tookOverTheOtherComputersLock: false,
+      tookOverTheRenamedWindowsLock: true,
+      otherComputersLock: lockOfTheOtherComputer,
+      leftInTheRenamedWindowsStorage: [],
+    },
+  )
+})
