@@ -1659,6 +1659,67 @@ test('the end of a run whose marker file is gone says that nothing of this run i
   }
 })
 
+// Value: protects=other editor windows after a run's end met its marker at a moment the system refused both its read and the look at its path (EBUSY); fails_when=a failed look that is no ENOENT counts as a marker that is gone, so the end answers that nothing is left and is never asked again, and the marker stays on disk as a running update; why_new=Cycle 0046 second ship, coverage audit of fixing cycle 2 (Step 7 pass 3, G6): the P2RT2 test's look at the path succeeds; seam=the claim loaded with loadModule, with a reader whose next read of the marker finds nothing and a file system whose next lstat of the marker fails with EBUSY; no_claim=Windows' real error codes
+test('the end of a run whose marker could neither be read nor looked at says that its marker stayed, and the same end asked again removes the marker', async () => {
+  // Arrange: a window whose next read of the marker file and next look at its path both fail, as for a file another program holds.
+  const wiki = await createWikiFolder()
+  let isNextMarkerLookRefused = false
+  const { claimWikiUpdateMarker: claimInThatWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './readWikiRegularFile': {
+      readWikiRegularFile: async (
+        ...readInputs: Parameters<typeof readWikiRegularFile>
+      ) =>
+        isNextMarkerLookRefused && readInputs[0] === wiki.markerPath
+          ? undefined
+          : readWikiRegularFile(...readInputs),
+    },
+    'node:fs/promises': {
+      ...fileSystem,
+      lstat: async (...lookInputs: Parameters<typeof fileSystem.lstat>) => {
+        if (isNextMarkerLookRefused && lookInputs[0] === wiki.markerPath) {
+          isNextMarkerLookRefused = false
+          throw Object.assign(new Error('EBUSY: resource busy or locked'), {
+            code: 'EBUSY',
+          })
+        }
+        return fileSystem.lstat(...lookInputs)
+      },
+    },
+  })
+  try {
+    const claim = await claimInThatWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    isNextMarkerLookRefused = true
+
+    // Act
+    const firstEnd = await claim.release()
+    const markerAfterTheFirstEnd = JSON.parse(
+      await readFile(wiki.markerPath, 'utf8'),
+    ).windowId
+    const secondEnd = await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      { firstEnd, markerAfterTheFirstEnd, secondEnd },
+      { firstEnd: false, markerAfterTheFirstEnd: 'window-a', secondEnd: true },
+    )
+    assert.deepEqual(await readdir(wiki.directory), ['wiki'])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the learner's project folder after a window of 0.2.29.0 (or of another machine) was killed while it prepared its claim on the marker; fails_when=the prepared claim folder, whose owner cannot be judged by a process start, is never removed and stays in `.codebook/` for good (row 35, PL-27: removeExpiredPreparedClaims had no test); why_new=Cycle 0046 row 35; seam=the folder's modification time and the clock handed to the claim
 test('a claim folder that a window prepared beside the marker and never put into place is removed by the next start once it is older than 60 s, although a process has its owner’s id', async () => {
   // Arrange: a killed editor's marker, so the start takes the claim, and a prepared claim folder whose owner file records this machine, this test process, which runs, and no process start.
