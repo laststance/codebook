@@ -7732,6 +7732,7 @@ test('a Save learning replay that was capturing its study when a removal that mo
   try {
     const saveStudy = LearningLibrary.prototype.saveStudy
     let writtenStudies = 0
+    let writtenBeforeRemovalEnded = 0
     context.mock.method(
       LearningLibrary.prototype,
       'saveStudy',
@@ -7739,6 +7740,9 @@ test('a Save learning replay that was capturing its study when a removal that mo
         this: LearningLibrary,
         study: Parameters<LearningLibrary['saveStudy']>[0],
       ) {
+        // Observe the write when it starts; the test may resume after an allowed later write has finished.
+        if (harness.reader.inspect().view!.studyRemoval?.status === 'moving')
+          writtenBeforeRemovalEnded++
         await saveStudy.call(this, study)
         writtenStudies++
       },
@@ -7787,9 +7791,12 @@ test('a Save learning replay that was capturing its study when a removal that mo
       failAfter(3_000, 'the save and the removal'),
     ])
     capturing = false
-    const writtenBeforeRemovalEnded = writtenStudies
     await waitUntil(
-      () => writtenStudies === 1,
+      () =>
+        writtenStudies === 1 &&
+        harness.service.state(harness.record).historyOutcome.status ===
+          'saved' &&
+        readerSeams(harness).queuedStudyWrites() === 0,
       'the write of the capture the removal held back',
       2_000,
     )
