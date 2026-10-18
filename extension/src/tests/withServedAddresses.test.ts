@@ -974,6 +974,86 @@ test('a template or a table that closes inside svg or MathML markup with a table
   ])
 })
 
+// Value: protects=the learner against an editor link after an end tag inside an open select that names an element opened before the select, which Chrome ignores because an open select ends the scope of what lies below it; fails_when=the reader gives such an end the body rules, so it closes the element with the select and the svg or MathML inside it, and a plaintext or xmp there hides the link from the filter while Chrome, still in the svg or MathML, shows it live; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (11 of 16 fuzz misses in 40,000 random pages; one row per element name of those cases); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('an end tag inside an open select that names an element opened before it is ignored, so a link after a plaintext or in an xmp of the svg or MathML in the select loses its link', () => {
+  // Arrange: each element opened before the select, an svg or MathML element in the select, the element's end, and a plaintext or xmp a browser reads as foreign markup.
+  const pages = [
+    '<article><b><select><svg></b><plaintext></plaintext></svg></select></b><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><div><select><math></div><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></math></select></div></article>',
+    '<article><h1><select><svg></h1><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></h1></article>',
+    '<article><h2><select><math></h2><plaintext></plaintext></math></select></h2><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><h3><select><svg></h3><plaintext></plaintext></svg></select></h3><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><h4><select><math></h4><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></math></select></h4></article>',
+    '<article><h5><select><svg></h5><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></h5></article>',
+    '<article><h6><select><math></h6><plaintext></plaintext></math></select></h6><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><code><select><svg></code><plaintext></plaintext></svg></select></code><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><em><select><math></em><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></math></select></em></article>',
+    '<article><ul><select><svg></ul><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></ul></article>',
+    '<article><object><select><math></object><plaintext></plaintext></math></select></object><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><font><select><svg></font><plaintext></plaintext></svg></select></font><a href="vscode://file/etc/hosts">Open the source</a></article>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<article><b><select><svg></b><plaintext></plaintext></svg></select></b><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><div><select><math></div><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></math></select></div></article>',
+    '<article><h1><select><svg></h1><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></h1></article>',
+    '<article><h2><select><math></h2><plaintext></plaintext></math></select></h2><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><h3><select><svg></h3><plaintext></plaintext></svg></select></h3><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><h4><select><math></h4><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></math></select></h4></article>',
+    '<article><h5><select><svg></h5><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></h5></article>',
+    '<article><h6><select><math></h6><plaintext></plaintext></math></select></h6><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><code><select><svg></code><plaintext></plaintext></svg></select></code><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><em><select><math></em><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></math></select></em></article>',
+    '<article><ul><select><svg></ul><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></ul></article>',
+    '<article><object><select><math></object><plaintext></plaintext></math></select></object><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><font><select><svg></font><plaintext></plaintext></svg></select></font><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+  ])
+})
+
+// Value: protects=a served page's text after the ends Chrome does act on inside an open select: its own end, an end of an element opened inside it, a cell's end by the table rules, and a paragraph end that first leaves the svg; fails_when=the select's scope also hides these ends, so the svg stays open and a plaintext's text is read as tags and renamed; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (the table of ends Chrome acts on, pinned before the fix); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('the select end, an end of an element opened inside the select, a cell end and a paragraph end still close the svg in an open select, so a plaintext after them holds text', () => {
+  // Arrange
+  const pages = [
+    '<article><select><svg></select><plaintext></plaintext></svg><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><select><div><svg></div><plaintext></plaintext></svg></select><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<table><tr><td><select><svg></td><plaintext></plaintext></svg></select><a href="vscode://file/etc/hosts">Open the source</a></table>',
+    '<article><p><select><svg></p><plaintext></plaintext></svg></select></p><a href="vscode://file/etc/hosts">Open the source</a></article>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<article><select><svg></select><plaintext></plaintext></svg><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><select><div><svg></div><plaintext></plaintext></svg></select><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<table><tr><td><select><svg></td><plaintext></plaintext></svg></select><a href="vscode://file/etc/hosts">Open the source</a></table>',
+    '<article><p><select><svg></p><plaintext></plaintext></svg></select></p><a href="vscode://file/etc/hosts">Open the source</a></article>',
+  ])
+})
+
+// Value: protects=the learner against an editor link after a start tag inside an open select that would close a paragraph or a list item opened before the select; fails_when=the start tag closes the outer paragraph or list item with the select, so a later formatting end pops the svg that Chrome keeps open, and a plaintext or xmp there hides a live link from the filter; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (an open select ends every scope but the table scope, for start tags too); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a block or list item start inside an open select leaves the paragraph or list item opened before the select open, so a link in the svg after a formatting end loses its link', () => {
+  // Arrange
+  const pages = [
+    '<article><b><p><select><div><svg></b><plaintext></plaintext></svg></div></select><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><b><li><select><li><svg></b><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></svg></li></select></article>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<article><b><p><select><div><svg></b><plaintext></plaintext></svg></div></select><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><b><li><select><li><svg></b><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></svg></li></select></article>',
+  ])
+})
+
 // Value: protects=a served page's text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is renamed; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
 test('a hidden input in a table body or a row, or written HIDDEN, leaves an open select open, so the style text after the select stays as written', () => {
   // Arrange: the table rule takes each input, so </select> closes the select with the svg in it and the style holds text.

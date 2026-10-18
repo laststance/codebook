@@ -39,6 +39,45 @@ const TAG_NAME = /[^\t\n\f\r />]*/y
 const ATTRIBUTE_NAME_REST = /[^\t\n\f\r />=]*/y
 /** An unquoted attribute value: up to white space or `>`. */
 const UNQUOTED_VALUE = /[^\t\n\f\r >]*/y
+/** The HTML elements that end the ordinary scope of the pinned parser (parse5 8.0.1's `SCOPING_ELEMENTS_HTML`), which the reader's scope walks repeat while an HTML select is open. */
+const SCOPE_END_TAG_IDS = new Set([
+  htmlTree.TAG_ID.APPLET,
+  htmlTree.TAG_ID.CAPTION,
+  htmlTree.TAG_ID.HTML,
+  htmlTree.TAG_ID.MARQUEE,
+  htmlTree.TAG_ID.OBJECT,
+  htmlTree.TAG_ID.TABLE,
+  htmlTree.TAG_ID.TD,
+  htmlTree.TAG_ID.TEMPLATE,
+  htmlTree.TAG_ID.TH,
+])
+/** The HTML elements that end the list item scope: the ordinary ones, ol and ul. */
+const LIST_ITEM_SCOPE_END_TAG_IDS = new Set([
+  ...SCOPE_END_TAG_IDS,
+  htmlTree.TAG_ID.OL,
+  htmlTree.TAG_ID.UL,
+])
+/** The HTML elements that end the button scope: the ordinary ones and button. */
+const BUTTON_SCOPE_END_TAG_IDS = new Set([
+  ...SCOPE_END_TAG_IDS,
+  htmlTree.TAG_ID.BUTTON,
+])
+/** The svg and MathML elements that end every scope but the table scope. */
+const FOREIGN_SCOPE_END_TAG_IDS = {
+  [htmlTree.NS.SVG]: new Set([
+    htmlTree.TAG_ID.DESC,
+    htmlTree.TAG_ID.FOREIGN_OBJECT,
+    htmlTree.TAG_ID.TITLE,
+  ]),
+  [htmlTree.NS.MATHML]: new Set([
+    htmlTree.TAG_ID.ANNOTATION_XML,
+    htmlTree.TAG_ID.MI,
+    htmlTree.TAG_ID.MN,
+    htmlTree.TAG_ID.MO,
+    htmlTree.TAG_ID.MS,
+    htmlTree.TAG_ID.MTEXT,
+  ]),
+}
 /** The tag ids the pinned parser's insertion-mode reset sets a mode at, whatever an element's namespace: the elements the HTML standard's reset names, all of them HTML elements. */
 const RESET_MODE_TAG_IDS = new Set([
   htmlTree.TAG_ID.TR,
@@ -218,6 +257,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   constructor(private readonly page: string) {
     super({ sourceCodeLocationInfo: true, scriptingEnabled: true })
     this.countFormattingEntries()
+    this.endScopesAtOpenSelect()
   }
 
   /**
@@ -521,6 +561,83 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     }
     // The pinned parser's event-free replace clones the same name/namespace.
     // Recheck that invariant when upgrading parse5; this adapter never changes token names.
+  }
+
+  /**
+   * Makes an open HTML select end the ordinary, list item and button scopes and the heading scope, as Chrome 151 reads a page: inside a select an element opened before it is out of scope, so an end tag of it (`</b>`, `</div>`, `</h1>`) is ignored, a `</p>` inserts an empty paragraph, and a block start inside the select closes no paragraph outside it; the table scope keeps its rules, so a cell or a table still closes the select. Called once by the constructor.
+   * The pinned parser's four scope checks are wrapped on this parser's stack: while no HTML select is open, and for the select itself, they answer as before.
+   * @returns Nothing; the stack's scope checks follow open selects from here on.
+   * @example reader.endScopesAtOpenSelect() // then '<b><select></b>' leaves the b and the select open
+   */
+  private endScopesAtOpenSelect(): void {
+    const stack = this.openElements
+    const hasInScope = stack.hasInScope.bind(stack)
+    const hasInListItemScope = stack.hasInListItemScope.bind(stack)
+    const hasInButtonScope = stack.hasInButtonScope.bind(stack)
+    const hasNumberedHeaderInScope = stack.hasNumberedHeaderInScope.bind(stack)
+    stack.hasInScope = (tagID): boolean =>
+      this.openHtmlSelectCount === 0 || tagID === htmlTree.TAG_ID.SELECT
+        ? hasInScope(tagID)
+        : this.isInScopeEndingAtSelect(
+            (openTagID) => openTagID === tagID,
+            SCOPE_END_TAG_IDS,
+          )
+    stack.hasInListItemScope = (tagID): boolean =>
+      this.openHtmlSelectCount === 0
+        ? hasInListItemScope(tagID)
+        : this.isInScopeEndingAtSelect(
+            (openTagID) => openTagID === tagID,
+            LIST_ITEM_SCOPE_END_TAG_IDS,
+          )
+    stack.hasInButtonScope = (tagID): boolean =>
+      this.openHtmlSelectCount === 0
+        ? hasInButtonScope(tagID)
+        : this.isInScopeEndingAtSelect(
+            (openTagID) => openTagID === tagID,
+            BUTTON_SCOPE_END_TAG_IDS,
+          )
+    stack.hasNumberedHeaderInScope = (): boolean =>
+      this.openHtmlSelectCount === 0
+        ? hasNumberedHeaderInScope()
+        : this.isInScopeEndingAtSelect(
+            (openTagID) => htmlTree.NUMBERED_HEADERS.has(openTagID),
+            SCOPE_END_TAG_IDS,
+          )
+  }
+
+  /**
+   * Walks the stack from the current node down as the pinned parser's scope checks do, and ends the walk at an HTML select as well; called by the scope checks {@link HtmlPageReader.endScopesAtOpenSelect} wraps, while an HTML select is open.
+   * @param isTarget - Whether an HTML element of this tag id is the one looked for.
+   * @param htmlScopeEnds - The HTML elements that end this scope.
+   * @returns Whether an HTML element looked for comes before any element that ends the scope (true on a stack that holds neither, as the pinned walk answers).
+   * @example reader.isInScopeEndingAtSelect((tagID) => tagID === TAG_ID.B, SCOPE_END_TAG_IDS) // => false for '<b><select>'
+   */
+  private isInScopeEndingAtSelect(
+    isTarget: (tagID: Parse5.html.TAG_ID) => boolean,
+    htmlScopeEnds: ReadonlySet<Parse5.html.TAG_ID>,
+  ): boolean {
+    const { items, tagIDs, stackTop } = this.openElements
+    for (let index = stackTop; index >= 0; index -= 1) {
+      const element = items[index]
+      const tagID = tagIDs[index]
+      if (
+        element === undefined ||
+        tagID === undefined ||
+        !this.treeAdapter.isElementNode(element)
+      )
+        continue
+      const namespace = this.treeAdapter.getNamespaceURI(element)
+      if (namespace === htmlTree.NS.HTML) {
+        if (isTarget(tagID)) return true
+        if (htmlScopeEnds.has(tagID) || tagID === htmlTree.TAG_ID.SELECT)
+          return false
+      } else if (
+        (namespace === htmlTree.NS.SVG || namespace === htmlTree.NS.MATHML) &&
+        FOREIGN_SCOPE_END_TAG_IDS[namespace].has(tagID)
+      )
+        return false
+    }
+    return true
   }
 
   /**
