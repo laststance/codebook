@@ -8099,6 +8099,50 @@ test('a saved study whose crashed recording names another host is moved with its
   }
 })
 
+// Value: protects=a saved study whose recording another computer that shares this storage folder wrote, with the record of its writer this build keeps; fails_when=the record of another machine is judged 'may-run' (the plain refusal returns, OC1's dead end), or the dialog takes the host from the header, so it names this computer (TC3); why_new=Cycle 0046 testing review TC3: every removal test used a header-only recording; seam=the recording's header, which names this host and a process id of no process, its writer record, which names machine-b and old-laptop.local, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording’s writer record names another machine is moved with its recording after the learner chooses Move to Trash Anyway in a dialog that names the record’s host', async () => {
+  // Arrange: the header names this host; the record of the writer names machine-b under the host name old-laptop.local.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+      'with-record',
+    )
+    await rewriteWriterRecord(
+      harness.reader.inspect().libraryDirectory!,
+      study.id,
+      { machineId: 'machine-b', hostname: 'old-laptop.local' },
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [
+          study.id,
+          `${study.id}.study.meta.v3.json`,
+          `${study.id}.study.v3.json`,
+        ],
+        studyRemoval: 'moved',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's consent to each recording that the removal moves although its writer may still run on another computer; fails_when=the dialog names only one of the study's recordings and "Move to Trash Anyway" then moves the other too, unnamed (AD6, probe p3 E3); why_new=Cycle 0046 adversarial review AD6; seam=two recordings of the study (recordings.v2 by the helper, recordings.v3 by hand), each a header of another host without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a saved study whose recordings name two other hosts is moved with both after the learner chooses Move to Trash Anyway in a dialog that names both hosts and starts', async () => {
   // Arrange: the recordings.v2 recording names old-laptop.local (2026-10-01); a recordings.v3 one names other-desktop.local (2026-10-17).
@@ -8516,6 +8560,50 @@ async function unsavedRunOf(
     profile: 'repository-browser',
   }
 }
+
+// Value: protects=a run's recording, with no saved study, that another computer sharing this storage folder wrote, with the record of its writer this build keeps; fails_when=the record of another machine is judged 'may-run', so the recording is hidden from Saved studies for good, or the dialog names this computer from the header (TC3); why_new=Cycle 0046 testing review TC3: the listing test used a header-only recording; seam=the recording's header, which names this host and a process id of no process, its writer record, which names machine-b and old-laptop.local, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a run’s recording whose writer record names another machine is listed in Saved studies, and Delete moves it after the learner chooses Move to Trash Anyway in a dialog that names the record’s host', async () => {
+  // Arrange: only a recording is left of the run; its header names this host, the record of its writer machine-b under old-laptop.local.
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    await crashedRecordingOf(
+      harness,
+      run,
+      { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+      'with-record',
+    )
+    await rewriteWriterRecord(
+      harness.reader.inspect().libraryDirectory!,
+      run.id,
+      { machineId: 'machine-b', hostname: 'old-laptop.local' },
+    )
+    await harness.reader.action('retry')
+    const listed = harness.reader
+      .inspect()
+      .view!.studies.map((entry) => [entry.id, entry.format])
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, run.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        listed: structuredClone(listed),
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+      },
+      {
+        listed: [[run.id, 'archive-missing']],
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [run.id],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
 
 // Value: protects=a learner whose library holds only the recording an editor left when it crashed on this Mac under an earlier host name, or on another computer, for a run that never saved its study; fails_when=such a recording is hidden from Saved studies for good, so its files stay and no Delete reaches the dialog that names its host; why_new=Cycle 0046 review AF2: a study without an archive was listed only when no writer of any host may still write its recording; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a run’s crashed recording that names another host is listed in Saved studies, and Delete moves it after the learner chooses Move to Trash Anyway', async () => {
