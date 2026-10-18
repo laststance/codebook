@@ -2279,6 +2279,67 @@ test('a publish whose candidate beside the Wiki in the project is a folder that 
   }
 })
 
+// Value: protects=the folder outside the project that the prior Wiki's backup beside the Wiki folder leads to when it is a junction to another volume on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the recovery looks at the backup with lstat alone, so it reads the Wiki behind the junction and moves the junction into the Wiki folder's place; why_new=Cycle 0046 /ship Codex review CX18 (the output and the stage are held to the project's own folders, the backup the recovery moves was not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/wrongLookHooks.mjs)
+test('a recovery whose kept prior Wiki beside the Wiki folder is a folder that lstat calls a directory although its real path leaves the project is refused with that folder named, and nothing is moved', async () => {
+  // Arrange: a publish stopped after it moved the prior Wiki aside; the prior Wiki is then moved out of the project and a link to it stands at the backup's path.
+  const { recoverWikiPublication: recoverWhereTheLookIsWrong } =
+    await loadPublisherWhereTheLookIsWrong()
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-backup-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook', 'wiki'),
+    stage = join(root, '.codebook', 'wiki.stage-update'),
+    backup = `${output}.previous-test`,
+    priorMovedOut = join(directory, 'prior-moved-out')
+  try {
+    await mkdir(root)
+    await writeStage(output, root, '<h1>Prior</h1>')
+    await writeStage(stage, root, '<h1>Candidate</h1>')
+    await rename(output, priorMovedOut)
+    await symlink(priorMovedOut, backup, 'junction')
+    await writeFile(
+      `${output}.publish-journal.json`,
+      JSON.stringify({
+        projectRoot: root,
+        output,
+        stage,
+        backup,
+        pid: 99999999,
+      }),
+    )
+
+    // Act
+    const refusal = await recoverWhereTheLookIsWrong({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: the Wiki folder is still missing, and the backup's link, the journal and the stage stand as before.
+    assert.deepEqual(
+      {
+        refusal,
+        beside: (await readdir(join(root, '.codebook'))).sort(),
+        prior: await readFile(join(priorMovedOut, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: `The prior Wiki kept at ${backup} is a link, a file or a folder that leads out of the project. Nothing was moved. Inspect it, then run --recover again.`,
+        beside: [
+          'wiki.previous-test',
+          'wiki.publish-journal.json',
+          'wiki.stage-update',
+        ],
+        prior: '<h1>Prior</h1>',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 /** The load of the copy of the shipped publisher whose `node:fs/promises` runs a test's swap before it makes a folder, once it has begun. */
 let publisherWhoseFolderIsSwapped
 /**

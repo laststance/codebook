@@ -65,6 +65,9 @@ const stageRefusalOf = path => 'The Wiki stage ' + path + ' is a link, a file or
 /** The refusal of an output inside the project whose path passes through a folder that is no folder of the project's own, for the path it names; for {@link requireOwnFolder} and {@link requireStageWhereItWasMade}. @example linkedPathRefusalOf('/repo/.codebook') // => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: /repo/.codebook. …' */
 const linkedPathRefusalOf = path => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.';
 
+/** The refusal of the prior Wiki an interrupted publish kept beside the Wiki folder when it is no folder of its own, for {@link recoverWikiPublication}; recovery moves nothing then. @example backupRefusalOf('/repo/.codebook/wiki.previous-1') // => 'The prior Wiki kept at /repo/.codebook/wiki.previous-1 is a link, a file or a folder that leads out of the project. …' */
+const backupRefusalOf = path => 'The prior Wiki kept at ' + path + ' is a link, a file or a folder that leads out of the project. Nothing was moved. Inspect it, then run --recover again.';
+
 /** Refuses an entry on the output's path inside the project that is no folder of the project's own: a link, a file, or a folder whose real path leaves the project (a junction on Windows that lstat calls a directory). Called by {@link enteredProjectAt} for the folders above the output, and by {@link requireRegularFolder} for the output and its stage. @example await requireOwnFolder('/repo/wiki-link', stat, '/repo') // throws while wiki-link is a link */
 async function requireOwnFolder(path, stat, root) {
   if (!(await isOwnFolder(path, stat, root, true))) throw new Error(linkedPathRefusalOf(path));
@@ -92,7 +95,7 @@ async function requireOwnFoldersToOutput(requested, root) {
 }
 
 
-/** Refuses a Wiki folder or a stage beside it that is no folder of its own, with the sentence `refusalOf` words for it: a link, a file or a special file, and, when the output lies inside the project, a folder whose real path leaves the project (a junction on Windows to another volume, which lstat calls a directory), by the rule {@link requireOwnFolder} holds the folders above it to; a path that holds nothing yet passes. Called by {@link locations} for the output and the stage. @example await requireRegularFolder('/repo/.codebook/wiki', '/repo', true, outputRefusalOf) // throws while wiki is a junction to another volume */
+/** Refuses a Wiki folder, a stage beside it or the prior Wiki a publish kept beside it that is no folder of its own, with the sentence `refusalOf` words for it: a link, a file or a special file, and, when the output lies inside the project, a folder whose real path leaves the project (a junction on Windows to another volume, which lstat calls a directory), by the rule {@link requireOwnFolder} holds the folders above it to; a path that holds nothing yet passes. Called by {@link locations} for the output and the stage, and by {@link recoverWikiPublication} for the kept prior Wiki before it reads or moves it. @example await requireRegularFolder('/repo/.codebook/wiki', '/repo', true, outputRefusalOf) // throws while wiki is a junction to another volume */
 async function requireRegularFolder(path, root, isOutputInProject, refusalOf) {
   const stat = await lookAt(path);
   if (stat && !(await isOwnFolder(path, stat, root, isOutputInProject))) throw new Error(refusalOf(path));
@@ -419,6 +422,8 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
           throw new Error('The newly published Wiki is missing its publication record.');
         result = { status: 'published-or-restored', output, previousOutput: record.backup };
       } else if (record.backup) {
+        // The kept prior Wiki is read and moved into the Wiki folder's place, so it is held to the rule of the output.
+        await requireRegularFolder(record.backup, root, paths.isOutputInProject, backupRefusalOf);
         const prior = await inspectOutput(record.backup, root, { allowLegacy: true });
         if (!prior || record.priorManifestSha256 && digest(prior.bytes) !== record.priorManifestSha256) throw new Error('The prior Wiki does not match the publication journal.');
         await rename(record.backup, output);
