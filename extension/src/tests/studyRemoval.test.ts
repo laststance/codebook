@@ -612,7 +612,7 @@ test('a removal of a study that has only its archive, refused by the Trash, move
   assert.deepEqual(await storage.library.readStudy(study.id), study)
 })
 
-// Value: protects=a removal that moved no file says that nothing moved and names the write-back that failed, so the reader keeps a study that is whole; fails_when=a failed write-back is swallowed, or it is answered as partly moved although no path is in the Trash; why_new=the write-back is new; seam=the injected mover, which blocks the ledger path before it refuses the move
+// Value: protects=a removal that moved no file says that nothing moved and names the write-back that failed, so the reader keeps a study that is whole, and still says that the Trash refused, so a full library stops offering deletion; fails_when=a failed write-back is swallowed, it is answered as partly moved although no path is in the Trash, or the write-back's branch drops trashRefused (TC4: the regex anchored at the start never saw it); why_new=the write-back is new, and Cycle 0046 testing review TC4; seam=the injected mover, which blocks the ledger path before it refuses the move
 test('a removal that moved nothing and cannot write the ledger back says that nothing moved and names both failures', async (context) => {
   // Arrange: the ledger names the study; the mover puts a directory in the ledger's place and then refuses the archive.
   const storage = await removalStorage(context, 4)
@@ -627,10 +627,16 @@ test('a removal that moved nothing and cannot write the ledger back says that no
   }
   // Act
   const removal = await storage.library.removeStudy(study.id, refusingMover)
-  // Assert
+  // Assert: the outcome and the Trash's refusal exactly, the cause by its start (the system words the write-back's failure).
+  const { cause, ...withoutCause } =
+    'cause' in removal ? removal : { cause: '', ...removal }
+  assert.deepEqual(withoutCause, {
+    outcome: 'nothing-moved',
+    trashRefused: true,
+  })
   assert.match(
-    JSON.stringify(removal),
-    /^\{"outcome":"nothing-moved","cause":"Trash refused the archive; the learner ledger could not be written back: EISDIR/,
+    cause,
+    /^Trash refused the archive; the learner ledger could not be written back: EISDIR/,
   )
   assert.deepEqual(
     (await readdir(storage.directory)).filter((name) => name.endsWith('.tmp')),
