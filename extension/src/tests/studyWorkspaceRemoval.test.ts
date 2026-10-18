@@ -4399,7 +4399,7 @@ test('after a removal refused because another window of this machine still recor
     harness.setSavedStudyCapacity(1)
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     const otherWindow = await idleChild(context)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: otherWindow.pid!, hostname: hostname() },
@@ -7987,16 +7987,16 @@ test('a saved study chosen during Recording is not answered by a playback change
 })
 
 /**
- * Leaves an unsealed recording of a run, started on 2026-10-01 at 08:00 UTC, as an editor that crashed left it, and names its writer.
+ * Leaves an unsealed recording of a run, started on 2026-10-01 at 08:00 UTC, and names its writer: an editor that crashed (a process id of no process, another host, or a later process that got the id) or, with a live child process of the test, an editor window of this machine that still writes it.
  * `header-only` makes it a recording of 0.2.29.0 (no record of its writer beside the recordings); `with-record` keeps the record this build writes and names the writer there too, with the writer's own process start.
  * @param harness - The reader whose library holds the study.
  * @param study - The run: a saved study, or a run that saved none ({@link unsavedRunOf}).
  * @param owner - The writer: its process id and its host name.
  * @param record - Whether the recording has the record of its writer.
  * @returns The recording's directory.
- * @example await crashedRecordingOf(harness, study, { pid: 2 ** 22 + 1, hostname: 'old-laptop.local' }, 'header-only')
+ * @example await unsealedRecordingOf(harness, study, { pid: 2 ** 22 + 1, hostname: 'old-laptop.local' }, 'header-only')
  */
-async function crashedRecordingOf(
+async function unsealedRecordingOf(
   harness: Harness,
   study: Pick<
     Awaited<ReturnType<typeof saveEarlierStudy>>,
@@ -8060,7 +8060,7 @@ test('a saved study whose crashed recording names another host is moved with its
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8105,7 +8105,7 @@ test('a saved study whose recording’s writer record names another machine is m
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: ID_OF_NO_PROCESS, hostname: hostname() },
@@ -8149,7 +8149,7 @@ test('a saved study whose recordings name two other hosts is moved with both aft
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8221,7 +8221,7 @@ test('while the dialog about a recording on another computer is open the removal
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8263,7 +8263,7 @@ test('after Move to Trash Anyway the removal is shown as moving again while the 
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8315,7 +8315,7 @@ test('Cancel in the dialog about a recording that names another host moves nothi
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    const recording = await crashedRecordingOf(
+    const recording = await unsealedRecordingOf(
       harness,
       study,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8358,7 +8358,7 @@ test('a saved study whose recording names a live process of this computer begun 
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     const laterProcess = await idleChild(context)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: laterProcess.pid!, hostname: hostname() },
@@ -8398,7 +8398,7 @@ test('the dialog about a recording that a live process of this computer begun af
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     const laterProcess = await idleChild(context)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: laterProcess.pid!, hostname: hostname() },
@@ -8434,7 +8434,7 @@ test('a saved study whose recording a live window of this machine is still writi
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     const otherWindow = await idleChild(context)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: otherWindow.pid!, hostname: hostname() },
@@ -8476,7 +8476,7 @@ test('a saved study with a recording a live window of this machine still writes 
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     const otherWindow = await idleChild(context)
-    const ofThisMachine = await crashedRecordingOf(
+    const ofThisMachine = await unsealedRecordingOf(
       harness,
       study,
       { pid: otherWindow.pid!, hostname: hostname() },
@@ -8567,7 +8567,7 @@ test('a run’s recording whose writer record names another machine is listed in
   const harness = await workspaceHarness()
   try {
     const run = await unsavedRunOf(harness)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       run,
       { pid: ID_OF_NO_PROCESS, hostname: hostname() },
@@ -8611,7 +8611,7 @@ test('a run’s crashed recording that names another host is listed in Saved stu
   const harness = await workspaceHarness()
   try {
     const run = await unsavedRunOf(harness)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       run,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8658,7 +8658,7 @@ test('Cancel in the dialog about a listed run’s recording that names another h
   const harness = await workspaceHarness()
   try {
     const run = await unsavedRunOf(harness)
-    const recording = await crashedRecordingOf(
+    const recording = await unsealedRecordingOf(
       harness,
       run,
       { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
@@ -8702,7 +8702,7 @@ test('a run’s recording that a live window of this machine still writes is not
   try {
     const run = await unsavedRunOf(harness)
     const otherWindow = await idleChild(context)
-    await crashedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       run,
       { pid: otherWindow.pid!, hostname: hostname() },
