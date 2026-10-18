@@ -1532,6 +1532,122 @@ test('a playback position save queued before a removal settles before the first 
   }
 })
 
+// Value: protects=the playback position of a study whose removal waits for the dialog about a recording on another computer: a position save the learner causes while that dialog is open lands before the first move, and none is left behind; fails_when=the move after "Move to Trash Anyway" does not wait for the writes this window accepted while the dialog was open, so the position save runs against files on their way to the Trash (TT8, PD4); why_new=Cycle 0046 third testing review TT8: no test accepted a write while the second dialog waited; seam=the store's position save, held by the test, a recordings.v1 header of another host beside the study's own recordings.v2 recording, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a playback position save queued while the dialog about a recording on another computer is open settles before the first move after Move to Trash Anyway', async (context) => {
+  // Arrange: a saved recorded run, with a recording of the same study that names old-laptop.local in an older format's folder; position saves are held until the test lets them go.
+  const harness = await recordedReaderHarness()
+  let releasePositionSave = (): void => {}
+  try {
+    const ofAnotherComputer = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v1',
+      harness.studyId,
+    )
+    await mkdir(ofAnotherComputer, { recursive: true })
+    await writeFile(
+      join(ofAnotherComputer, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'old-laptop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-01T08:00:00.000Z',
+      }),
+    )
+    const order: string[] = []
+    const savePreference = RecordingStore.prototype.savePreference
+    let positionSaveStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+        positionSaveStarted = resolve
+      }),
+      positionSaveHeld = new Promise<void>((resolve) => {
+        releasePositionSave = resolve
+      })
+    context.mock.method(
+      RecordingStore.prototype,
+      'savePreference',
+      async function (
+        this: RecordingStore,
+        preference: Parameters<RecordingStore['savePreference']>[0],
+      ) {
+        positionSaveStarted()
+        await positionSaveHeld
+        await savePreference.call(this, preference)
+        order.push('position saved')
+      },
+    )
+    harness.rejectTrashMoves((path) => {
+      order.push(`moved ${basename(path)}`)
+      return false
+    })
+    // While the second dialog is open the learner opens Recording and leaves it, which queues a position save.
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button !== `Move to ${TRASH} Anyway`) return button
+      await harness.reader.openRecording(harness.studyId)
+      await waitUntil(
+        () => harness.controller.state().readiness === 'ready',
+        'the recording opened during the dialog',
+        2_000,
+      )
+      await readerSeams(harness).receive(
+        {
+          type: 'tab',
+          revision: harness.reader.inspect().view!.revision,
+          tab: 'overview',
+        },
+        'context',
+      )
+      await started
+      return button
+    })
+
+    // Act: the learner chooses Move to Trash Anyway while the position save is held, then the save is let go.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () =>
+        harness.warningDialogs.length === 2 &&
+        ['moving', 'moved', 'failed'].includes(
+          harness.reader.inspect().view!.studyRemoval?.status ?? '',
+        ),
+      'the removal after Move to Trash Anyway',
+      4_000,
+    )
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    const movesWhileSaveHeld = order.filter((step) =>
+      step.startsWith('moved'),
+    ).length
+    releasePositionSave()
+    await removal
+
+    // Assert
+    const firstMove = order.indexOf(`moved ${harness.studyId}`)
+    assert.deepEqual(
+      {
+        movesWhileSaveHeld,
+        studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
+        savedBeforeTheFirstMove: order
+          .slice(0, firstMove)
+          .includes('position saved'),
+        savedAfterIt: order.slice(firstMove).includes('position saved'),
+      },
+      {
+        movesWhileSaveHeld: 0,
+        studyRemoval: 'moved',
+        savedBeforeTheFirstMove: true,
+        savedAfterIt: false,
+      },
+    )
+  } finally {
+    // A save still held would keep the window from closing.
+    releasePositionSave()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=a learner who reads a recording is not shown the line of a later run that did not start as if it belonged to that recording; fails_when=the refusal line stays in the pane while a recording is open (NF-24); why_new=the line was only asserted on Overview and Live; seam=none
 test('the refusal line of a run that did not start is not shown while a recording is open', async () => {
   // Arrange: a saved recorded run fills a library of one study; the next run is refused.
