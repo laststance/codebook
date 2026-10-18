@@ -1059,6 +1059,59 @@ test('a managed launch whose new profile folder cannot be resolved removes that 
   )
 })
 
+// Value: protects=the run's own profile folder on a machine where the process listing fails (PowerShell refused, a listing that runs past its bound): the close cannot verify the browser's exit, journals that it is unverified with the reason, and still removes the folder this run made and completes, so no folder is left that no later close or sweep (both need the listing) would remove (AD22, /ship adversarial review Step 11); fails_when=a failed listing fails the close's exit step, so the close ends as an incomplete cleanup before its removal and the folder stays for good; why_new=every close test listed the processes; seam=the stand-in for the profile's processes, which fails as a listing that ran past its bound fails
+test('a managed close whose process listing fails journals the exit as unverified, still removes its profile folder, and completes', async (context) => {
+  // Arrange: a launched managed browser whose process listing fails at the close.
+  const managed = await managedBrowser(context, {
+    removeAbandonedProfiles: async () => [],
+    processesOfProfile: () => {
+      throw new Error(
+        'The process listing (/bin/ps) did not answer within 10000 ms and was ended.',
+      )
+    },
+  })
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const profile = profileOf(managed.events)
+  // Act
+  const closeFailure = await managed.browser.close().then(
+    () => undefined,
+    (error: Error) => error.message,
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      closeFailure,
+      folderLeft: await exists(profile),
+      journal: managed.events.map((event) =>
+        event.type === 'browser.managed-exit-unverified'
+          ? { type: event.type, detail: event.detail }
+          : event.type,
+      ),
+    },
+    {
+      closeFailure: undefined,
+      folderLeft: false,
+      journal: [
+        'browser.managed-profile',
+        'host.debugger-started',
+        {
+          type: 'browser.managed-exit-unverified',
+          detail: {
+            profile,
+            reason:
+              'Error: The process listing (/bin/ps) did not answer within 10000 ms and was ended.',
+          },
+        },
+        'browser.managed-profile-removed',
+        'browser.cleanup-verified',
+      ],
+    },
+  )
+})
+
 // Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
   // Arrange: three folders lie in the profile root when the next run starts. The killed editor's marker names an id no process can have: the id of a child that just exited could be given to another process before the sweep judges it.

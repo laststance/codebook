@@ -44,6 +44,7 @@ import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
 import type { selectHost } from './utils/selectHost'
 import { selectPageTarget } from './utils/selectPageTarget'
 import { settleCleanup } from './utils/settleCleanup'
+import { WaitTimeoutError } from './utils/waitTimeoutError'
 import { waitUntil } from './utils/waitUntil'
 
 export interface HostConfiguration {
@@ -677,14 +678,24 @@ export class HostBrowser {
           // A folder an earlier close removed has no processes to look for, and looking would fail on the missing path.
           if (!this.managedProfile || this.managedProfileRemoved) return
           const profile = this.managedProfile
-          // Each look lists every process of the machine; on Windows the looks are spaced out (profileProcessPollIntervalMs).
-          await waitUntil(
-            async () => (await profileProcesses(profile)).length === 0,
-            'owned Chrome profile processes exited',
-            ACTIVE_TIMEOUT_MS,
-            undefined,
-            profileProcessPollIntervalMs(process.platform),
-          )
+          try {
+            // Each look lists every process of the machine; on Windows the looks are spaced out (profileProcessPollIntervalMs).
+            await waitUntil(
+              async () => (await profileProcesses(profile)).length === 0,
+              'owned Chrome profile processes exited',
+              ACTIVE_TIMEOUT_MS,
+              undefined,
+              profileProcessPollIntervalMs(process.platform),
+            )
+          } catch (error) {
+            // Processes still there at the bound are a failed release. A listing that cannot be made proves nothing either way: the close goes on, so the folder this run made is removed and never left behind, also on a machine where no listing ever succeeds.
+            if (error instanceof WaitTimeoutError) throw error
+            this.record('browser.managed-exit-unverified', {
+              profile,
+              reason: String(error),
+            })
+            return
+          }
           this.record('browser.managed-exit-verified', {
             profile,
             remainingProcesses: 0,
