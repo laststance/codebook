@@ -198,3 +198,105 @@ test('a question asked on a Wiki page opened from disk tells the offline sentenc
     },
   )
 })
+
+/** The page forms the reader serves a question from: a Wiki published before this build, with that shell's script, and one of this build, with the bundled shell's script. */
+const SERVED_FORMS = [
+  {
+    published: 'before this build',
+    composer: 'published-before-the-question-status',
+    shell: 'scripts/fixtures/reader-shell-0.2.29.0.txt',
+  },
+  {
+    published: 'by this build',
+    composer: 'current-shell',
+    shell: 'skills/codebook/reader-shell.html',
+  },
+] as const
+
+// Value: protects=a screen reader user whose question the reader refuses at once (a question too long, a reader that is gone): the reason is announced from the question status line, which was in the page, drawn and empty, before the question, and no empty answer stays open; fails_when=the reason is written into the answer's status region, whose disclosure the same question showed a moment before, so a refusal that comes back within the same frame lands in a region that entered the page with it and is not announced; why_new=D2 (the residual gap of the first fix: an immediate reply); seam=openFakeWikiPage with the shell's script and the served codebook-qa.js, the fake reader's refusal of api/ask (an error status and its reason, answered at once); no_claim=what a given screen reader announces, and the timing of a browser's frames
+for (const form of SERVED_FORMS)
+  test(`a question the reader refuses at once on a served Wiki published ${form.published} is announced from the status line that was in the page before it, and no empty answer stays open`, async () => {
+    // Arrange
+    const script = `${await shellScriptOf(form.shell)}\n${await readServedWikiScript()}`
+    const page = await openFakeWikiPage(
+      script,
+      'current-shell',
+      { questionAnswer: { error: 'The Wiki question is too long.' } },
+      { composer: form.composer },
+    )
+    const statusBeforeTheQuestion = questionStatusOf(page)
+
+    // Act
+    await page.ask('Where is the order created?')
+
+    // Assert
+    assert.deepEqual(
+      {
+        statusBeforeTheQuestion,
+        statusAfterTheRefusal: questionStatusOf(page),
+        answer: page.find('.qa-answer')?.textContent,
+        isAnswerDisclosureShown: page.isShown(page.find('#qa-response')),
+      },
+      {
+        statusBeforeTheQuestion: {
+          role: 'status/polite',
+          text: '',
+          isShown: true,
+          isInADisclosure: false,
+        },
+        statusAfterTheRefusal: {
+          role: 'status/polite',
+          text: 'Error: The Wiki question is too long.',
+          isShown: true,
+          isInADisclosure: false,
+        },
+        answer: '',
+        isAnswerDisclosureShown: false,
+      },
+    )
+  })
+
+// Value: protects=a screen reader user in an editor that exposes no model to the Wiki reader: the sentence that the question waits in the editor chat comes back at once and is announced from the question status line, which was in the page before it, and no empty answer stays open; fails_when=the hand-off sentence is written into the answer's status region that the same question showed a moment before, so it enters the page together with its text and is not announced; why_new=D2 (the residual gap of the first fix: an immediate hand-off); seam=openFakeWikiPage with the shell's script and the served codebook-qa.js, the fake reader's hand-off answer of api/ask, answered at once; no_claim=what a given screen reader announces
+for (const form of SERVED_FORMS)
+  test(`a question handed to the editor chat at once on a served Wiki published ${form.published} is announced from the status line that was in the page before it, and no empty answer stays open`, async () => {
+    // Arrange
+    const handoff =
+      'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.'
+    const script = `${await shellScriptOf(form.shell)}\n${await readServedWikiScript()}`
+    const page = await openFakeWikiPage(
+      script,
+      'current-shell',
+      { questionAnswer: { handoff } },
+      { composer: form.composer },
+    )
+    const statusBeforeTheQuestion = questionStatusOf(page)
+
+    // Act
+    await page.ask('Where is the order created?')
+
+    // Assert
+    assert.deepEqual(
+      {
+        statusBeforeTheQuestion,
+        statusAfterTheHandoff: questionStatusOf(page),
+        answer: page.find('.qa-answer')?.textContent,
+        isAnswerDisclosureShown: page.isShown(page.find('#qa-response')),
+      },
+      {
+        statusBeforeTheQuestion: {
+          role: 'status/polite',
+          text: '',
+          isShown: true,
+          isInADisclosure: false,
+        },
+        statusAfterTheHandoff: {
+          role: 'status/polite',
+          text: handoff,
+          isShown: true,
+          isInADisclosure: false,
+        },
+        answer: '',
+        isAnswerDisclosureShown: false,
+      },
+    )
+  })

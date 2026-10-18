@@ -300,7 +300,7 @@ export type FakeWikiPageLayout =
   /** A page with neither the link nor the label. */
   | 'no-rail'
 
-/** What the fake reader answers a question of the page's form with: an answer with its citations, or the sentence of a question handed over to the editor's chat. */
+/** What the fake reader answers a question of the page's form with: an answer with its citations, the sentence of a question handed over to the editor's chat, or a refusal, which the reader answers with an error status and its reason. */
 export type FakeWikiQuestionAnswer =
   | {
       answer: string
@@ -308,6 +308,7 @@ export type FakeWikiQuestionAnswer =
       sourceChanged: boolean
     }
   | { handoff: string }
+  | { error: string }
 
 /** Which question form the fake page carries in its reading column. */
 export type FakeWikiPageComposer =
@@ -658,7 +659,7 @@ export async function openFakeWikiPage(
     }
     if (route === 'api/ask') {
       const answer = structuredClone(pageReader.questionAnswer)
-      return { ok: true, json: async () => answer }
+      return { ok: !('error' in answer), json: async () => answer }
     }
     if (route === 'api/freshness' && !pageReader.isFreshnessFailing) {
       const answer = {

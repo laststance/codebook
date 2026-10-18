@@ -117,7 +117,7 @@ const qaClient = `(function () {
     questionStatusStyle.textContent = ${JSON.stringify(WIKI_QUESTION_STATUS_STYLE)};
     document.head.append(questionStatusStyle);
   }
-  // Only the latest question empties the status line when its answer comes.
+  // Only the latest question writes the status line when its reply comes.
   var questionsAsked = 0;
   form.addEventListener('submit', async function (event) {
     event.preventDefault(); event.stopImmediatePropagation();
@@ -133,18 +133,24 @@ const qaClient = `(function () {
     output.style.display = 'block'; output.textContent = '';
     var asked = ++questionsAsked;
     questionStatus.textContent = 'Asking the editor model…';
+    // A hand-off or a failure can come back within the frame that showed the answer's region, which would enter the page together with that text: the sentence is the status line's, which was in the page before it, and the answer's empty disclosure leaves again. A newer question keeps its own progress and disclosure.
+    var tell = function (sentence) {
+      if (asked !== questionsAsked) return;
+      questionStatus.textContent = sentence;
+      if (disclosure) disclosure.hidden = true;
+    };
     try {
       var response = await fetch(prefix + '${WIKI_QUESTION_ROUTE}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
       var result = await response.json();
       if (!response.ok) throw new Error(result.error || 'The editor model could not answer.');
-      if (result.handoff) { output.textContent = result.handoff; return; }
+      if (result.handoff) { tell(result.handoff); return; }
+      if (asked === questionsAsked) questionStatus.textContent = '';
       output.textContent = result.answer;
       if (result.sourceChanged) { var stale = document.createElement('p'); stale.textContent = 'Some indexed source changed. Update LLM Wiki before relying on this answer.'; output.appendChild(stale); }
       var list = document.createElement('ul');
       result.citations.forEach(function (citation) { var item = document.createElement('li'); var link = document.createElement('a'); link.href = citation.uri; link.textContent = citation.path + ':' + citation.line; item.appendChild(link); list.appendChild(item); });
       output.appendChild(list);
-    } catch (error) { output.textContent = String(error); }
-    finally { if (asked === questionsAsked) questionStatus.textContent = ''; }
+    } catch (error) { tell(String(error)); }
   }, true);
 })();`
 
