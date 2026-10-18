@@ -15,16 +15,17 @@ test('a symlinked profile observes its canonical process and excludes a prefix-s
   const profile = await realpath(directory)
   const alias = `${directory}-alias`
   await symlink(profile, alias)
+  // A loose argument ends Node's own options without a switch terminator (`--`): on Windows, Chrome and {@link profileProcesses} read no switch after one, so the profile switch would not count.
   const owned = spawn(process.execPath, [
     '-e',
     'setInterval(() => {}, 1000)',
-    '--',
+    'chrome',
     `--user-data-dir=${profile}`,
   ])
   const unrelated = spawn(process.execPath, [
     '-e',
     'setInterval(() => {}, 1000)',
-    '--',
+    'chrome',
     `--user-data-dir=${profile}-other`,
   ])
   try {
