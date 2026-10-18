@@ -60,10 +60,7 @@ import {
 } from './utils/answerDeepWikiQuestion'
 import { assertNoLinkOnWikiPath } from './utils/assertNoLinkOnWikiPath'
 import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
-import {
-  claimWikiUpdateMarker,
-  type WikiUpdateMarkerClaim,
-} from './utils/claimWikiUpdateMarker'
+import { claimWikiUpdateMarker } from './utils/claimWikiUpdateMarker'
 import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
@@ -79,6 +76,7 @@ import {
 import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
 import { deepWikiOpenFailureNotice } from './utils/deepWikiOpenFailureNotice'
 import { describeBrokenWikiWatch } from './utils/describeBrokenWikiWatch'
+import { describeOtherWikiWindow } from './utils/describeOtherWikiWindow'
 import {
   describeSecondWikiUpdateStart,
   type WikiUpdateProgressPlace,
@@ -87,19 +85,15 @@ import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
+import { findUnacknowledgedWikiLeftover } from './utils/findUnacknowledgedWikiLeftover'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import {
   folderChangeCleanupNotice,
   type FolderChangeCleanupFailure,
   type FolderChangeCleanupStep,
 } from './utils/folderChangeCleanupNotice'
-import { formatClockTime } from './utils/formatClockTime'
-import { hasWikiPublishEndedWait } from './utils/hasWikiPublishEndedWait'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
-import {
-  isAcknowledgedWikiLeftover,
-  type WikiLeftover,
-} from './utils/isAcknowledgedWikiLeftover'
+import type { WikiLeftover } from './utils/isAcknowledgedWikiLeftover'
 import { isWikiManifestOf } from './utils/isWikiManifestOf'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
@@ -122,7 +116,6 @@ import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import {
-  selectActiveWikiCandidate,
   wikiLastRunSchema,
   type WikiLastRun,
 } from './utils/selectActiveWikiCandidate'
@@ -1348,6 +1341,221 @@ export function activate(
     hasGitRepository: boolean
   }
   /**
+   * Records a refused start of a Wiki update in a sentence Codebook wrote and tells the learner; called by {@link lookAtWikiStart} and {@link checkWikiUpdateStart} for each refusal they word themselves.
+   * @param host - Editor host that was asked.
+   * @param wikiOutput - Resolved Wiki folder and its label.
+   * @param reason - The sentence of the refusal.
+   * @param workInProgress - Given when the refusal names somebody who is still updating this Wiki (another window's run, or an earlier chat the start waits for): the site may then be replaced after the refusal, which the recorded state says, and `onUpdateAnyway` in it offers the override.
+   * @returns `undefined`, the start checks' answer for a start that does not go ahead.
+   * @example
+   * return refuseWikiStart('vscode', wikiOutput, 'This Wiki was published again while Codebook checked it. Press Update LLM Wiki again.')
+   */
+  const refuseWikiStart = (
+    host: WikiUpdateHost,
+    wikiOutput: WikiUpdateOutput,
+    reason: string,
+    workInProgress?: { onUpdateAnyway?: () => void },
+  ): undefined => {
+    wikiUpdateRun.refuseStart(host, wikiOutput, {
+      kind: 'failed',
+      reason,
+      isCodebookSentence: true,
+      ...(workInProgress ? { mayBeReplacedLater: true } : {}),
+    })
+    showWikiUpdateNotice(workInProgress?.onUpdateAnyway)
+    return undefined
+  }
+  /**
+   * Starts the update again when the learner presses "Update anyway", with only the leftovers the refusals named ignored; called by the button of a refusal {@link lookAtWikiStart} words for an earlier chat's leftover.
+   * @param leftovers - The leftovers of the earlier presses and of this refusal ({@link updateDeepWiki}).
+   * @returns Nothing; a start that throws is told in a notice.
+   * @example
+   * startWikiUpdateAnyway([{ kind: 'last-run', endedAtMs: 1_790_000_000_000 }])
+   */
+  const startWikiUpdateAnyway = (leftovers: WikiLeftover[]): void => {
+    // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
+    Promise.resolve(wikiUpdate)
+      .catch(() => undefined)
+      .then(() => updateDeepWiki(leftovers))
+      .catch((error: unknown) => {
+        void showNotice(
+          'error',
+          `Codebook could not start the Wiki update: ${thrownMessage(error)}`,
+        )
+      })
+  }
+  /** What the Wiki looked like to the first checks of a start that may go on: its publish token and publication, and its manifest's identity and freshness (undefined while the manifest cannot be inspected). */
+  type WikiToUpdate = Pick<WikiUpdateStart, 'publicationAtStart'> & {
+    tokenAtStart: string
+    before: WikiUpdateEndFacts['published']
+  }
+  /**
+   * Makes the checks of a start that need nothing but the Wiki folder: what makes the publisher refuse, no Wiki at all, a manifest of another checkout, a Wiki that is already current; called by {@link lookAtWikiStart} first.
+   * @param projectRoot - Canonical opened project.
+   * @param wikiOutput - Resolved Wiki folder and its label.
+   * @param host - Editor host that was asked.
+   * @returns What the Wiki looked like, when the start may go on; `undefined` after the refusal or "already current" was recorded and the learner told.
+   * @throws What a check threw (a manifest of another checkout, a file system error).
+   * @example
+   * await inspectWikiToUpdate('/repo', wikiOutput, 'vscode') // => { tokenAtStart: 'a1b2…', publicationAtStart: 'a1b2…+0f9e…', before: { identity, revision, index, freshness } }
+   */
+  const inspectWikiToUpdate = async (
+    projectRoot: string,
+    wikiOutput: WikiUpdateOutput,
+    host: WikiUpdateHost,
+  ): Promise<WikiToUpdate | undefined> => {
+    const { outputDirectory } = wikiOutput
+    // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
+    const startBlock = await findWikiUpdateStartBlock(
+      outputDirectory,
+      projectRoot,
+    )
+    if (startBlock) {
+      wikiUpdateRun.refuseStart(host, wikiOutput, {
+        kind: 'conflict',
+        ...startBlock,
+      })
+      showWikiUpdateNotice()
+      return undefined
+    }
+    const tokenAtStart = await readWikiPublishToken(outputDirectory)
+    // Without a manifest there is nothing to update; the learner needs the generate step, not a file-system error.
+    if (tokenAtStart === undefined) {
+      const noWiki = `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`
+      // The page records the refusal like any other; there is no site to keep, so neither says one was kept.
+      wikiUpdateRun.refuseStart(host, wikiOutput, {
+        kind: 'failed',
+        reason: noWiki,
+        isCodebookSentence: true,
+        site: 'missing',
+      })
+      void showNotice('error', noWiki)
+      return undefined
+    }
+    const publicationAtStart =
+      await readWikiPublicationIdentity(outputDirectory)
+    // A manifest of another checkout throws here; the caller records the failed start.
+    await assertWikiOwner(projectRoot, outputDirectory)
+    const before = await inspectPublishedWiki(projectRoot, outputDirectory)
+    if (before?.freshness.status === 'current') {
+      const { freshness, ...published } = before
+      wikiUpdateRun.alreadyCurrent(
+        wikiOutput,
+        published,
+        // In a folder without Git "current" covers the indexed sources only, and the learner is told.
+        Boolean(freshness.addedFilesUnchecked),
+      )
+      showWikiUpdateNotice()
+      return undefined
+    }
+    return { tokenAtStart, publicationAtStart, before }
+  }
+  /**
+   * Makes the checks of a start once, for one generation of the Wiki: those of the Wiki folder ({@link inspectWikiToUpdate}), another window's marker, an earlier chat's leftover ({@link findUnacknowledgedWikiLeftover}), and last the claim of the marker; called by {@link checkWikiUpdateStart}, a second time when a publish landed while the first look ran.
+   * @param projectRoot - Canonical opened project.
+   * @param wikiOutput - Resolved Wiki folder and its label.
+   * @param host - Editor host that was asked.
+   * @param acknowledgedLeftovers - The leftovers "Update anyway" passed so far ({@link checkWikiUpdateStart}).
+   * @returns
+   * - The start may go ahead: what the run begins with; the Wiki's marker is claimed for it
+   * - The start was refused or nothing needs updating: `undefined`, after the state was recorded and the learner told
+   * - A publish landed while the checks ran: `published-meanwhile`, with nothing recorded and no marker claimed
+   * @throws What a check threw (a manifest of another checkout, a file system error).
+   * @example
+   * await lookAtWikiStart('/repo', wikiOutput, 'vscode', []) // => 'published-meanwhile'
+   */
+  const lookAtWikiStart = async (
+    projectRoot: string,
+    wikiOutput: WikiUpdateOutput,
+    host: WikiUpdateHost,
+    acknowledgedLeftovers: readonly WikiLeftover[],
+  ): Promise<WikiUpdateStart | undefined | 'published-meanwhile'> => {
+    const { outputDirectory } = wikiOutput
+    const wikiToUpdate = await inspectWikiToUpdate(
+      projectRoot,
+      wikiOutput,
+      host,
+    )
+    if (!wikiToUpdate) return undefined
+    const { tokenAtStart, publicationAtStart, before } = wikiToUpdate
+    // Each window holds its own run state; the marker is the trace of another window's run before its agent has staged anything.
+    const markerLook = await readLiveWikiUpdateMarker(
+      outputDirectory,
+      wikiWindowId,
+    )
+    // A marker another window is writing at this moment is the beginning of its run.
+    if (markerLook.kind === 'being-written')
+      return refuseWikiStart(
+        host,
+        wikiOutput,
+        describeOtherWikiWindow(markerLook.heldBy),
+        {},
+      )
+    const otherWindow =
+      markerLook.kind === 'live' ? markerLook.heldBy : undefined
+    // A run that is active in another window refuses the start, and nothing overrides it.
+    if (otherWindow && otherWindow.watchEndedAtMs === undefined)
+      return refuseWikiStart(
+        host,
+        wikiOutput,
+        describeOtherWikiWindow(otherWindow),
+        {},
+      )
+    // The first leftover of an earlier chat in the way that no press of "Update anyway" passed; a refusal names one chat's leftovers, and its "Update anyway" passes only those.
+    const unacknowledged = await findUnacknowledgedWikiLeftover(
+      outputDirectory,
+      {
+        nowMs: Date.now(),
+        watchTimeoutMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
+        otherWindow,
+        // The record of another output says nothing about this one's candidates.
+        lastRun: lastWikiRuns.get(outputDirectory),
+        acknowledged: acknowledgedLeftovers,
+        listCandidates: listWikiCandidates,
+      },
+    )
+    if (unacknowledged)
+      return refuseWikiStart(host, wikiOutput, unacknowledged.reason, {
+        onUpdateAnyway: () =>
+          startWikiUpdateAnyway([
+            ...acknowledgedLeftovers,
+            ...unacknowledged.named,
+          ]),
+      })
+    // A publish that landed while the checks ran made them about two generations: check the new one.
+    if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart)
+      return 'published-meanwhile'
+    const startedAtMs = Date.now()
+    const claim = await claimWikiUpdateMarker(outputDirectory, {
+      pid: process.pid,
+      windowId: wikiWindowId,
+      host,
+      startedAtMs,
+    })
+    // Another window began its run between the look at the marker and this write.
+    if ('heldBy' in claim)
+      return refuseWikiStart(
+        host,
+        wikiOutput,
+        describeOtherWikiWindow(claim.heldBy),
+        {},
+      )
+    // This window's own reservation of this output, if it left one, is now this run's marker; its timer must not remove it. A reservation of another output shares no marker with this run and keeps its timer.
+    clearTimeout(wikiReservations.get(outputDirectory)?.timer)
+    wikiReservations.delete(outputDirectory)
+    // A change of an earlier run's marker that waits for its next attempt has nothing left to change: this run holds the marker now.
+    cancelWikiMarkerChange(outputDirectory)
+    return {
+      tokenAtStart,
+      publicationAtStart,
+      uncoveredAtStart: before?.freshness.addedPaths ?? [],
+      hasGitRepository: !before?.freshness.addedFilesUnchecked,
+      releaseMarker: claim.release,
+      reserveMarker: claim.reserve,
+      startedAtMs,
+    }
+  }
+  /**
    * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
    *
    * The order: what makes the publisher refuse (a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusals named (a refusal names one chat's leftovers: another window's stopped watch, a candidate, or this window's own stopped watch together with the candidate that watch saw; the leftovers of two chats at once are named in two refusals, one after the other), and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
@@ -1369,211 +1577,21 @@ export function activate(
     host: WikiUpdateHost,
     acknowledgedLeftovers: readonly WikiLeftover[],
   ): Promise<WikiUpdateStart | undefined> => {
-    const { outputDirectory } = wikiOutput
-    /** Records a refusal in a sentence Codebook wrote and tells the learner. `workInProgress` is given when the refusal names somebody who is still updating this Wiki (another window's run, or an earlier chat the start waits for): the site may then be replaced after the refusal, which the recorded state says, and `onUpdateAnyway` in it offers the override. */
-    const refuse = (
-      reason: string,
-      workInProgress?: { onUpdateAnyway?: () => void },
-    ): undefined => {
-      wikiUpdateRun.refuseStart(host, wikiOutput, {
-        kind: 'failed',
-        reason,
-        isCodebookSentence: true,
-        ...(workInProgress ? { mayBeReplacedLater: true } : {}),
-      })
-      showWikiUpdateNotice(workInProgress?.onUpdateAnyway)
-      return undefined
-    }
-    /** Starts the update again when the learner presses "Update anyway", with only the leftovers the refusal named ignored. */
-    const updateAnyway = (leftovers: WikiLeftover[]): void => {
-      // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
-      Promise.resolve(wikiUpdate)
-        .catch(() => undefined)
-        .then(() => updateDeepWiki(leftovers))
-        .catch((error: unknown) => {
-          void showNotice(
-            'error',
-            `Codebook could not start the Wiki update: ${thrownMessage(error)}`,
-          )
-        })
-    }
-    /** The sentence for another window's running update, for the marker another window is writing at this moment because its update begins, or for the marker another window is removing or replacing at this moment; nothing overrides it. */
-    const describeOtherWindow = (
-      holder: Extract<WikiUpdateMarkerClaim, { heldBy: unknown }>['heldBy'],
-    ): string => {
-      // A marker another window removes or replaces at this moment names no run.
-      if ('isMarkerInChange' in holder)
-        return 'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.'
-      // A marker another window is writing names no run yet.
-      if ('beingWrittenSinceMs' in holder)
-        return 'Another editor window is starting an update of this Wiki. Wait a moment and try again.'
-      return `Another editor window is updating this Wiki (${holder.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(holder.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
-    }
     for (const isLastAttempt of [false, true]) {
-      // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
-      const startBlock = await findWikiUpdateStartBlock(
-        outputDirectory,
+      const look = await lookAtWikiStart(
         projectRoot,
-      )
-      if (startBlock) {
-        wikiUpdateRun.refuseStart(host, wikiOutput, {
-          kind: 'conflict',
-          ...startBlock,
-        })
-        showWikiUpdateNotice()
-        return undefined
-      }
-      const tokenAtStart = await readWikiPublishToken(outputDirectory)
-      // Without a manifest there is nothing to update; the learner needs the generate step, not a file-system error.
-      if (tokenAtStart === undefined) {
-        const noWiki = `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`
-        // The page records the refusal like any other; there is no site to keep, so neither says one was kept.
-        wikiUpdateRun.refuseStart(host, wikiOutput, {
-          kind: 'failed',
-          reason: noWiki,
-          isCodebookSentence: true,
-          site: 'missing',
-        })
-        void showNotice('error', noWiki)
-        return undefined
-      }
-      const publicationAtStart =
-        await readWikiPublicationIdentity(outputDirectory)
-      // A manifest of another checkout throws here; the caller records the failed start.
-      await assertWikiOwner(projectRoot, outputDirectory)
-      const before = await inspectPublishedWiki(projectRoot, outputDirectory)
-      if (before?.freshness.status === 'current') {
-        const { freshness, ...published } = before
-        wikiUpdateRun.alreadyCurrent(
-          wikiOutput,
-          published,
-          // In a folder without Git "current" covers the indexed sources only, and the learner is told.
-          Boolean(freshness.addedFilesUnchecked),
-        )
-        showWikiUpdateNotice()
-        return undefined
-      }
-      // Each window holds its own run state; the marker is the trace of another window's run before its agent has staged anything.
-      const markerLook = await readLiveWikiUpdateMarker(
-        outputDirectory,
-        wikiWindowId,
-      )
-      // A marker another window is writing at this moment is the beginning of its run.
-      if (markerLook.kind === 'being-written')
-        return refuse(describeOtherWindow(markerLook.heldBy), {})
-      const otherWindow =
-        markerLook.kind === 'live' ? markerLook.heldBy : undefined
-      // A run that is active in another window refuses the start, and nothing overrides it.
-      if (otherWindow && otherWindow.watchEndedAtMs === undefined)
-        return refuse(describeOtherWindow(otherWindow), {})
-      const nowMs = Date.now()
-      // Every leftover in the way now, each entry with the sentence that names it; a refusal names one entry, and its "Update anyway" passes only that entry's leftovers.
-      const leftovers: Array<{ named: WikiLeftover[]; reason: string }> = []
-      // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on. A site published since that watch's end ended the wait: the reservation names no candidate, so this window knows no more of that chat's publish than its time.
-      if (
-        otherWindow?.watchEndedAtMs !== undefined &&
-        nowMs < otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS &&
-        !(await hasWikiPublishEndedWait(outputDirectory, {
-          watchEndedAtMs: otherWindow.watchEndedAtMs,
-          candidateNames: [],
-        }))
-      )
-        leftovers.push({
-          named: [
-            {
-              kind: 'reservation',
-              windowId: otherWindow.windowId,
-              startedAtMs: otherWindow.startedAtMs,
-            },
-          ],
-          reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(otherWindow.watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-        })
-      // The record of another output says nothing about this one's candidates.
-      const lastRun = lastWikiRuns.get(outputDirectory)
-      const activeCandidate = selectActiveWikiCandidate(
-        await listWikiCandidates(outputDirectory),
-        { nowMs, activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS, lastRun },
-      )
-      // This window's own stopped watch, whose chat may still work; a watch that stopped before the chat staged anything left no candidate. Its own publish since the watch's end ended the wait: the page has shown that publish, and nothing is left to wait for.
-      const awaitedOwnRun =
-        lastRun?.mayAgentStillWork &&
-        nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS &&
-        !(await hasWikiPublishEndedWait(outputDirectory, {
-          watchEndedAtMs: lastRun.endedAtMs,
-          candidateNames: lastRun.candidateNames ?? [],
-        }))
-          ? lastRun
-          : undefined
-      const ownRunLeftover: WikiLeftover | undefined = awaitedOwnRun && {
-        kind: 'last-run',
-        endedAtMs: awaitedOwnRun.endedAtMs,
-      }
-      // A candidate this window's stopped watch saw is that watch's chat's: one refusal names both, and its "Update anyway" passes both. A candidate the watch never saw is named in a refusal of its own.
-      const isCandidateOfOwnRun =
-        activeCandidate !== undefined &&
-        (awaitedOwnRun?.candidateNames ?? []).includes(activeCandidate.name)
-      if (activeCandidate) {
-        const candidateLeftover: WikiLeftover = {
-          kind: 'candidate',
-          name: activeCandidate.name,
-        }
-        leftovers.push({
-          named:
-            isCandidateOfOwnRun && ownRunLeftover
-              ? [candidateLeftover, ownRunLeftover]
-              : [candidateLeftover],
-          reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-        })
-      }
-      if (awaitedOwnRun && ownRunLeftover && !isCandidateOfOwnRun)
-        leftovers.push({
-          named: [ownRunLeftover],
-          reason: `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatClockTime(awaitedOwnRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-        })
-      // A press of "Update anyway" passes only the leftovers its refusals named; another one, there already or appeared since, is named in a refusal of its own.
-      const unacknowledged = leftovers.find(({ named }) =>
-        named.some(
-          (leftover) =>
-            !isAcknowledgedWikiLeftover(leftover, acknowledgedLeftovers),
-        ),
-      )
-      if (unacknowledged)
-        return refuse(unacknowledged.reason, {
-          onUpdateAnyway: () =>
-            updateAnyway([...acknowledgedLeftovers, ...unacknowledged.named]),
-        })
-      // A publish that landed while the checks ran made them about two generations: check the new one.
-      if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart) {
-        if (isLastAttempt)
-          return refuse(
-            'This Wiki was published again while Codebook checked it. Press Update LLM Wiki again.',
-          )
-        continue
-      }
-      const startedAtMs = Date.now()
-      const claim = await claimWikiUpdateMarker(outputDirectory, {
-        pid: process.pid,
-        windowId: wikiWindowId,
+        wikiOutput,
         host,
-        startedAtMs,
-      })
-      // Another window began its run between the look at the marker and this write.
-      if ('heldBy' in claim)
-        return refuse(describeOtherWindow(claim.heldBy), {})
-      // This window's own reservation of this output, if it left one, is now this run's marker; its timer must not remove it. A reservation of another output shares no marker with this run and keeps its timer.
-      clearTimeout(wikiReservations.get(outputDirectory)?.timer)
-      wikiReservations.delete(outputDirectory)
-      // A change of an earlier run's marker that waits for its next attempt has nothing left to change: this run holds the marker now.
-      cancelWikiMarkerChange(outputDirectory)
-      return {
-        tokenAtStart,
-        publicationAtStart,
-        uncoveredAtStart: before?.freshness.addedPaths ?? [],
-        hasGitRepository: !before?.freshness.addedFilesUnchecked,
-        releaseMarker: claim.release,
-        reserveMarker: claim.reserve,
-        startedAtMs,
-      }
+        acknowledgedLeftovers,
+      )
+      if (look !== 'published-meanwhile') return look
+      // A second publish while the checks ran leaves no generation to check.
+      if (isLastAttempt)
+        return refuseWikiStart(
+          host,
+          wikiOutput,
+          'This Wiki was published again while Codebook checked it. Press Update LLM Wiki again.',
+        )
     }
     return undefined
   }
