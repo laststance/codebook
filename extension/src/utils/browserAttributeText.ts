@@ -3,7 +3,7 @@ import { UNICODE_LAST_CODE_POINT } from '../constants'
 /** A character reference in an attribute value as a browser's tokenizer finds it: a decimal or hexadecimal number with or without its semicolon, or a run of letters and digits after `&`, with its semicolon if one follows. */
 const CHARACTER_REFERENCE =
   /&(?:#([xX][0-9a-fA-F]+|[0-9]+);?|([A-Za-z][A-Za-z0-9]*;?))/g
-/** The named references whose character is ASCII, with their semicolon, and the five whose name a browser also reads without it (`amp`, `lt`, `gt`, `quot` in either case). Every other name a browser knows stands for a character outside ASCII, which can be no letter, digit, colon, slash or white space of an address, a scheme or a keyword; such a reference is left as written, which judges alike. */
+/** The named references whose character is ASCII, with their semicolon, and the four whose name a browser also reads without it (`amp`, `lt`, `gt`, `quot` in either case). Every other name a browser knows stands for a character outside ASCII, which can be no letter, digit, colon, slash or white space of an address, a scheme or a keyword; such a reference is left as written, which judges alike. */
 const ASCII_NAMED_REFERENCES: Readonly<Record<string, string>> = {
   'Tab;': '\t',
   'NewLine;': '\n',
