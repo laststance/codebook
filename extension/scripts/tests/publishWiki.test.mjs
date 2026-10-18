@@ -2476,6 +2476,76 @@ test('an output outside the project reached through a link outside it is still p
   }
 })
 
+// Value: protects=the learner who chose an output folder outside the project and updates the Wiki there again; fails_when=the publisher holds the Wiki folder itself to the rule of an output inside the project whatever its place, so an existing Wiki outside the project, whose real path of course leaves the project, is refused at the next preparation, publish or recovery; why_new=Cycle 0046 /ship repeat testing review TC5 (the real-path rule of the Wiki folder, AF3, had no test of an output outside the project that already exists); seam=none
+test('a Wiki published into an output folder outside the project is prepared, published and recovered there again, each without a refusal of its path', async () => {
+  // Arrange: a first Wiki published into a folder outside the project.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-again-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  const output = join(outside, 'wiki'),
+    first = join(outside, 'first'),
+    next = join(outside, 'next')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await writeStage(first, root, '<h1>First</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+
+    // Act: the next update, as the editor runs it, then a recovery; each step answers its outcome or its refusal.
+    const prepared = await writeStage(
+      next,
+      root,
+      '<h1>Next</h1>',
+      undefined,
+      output,
+    ).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+    const published = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      (result) => result.output,
+      (error) => error.message,
+    )
+    const recovered = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      (result) => result.status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        prepared,
+        published,
+        recovered,
+        isNextWikiInPlace: (
+          await readFile(join(output, 'index.html'), 'utf8')
+        ).includes('>Next</h2>'),
+      },
+      {
+        prepared: 'prepared',
+        published: output,
+        recovered: 'published-current',
+        isNextWikiInPlace: true,
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the editor agent that writes a Wiki with the bundled skill, which reads the publisher's rules there before it writes; fails_when=the skill no longer tells the agent that a page's content carries no event attribute and links only to the schemes the publisher accepts, or that the publisher refuses a link on the output's path inside the project, so the agent learns each rule only from a refused publish; why_new=Cycle 0046 /ship follow-up N4 (findings F1 and F2 added the refusals); seam=none
 test('the bundled skill tells the agent the publisher’s refusals of event attributes, of addresses of other schemes and of a link on the output’s path inside the project', async () => {
   // Arrange / Act
