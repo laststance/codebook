@@ -776,6 +776,59 @@ test('a Return Current during which the learner closes the Study workspace refus
   }
 })
 
+// Value: protects=a Return Current that arranged the Live panes beside Cursor's chat when the editor rejects the chat's focus command at the Return's end: the Return still answers with its Live arrangement, and the rejection does not become the Return's failure; fails_when=the give-back to the chat in the Return's finally is awaited without a catch, so the rejected Focus Agent turns the arranged Return into a failure with "Native layout command failed" (Cycle 0046 OCR1-5); why_new=Cycle 0046 OCR1-5; seam=workspaceHarness with Cursor's chat part and its focusTab, failNextCommand('composer.focusComposer'), the reader's open and returnToCurrent, presentationState
+test('a Return Current beside Cursor’s chat whose Focus Agent the editor rejects at the end still answers with its Live arrangement', async () => {
+  // Arrange: the Study is open beside Cursor's chat, which has the keyboard; the editor will reject the chat's focus command.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    harness.failNextCommand('composer.focusComposer')
+    const state = harness.reader.presentationState()
+
+    // Act
+    const answer = await harness.reader
+      .returnToCurrent({
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the Return answered, Focus Agent was asked once, and the Live arrangement stands confirmed.
+    const after = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        answer,
+        focusAgentRuns: harness.commands.filter(
+          (command) => command === 'composer.focusComposer',
+        ).length,
+        contentTab: after.reader.contentTab,
+        layoutConfirmed: after.layoutConfirmed,
+        appColumn: after.panes.appColumn,
+      },
+      {
+        answer: 'returned',
+        focusAgentRuns: 1,
+        contentTab: 'live',
+        layoutConfirmed: true,
+        appColumn: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('first Study entry from one editor group keeps empty Context separate from the application', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

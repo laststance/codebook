@@ -8647,8 +8647,13 @@ export class StudyWorkspace {
     try {
       // The learner's newer input that refused the Return keeps the keyboard, untold.
       if (yieldedToLearner || !stillCurrent()) return
-      // A chat of another editor part that had the keyboard gets it back first; the learner's own place is settled only otherwise.
-      if (await returnForeignFocus?.(false, stillCurrent, chatCause)) return
+      // A chat of another editor part that had the keyboard gets it back first; the learner's own place is settled only otherwise. A focus command the editor rejects gives nothing back and keeps the Return's own outcome (Cycle 0046 OCR1-5).
+      if (
+        await returnForeignFocus?.(false, stillCurrent, chatCause).catch(
+          () => false,
+        )
+      )
+        return
       if (!stillCurrent()) return
       // An agent's Return whose remembered tab got nothing back tells what its preparation left (row 625).
       this.tellOwedPreparationNotice()
