@@ -351,3 +351,74 @@ test('an address that a browser reads as a network path or another scheme once i
       '<a href="pages/a&amp;b.html">e</a>',
   )
 })
+
+// Value: protects=the learner against a link that a comment's end lets out where an earlier attribute's quoted value seems to hold it; fails_when=the filter reads the comment's end differently from a browser, so the live `vscode://file` link after `-->` is served as written, or it renames the text after it; why_new=Cycle 0046 /ship third testing review TT23 (the order of renames across tag starts; the single reading's equivalent is where the comment ends); seam=none, the served page is compared as text
+test('a link that a comment’s end lets out of what looks like a quoted value loses its link, and the text after it stays', () => {
+  // Arrange: a browser ends the comment at `-->`, inside what looks like the title's value, so the second link is live and the rest is text.
+  const page =
+    '<!-- <a title="--><a href=\'vscode://file/etc/hosts\'>x</a>" href="javascript:y">'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<!-- <a title="--><a data-codebook-unlinked=\'vscode://file/etc/hosts\'>x</a>" href="javascript:y">',
+  )
+})
+
+// Value: protects=the learner whose served page writes a refresh with spaces around its keyword, which a browser may still act on; fails_when=the filter compares the keyword without trimming it, so ` refresh ` keeps its effect; why_new=Cycle 0046 /ship third testing review TT24 (the trim had no test); seam=none, the served page is compared as text
+test('a refresh written with spaces around its keyword loses its effect', () => {
+  // Arrange
+  const page =
+    '<meta http-equiv=" refresh " content="0;url=vscode://file/etc/hosts">'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<meta data-codebook-unlinked=" refresh " content="0;url=vscode://file/etc/hosts">',
+  )
+})
+
+// Value: protects=the learner against a link whose attribute follows a slash right after the tag's name, which a browser reads as a separator; fails_when=the filter reads `/href` as one name, or stops at the slash, so `<a/href="vscode://file/…">` is served as a live link; why_new=Cycle 0046 /ship third testing review TT25; seam=none, the served page is compared as text
+test('an attribute after a slash right after the tag’s name is judged', () => {
+  // Arrange
+  const page = '<a/href="vscode://file/etc/hosts">hosts</a>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<a/data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+  )
+})
+
+// Value: protects=the served page's text and the reader's answer to a page whose tag holds what looks like another tag's start, or a number past the last code point; fails_when=the filter reads a tag again from a `<` inside it and renames one name twice, which garbles the page, or it reads `&#1114112;` as a character and throws, so the reader answers the page with a 500; why_new=Cycle 0046 /ship third testing review TT26; seam=none, the served page is compared as text
+test('a name inside a tag that looks like another tag’s start is renamed once, and a reference past the last code point is read as the replacement character', () => {
+  // Arrange
+  const pages = [
+    '<a <b href=javascript:x>t</a>',
+    '<a href="&#1114112;x">u</a><a href="&#x110000;y">v</a>',
+  ]
+
+  // Act: each page as served, or the error the filter threw.
+  const served = pages.map((page) => {
+    try {
+      return withServedAddresses(page, 'vscode')
+    } catch (error) {
+      return String(error)
+    }
+  })
+
+  // Assert: a relative address that starts with the replacement character stays a link.
+  assert.deepEqual(served, [
+    '<a <b data-codebook-unlinked=javascript:x>t</a>',
+    '<a href="&#1114112;x">u</a><a href="&#x110000;y">v</a>',
+  ])
+})
