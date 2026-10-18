@@ -42,6 +42,8 @@ The checkout must also stay as it is while the package tests run. `extension/scr
 
 ## Measured health
 
+Fallow scores application code only (owner direction of 2026-10-19): `extension/src` without `src/tests`, and the bundled `extension/skills`, the code the package ships. Test code and the `scripts` folder (tests, QA drivers, build and package tools) are out of scope: `health.ignore` and `duplicates.ignore` in [`.fallowrc.json`](../../extension/.fallowrc.json) leave them out, and `ignoreFindings` hides their dead-code findings while they stay entry points of the module graph, so the application code they call still counts as used. `pnpm --dir extension dupes` and `pnpm --dir extension dead-code` compare with their own baselines, [`fallow-dupes-baseline.json`](../../extension/fallow-dupes-baseline.json) and [`fallow-dead-code-baseline.json`](../../extension/fallow-dead-code-baseline.json), saved from the source of 2026-10-19 with Fallow 3.34.1: a new clone group or new dead code fails.
+
 `pnpm --dir extension health` runs [`scripts/checkHealth.mjs`](../../extension/scripts/checkHealth.mjs), the health step of the Fallow job. It scores Fallow health with coverage measured from this source in the same run. The static estimate it replaces only asks which code the tests can reach by import, and it cannot see the workspace module that the tests load into a VM.
 
 1. It reads [`fallow-health-reference.json`](../../extension/fallow-health-reference.json) and refuses a run whose Node, c8, v8-to-istanbul or Fallow version, `.node-version`, `.c8rc.json`, `.fallowrc.json` or baseline bytes differ from those the measured baseline was taken with.

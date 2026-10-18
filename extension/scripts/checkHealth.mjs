@@ -116,7 +116,7 @@ async function readReference() {
   return reference
 }
 
-/** Reads the version of every producer of the measured run as installed here. @example await readProducers() // => { node: '24.21.0', c8: '12.0.0', v8ToIstanbul: '9.3.0', fallow: '3.27.0' } */
+/** Reads the version of every producer of the measured run as installed here. @example await readProducers() // => { node: '24.21.0', c8: '12.0.0', v8ToIstanbul: '9.3.0', fallow: '3.34.1' } */
 async function readProducers() {
   const c8Manifest = requireFromExtension.resolve('c8/package.json')
   const converterManifest = createRequire(c8Manifest).resolve(

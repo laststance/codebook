@@ -1,123 +1,41 @@
 {
+  "kind": "health",
   "finding_counts": {
-    "scripts/repository-return-qa.mjs": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "scripts/study-bootstrap-qa.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "scripts/study-reading-pose-qa.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "scripts/understanding-focus-qa.mjs": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "scripts/utils/buildPackage.mjs": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "scripts/utils/cleanPackageOutputs.mjs": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "scripts/utils/inspectBundle.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "scripts/utils/readBuildIdentity.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "scripts/utils/readVsixBytes.mjs": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "scripts/utils/readVsixEntries.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "scripts/utils/resolvePackageDestination.mjs": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "scripts/utils/runPackageCommand.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_moderate": {
-        "count": 2
-      }
-    },
-    "scripts/utils/verifyPackageContent.mjs": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
     "skills/codebook/publish-wiki.mjs": {
       "complexity_critical": {
-        "count": 5
+        "count": 4
+      },
+      "complexity_high": {
+        "count": 1
       },
       "crap_critical": {
-        "count": 6
+        "count": 4
       },
       "crap_high": {
-        "count": 3
+        "count": 1
       },
       "crap_moderate": {
-        "count": 6
+        "count": 1
       }
     },
     "skills/codebook/render-wiki-diagrams.mjs": {
       "complexity_critical": {
-        "count": 4
-      },
-      "crap_critical": {
-        "count": 4
-      },
-      "crap_high": {
         "count": 1
       },
+      "complexity_high": {
+        "count": 2
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      },
       "crap_moderate": {
-        "count": 3
+        "count": 1
       }
     },
     "skills/codebook/render-wiki.mjs": {
@@ -125,9 +43,9 @@
         "count": 2
       },
       "crap_critical": {
-        "count": 3
+        "count": 2
       },
-      "crap_moderate": {
+      "crap_high": {
         "count": 1
       }
     },
@@ -170,12 +88,6 @@
       },
       "crap_critical": {
         "count": 1
-      },
-      "crap_high": {
-        "count": 1
-      },
-      "crap_moderate": {
-        "count": 2
       }
     },
     "src/environment.ts": {
@@ -295,18 +207,8 @@
         "count": 1
       }
     },
-    "src/replayDebugSchemas.ts": {
-      "crap_high": {
-        "count": 1
-      }
-    },
     "src/repositoryBook.ts": {
       "crap_critical": {
-        "count": 1
-      }
-    },
-    "src/repositoryConfigSchemas.ts": {
-      "crap_moderate": {
         "count": 1
       }
     },
@@ -384,9 +286,6 @@
       },
       "crap_critical": {
         "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
       }
     },
     "src/server.ts": {
@@ -453,13 +352,13 @@
         "count": 3
       },
       "crap_critical": {
-        "count": 11
+        "count": 3
       },
       "crap_high": {
-        "count": 8
+        "count": 7
       },
       "crap_moderate": {
-        "count": 9
+        "count": 2
       }
     },
     "src/utils/answerDeepWikiQuestion.ts": {
@@ -570,19 +469,25 @@
       }
     },
     "src/utils/installShortcutHelp.ts": {
-      "crap_critical": {
-        "count": 1
-      },
       "crap_moderate": {
-        "count": 3
+        "count": 2
       }
     },
     "src/utils/installWikiUpdateStatus.ts": {
       "complexity_critical": {
-        "count": 2
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
       },
       "crap_critical": {
-        "count": 3
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
       }
     },
     "src/utils/isProportionalEditorLayout.ts": {
@@ -699,42 +604,41 @@
     "src/studyModel.ts:dead code",
     "src/utils/projectRecording.ts:high impact",
     "src/utils/captureStudy.ts:complexity",
-    "src/utils/projectConfiguredStudy.ts:complexity",
-    "src/utils/validateRecordingContext.ts:high impact",
     "src/service.ts:complexity",
+    "src/utils/projectConfiguredStudy.ts:complexity",
     "src/utils/validateConfiguredStudyEvidence.ts:complexity",
-    "src/utils/decodeConfiguredStudy.ts:high impact",
-    "src/recordingStore.ts:complexity",
     "src/resources.ts:complexity",
-    "src/recordingSchemas.ts:dead code",
-    "src/utils/answerDeepWikiQuestion.ts:complexity",
+    "src/recordingStore.ts:complexity",
+    "src/utils/validateRecordingContext.ts:high impact",
+    "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/ui/studyHtml.ts:high impact",
     "skills/codebook/render-wiki.mjs:complexity",
-    "src/nodeTestHistoryStore.ts:complexity",
-    "src/utils/findWikiUpdateStartBlock.ts:complexity",
+    "src/recordingSchemas.ts:dead code",
+    "src/studyWorkspace.ts:complexity",
+    "src/utils/answerDeepWikiQuestion.ts:complexity",
     "src/playbackController.ts:complexity",
+    "src/utils/findWikiUpdateStartBlock.ts:complexity",
+    "src/nodeTestHistoryStore.ts:complexity",
     "src/deepWikiReader.ts:complexity",
     "src/ownedNodeTestRun.ts:complexity",
     "src/utils/readRecordingResource.ts:complexity",
     "skills/codebook/publish-wiki.mjs:complexity",
-    "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
+    "src/extension.ts:complexity",
     "src/repositoryReader.ts:complexity",
+    "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
     "src/utils/readDevelopmentBundle.ts:complexity",
     "src/utils/validateRepositoryBook.ts:complexity",
-    "src/runtimeSupport/hostBrowser.ts:complexity",
-    "src/extension.ts:complexity",
     "src/cursorSkillDeployment.ts:complexity",
-    "src/studyWorkspace.ts:complexity",
-    "src/utils/configuredDomExpression.ts:complexity",
     "skills/codebook/render-wiki-diagrams.mjs:complexity",
-    "src/utils/resolveNextClientManifest.ts:complexity",
+    "src/runtimeSupport/hostBrowser.ts:complexity",
     "src/configuredBrowserRun.ts:complexity",
-    "scripts/utils/inspectBundle.mjs:complexity",
+    "src/utils/refreshCursorMcpCatalog.ts:hidden coupling",
+    "src/utils/configuredDomExpression.ts:complexity",
+    "src/utils/resolveNextClientManifest.ts:complexity",
     "src/ui/repositoryHtml.ts:complexity",
-    "scripts/utils/readBuildIdentity.mjs:complexity",
-    "scripts/utils/runPackageCommand.mjs:complexity",
     "src/ownedRepositoryBreakpoint.ts:complexity",
-    "scripts/study-bootstrap-qa.mjs:complexity",
+    "src/replayDebugger.ts:hidden coupling",
+    "src/utils/rebindDeepWikiEditorLinks.ts:hidden coupling",
     "src/replayDebugAdapter.ts:complexity"
   ]
 }

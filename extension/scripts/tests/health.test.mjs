@@ -276,13 +276,13 @@ test('the measured gate keeps the pre-repair budget of revision 944c1342 at the 
     baseline: {
       file: 'fallow-health-measured-baseline.json',
       sha256:
-        'bfd0658d3052d0a92345326beb40a696aa1296c50457c39f2fc46edd1c79c104',
+        'e74f7142ff36b0e72c2910c70b60ea46891e48d2644610b8b04b6ce86b4c9b00',
     },
     limits: { maxCyclomatic: 20, maxCognitive: 15, maxCrap: 30 },
   })
   assert.equal(
     sha256(baseline.replaceAll('\r\n', '\n')),
-    'bfd0658d3052d0a92345326beb40a696aa1296c50457c39f2fc46edd1c79c104',
+    'e74f7142ff36b0e72c2910c70b60ea46891e48d2644610b8b04b6ce86b4c9b00',
   )
 })
 

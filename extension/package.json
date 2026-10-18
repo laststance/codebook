@@ -317,7 +317,7 @@
     "format:check": "cd .. && prettier --check .",
     "health": "node scripts/checkHealth.mjs",
     "health:static": "fallow health --fail-on-issues --baseline fallow-health-baseline.json",
-    "dupes": "fallow dupes --fail-on-issues",
+    "dupes": "fallow dupes --fail-on-issues --baseline fallow-dupes-baseline.json",
     "dead-code": "fallow dead-code --fail-on-issues --baseline fallow-dead-code-baseline.json",
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
   },
@@ -342,7 +342,7 @@
     "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "eslint-config-ts-prefixer": "5.1.0",
-    "fallow": "3.27.0",
+    "fallow": "3.34.1",
     "lint-staged": "17.5.1",
     "prettier": "3.9.8",
     "typescript": "5.9.3",
