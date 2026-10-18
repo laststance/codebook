@@ -3278,6 +3278,86 @@ test('a removal is refused while a recording is still opening, also when the ope
   }
 })
 
+// Value: protects=a study whose recording is on its way to the screen while the dialog about a recording of another computer is open is never moved underneath it; fails_when="Move to Trash Anyway" moves the study without the refusals the first dialog's answer is checked against, so the files the Recording load reads go to the Trash (S3); why_new=Cycle 0046 CodeRabbit review CR1 (S3): the second dialog's answer was not checked again; seam=the reader's replay-debugger preparation, held by the test, a recordings.v3 header of another host beside the study's sealed recording, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a recording opened while the dialog about a recording of another computer is open refuses the removal after Move to Trash Anyway, and nothing moves', async () => {
+  // Arrange: a saved recorded run, with a recording of the same study that names old-laptop.local beside its own; the load of a recording is held before Recording becomes active.
+  const harness = await recordedReaderHarness()
+  try {
+    const ofAnotherComputer = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      harness.studyId,
+    )
+    await mkdir(ofAnotherComputer, { recursive: true })
+    await writeFile(
+      join(ofAnotherComputer, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'old-laptop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-01T08:00:00.000Z',
+      }),
+    )
+    const prepareDebugger = readerSeams(harness).debuggerReplacement
+    let releaseLoad = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    readerSeams(harness).debuggerReplacement = async (
+      signal,
+    ): Promise<void> => {
+      await held
+      await prepareDebugger(signal)
+    }
+    let moveAnyway!: () => void
+    harness.answerWarningDialogs(([button]) =>
+      button === `Move to ${TRASH} Anyway`
+        ? new Promise<string | undefined>((resolve) => {
+            moveAnyway = (): void => resolve(button)
+          })
+        : Promise.resolve(button),
+    )
+
+    // Act: the learner opens Recording while the second dialog waits, then chooses Move to Trash Anyway.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.warningDialogs.length === 2,
+      'the dialog about the recording of another computer',
+      1_000,
+    )
+    await harness.reader.openRecording(harness.studyId)
+    moveAnyway()
+    await removal
+    const afterAnswer = structuredClone(
+      harness.reader.inspect().view!.studyRemoval,
+    )
+    releaseLoad()
+    // The held load ends either way; which recording it shows is not this test's.
+    await waitUntil(
+      () => harness.controller.state().readiness !== 'loading',
+      'the end of the load started during the dialog',
+      2_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { afterAnswer, moved: harness.trashMoves },
+      {
+        afterAnswer: {
+          status: 'refused',
+          studyId: harness.studyId,
+          text: 'Choose Overview or Live to leave Recording before deleting this study.',
+        },
+        moved: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a recording that failed to open before Recording became active does not lock its study against deletion; fails_when=the refusal remembers the failed open instead of reading the controller, so the study can never be removed in that window; why_new=the refusal now also covers an open in flight and must end with it; seam=the reader's replay-debugger preparation, made to fail by the test
 test('after a recording open failed before Recording became active, the study can be removed', async () => {
   // Arrange: a saved recorded run whose recording load fails at its first step.

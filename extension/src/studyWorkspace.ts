@@ -21651,7 +21651,7 @@ export class StudyWorkspace {
       studyId,
       evidence.directory,
     )
-    // The learner kept a study whose recording may still run on another computer: nothing changed.
+    // The learner kept a study whose recording Codebook cannot confirm, or the removal was refused after that dialog: nothing changed, and the refusal names itself.
     if (!removal) return
     if (removal.outcome === 'nothing-moved') {
       // No file of the study moved, so the run stays a checkpoint candidate and its pending entry is kept. The list may have changed meanwhile, and a failed write-back leaves the ledger without its two references to the study, so both are read again.
@@ -21761,8 +21761,8 @@ export class StudyWorkspace {
    * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link UnconfirmedWriterRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
-   * While that dialog is open the removal is `confirming` again; it is `moving` once more only after the learner chose to move, and ends without a line after Cancel.
-   * @returns What the removal changed on disk; `undefined` when the learner chose Cancel, and nothing changed.
+   * While that dialog is open the removal is `confirming` again, as during the first dialog: the study is whole, and what the learner does meanwhile is answered after the dialog. After "Move to Trash Anyway" the same refusals as after the first dialog ({@link refuseStudyRemoval}) are asked again, so a Recording opened or loading meanwhile refuses the removal; a write accepted meanwhile settles before the first move ({@link settleStudyWrites}). The removal is `moving` once more only after both, and ends without a line after Cancel.
+   * @returns What the removal changed on disk; `undefined` when the learner chose Cancel, or the removal was refused after the second dialog (its line says why), and nothing changed.
    * @example await this.moveStudyFilesWithLearnersChoice(studyId, evidenceDirectory) // => { outcome: 'moved' } after "Move to Trash Anyway"
    */
   private async moveStudyFilesWithLearnersChoice(
@@ -21793,6 +21793,8 @@ export class StudyWorkspace {
       }
     }
     if (!isMoveChosen) return undefined
+    // As after the first dialog, the answer counts against the state after it: a Recording opened or loading meanwhile, a run started, or a study gone refuses the removal.
+    if (this.refuseStudyRemoval(studyId)) return undefined
     this.studyRemoval = this.withRemovalRequest({
       status: 'moving',
       studyId,
