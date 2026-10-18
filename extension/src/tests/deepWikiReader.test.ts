@@ -785,8 +785,8 @@ test('the reader’s look refuses a Wiki folder, and a folder above it, that lst
   ])
 })
 
-// Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them), against a script written straight into a page file of the Wiki folder, and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or gives its nonce to any script of a page file instead of its own script alone; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; repeat review SC1 (critical): every script of a page file got the nonce; seam=none (the reader's real responses)
-test('every page the reader serves lets only the reader’s own script run by its nonce and the shell’s script by its known hash: a script written into a page file or into an asset that is an HTML file gets neither', async (context) => {
+// Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them), against a script written straight into a page file of the Wiki folder, and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or lets a script run by a secret its own tag carries, which a tag left open before it takes over; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; repeat review SC1 (critical): every script of a page file got the nonce; Codex review CX16: the reader's nonce went to a script tag a page file leaves open before the reader's own; seam=none (the reader's real responses)
+test('every page the reader serves lets only script files of its own origin and the shell’s script by its known hash run, and the reader’s own tag carries no secret: a script written into a page file or into an asset that is an HTML file runs nowhere', async (context) => {
   // Arrange: an overview page file with content that holds an event attribute and a javascript: link, and a script that is not the shell's, written into the file; and an asset that ends in .html with a script of its own.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-policy-')),
@@ -819,43 +819,137 @@ test('every page the reader serves lets only the reader’s own script run by it
   )
   context.after(() => reader.close())
   const clientAddress = `${new URL(reader.url).pathname.replace('index.html', '')}codebook-qa.js`
-  /** The policy and the page with this response's nonce written as NONCE, so two responses compare as text. */
-  const servedWithoutItsNonce = async (path: string) => {
+  /** The policy and the page of one response, the reader's script address written as CLIENT. */
+  const served = async (path: string) => {
     const response = await fetch(new URL(path, reader.url))
-    const policy = response.headers.get('content-security-policy') ?? ''
-    const nonce = /'nonce-([^']+)'/.exec(policy)?.[1] ?? 'none'
     return {
-      nonce,
-      policy: policy.replaceAll(nonce, 'NONCE'),
-      page: (await response.text())
-        .replaceAll(nonce, 'NONCE')
-        .replaceAll(clientAddress, 'CLIENT'),
+      policy: response.headers.get('content-security-policy'),
+      page: (await response.text()).replaceAll(clientAddress, 'CLIENT'),
     }
   }
 
   // Act
-  const overview = await servedWithoutItsNonce('index.html')
-  const asset = await servedWithoutItsNonce('assets/notes.html')
+  const overview = await served('index.html')
+  const asset = await served('assets/notes.html')
 
   // Assert
   assert.deepEqual(
-    {
-      overview: { policy: overview.policy, page: overview.page },
-      asset: { policy: asset.policy, page: asset.page },
-      isNonceOfEachResponse: overview.nonce !== asset.nonce,
-    },
+    { overview, asset },
     {
       overview: {
         policy:
-          "script-src 'nonce-NONCE' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
-        page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script nonce="NONCE" src="CLIENT"></script></body>',
+          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script src="CLIENT"></script></body>',
       },
       asset: {
         policy:
-          "script-src 'nonce-NONCE' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
-        page: '<!doctype html><body><article></article><script>run()</script><script nonce="NONCE" src="CLIENT"></script></body>',
+          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article></article><script>run()</script><script src="CLIENT"></script></body>',
       },
-      isNonceOfEachResponse: true,
+    },
+  )
+})
+
+// Value: protects=the reader's origin, whose page may ask the editor's model, against a script file written into the Wiki folder and named by the manifest, which a page file points at with a script tag, plainly or through a tag it leaves open before the reader's own; fails_when=the reader serves a `.js` file of the Wiki folder as JavaScript again, so the policy's `'self'` lets it run, or a response of the reader (a page, an asset, its own script, an answer, a refusal) comes without `nosniff`, so a browser may run a file of another type as script; why_new=Cycle 0046 /ship Codex review CX16: under a nonce, a script tag left open before the reader's own takes over its nonce in a browser that does not refuse such a tag (Chromium refuses it, Firefox and Safari were not tried); seam=none (the reader's real responses)
+test('a script file of the Wiki folder is served as plain text, a page that points at it plainly or through a tag left open before the reader’s own gets no secret to run it, and every response of the reader says nosniff', async (context) => {
+  // Arrange: a script file in the Wiki folder that the manifest names, an overview that points at it, and a page that leaves a script tag open before the reader's own.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-script-file-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(join(outputDirectory, 'assets'), { recursive: true })
+  await writeFile(
+    join(outputDirectory, 'assets/planted.js'),
+    "fetch('api/ask')",
+  )
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    '<!doctype html><body><article><script src="assets/planted.js"></script></article></body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'assets/open-tag.html'),
+    '<!doctype html><body><article></article><script src="planted.js" </body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['assets/planted.js', 'assets/open-tag.html'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const clientAddress = `${new URL(reader.url).pathname.replace('index.html', '')}codebook-qa.js`
+  /** The type, the nosniff header and the policy of one response, and its page with the reader's script address written as CLIENT. */
+  const served = async (path: string) => {
+    const response = await fetch(new URL(path, reader.url))
+    return {
+      type: response.headers.get('content-type'),
+      sniffing: response.headers.get('x-content-type-options'),
+      policy: response.headers.get('content-security-policy'),
+      body: (await response.text()).replaceAll(clientAddress, 'CLIENT'),
+    }
+  }
+
+  // Act
+  const scriptFile = await served('assets/planted.js')
+  const overview = await served('index.html')
+  const openTag = await served('assets/open-tag.html')
+  const ownScript = await served('codebook-qa.js')
+  const answer = await served('api/update-status')
+  const refusal = await served('assets/not-published.js')
+
+  // Assert: the script file is plain text; the pages carry the policy and the reader's tag without a nonce; every response says nosniff, and the reader's own script alone is JavaScript.
+  assert.deepEqual(
+    {
+      scriptFile,
+      overview,
+      openTag,
+      ownScript: { type: ownScript.type, sniffing: ownScript.sniffing },
+      answer: { type: answer.type, sniffing: answer.sniffing },
+      refusal: { type: refusal.type, sniffing: refusal.sniffing },
+    },
+    {
+      scriptFile: {
+        type: 'text/plain; charset=utf-8',
+        sniffing: 'nosniff',
+        policy: null,
+        body: "fetch('api/ask')",
+      },
+      overview: {
+        type: 'text/html; charset=utf-8',
+        sniffing: 'nosniff',
+        policy:
+          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        body: '<!doctype html><body><article><script src="assets/planted.js"></script></article><script src="CLIENT"></script></body>',
+      },
+      openTag: {
+        type: 'text/html; charset=utf-8',
+        sniffing: 'nosniff',
+        policy:
+          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        body: '<!doctype html><body><article></article><script src="planted.js" <script src="CLIENT"></script></body>',
+      },
+      ownScript: {
+        type: 'text/javascript; charset=utf-8',
+        sniffing: 'nosniff',
+      },
+      answer: {
+        type: 'application/json; charset=utf-8',
+        sniffing: 'nosniff',
+      },
+      refusal: {
+        type: 'application/json; charset=utf-8',
+        sniffing: 'nosniff',
+      },
     },
   )
 })
@@ -907,7 +1001,7 @@ test('the reader’s policy names the hash of the one script the shell of this b
   assert.deepEqual(
     {
       scriptHashes,
-      policy: policy?.replace(/'nonce-[^']+'/, "'nonce-NONCE'"),
+      policy,
     },
     {
       scriptHashes: [
@@ -915,7 +1009,7 @@ test('the reader’s policy names the hash of the one script the shell of this b
         ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
       ],
       policy:
-        "script-src 'nonce-NONCE' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
     },
   )
 })

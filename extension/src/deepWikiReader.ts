@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import {
   createServer,
@@ -311,6 +311,7 @@ export async function startDeepWikiReader(
     response: ServerResponse,
   ): Promise<void> {
     response.setHeader('Referrer-Policy', 'no-referrer')
+    // Every response says nosniff, its pages, its answers and the reader's own script included: a browser then runs as script only a response typed as JavaScript, and the reader's own script is the one.
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Cache-Control', 'no-store')
     const url = new URL(request.url ?? '/', origin)
@@ -448,29 +449,28 @@ export async function startDeepWikiReader(
       : undefined
     const content = await readFile(filePath)
     if (relativePath.endsWith('.html')) {
-      // A script runs only as the reader's own, with this response's nonce, or as the shell's own, by its hash; never one the page's content or a hand-written file carries.
-      const nonce = randomUUID()
+      // A script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries.
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
       response.setHeader(
         'Content-Security-Policy',
-        `script-src 'nonce-${nonce}' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
+        `script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
       response.end(
         servedWikiPageHtml(content.toString('utf8'), {
           editorScheme,
-          nonce,
           clientAddress: `${prefix}codebook-qa.js`,
           publication,
         }),
       )
       return
     }
+    // No file of the Wiki folder is served as script: under `nosniff` a browser runs no script of another type, so a `.js` file there is plain text, and the reader's own script stays the one script file of this origin.
     response.setHeader(
       'Content-Type',
       relativePath.endsWith('.css')
         ? 'text/css; charset=utf-8'
         : relativePath.endsWith('.js')
-          ? 'text/javascript; charset=utf-8'
+          ? 'text/plain; charset=utf-8'
           : 'application/octet-stream',
     )
     response.end(content)

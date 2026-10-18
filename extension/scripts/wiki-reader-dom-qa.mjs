@@ -82,6 +82,16 @@ const PAGE_WITH_FOREIGN_EDITOR_LINKS = 'pages/chapter-3.html'
 /** The links of {@link PAGE_WITH_FOREIGN_EDITOR_LINKS}, after the chapter's content: a link to a file through VS Code, a link to another extension through Cursor, and an image whose address is a file through VS Code. */
 const FOREIGN_EDITOR_LINKS =
   '<p>Explained from source.</p><p><a id="foreign-file-link" href="vscode://file/etc/hosts">The hosts file</a> <a id="foreign-extension-link" href="cursor://other.extension/run?task=1">Run the task</a> <img id="foreign-image" src="vscode://file/etc/a.png" alt="An image"></p>'
+/** A script file written into the Wiki folder after the publish and named by its manifest, as no publisher writes it; when it runs, it notes itself in `window.contentScriptRuns`. */
+const PLANTED_SCRIPT_FILE = 'assets/planted.js'
+/** The text of {@link PLANTED_SCRIPT_FILE}. */
+const PLANTED_SCRIPT_FILE_TEXT =
+  "(window.contentScriptRuns = window.contentScriptRuns || []).push('planted file')"
+/** The two chapters that point at {@link PLANTED_SCRIPT_FILE} after the publish: one with a script tag in its content, one with a script tag it leaves open before the reader's own, so that tag takes the reader's attributes. */
+const PAGES_POINTING_AT_THE_PLANTED_FILE = {
+  withScriptTag: 'pages/chapter-4.html',
+  withScriptTagLeftOpen: 'pages/chapter-5.html',
+}
 /** The rail entry of a page after its link, as this publisher prints it and as the earlier builds printed it: what {@link withEntryAfterItsLink} replaces. */
 const ENTRY_AFTER_ITS_LINK =
   / aria-describedby="codebook-open-target">Open in VS Code<\/a> .*?<\/p>/
@@ -494,6 +504,43 @@ async function publishSampleWiki() {
       (await readFile(withContentScript, 'utf8')).replace(
         '<p>Explained from source.</p>',
         CONTENT_SCRIPT,
+      ),
+    )
+    // A script file is written into the Wiki folder and named by its manifest, and two chapters point at it: one with a script tag, one with a script tag it leaves open before the reader's own.
+    await mkdir(join(outputDirectory, 'assets'), { recursive: true })
+    await writeFile(
+      join(outputDirectory, PLANTED_SCRIPT_FILE),
+      PLANTED_SCRIPT_FILE_TEXT,
+    )
+    const publishedManifest = join(outputDirectory, 'codebook-wiki.json')
+    const manifest = JSON.parse(await readFile(publishedManifest, 'utf8'))
+    await writeFile(
+      publishedManifest,
+      JSON.stringify({
+        ...manifest,
+        assets: [...manifest.assets, PLANTED_SCRIPT_FILE],
+      }),
+    )
+    const withScriptTag = join(
+      outputDirectory,
+      PAGES_POINTING_AT_THE_PLANTED_FILE.withScriptTag,
+    )
+    await writeFile(
+      withScriptTag,
+      (await readFile(withScriptTag, 'utf8')).replace(
+        '<p>Explained from source.</p>',
+        `<p>Explained from source.</p><script src="../${PLANTED_SCRIPT_FILE}"></script>`,
+      ),
+    )
+    const withScriptTagLeftOpen = join(
+      outputDirectory,
+      PAGES_POINTING_AT_THE_PLANTED_FILE.withScriptTagLeftOpen,
+    )
+    await writeFile(
+      withScriptTagLeftOpen,
+      (await readFile(withScriptTagLeftOpen, 'utf8')).replace(
+        '</body>',
+        `<script src="../${PLANTED_SCRIPT_FILE}" </body>`,
       ),
     )
     // One chapter gets links to a file and to another extension in the editor, written straight into its file.
@@ -2126,6 +2173,46 @@ async function check(page, options, collected) {
       },
     )
   }
+  const usePagesPointingAtAPlantedScriptFile = async () => {
+    await page.setViewportSize({ width: 1200, height: 720 })
+    const used = {}
+    for (const [kind, path] of Object.entries(
+      options.pagesPointingAtThePlantedFile,
+    )) {
+      // Arrange: a chapter that points at a script file written into the Wiki folder; the page with its tag left open has no reader's script to wait for.
+      await page.goto(`${options.url}${path}`)
+      if (kind === 'withScriptTag')
+        await page.waitForFunction(
+          () =>
+            document.querySelector('[data-codebook-freshness]').textContent ===
+            'Source changed · Update available',
+        )
+      // Act: the theme button is pressed, as a learner does.
+      await page.click('button#theme-toggle')
+      used[kind] = await page.evaluate(() => ({
+        contentScriptRuns: window.contentScriptRuns ?? [],
+        theme: document.documentElement.dataset.theme ?? null,
+        status: document.querySelector('[data-codebook-status]').textContent,
+      }))
+      await page.click('button#theme-toggle')
+    }
+    // Assert
+    record(
+      'a script file written into the Wiki folder and named by its manifest runs under the reader neither from a script tag of a page nor from one a page leaves open before the reader’s own, while the shell’s theme button works on both pages and the reader’s own script on the first',
+      used,
+      {
+        doesNoPlantedFileRunFromItsTag:
+          used.withScriptTag.contentScriptRuns.length === 0,
+        doesNoPlantedFileRunFromATagLeftOpen:
+          used.withScriptTagLeftOpen.contentScriptRuns.length === 0,
+        doesThemeButtonSwitchTheThemeOnBoth:
+          used.withScriptTag.theme === 'dark' &&
+          used.withScriptTagLeftOpen.theme === 'dark',
+        isReaderScriptConnected:
+          used.withScriptTag.status === '● Connected to Codebook reader',
+      },
+    )
+  }
   const usePageWithForeignEditorLinks = async () => {
     // Arrange: a chapter whose file got links to a file and to another extension in the editor after the publish.
     await page.setViewportSize({ width: 1200, height: 720 })
@@ -2263,6 +2350,7 @@ async function check(page, options, collected) {
     usePageWithContentScript,
     useOfflinePageWithContentScript,
     usePageWithPlantedScript,
+    usePagesPointingAtAPlantedScriptFile,
     usePageWithForeignEditorLinks,
     useWikiPublishedFromCrlfShell,
   ])
@@ -2373,6 +2461,7 @@ try {
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
       pageWithContentScript: PAGE_WITH_CONTENT_SCRIPT,
       pageWithPlantedScript: PAGE_WITH_PLANTED_SCRIPT,
+      pagesPointingAtThePlantedFile: PAGES_POINTING_AT_THE_PLANTED_FILE,
       pageWithForeignEditorLinks: PAGE_WITH_FOREIGN_EDITOR_LINKS,
       // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
       offlinePageWithContentScript: pathToFileURL(
