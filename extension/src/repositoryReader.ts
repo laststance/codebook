@@ -410,7 +410,7 @@ export class RepositoryReader {
         // An external Return cannot arrange source panes over the input it must preserve.
         this.deferredReturn = restoreReadingLayout ? selection : undefined
         // The Return waits for the learner's own selection of the Wiki from here on, also during this open's own loading (R6, AD2).
-        if (this.deferredReturn) this.watchDeferredReturn()
+        this.watchDeferredReturn()
         anchoredSource = await this.prepareBackgroundSource(
           selection,
           book,
@@ -512,7 +512,7 @@ export class RepositoryReader {
         // A refused agent's read leaves no copy of its own behind (row 696).
         this.retireCopyOfRefusedOpen(generation)
         // A refused Return leaves nothing that a later selection of the Wiki would complete (AD1).
-        if (this.deferredReturn) this.expireDeferredReturn()
+        this.expireDeferredReturn()
         this.publish()
       }
       throw error
@@ -1688,6 +1688,8 @@ export class RepositoryReader {
    */
   private watchDeferredReturn(): void {
     this.forgetDeferredReturnWatch()
+    // Only a deferred Return is watched.
+    if (!this.deferredReturn) return
     /** Names the place of the native focus: the named group with its front tab, and the active text editor. */
     const focusPlace = (): { group: string; editor: string } => {
       const group = vscode.window.tabGroups.activeTabGroup,
@@ -1738,9 +1740,12 @@ export class RepositoryReader {
 
   /**
    * Ends a command's deferred Return with the preview of its cited source ({@link sourceDeferred}), so no later selection of the Wiki completes it; called when {@link watchDeferredReturn} expires it and by {@link open} when the Return's open is refused (Cycle 0046 AD1).
+   * Nothing happens without a deferred Return.
    * @example this.expireDeferredReturn() // the palette's Return will not restore the article layout any more
    */
   private expireDeferredReturn(): void {
+    // Without a deferred Return there is nothing to end, and an agent's deferred citation keeps its own preview.
+    if (!this.deferredReturn) return
     this.sourceDeferred = false
     this.forgetDeferredReturn()
   }
