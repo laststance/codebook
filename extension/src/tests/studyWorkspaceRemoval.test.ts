@@ -8734,6 +8734,50 @@ test('the dialog about a recording that a live process of this computer begun af
   }
 })
 
+// Value: protects=the learner's Cancel in the dialog about a recording that a live process of this computer begun after it may still write; fails_when=Cancel there moves the study or its recording anyway, or leaves the removal shown, although another editor window of this computer may still be recording it; why_new=Cycle 0046 second /ship state-machine review SM1: the cell unconfirmed-here x cancel-anyway had no test of what stays; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary; no_claim=the dialog's words, which the test above holds
+test('Cancel in the dialog about a recording that a live process of this computer begun after it may still write moves nothing and leaves the study as it was', async (context: TestContext) => {
+  // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it. The learner confirms the removal, then cancels the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const laterProcess = await idleChild(context)
+    const recording = await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: laterProcess.pid!, hostname: hostname() },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) =>
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
+    )
+    const library = await harness.reader.learningStorage()
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves,
+        studyRemoval: harness.reader.inspect().view!.studyRemoval,
+        listed: (await library.list()).map((entry) => entry.id),
+        // A recording that was moved is read as gone, so a Cancel taken for the confirmation fails here and not in the read.
+        recordingLeft: await readdir(recording).catch((): string[] => []),
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`], [`Move to ${TRASH} Anyway`]],
+        moved: [],
+        studyRemoval: undefined,
+        listed: [study.id],
+        recordingLeft: ['frames.jsonl', 'header.json'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a study whose recording another editor window of this machine is still writing, which the learner gets no way to remove; fails_when=a writer this machine can prove alive (its record names this machine, and the live process has the recorded start) is offered "Move to Trash Anyway", so the learner removes a recording while it is written; why_new=Cycle 0046 OCR review OC1: only a writer this machine cannot probe gets the learner's choice; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a saved study whose recording a live window of this machine is still writing is refused, and no Move to Trash Anyway is offered', async (context: TestContext) => {
   // Arrange
