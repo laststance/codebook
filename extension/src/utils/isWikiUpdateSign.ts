@@ -139,9 +139,6 @@ function withHomeFolder(
     : text
 }
 
-/** The state of one reading of a command line by {@link commandsOf}: the commands so far, and whether the reading stands in a comment. */
-type CommandReading = { commands: Command[]; isInComment: boolean }
-
 /**
  * Starts the next command at an operator; called by {@link readWord}. Operators in a row (`&&` before a line break) end one command, and the first of them joins the next.
  * @param commands - The commands so far.
@@ -156,27 +153,40 @@ function startCommand(commands: Command[], operator: string): void {
 }
 
 /**
- * Reads one word or operator of a command line into the reading, as its shell does: on POSIX, an unquoted word that starts with `#` begins a comment, which the shell passes over up to the end of its line. Called by {@link commandsOf} for each.
- * @param reading - The reading.
+ * Reads one word or operator of a command line into the commands, as its shell does; called by {@link commandsOf} for each word outside a comment.
+ * @param commands - The commands so far.
  * @param word - The word or operator as the command line writes it.
  * @param text - The word's text as the shell passes it on ({@link unquotedWord}, {@link withHomeFolder}).
- * @param platform - The platform whose shells the command line is read for.
- * @returns Nothing; `reading` holds the word.
+ * @returns Nothing; `commands` holds the word, or the next command an operator starts.
  * @example
- * readWord(reading, '#', '#', 'linux') // the rest of the line is a comment
+ * readWord(commands, '&&', '&&') // the next word belongs to a new command
  */
-function readWord(
-  reading: CommandReading,
+function readWord(commands: Command[], word: string, text: string): void {
+  if (COMMAND_OPERATOR.test(word)) startCommand(commands, word)
+  else commands.at(-1)?.words.push(text)
+}
+
+/**
+ * Says where the reading of a command line goes on after a word: on POSIX, an unquoted word that starts with `#` begins a comment, which the shell passes over up to the end of its line, so the reading goes on at that line break; called by {@link commandsOf} for each word.
+ * Why: the words are matched from the whole line, so a quote inside a comment (the apostrophe of `don't`) would otherwise quote up to the next quote of a later line, and the commands of that line would be read as part of the comment.
+ * @param commandLine - The whole command line.
+ * @param word - The word as the command line writes it.
+ * @param wordIndex - Where the word starts in the command line.
+ * @param platform - The platform whose shells the command line is read for; Windows shells know no `#` comment.
+ * @returns The index of the line break that ends the comment, the length of the command line for a comment on its last line, and `undefined` for a word that begins no comment.
+ * @example
+ * endOfComment("# don't\nls", '#', 0, 'linux') // => 7
+ * endOfComment('ls /repo', 'ls', 0, 'linux')     // => undefined
+ */
+function endOfComment(
+  commandLine: string,
   word: string,
-  text: string,
+  wordIndex: number,
   platform: string,
-): void {
-  // A comment runs to the end of its line, where the next command starts.
-  if (reading.isInComment && word !== '\n') return
-  reading.isInComment = platform !== 'win32' && word.startsWith('#')
-  if (reading.isInComment) return
-  if (COMMAND_OPERATOR.test(word)) startCommand(reading.commands, word)
-  else reading.commands.at(-1)?.words.push(text)
+): number | undefined {
+  if (platform === 'win32' || !word.startsWith('#')) return undefined
+  const lineBreakAt = commandLine.indexOf('\n', wordIndex)
+  return lineBreakAt === -1 ? commandLine.length : lineBreakAt
 }
 
 /**
@@ -195,20 +205,28 @@ function commandsOf(
   platform: string,
   homeDirectory: string,
 ): Command[] {
-  const reading: CommandReading = {
-    commands: [{ words: [], operator: '' }],
-    isInComment: false,
-  }
-  for (const [word] of commandLine.matchAll(
+  const commands: Command[] = [{ words: [], operator: '' }]
+  // A copy of the pattern of words, whose position the reading moves past a comment.
+  const wordPattern = new RegExp(
     platform === 'win32' ? WINDOWS_WORD : POSIX_WORD,
-  ))
-    readWord(
-      reading,
-      word,
-      withHomeFolder(word, unquotedWord(word, platform), homeDirectory),
-      platform,
-    )
-  return reading.commands.filter(({ words }) => words.length > 0)
+  )
+  for (
+    let match = wordPattern.exec(commandLine);
+    match !== null;
+    match = wordPattern.exec(commandLine)
+  ) {
+    const [word] = match
+    const commentEnd = endOfComment(commandLine, word, match.index, platform)
+    // A comment's text is no word: the reading goes on at the line break after it, where the next command starts.
+    if (commentEnd !== undefined) wordPattern.lastIndex = commentEnd
+    else
+      readWord(
+        commands,
+        word,
+        withHomeFolder(word, unquotedWord(word, platform), homeDirectory),
+      )
+  }
+  return commands.filter(({ words }) => words.length > 0)
 }
 
 /**
