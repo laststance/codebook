@@ -134,10 +134,10 @@ test('macOS and Linux start ps from /bin, else from /usr/bin, and refuse the lis
 
 // Value: protects=a profile sweep and a profile probe on Windows, which has no `ps`, and the program it starts there; fails_when=the listing runs `ps` there (ENOENT), the PowerShell command loses -NoProfile, -NonInteractive, its error action or its bounds, opens a console window, a command line is read wrongly (a path outside ASCII, a process without a readable command line) (Cycle 0046 row 96), or PowerShell is started by its bare name, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (F4, Cycle 0046 /ship review; row 107 for the start query); why_new=the listing had no form for Windows, and its program was named by its bare name alone; seam=the injected platform, environment and runner. The real query runs in the Windows job.
 test('Windows lists the processes with one bounded PowerShell query, started from the system root, and reads each line as a process id and its command line', async () => {
-  // Arrange: an answer as the query prints it, a process id and the Base64 of the command line's UTF-8 bytes on each line, with Windows line ends. Process 4 shows no command line to this user; the last command line holds a folder with a name outside ASCII ("C:\Users\学習者", "learner" in Japanese).
+  // Arrange: an answer as the query prints it, a process id and the percent-encoding of the command line's UTF-8 bytes on each line, with Windows line ends. Process 4 shows no command line to this user; the second command line holds a folder with a name outside ASCII ("C:\Users\学習者", "learner" in Japanese); the last holds a line break.
   const listing = answeringListing({
     stdout:
-      '0 \r\n4 \r\n4242 ImM6XG5vZGUuZXhlIiAtZSAic2V0SW50ZXJ2YWwoKCkgPT4ge30sIDEwMDApIg==\r\n5150 ImM6XGNocm9tZS5leGUiIC0tdXNlci1kYXRhLWRpcj1DOlxVc2Vyc1zlrabnv5LogIVcQXBwRGF0YVxMb2NhbFxUZW1wXGNvZGVib29rLWJyb3dzZXItYTFiMmMz\r\n',
+      '0 \r\n4 \r\n4242 %22c%3A%5Cnode.exe%22%20-e%20%22setInterval%28%28%29%20%3D%3E%20%7B%7D%2C%201000%29%22\r\n5150 %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5C%E5%AD%A6%E7%BF%92%E8%80%85%5CAppData%5CLocal%5CTemp%5Ccodebook-browser-a1b2c3\r\n6006 %22c%3A%5Ctool.exe%22%20first-line%0Asecond-line\r\n',
   })
   // Act
   const listed = await listProcesses({
@@ -153,7 +153,7 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { '{0} {1}' -f $_.ProcessId, [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.CommandLine)) }",
+        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }",
       ],
       options: {
         timeout: 10_000,
@@ -173,7 +173,26 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
       command:
         '"c:\\chrome.exe" --user-data-dir=C:\\Users\\学習者\\AppData\\Local\\Temp\\codebook-browser-a1b2c3',
     },
+    { pid: 6006, command: '"c:\\tool.exe" first-line\nsecond-line' },
   ])
+})
+
+// Value: protects=the process listing of a Windows machine whose PowerShell runs in Constrained Language mode (AppLocker or App Control for Business on a managed machine put every PowerShell there): the query names only .NET types that mode allows (about_Language_Modes: `[uri]`, `[string]`), so it runs there, and every attach and close of a managed run can see its Chrome (AD22, /ship adversarial review Step 11); fails_when=the query names a type that mode refuses, as `[Convert]` and `[Text.Encoding]` were, so "Method invocation is supported only on core types in this language mode" fails every listing; why_new=the query's types were never checked against the mode; seam=the injected platform, environment and runner. The real query runs in the Windows job, in its full language mode.
+test('the Windows listing query names only .NET types that PowerShell’s Constrained Language mode allows', async () => {
+  // Arrange
+  const listing = answeringListing({ stdout: '' })
+  await listProcesses({
+    platform: 'win32',
+    run: listing.run,
+    environment: { SystemRoot: 'C:\\Windows' },
+  })
+  const query = listing.calls[0]?.listingArguments.at(-1) ?? ''
+  // Act
+  const namedTypes = [...query.matchAll(/\[([A-Za-z][\w.]*)\]/g)].map(
+    (match) => match[1],
+  )
+  // Assert: both are allowed types of about_Language_Modes.
+  assert.deepEqual(namedTypes, ['uri', 'string'])
 })
 
 // Value: protects=the Windows listing never starts a program found by a search: PowerShell is started from SystemRoot, else from windir, and with neither naming an absolute folder the listing is refused before any program is started, so the sweep that waits for it removes nothing (CX8, /ship Codex adversarial review; F4 and row 107 before it); fails_when=a missing, empty or relative system root makes the listing start the bare `powershell.exe`, which Windows looks up in the current directory and the search path, where another program of that name can run with the user's rights, or builds a relative path to PowerShell; why_new=the fallback to the bare name was pinned as the rule; seam=the injected platform, environment and runner

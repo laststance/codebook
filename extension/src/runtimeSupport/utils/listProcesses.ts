@@ -55,12 +55,33 @@ const UNIX_LISTING: Omit<ProcessListingForm, 'file'> = {
 }
 
 /**
- * What PowerShell runs on Windows: every `Win32_Process` with its id and its command line, one a line as `<pid> <command line in Base64 of its UTF-8 bytes>`.
- * The command line is printed in Base64, so that the answer is ASCII whatever code page the console has, and a command line with a line break stays one line.
- * A process whose command line Windows does not show to this user (a system process, a process of another user) is printed with an empty one. A failed query ends PowerShell with an error (`-ErrorAction Stop`), never with a partial list.
+ * What PowerShell runs on Windows: every `Win32_Process` with its id and its command line, one a line as `<pid> <command line, percent-encoded>`.
+ * The command line is percent-encoded by `[uri]::EscapeDataString` (its UTF-8 bytes, RFC 3986), so that the answer is ASCII whatever code page the console has, and a command line with a line break stays one line.
+ * The query uses only what PowerShell's Constrained Language mode allows, which AppLocker or App Control for Business put every PowerShell of a managed machine in: cmdlets, `ForEach-Object`, `try`/`catch`, the format operator, and the methods of the allowed types `[uri]` and `[string]` (about_Language_Modes); `[Convert]` and `[Text.Encoding]`, which the query used before, are no allowed types there, and every listing would fail.
+ * A process whose command line Windows does not show to this user (a system process, a process of another user), or whose command line cannot be encoded (longer than .NET Framework encodes in one call), is printed with an empty one. A failed query ends PowerShell with an error (`-ErrorAction Stop`), never with a partial list.
  */
 const WINDOWS_LISTING_COMMAND =
-  "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { '{0} {1}' -f $_.ProcessId, [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.CommandLine)) }"
+  "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }"
+
+/** The characters a percent-encoded command line consists of: what `[uri]::EscapeDataString` leaves as it is (RFC 3986's unreserved characters, and the few more RFC 2396 left on an older .NET Framework) and `%` with two hexadecimal digits. */
+const PERCENT_ENCODED_TEXT = /^[A-Za-z0-9\-._~!*'()%]+$/
+
+/**
+ * Decodes a command line the Windows listing printed percent-encoded; called by the line reader of {@link WINDOWS_LISTING}.
+ * @param encoded - The text after the process id.
+ * @returns The command line; `undefined` for a text that is no percent-encoding of UTF-8.
+ * @example
+ * decodedCommandLine('%22c%3A%5Cnode.exe%22') // => '"c:\\node.exe"'
+ */
+function decodedCommandLine(encoded: string): string | undefined {
+  if (!PERCENT_ENCODED_TEXT.test(encoded)) return undefined
+  try {
+    return decodeURIComponent(encoded)
+  } catch {
+    // A malformed escape is no command line the query printed.
+    return undefined
+  }
+}
 
 /** PowerShell on Windows, which has no `ps`: {@link WINDOWS_LISTING_COMMAND}, without a profile and without a prompt. Its program is named by {@link listingFormOf}, by its full path under the system root. */
 const WINDOWS_LISTING: Omit<ProcessListingForm, 'file'> = {
@@ -71,13 +92,11 @@ const WINDOWS_LISTING: Omit<ProcessListingForm, 'file'> = {
     WINDOWS_LISTING_COMMAND,
   ],
   processOfLine: (line) => {
-    // A process without a readable command line has no Base64 text after its id and is left out.
-    const match = /^(\d+) ([A-Za-z0-9+/]+={0,2})$/.exec(line.trim())
-    if (!match?.[1] || !match[2]) return undefined
-    return {
-      pid: Number(match[1]),
-      command: Buffer.from(match[2], 'base64').toString('utf8'),
-    }
+    // A process without a readable command line has no text after its id and is left out.
+    const match = /^(\d+) (\S+)$/.exec(line.trim())
+    const command = match?.[2] && decodedCommandLine(match[2])
+    if (!match?.[1] || !command) return undefined
+    return { pid: Number(match[1]), command }
   },
 }
 
