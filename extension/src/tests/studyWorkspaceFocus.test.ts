@@ -536,6 +536,133 @@ test("an agent's cold Wiki layout beside Cursor's chat part refused after its me
   }
 })
 
+// Value: protects=the keyboard of a newer Wiki entry when an older agent's cold Wiki layout beside Cursor's chat part is superseded after its measurement borrowed the main editor: the superseded layout gives nothing back, so the older entry runs no Focus Agent and tells no sentence; fails_when=the refused layout's give-back runs for every failure that is no learner's change, also a cancelled entry's, so the older entry moves the keyboard into the chat while the newer entry holds it (Cycle 0046 CR4-4); why_new=Cycle 0046 CR4-4; seam=workspaceHarness with one main group, addSeparateEditorPart and focusTab, leavePaneFocusUnreportedBesideChat, holdNextCommand('vscode.setEditorLayout'), the entry's AbortController, the reader's own focus receipts, the native commands and the information messages
+test("an agent's cold Wiki layout beside Cursor's chat part that is cancelled after its measurement gives the chat nothing back and tells nothing", async () => {
+  // Arrange: one main editor group with the learner's login-form.tsx and the chat holding the keyboard; the editor holds its answer to the split the Wiki needs.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  chat.focusTab()
+  const split = harness.holdNextCommand('vscode.setEditorLayout')
+  const entry = new AbortController()
+  const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+  const focus = {
+    begin(): void {},
+    retainCurrentFocus(
+      acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+    ) {
+      const receipt = harness.retainRepositoryFocus(acquire)
+      receipts.push(receipt)
+      return receipt
+    },
+  }
+  const messagesBefore = harness.informationMessages.length
+  try {
+    // Act: a newer navigation cancels the entry while the split waits.
+    const arranging = harness.reader
+      .arrangeRepository(entry.signal, undefined, focus)
+      .then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+    await split.started
+    const commandsBefore = harness.commands.length
+    entry.abort(new Error('Evidence navigation was superseded.'))
+    split.release()
+    const refusal = await arranging
+
+    // Assert: the cancellation is reported, and the cancelled entry ran no focus command and told nothing.
+    assert.deepEqual(
+      {
+        refusal,
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter(
+            (command) =>
+              command === 'composer.focusComposer' ||
+              command.startsWith('workbench.action.focus'),
+          ),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal: 'Error: Evidence navigation was superseded.',
+        keyboardCommands: [],
+        messages: [],
+      },
+    )
+  } finally {
+    split.release()
+    for (const receipt of receipts) receipt.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the window after the learner closed the Study workspace while an agent's cold Wiki layout beside Cursor's chat part waited after its measurement: the closed reader's layout gives nothing back, so no focus command runs after the Close; fails_when=the refused layout's give-back runs for the lifetime the Close ended, and the closed reader runs Focus Agent and tells its sentence (Cycle 0046 CR4-4); why_new=Cycle 0046 CR4-4; seam=workspaceHarness with one main group, addSeparateEditorPart and focusTab, leavePaneFocusUnreportedBesideChat, holdNextCommand('vscode.setEditorLayout'), the reader's close, the reader's own focus receipts, the native commands and the information messages
+test("an agent's cold Wiki layout beside Cursor's chat part whose reader closes after its measurement runs no focus command after the Close", async () => {
+  // Arrange: one main editor group with the learner's login-form.tsx and the chat holding the keyboard; the editor holds its answer to the split the Wiki needs.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.focusMutableDraft('login-form.tsx', 1)
+  chat.focusTab()
+  const split = harness.holdNextCommand('vscode.setEditorLayout')
+  const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+  const focus = {
+    begin(): void {},
+    retainCurrentFocus(
+      acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+    ) {
+      const receipt = harness.retainRepositoryFocus(acquire)
+      receipts.push(receipt)
+      return receipt
+    },
+  }
+  const messagesBefore = harness.informationMessages.length
+  try {
+    // Act: the learner closes the reader while the split waits.
+    const arranging = harness.reader
+      .arrangeRepository(new AbortController().signal, undefined, focus)
+      .then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+    await split.started
+    const closing = harness.reader.close()
+    const commandsAfterClose = harness.commands.length
+    split.release()
+    const refusal = await arranging
+    await closing
+
+    // Assert: the layout reports the Close, and the closed reader ran no Focus Agent and told nothing.
+    assert.deepEqual(
+      {
+        refusal,
+        chatCommands: harness.commands
+          .slice(commandsAfterClose)
+          .filter((command) => command === 'composer.focusComposer'),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal:
+          'Error: The study workspace was closed; repeat the action explicitly if needed.',
+        chatCommands: [],
+        messages: [],
+      },
+    )
+  } finally {
+    split.release()
+    for (const receipt of receipts) receipt.dispose()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's newer choice during an agent's cold Wiki layout beside Cursor's chat part: once the measurement focused the first group, a click into the learner's file of the second group is a learner's change, which the reader's receipt still refuses, so the Wiki takes nothing from that file; fails_when=the acceptance of Cursor's stale group name (row 660) also takes a later learner change for the measurement's own focus; why_new=Cycle 0046 row 660 (its bound); seam=workspaceHarness with addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, holdNextPrimaryFocusResponse (the learner's click between the focus command's effect and its answer), focusMutableDraft and focusExistingSource (the learner's click, reported as a group activation), the reader's own focus receipts
 test("a learner's click into another file while an agent's cold Wiki layout beside Cursor's chat part measures is still refused as the learner's newer focus", async () => {
   // Arrange: as above, with the learner's notes.ts in the second group; the focus command's answer is held so the learner can click in between.

@@ -7071,8 +7071,12 @@ export class StudyWorkspace {
             },
           )
         } catch (error) {
-          // A refusal no learner's change caused gives back the keyboard the measurement borrowed; a learner's newer focus keeps it (row 660).
-          if (keyboardReturn && !this.hasLearnerChange(retainedFocus))
+          // A refusal no learner's change caused gives back the keyboard the measurement borrowed; a learner's newer focus keeps it (row 660), and so does a newer entry or a Close that ended this one (Cycle 0046 CR4-4).
+          if (
+            keyboardReturn &&
+            !this.hasLearnerChange(retainedFocus) &&
+            this.isLayoutEntryCurrent(assertCurrent)
+          )
             await keyboardReturn('refusedArrangement').catch(() => false)
           throw error
         }
@@ -7131,6 +7135,22 @@ export class StudyWorkspace {
       throw new Error(
         'The editor could not reserve separate Wiki/source panes; existing tabs were preserved.',
       )
+  }
+
+  /**
+   * Says whether a layout entry still owns the window's native work: its layout queue's check ({@link withLayout}: the same reader lifetime, a signal that was not aborted, no newer Wiki navigation) holds and no Close runs; asked by {@link arrangeRepositoryLayout} when its cold layout was refused, before it gives back a borrowed keyboard, as the refusals of {@link open} and {@link performPresentation} ask of their own lifetime (Cycle 0046 CR4-4).
+   * @param assertCurrent - The layout queue's check of the entry.
+   * @returns `true` while the entry is current; `false` once it was cancelled, superseded or closed, whose give-back would move the keyboard a newer entry or the learner holds.
+   * @example this.isLayoutEntryCurrent(assertCurrent) // => false after a newer Wiki navigation aborted the entry
+   */
+  private isLayoutEntryCurrent(assertCurrent: () => void): boolean {
+    if (this.closing) return false
+    try {
+      assertCurrent()
+      return true
+    } catch {
+      return false
+    }
   }
 
   /**
