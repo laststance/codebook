@@ -410,3 +410,27 @@ test('a page that waited for a free worker gets its whole deadline from the mome
     },
   ])
 })
+
+// Value: protects=the editor's machine against a page whose request went before the reader handed it over (the reader hands such a page over with its signal aborted, G7): it must take no worker and no place among the busy ones; fails_when=the pool starts a worker for a page whose signal is aborted already, which no abort event then stops, so the page is prepared to its end or its deadline; why_new=Step 7 pass 3 W4 (the early answer became reachable with G7); seam=the page-worker module loaded with a Worker class that records the threads it starts; no_claim=none
+test('a page whose request went before it was asked for is answered as failed at once, and no worker starts for it', async () => {
+  // Arrange: a request that is gone already.
+  const pool = await loadPageWorkerRecordingThreads({})
+  const goneRequest = new AbortController()
+  goneRequest.abort()
+
+  // Act
+  const answer = await within(
+    pool.servedWikiPageOffThread(
+      '<body><p>Gone page</p></body>',
+      PAGE_OPTIONS,
+      { deadlineMs: 10_000, signal: goneRequest.signal },
+    ),
+    1_000,
+  )
+
+  // Assert: the answer is copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({ answer, startedWorkers: pool.startedWorkers.length }),
+    { answer: { state: 'failed' }, startedWorkers: 0 },
+  )
+})
