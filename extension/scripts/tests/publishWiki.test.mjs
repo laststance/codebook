@@ -3836,7 +3836,7 @@ test('a published page carries a Content-Security-Policy that lets only the shel
         scripts: page.match(/<script\b/g)?.length,
       },
       {
-        head: '<!doctype html>\n<html lang="en" data-codebook-reader="2">\n<head>\n<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<meta http-equiv="Content-Security-Policy" content="script-src \'self\' \'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=\'; object-src \'none\'; base-uri \'none\'">\n',
+        head: "<!doctype html>\n<html lang=\"en\" data-codebook-reader=\"2\">\n<head>\n<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'\">\n",
         scriptHash: 'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
         scripts: 1,
       },
@@ -3882,7 +3882,7 @@ test('a page rendered from a reader shell with CRLF line endings is written with
       {
         hasCarriageReturn: false,
         policy:
-          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
         scriptHash: 'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
       },
     )

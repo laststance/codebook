@@ -125,6 +125,10 @@ const qaClient = `(function () {
   }, true);
 })();`
 
+/** The fetch directives of every page the reader serves: a page fetches its images (and `data:` images), media, styles, fonts and requests from the reader's own address alone, opens no frame and submits a form only to that address. An address of another host (`//host`, `http://other`) or a frame that the filter left therefore fetches nothing under the reader; the reader's own features (the question route, the update panel, the theme, the keyboard help, inline styles and the Wiki's images) all stay on its address. */
+const SERVED_PAGE_FETCH_DIRECTIVES =
+  "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'"
+
 /** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), and only when there is none at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When the Wiki folder or a folder on its path in the project is a link, a file, or a folder whose real path leaves the project, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
@@ -449,11 +453,11 @@ export async function startDeepWikiReader(
       : undefined
     const content = await readFile(filePath)
     if (relativePath.endsWith('.html')) {
-      // A script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries.
+      // A script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries. Everything else the page fetches, frames or submits stays on this origin.
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
       response.setHeader(
         'Content-Security-Policy',
-        `script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
+        `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
       response.end(
         servedWikiPageHtml(content.toString('utf8'), {

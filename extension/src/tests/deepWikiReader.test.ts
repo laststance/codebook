@@ -879,12 +879,12 @@ test('every page the reader serves lets only script files of its own origin and 
     {
       overview: {
         policy:
-          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a data-codebook-unlinked="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script src="CLIENT"></script></body>',
       },
       asset: {
         policy:
-          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article></article><script>run()</script><script src="CLIENT"></script></body>',
       },
     },
@@ -969,14 +969,14 @@ test('a script file of the Wiki folder is served as plain text, a page that poin
         type: 'text/html; charset=utf-8',
         sniffing: 'nosniff',
         policy:
-          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
         body: '<!doctype html><body><article><script src="assets/planted.js"></script></article><script src="CLIENT"></script></body>',
       },
       openTag: {
         type: 'text/html; charset=utf-8',
         sniffing: 'nosniff',
         policy:
-          "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
         body: '<!doctype html><body><article></article><script src="planted.js" <script src="CLIENT"></script></body>',
       },
       ownScript: {
@@ -1050,7 +1050,7 @@ test('the reader’s policy names the hash of the one script the shell of this b
         ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
       ],
       policy:
-        "script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
     },
   )
 })

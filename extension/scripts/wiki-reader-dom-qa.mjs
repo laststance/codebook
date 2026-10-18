@@ -87,6 +87,28 @@ const PAGE_WITH_ENCODED_REFUSALS = 'pages/chapter-6.html'
 /** The markup of {@link PAGE_WITH_ENCODED_REFUSALS}, after the chapter's content. */
 const ENCODED_REFUSALS =
   '<p>Explained from source.</p><meta http-equiv="&#114efresh" content="1;url=chapter-1.html"><p><iframe id="srcdoc-frame" title="A frame" srcdoc="&lt;a id=&quot;inner-link&quot; href=&quot;vscode://file/etc/hosts&quot;&gt;Inner&lt;/a&gt;"></iframe></p><svg width="120" height="24" role="img" aria-label="An animated link"><a id="animated-link" href="#none"><set attributeName="href" to="vscode://file/etc/hosts"/><text x="0" y="16">Animated</text></a></svg><p><img id="network-image" src="/&sol;attacker.invalid/x.png" alt="A network image"></p>'
+/** The Wiki's own image, a PNG of one pixel published as an asset of the sample Wiki. */
+const OWN_IMAGE = 'assets/own-image.png'
+const OWN_IMAGE_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+/** The two chapters that get references to another host after the publish, with the Wiki's own image: one in this build's shell, whose page policy holds the fetch directives too, and one in the shell of 0.2.29.0, whose page policy does not, so only the reader's header stops its fetches. */
+const PAGES_WITH_OTHER_HOST_REFERENCES = {
+  thisShell: 'pages/chapter-4.html',
+  shellOf02290: 'pages/chapter-2.html',
+}
+/** How long the check gives a page after its own image loaded before it asks the other host what was fetched from it. */
+const OTHER_HOST_WAIT_MS = 1_000
+/**
+ * The references to another host a chapter gets, with the Wiki's own image: an image, an image by a protocol-relative address, a frame, a style sheet, a sound and a background.
+ * @param {string} origin - The other host's origin, `http://127.0.0.1:<port>`.
+ * @returns {string} The markup, put after the chapter's content.
+ * @example
+ * otherHostReferences('http://127.0.0.1:9') // => '<p><img id="own-image" src="../assets/own-image.png" …'
+ */
+const otherHostReferences = (origin) =>
+  `<p><img id="own-image" src="../${OWN_IMAGE}" alt="The Wiki's own image"><img src="${origin}/image.png" alt="Another host's image"><img src="//${origin.slice('http://'.length)}/protocol-relative.png" alt="A protocol-relative image"></p><iframe title="Another host's frame" src="${origin}/frame.html"></iframe><link rel="stylesheet" href="${origin}/style.css"><audio src="${origin}/sound.mp3" preload="auto"></audio><p style="background:url(${origin}/background.png)">A background of another host</p>`
 /** How long the check waits on {@link PAGE_WITH_FOREIGN_EDITOR_LINKS} before it reads the page: past the second after which its refresh would move the page. */
 const REFRESH_WAIT_MS = 2_500
 /** A script file written into the Wiki folder after the publish and named by its manifest, as no publisher writes it; when it runs, it notes itself in `window.contentScriptRuns`. */
@@ -321,7 +343,7 @@ function sampleManifest(projectRoot, sources) {
         outline: READER_IDS.map((id) => ({ id, label: `Section ${id}` })),
       })),
     ],
-    assets: [],
+    assets: [OWN_IMAGE],
     excludedPaths: [],
     includedSources: sources,
   }
@@ -439,6 +461,8 @@ async function publishSampleWiki() {
       join(stage, 'codebook-wiki.json'),
       JSON.stringify(sampleManifest(projectRoot, sources)),
     )
+    await mkdir(dirname(join(stage, OWN_IMAGE)), { recursive: true })
+    await writeFile(join(stage, OWN_IMAGE), OWN_IMAGE_BYTES)
     await publishWiki({ projectRoot, outputDirectory, stageDirectory: stage })
     // One page goes back into the shape of a page published before this build: its headings carry the reader's ids themselves, and its rail entry is its link alone, as 0.2.29.0 printed it.
     const publishedBefore = join(
@@ -2316,6 +2340,51 @@ async function check(page, options, collected) {
       },
     )
   }
+  const usePagesWithOtherHostReferences = async () => {
+    await page.setViewportSize({ width: 1200, height: 720 })
+    const used = {}
+    for (const [place, address] of [
+      [
+        'servedThisShell',
+        `${options.url}${options.pagesWithOtherHostReferences.thisShell}`,
+      ],
+      [
+        'servedShellOf02290',
+        `${options.url}${options.pagesWithOtherHostReferences.shellOf02290}`,
+      ],
+      ['thisShellFromDisk', options.otherHostReferencesFromDisk],
+    ]) {
+      // Arrange: the other host forgets what was fetched from it.
+      await page.request.get(`${options.otherHost}/forget`)
+      // Act: the page loads its own image, and a while later the other host says what the page fetched from it.
+      await page.goto(address)
+      await page.waitForFunction(
+        () => document.querySelector('#own-image')?.complete === true,
+      )
+      await page.waitForTimeout(options.otherHostWaitMs)
+      used[place] = {
+        ownImageWidth: await page.evaluate(
+          () => document.querySelector('#own-image').naturalWidth,
+        ),
+        fetchedFromOtherHost: await (
+          await page.request.get(`${options.otherHost}/fetched`)
+        ).json(),
+      }
+    }
+    // Assert
+    record(
+      'a page of this build’s shell and one of 0.2.29.0’s whose files refer to images, a frame, a style sheet, a sound and a background of another host fetch none of them, served or opened from disk, while the Wiki’s own image loads',
+      used,
+      {
+        doesOwnImageLoadEverywhere: Object.values(used).every(
+          ({ ownImageWidth }) => ownImageWidth === 1,
+        ),
+        isNothingFetchedFromAnotherHost: Object.values(used).every(
+          ({ fetchedFromOtherHost }) => fetchedFromOtherHost.length === 0,
+        ),
+      },
+    )
+  }
   const useWikiPublishedFromCrlfShell = async () => {
     // Arrange: a Wiki the shipped publisher rendered from a reader shell with CRLF line endings, served by a reader of its own and opened from disk.
     await page.setViewportSize({ width: 1200, height: 720 })
@@ -2415,6 +2484,7 @@ async function check(page, options, collected) {
     usePagesPointingAtAPlantedScriptFile,
     usePageWithForeignEditorLinks,
     usePageWithEncodedRefusals,
+    usePagesWithOtherHostReferences,
     useWikiPublishedFromCrlfShell,
   ])
     await step()
@@ -2484,6 +2554,30 @@ const updateStatusControl = createServer((request, response) => {
 await new Promise((resolveListening) =>
   updateStatusControl.listen(0, '127.0.0.1', resolveListening),
 )
+// Another host on this machine, which notes every path a page fetches from it; the check asks it what was fetched (`/fetched`) and has it forget (`/forget`).
+let fetchedFromOtherHost = []
+const otherHost = createServer((request, response) => {
+  const path = String(request.url)
+  if (path === '/forget') fetchedFromOtherHost = []
+  else if (path !== '/fetched') fetchedFromOtherHost.push(path)
+  response.setHeader('Content-Type', 'application/json')
+  response.end(JSON.stringify(path === '/fetched' ? fetchedFromOtherHost : []))
+})
+await new Promise((resolveListening) =>
+  otherHost.listen(0, '127.0.0.1', resolveListening),
+)
+const otherHostOrigin = `http://127.0.0.1:${otherHost.address().port}`
+// Two chapters get references to that host after the publish, with the Wiki's own image.
+for (const pagePath of Object.values(PAGES_WITH_OTHER_HOST_REFERENCES)) {
+  const pageFile = join(wiki.outputDirectory, pagePath)
+  await writeFile(
+    pageFile,
+    (await readFile(pageFile, 'utf8')).replace(
+      '</article>',
+      `${otherHostReferences(otherHostOrigin)}</article>`,
+    ),
+  )
+}
 let reader
 let crlfReader
 let isBrowserOpen = false
@@ -2527,6 +2621,12 @@ try {
       pagesPointingAtThePlantedFile: PAGES_POINTING_AT_THE_PLANTED_FILE,
       pageWithForeignEditorLinks: PAGE_WITH_FOREIGN_EDITOR_LINKS,
       pageWithEncodedRefusals: PAGE_WITH_ENCODED_REFUSALS,
+      pagesWithOtherHostReferences: PAGES_WITH_OTHER_HOST_REFERENCES,
+      otherHost: otherHostOrigin,
+      otherHostWaitMs: OTHER_HOST_WAIT_MS,
+      otherHostReferencesFromDisk: pathToFileURL(
+        join(wiki.outputDirectory, PAGES_WITH_OTHER_HOST_REFERENCES.thisShell),
+      ).href,
       refreshWaitMs: REFRESH_WAIT_MS,
       // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
       offlinePageWithContentScript: pathToFileURL(
@@ -2559,6 +2659,7 @@ try {
     },
     () =>
       new Promise((resolveClosed) => updateStatusControl.close(resolveClosed)),
+    () => new Promise((resolveClosed) => otherHost.close(resolveClosed)),
     wiki.remove,
     crlfWiki.remove,
   ])
