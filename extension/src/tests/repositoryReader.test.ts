@@ -1100,6 +1100,46 @@ async function readerHarness(context: TestContext) {
       for (const listener of focusListeners) listener()
       return editor
     },
+    /**
+     * Opens a learner's file in the Wiki's group, in front of the Wiki, and gives it the keyboard, as the learner's click into a file of that group does: the editor names the Wiki's group, the file's tab is in front of it and the file's text editor is active (Cycle 0046 Q6).
+     * @param filename - The learner's file, in the temporary repository.
+     * @returns The file's text editor.
+     * @example harness.focusDraftInWikiGroup('notes.ts') // notes.ts stands in front of the Wiki, with the keyboard
+     */
+    focusDraftInWikiGroup(filename: string): NativeEditor {
+      const document = {
+          uri: Uri.file(join(root, filename)),
+          version: 1,
+          getText: () => 'Keep my draft.',
+        },
+        tab = { input: new TabInputText(document.uri) },
+        editor = {
+          document,
+          viewColumn: 2,
+          selections: [
+            { anchor: new Position(0, 0), active: new Position(0, 0) },
+          ],
+        }
+      learnerEditors.set(tab, editor)
+      otherGroup.tabs.push(tab)
+      otherGroup.activeTab = tab
+      activeGroup = otherGroup
+      activeEditor = editor
+      blurWikiPanel()
+      fireTabChange({ opened: [tab] })
+      for (const listener of groupListeners) listener()
+      for (const listener of focusListeners) listener()
+      return editor
+    },
+    /**
+     * Types in the file in front of the group the editor names: its tab turns dirty, which the editor reports as a changed tab, and the focus stays where it is (Cycle 0046 Q6).
+     * @example harness.typeInFrontFile() // notes.ts turns dirty; the editor reports a changed tab
+     */
+    typeInFrontFile(): void {
+      const tab = activeGroup.activeTab
+      assert.ok(tab)
+      fireTabChange({ changed: [tab] })
+    },
     /** Names the first group's tabs in their order as `scheme:file name`, and its front tab, as the learner sees them. @example harness.firstGroupTabs() // => { tabs: ['file:login-form.tsx'], front: 'file:login-form.tsx' } */
     firstGroupTabs: () => namedGroupTabs(sourceGroup),
     /** Names the Wiki group's tabs in their order as `scheme:file name` or view type, and its front tab, as the learner sees them. @example harness.wikiGroupTabs() // => { tabs: ['mainThreadWebview-codebook.repositoryWiki'], front: 'mainThreadWebview-codebook.repositoryWiki' } */
@@ -2616,6 +2656,46 @@ test('a palette Return to Wiki completes at the learner’s click on the Wiki al
       error: harness.reader.inspect().view.error,
     },
     { arrangements: 1, selection, error: '' },
+  )
+})
+
+// Value: protects=the article Return the learner asked for from the Command Palette while typing in a file in front of the Wiki in its own group: typing turns the file's tab dirty, a changed tab that moves no focus, so the Return still waits; the learner's click on the Wiki's tab, which the editor reports as the Wiki's tab coming to the front while the file's text editor is still reported, is the learner's selection of the Wiki and restores the article's layout once; fails_when=the deferred Return's watch, in the Wiki's own group, takes any active text editor of that group for a move without comparing with the place before (Q6: a regression of AD28, so the first keystroke ends the Return), or the watch does not ask first whether the Wiki has the native focus, so the tab model's report of the click, heard before the editors', ends it (TT3); why_new=Cycle 0046 Q6 (the third OCR review, probe E/probe_watch.cjs: deferred true after the watch began, false after a dirty-flag tab change) and TT3 (the third testing review: the Wiki-focus guard of movedAway had no test); seam=readerHarness with focusDraftInWikiGroup (the new seam: notes.ts in front of the Wiki in its group, with the keyboard), requireSourceFocus, open with preserveNativeInput, typeInFrontFile (the new seam: a changed tab), clickWikiTab (the Wiki's tab to the front with its tab change, then the Wiki's activation), arrangements; no_claim=the order in which either editor reports such a click
+test('a palette Return to Wiki made while the learner types in a file in front of the Wiki in its group survives that typing and restores the article layout at the learner’s click on the Wiki’s tab', async (context) => {
+  // Arrange: the learner types in notes.ts, in front of the Wiki in the Wiki's group; the palette's Return to Wiki defers the article's layout.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusDraftInWikiGroup('notes.ts')
+  harness.requireSourceFocus()
+  const selection = {
+    ...harness.selection,
+    nodeId: 'order',
+    location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+  }
+  await harness.reader.open(selection, undefined, true, true)
+  const arrangementsBefore = harness.arrangements()
+
+  // Act: the learner types on, which turns the file's tab dirty; then the learner clicks the Wiki's tab.
+  harness.typeInFrontFile()
+  const arrangementsAfterTyping = harness.arrangements()
+  harness.clickWikiTab()
+  // A dropped Return arranges nothing: the wait ends without a refusal, and the assertion below reads what happened.
+  await waitUntil(
+    () =>
+      harness.arrangements() === arrangementsBefore + 1 &&
+      !harness.reader.inspect().view.loading,
+    'original article layout restored after the learner selected the Wiki',
+    2_000,
+  ).catch(() => undefined)
+
+  // Assert: nothing was arranged while the learner typed, and the layout was restored once at the Wiki's selection.
+  assert.deepEqual(
+    {
+      atTyping: arrangementsAfterTyping - arrangementsBefore,
+      atSelection: harness.arrangements() - arrangementsBefore,
+      selection: harness.reader.inspect().view.selection,
+      error: harness.reader.inspect().view.error,
+    },
+    { atTyping: 0, atSelection: 1, selection, error: '' },
   )
 })
 

@@ -1712,12 +1712,19 @@ export class RepositoryReader {
      * The learner's click on the Wiki is reported in parts, and the reader judges it by its end, whatever the order of the parts (Cycle 0046 AD28): the extension host hears of the editors and of the tab model on separate channels, and of a group's activation apart from its front tab's.
      * - A lone report that the text editor is gone, in the group named before, is no move yet: the Wiki's group may be named next.
      * - The Wiki's own group named while another tab is still in front of the Wiki is no move either, unless a text editor of that group is active: the Wiki's tab may come to the front next; a file of that group the learner chose is a move.
+     * - A report that leaves the place as it was is no move, also in the Wiki's own group: the learner who types in a file in front of the Wiki in its group turns its tab dirty, which the editor reports as a changed tab (Cycle 0046 Q6).
      */
     const movedAway = (): boolean => {
       if (this.hasNativeWikiFocus()) return false
       const place = focusPlace(),
         editor = vscode.window.activeTextEditor,
         wikiColumn = this.panel?.viewColumn
+      // The same group with the same front tab, and the same text editor: the focus did not move.
+      if (
+        place.group === placeBefore.group &&
+        place.editor === placeBefore.editor
+      )
+        return false
       if (vscode.window.tabGroups.activeTabGroup.viewColumn === wikiColumn)
         return editor?.viewColumn === wikiColumn
       if (place.group !== placeBefore.group) return true
