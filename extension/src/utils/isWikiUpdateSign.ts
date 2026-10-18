@@ -70,6 +70,27 @@ const HOME_AT_WRITTEN_START =
 const HOME_AT_TEXT_START = /^(?:~|\$HOME|\$\{HOME\})/
 /** The operators after which the next command runs in the folder a `cd` before them changed to: `&&` and `;`. After `||`, `|` or `&` it runs in another folder or none. */
 const OPERATOR_THAT_KEEPS_THE_FOLDER = /^(?:&&|;)$/
+/** The programs that change the folder of the commands after them: `cd`, `pushd`, `popd`, and `chdir` of Windows' cmd. */
+const FOLDER_CHANGING_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'chdir'])
+/** The options of `cd` and `pushd` that leave their folder argument readable: POSIX's `-P` and `-L`, the `/d` of Windows' cmd, and `--`. */
+const CD_OPTIONS = new Set(['-P', '-L', '/d', '/D', '--'])
+/** The options of Node.js that take the next word as their value when no `=` joins it: a module to load first (`-r`, `--require`, `--import`, `--loader`, `--experimental-loader`), conditions (`-C`, `--conditions`), an environment file (`--env-file`, `--env-file-if-exists`), the input type (`--input-type`), and code (`-e`, `--eval`, `-p`, `--print`). */
+const NODE_OPTIONS_WITH_A_VALUE = new Set([
+  '-r',
+  '--require',
+  '--import',
+  '--loader',
+  '--experimental-loader',
+  '-C',
+  '--conditions',
+  '--env-file',
+  '--env-file-if-exists',
+  '--input-type',
+  '-e',
+  '--eval',
+  '-p',
+  '--print',
+])
 /** A program that is Node.js, however it is named: `node`, `node.exe`, or either with its folder. */
 const NODE_PROGRAM = /(?:^|[\\/])node(?:\.exe)?$/i
 /** An option of Node.js that runs no script: it checks the script's syntax, evaluates or prints code of its own, or shows the help or the version (`-c`, `--check`, `-e`, `--eval`, `-p`, `--print`, `-h`, `--help`, `-v`, `--version`), also with its value after `=` or in a cluster of short options (`-pe`). */
@@ -152,16 +173,27 @@ function commandsOf(
 }
 
 /**
- * Reads the folder a command changes to when it is `cd <folder>`: `cd` and one word, no option and no second folder; called by {@link foldersOf}.
+ * Reads the folder a command changes to: `cd`, `pushd` or `chdir` with one folder, after the options that keep it readable ({@link CD_OPTIONS}); called by {@link foldersOf}.
  * @param words - The command's words.
- * @returns The folder as the command writes it; `undefined` for any other command.
+ * @returns
+ * - The folder as the command writes it
+ * - `unknown` for a change of folder the command line does not tell: `cd` alone, `cd -`, `popd`, another option, or more than one folder
+ * - `undefined` for a command that changes no folder
  * @example
- * cdTargetOf(['cd', '/repo'])       // => '/repo'
- * cdTargetOf(['cd', '-P', '/repo']) // => undefined
+ * folderChangeOf(['cd', '-P', '/repo']) // => '/repo'
+ * folderChangeOf(['cd'])                // => 'unknown'
+ * folderChangeOf(['ls', '/repo'])       // => undefined
  */
-function cdTargetOf(words: string[]): string | undefined {
-  const [program, target, ...rest] = words
-  return program === 'cd' && rest.length === 0 ? target : undefined
+function folderChangeOf(words: string[]): string | 'unknown' | undefined {
+  const [program = '', ...rest] = words
+  if (!FOLDER_CHANGING_PROGRAMS.has(program)) return undefined
+  const [target, ...others] = rest.filter((word) => !CD_OPTIONS.has(word))
+  const isReadable =
+    program !== 'popd' &&
+    target !== undefined &&
+    target !== '-' &&
+    others.length === 0
+  return isReadable ? target : 'unknown'
 }
 
 /**
@@ -184,7 +216,7 @@ function folderOfCd(
 }
 
 /**
- * Finds the folder each command runs in as far as the command line tells it: a `cd <folder>` ({@link cdTargetOf}) changes it for the commands after `&&` or `;` ({@link OPERATOR_THAT_KEEPS_THE_FOLDER}); any other operator, or a relative `cd` from a folder not known ({@link folderOfCd}), leaves it unknown. Called by {@link isUpdateCommandLine}.
+ * Finds the folder each command runs in as far as the command line tells it: a `cd <folder>` or `pushd <folder>` ({@link folderChangeOf}) changes it for the commands after `&&` or `;`, and one it cannot read (`cd` alone, `popd`) leaves it unknown ({@link OPERATOR_THAT_KEEPS_THE_FOLDER}); any other operator, or a relative `cd` from a folder not known ({@link folderOfCd}), leaves it unknown. Called by {@link isUpdateCommandLine}.
  * @param commands - The commands, as {@link commandsOf} split them.
  * @param platform - The platform whose paths the folders are resolved by.
  * @returns For each command, the absolute folder it runs in, or `undefined` when the command line does not tell it.
@@ -201,9 +233,10 @@ function foldersOf(
     // The folder a cd changed to holds only after `&&` or `;`.
     if (!OPERATOR_THAT_KEEPS_THE_FOLDER.test(operator)) folder = undefined
     const current = folder
-    const target = cdTargetOf(words)
-    // Only `cd <folder>` changes the folder for the commands after it.
-    if (target !== undefined) folder = folderOfCd(target, current, paths)
+    const change = folderChangeOf(words)
+    // A change of folder the command line does not tell leaves the folder unknown; a readable one sets it.
+    if (change === 'unknown') folder = undefined
+    else if (change !== undefined) folder = folderOfCd(change, current, paths)
     return current
   })
 }
@@ -229,35 +262,57 @@ function pathIn(
 }
 
 /**
- * Picks the script a command runs: its program, or the first argument after Node.js that is no option; called by {@link isUpdateCommandLine}.
- * @param words - The command's words.
- * @returns The program, or the script when the program is Node.js; `undefined` for Node.js without a script.
+ * Reads the words after Node.js as Node.js reads them: its options, each passing over the next word when it takes it as its value ({@link NODE_OPTIONS_WITH_A_VALUE}), up to the script: the first other word, or the word after `--`; called by {@link scriptOf} and {@link runsNoScript}.
+ * @param words - The command's words, Node.js first.
+ * @returns The options before the script, and the script; `undefined` for Node.js without one.
  * @example
- * scriptOf(['node', '--no-warnings', '/ext/publish-wiki.mjs', '--prepare']) // => '/ext/publish-wiki.mjs'
- * scriptOf(['ls', '/repo'])                                                 // => 'ls'
+ * nodeCommandOf(['node', '--require', './hook.js', '/ext/publish-wiki.mjs']) // => { options: ['--require'], script: '/ext/publish-wiki.mjs' }
  */
-function scriptOf(words: string[]): string | undefined {
-  const [program = ''] = words
-  if (!NODE_PROGRAM.test(program)) return program
-  return words.slice(1).find((word) => !word.startsWith('-'))
+function nodeCommandOf(words: string[]): {
+  options: string[]
+  script: string | undefined
+} {
+  const options: string[] = []
+  // Each word after Node.js in turn, up to the script.
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index] ?? ''
+    if (word === '--') return { options, script: words[index + 1] }
+    if (!word.startsWith('-')) return { options, script: word }
+    options.push(word)
+    // An option that takes the next word as its value passes over it.
+    if (NODE_OPTIONS_WITH_A_VALUE.has(word)) index += 1
+  }
+  return { options, script: undefined }
 }
 
 /**
- * Says whether a command is Node.js with an option before its script that runs no script ({@link NODE_OPTION_THAT_RUNS_NO_SCRIPT}); called by {@link isUpdateCommandLine}, for which such a command is no step of an update whatever it names.
+ * Picks the script a command runs: its program, or the script Node.js runs ({@link nodeCommandOf}); called by {@link isUpdateCommandLine}.
  * @param words - The command's words.
- * @returns `true` for `node --check <script>` or `node -e <code> <script>`; `false` for another program, and for Node.js whose options before the script all run it.
+ * @returns The program, or the script when the program is Node.js; `undefined` for Node.js without a script.
  * @example
- * runsNoScript(['node', '--check', '/ext/publish-wiki.mjs'])        // => true
- * runsNoScript(['node', '--no-warnings', '/ext/publish-wiki.mjs'])  // => false
+ * scriptOf(['node', '-r', './hook.js', '/ext/publish-wiki.mjs', '--prepare']) // => '/ext/publish-wiki.mjs'
+ * scriptOf(['ls', '/repo'])                                                    // => 'ls'
+ */
+function scriptOf(words: string[]): string | undefined {
+  const [program = ''] = words
+  return NODE_PROGRAM.test(program) ? nodeCommandOf(words).script : program
+}
+
+/**
+ * Says whether a command is Node.js with an option before its script that runs no script ({@link NODE_OPTION_THAT_RUNS_NO_SCRIPT}), the options read as Node.js reads them ({@link nodeCommandOf}); called by {@link isUpdateCommandLine}, for which such a command is no step of an update whatever it names.
+ * @param words - The command's words.
+ * @returns `true` for `node --check <script>` or `node --require fs --check <script>`; `false` for another program, and for Node.js whose options before the script all run it.
+ * @example
+ * runsNoScript(['node', '--require', 'fs', '--check', '/ext/publish-wiki.mjs']) // => true
+ * runsNoScript(['node', '--no-warnings', '/ext/publish-wiki.mjs'])              // => false
  */
 function runsNoScript(words: string[]): boolean {
-  const [program = '', ...rest] = words
-  const scriptAt = rest.findIndex((word) => !word.startsWith('-'))
-  // The options before the script; all words when there is none.
-  const options = scriptAt === -1 ? rest : rest.slice(0, scriptAt)
+  const [program = ''] = words
   return (
     NODE_PROGRAM.test(program) &&
-    options.some((option) => NODE_OPTION_THAT_RUNS_NO_SCRIPT.test(option))
+    nodeCommandOf(words).options.some((option) =>
+      NODE_OPTION_THAT_RUNS_NO_SCRIPT.test(option),
+    )
   )
 }
 

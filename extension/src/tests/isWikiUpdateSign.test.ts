@@ -149,6 +149,47 @@ test('the publisher written from the home folder with ~, $HOME or ${HOME}, or ru
   assert.deepEqual(signs, [true, true, true, true, true, true, true, true])
 })
 
+// Value: protects=the first sign of an update whose chat loads a module or an environment file before the publisher (`node -r ./hook.js <publisher>`, `--import tsx`, `-C development`, `--env-file .env`); fails_when=an option of Node.js that takes the next word as its value is read without it, so the value is taken for the script and the publisher's run gives no sign, or `node --require fs --check <publisher>` reads `fs` as the script and misses the check; why_new=Cycle 0046 /ship third review W9 (Codex R3A6, CodeRabbit CR5, security); seam=none
+test('the publisher run by Node.js after an option that takes the next word as its value is a step of an update, and after --require fs and --check it is not', () => {
+  // Act
+  const publisher = '/extensions/codebook/skills/codebook/publish-wiki.mjs'
+  const signs = [
+    `node -r ./hook.js ${publisher} --prepare --project /repo`,
+    `node --import tsx ${publisher} --prepare --project /repo`,
+    `node --loader ./loader.mjs ${publisher} --prepare --project /repo`,
+    `node -C development ${publisher} --prepare --project /repo`,
+    `node --env-file .env ${publisher} --prepare --project /repo`,
+    `node --require=fs ${publisher} --prepare --project /repo`,
+    `node --require fs --check ${publisher}`,
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, PLACES),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [true, true, true, true, true, true, false])
+})
+
+// Value: protects=the learner whose command changes the folder in a way the sign cannot follow, or follows with an option; fails_when=`cd` alone, `pushd /x` and `popd` keep the folder of the cd before them, so a relative publisher counts as the chat's although it runs elsewhere, or `cd -P <skill>` and `cd -L <skill>` are not read, so the chat's run gives no sign; why_new=Cycle 0046 /ship third review W9 (CodeRabbit CR5); seam=none
+test('a cd alone, a pushd elsewhere or a popd makes the folder unknown, while cd -P, cd -L and pushd into the skill folder are read', () => {
+  // Arrange
+  const skill = PLACES.skillDirectory
+
+  // Act
+  const signs = [
+    `cd ${skill} && cd && node publish-wiki.mjs --prepare`,
+    `cd ${skill} && pushd /tmp && node publish-wiki.mjs --prepare`,
+    `cd ${skill} && popd && node publish-wiki.mjs --prepare`,
+    `cd /tmp && cd -P ${skill} && node publish-wiki.mjs --prepare`,
+    `cd -L ${skill} && node publish-wiki.mjs --prepare`,
+    `pushd ${skill} && node publish-wiki.mjs --prepare`,
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, PLACES, 'linux'),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [false, false, false, true, true, true])
+})
+
 // Value: protects=the learner who runs a command of their own that names the publisher in a way no shell reads as its path; fails_when=a home folder in single quotes or in a longer variable's name, a `~` in double quotes, or a `cd` whose next command does not run in its folder (after `||` or `|`) is read as the path, so the learner's command counts as the chat's work; why_new=Cycle 0046 /ship adversarial review AD19 (the forms a shell keeps as text); seam=none
 test('a home folder in single quotes or in a longer name, a ~ in double quotes, a cd that the next command does not follow, and Node.js that checks the publisher are no steps of an update', () => {
   // Arrange
