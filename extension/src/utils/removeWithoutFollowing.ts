@@ -82,7 +82,7 @@ export type RemovalOrder = {
  * @param path - The directory that is not empty.
  * @param looked - The directory's device and file id at the walk's look, which the path must still name before the listing and before each entry's removal ({@link isStillTheDirectory}).
  * @param notEmptyError - What the system answered to its removal.
- * @param lastEntry - The name of the entry left for {@link removeLastEntryAndDirectory} ({@link RemovalOrder}); none when left out, and every entry is removed.
+ * @param order - What the walk was told ({@link RemovalOrder}): its `lastEntry` names the entry left for {@link removeLastEntryAndDirectory}, none when left out, and every entry is removed; its `pathsMayNotResolve` decides how this directory and every entry below it is shown to be its parent's own ({@link isFolderOfItsOwn}).
  * @returns `true` once every listed entry but the last one is removed; `false` when the directory is gone meanwhile.
  * @throws `notEmptyError` when the entry is no directory of its parent's own ({@link isFolderOfItsOwn}): nothing below it is listed. The error of {@link isStillTheDirectory} when another entry took the directory's place. The file system's error of the first entry that cannot be removed.
  * @example
@@ -112,6 +112,7 @@ async function removeEntriesOf(
  * @param path - The directory, shown to be its parent's own.
  * @param looked - Its device and file id at the walk's look ({@link isStillTheDirectory}).
  * @param names - The entries a listing gave, without the one that goes last.
+ * @param order - What the walk was told ({@link RemovalOrder}); only its `pathsMayNotResolve` is handed down to the removal of each entry, since no entry inside has an entry of its own that goes last.
  * @returns `true` once the entries are removed; `false` when the directory is gone meanwhile.
  * @throws The error of {@link isStillTheDirectory} when another entry took the directory's place, and the file system's error of the first entry that cannot be removed.
  * @example
@@ -191,6 +192,7 @@ async function restoreKeptEntry(
  * @param path - The directory, shown to be its parent's own.
  * @param looked - Its device and file id at the walk's look ({@link isStillTheDirectory}).
  * @param lastEntry - The entry that goes last (the owner marker of a profile folder).
+ * @param order - What the walk was told ({@link RemovalOrder}), handed to {@link removeNamedEntries} for the entries each new listing finds, so they are removed with the same `pathsMayNotResolve`.
  * @returns After the directory is gone; also when it went meanwhile.
  * @throws When the directory still gains entries after its last listing: its last entry stays. The system's error of the directory's removal, after trying to restore the last entry in the original directory. Every error of {@link removeNamedEntries} and {@link isStillTheDirectory} before the final removal.
  * @example
