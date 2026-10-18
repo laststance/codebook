@@ -92,6 +92,27 @@ function missingGit(): Error {
 }
 
 /**
+ * Lists every path Git may lie at, in `PATH`'s order, from the absolute folders of `PATH` alone; called by {@link gitExecutablePath}, which asks for each in turn whether it is a program file.
+ * @param platform - The system whose rules apply.
+ * @param environment - Where `PATH` and, on Windows, `PATHEXT` are read.
+ * @returns The candidates of each searched folder ({@link searchedFolders}, {@link candidatesIn}); empty when `PATH` holds no absolute folder.
+ * @example
+ * gitCandidates('linux', { PATH: '.:/usr/local/bin:/usr/bin' }) // => ['/usr/local/bin/git', '/usr/bin/git']
+ */
+function gitCandidates(
+  platform: NodeJS.Platform,
+  environment: ProcessEnvironment,
+): string[] {
+  const pathText = environmentVariable(environment, 'PATH', platform) ?? ''
+  const programExtensions =
+    environmentVariable(environment, 'PATHEXT', platform) ??
+    DEFAULT_WINDOWS_PROGRAM_EXTENSIONS
+  return searchedFolders(pathText, platform).flatMap((folder) =>
+    candidatesIn(folder, platform, programExtensions),
+  )
+}
+
+/**
  * Finds Git by an absolute path from a search of `PATH` alone, never in the learner's project nor in the process's current folder, so a repository that carries a program named git can never be started in Git's place; called by {@link inspectDeepWikiFreshness} and {@link RepositorySourceService} before every Git command they run in the opened project.
  * Why: a bare name is looked up in the spawn's current folder before `PATH` on Windows (libuv's `search_path`), and Codebook runs Git with the opened project as that folder, so a `git.exe` or `git.com` at a cloned repository's root would run with the learner's rights. macOS and Linux do not look there for a bare name, but take the same absolute path for one rule. Only absolute `PATH` folders are searched (an empty or relative entry is read from the current folder); on Windows each `PATHEXT` extension that Node.js starts without a shell is tried in its order.
  * A Git found with the product's own inputs is kept for the process, so it is searched for once.
@@ -107,18 +128,16 @@ export async function gitExecutablePath(
 ): Promise<string> {
   // The product's own lookup is made once; a test's inputs are looked up each time.
   if (inputs === undefined && gitFound !== undefined) return gitFound
-  const platform = inputs?.platform ?? process.platform,
-    environment = inputs?.environment ?? process.env,
-    isProgram = inputs?.isProgramFile ?? isProgramFile
-  const pathText = environmentVariable(environment, 'PATH', platform) ?? ''
-  const programExtensions =
-    environmentVariable(environment, 'PATHEXT', platform) ??
-    DEFAULT_WINDOWS_PROGRAM_EXTENSIONS
-  for (const folder of searchedFolders(pathText, platform))
-    for (const candidate of candidatesIn(folder, platform, programExtensions))
-      if (await isProgram(candidate)) {
-        if (inputs === undefined) gitFound = candidate
-        return candidate
-      }
+  const isProgram = inputs?.isProgramFile ?? isProgramFile
+  const candidates = gitCandidates(
+    inputs?.platform ?? process.platform,
+    inputs?.environment ?? process.env,
+  )
+  // One candidate at a time, in PATH's order: the first program file is Git.
+  for (const candidate of candidates)
+    if (await isProgram(candidate)) {
+      if (inputs === undefined) gitFound = candidate
+      return candidate
+    }
   throw missingGit()
 }
