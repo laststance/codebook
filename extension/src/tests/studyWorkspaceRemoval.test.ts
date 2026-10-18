@@ -8394,6 +8394,68 @@ test('after Move to Trash Anyway the removal is shown as moving again while the 
   }
 })
 
+// Value: protects=the learner's consent to each recording the removal moves, when another computer starts writing a recording of the study while the dialog is open; fails_when="Move to Trash Anyway" judges every writer again and moves the recording the dialog never named with the one it named (S2, probe: host-two written while the dialog was open, and both moved); why_new=Cycle 0046 Claude adversarial review #3 (S2); seam=the study's recordings.v2 header of old-laptop.local, a recordings.v3 header of other-desktop.local the test writes while the second dialog waits, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a recording of another host that appears while the dialog is open keeps the study after Move to Trash Anyway, and the line names both recordings', async () => {
+  // Arrange: the dialog names old-laptop.local; before the learner answers, a recording of other-desktop.local appears.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    const appearing = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      study.id,
+    )
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button === `Move to ${TRASH} Anyway`) {
+        await mkdir(appearing, { recursive: true })
+        await writeFile(
+          join(appearing, 'header.json'),
+          JSON.stringify({
+            owner: {
+              pid: ID_OF_NO_PROCESS,
+              hostname: 'other-desktop.local',
+              sessionId: randomUUID(),
+            },
+            createdAt: '2026-10-17T08:00:00.000Z',
+          }),
+        )
+      }
+      return button
+    })
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.length,
+        moved: harness.trashMoves,
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: 2,
+        moved: [],
+        studyRemoval: {
+          status: 'failed',
+          studyId: study.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's Cancel in the dialog about a recording that may still run on another computer; fails_when=Cancel moves the study or its recording anyway, or leaves the removal shown as failed or still moving; why_new=Cycle 0046 OCR review OC1; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('Cancel in the dialog about a recording that names another host moves nothing and leaves the study as it was', async () => {
   // Arrange: the learner confirms the removal, then cancels the dialog about the recording.

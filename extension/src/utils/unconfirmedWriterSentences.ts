@@ -1,4 +1,4 @@
-import type { UnconfirmedWriters } from '../learningLibrary'
+import type { NamedUnconfirmedWriters } from '../learningLibrary'
 
 /** Joins the places and times at which a study's recordings were started, as English lists them: "A", "A and B", "A, B, and C". */
 const RECORDING_STARTS = new Intl.ListFormat('en', {
@@ -18,7 +18,7 @@ const RECORDING_STARTS = new Intl.ListFormat('en', {
  * // => 'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether it is still recording.'
  */
 export function unconfirmedWriterSentences(
-  writers: UnconfirmedWriters,
+  writers: NamedUnconfirmedWriters,
 ): string {
   const [lead] = writers
   const starts = RECORDING_STARTS.format(

@@ -1,4 +1,7 @@
-import type { UnconfirmedWriter, UnconfirmedWriters } from '../learningLibrary'
+import type {
+  NamedUnconfirmedWriters,
+  UnconfirmedWriter,
+} from '../learningLibrary'
 
 import { systemTrashName, type SystemTrashName } from './systemTrashName'
 import { unconfirmedWriterSentences } from './unconfirmedWriterSentences'
@@ -24,7 +27,7 @@ function libraryRoomSentence(usage: { count: number; limit?: number }): string {
  * @returns What is lost if a writer still records, that nothing is lost otherwise, and what Cancel keeps; for one recording or for several.
  * @example unconfirmedWriterWarning([{ host: 'workstation', startedAt, place: 'this-computer' }]) // => 'If one still does, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.'
  */
-function unconfirmedWriterWarning(writers: UnconfirmedWriters): string {
+function unconfirmedWriterWarning(writers: NamedUnconfirmedWriters): string {
   const [lead] = writers
   // One recording is "it"; several are "one of them".
   if (writers.length === 1)
@@ -70,7 +73,7 @@ export function studyRemovalMessages(
         : `This study's recording may still be running in another editor window. Move the study to the ${trashName} anyway?`,
     unconfirmedWriterButton: `Move to ${trashName} Anyway`,
     /** The dialog's detail: the host each such recording names and when it started ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does; the first writer's place words the warning. */
-    unconfirmedWriterDetail: (writers: UnconfirmedWriters): string =>
+    unconfirmedWriterDetail: (writers: NamedUnconfirmedWriters): string =>
       `${unconfirmedWriterSentences(writers)} ${unconfirmedWriterWarning(writers)}`,
     nothingMoved: (cause: string): string =>
       `The saved study could not be moved to the ${trashName}. Nothing was deleted. ${cause}`,

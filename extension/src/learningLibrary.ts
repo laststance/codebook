@@ -127,19 +127,37 @@ type RemovalWriterVerdict = {
   ofAnotherWindow: RecordingWriterOfDirectory
 }
 
-/** Whether {@link LearningLibrary.removeStudy} keeps a study one of whose recordings has a writer this computer cannot confirm (`refuse`, the default), or moves it (`move`): the learner's choice after that refusal, made in a dialog that names the host and the recording's start. */
-export type UnconfirmedWriterRule = 'refuse' | 'move'
+/**
+ * Whether {@link LearningLibrary.removeStudy} keeps a study one of whose recordings has a writer this computer cannot confirm (`refuse`, the default), or moves it (`{ move }`): the learner's choice after that refusal, made in a dialog that names each such recording's host and start.
+ * `move` names the writers the learner agreed to, as the refusal gave them. The removal moves the study only while its recordings have exactly those writers; a recording that appeared, or changed, since the dialog keeps the study, and the refusal names the writers anew.
+ */
+export type UnconfirmedWriterRule =
+  'refuse' | { move: readonly UnconfirmedWriter[] }
 
 /**
  * A recording whose writer may still run and this computer cannot confirm, as {@link LearningLibrary.removeStudy} answers it with its refusal, so the caller can ask the learner.
+ * - `directory`: the recording's directory, which the learner's agreement names ({@link UnconfirmedWriterRule})
  * - `host` and `startedAt`: the host the recording names and the time it was started
  * - `place`: `another-computer` for a writer on another host, which this computer cannot probe; `this-computer` for a live process of this computer that has the writer's id and began, by the clock, after the recording (another process that got the id, or the writer itself after a step of the clock)
  */
 export type UnconfirmedWriter = {
+  directory: string
   host: string
   startedAt: string
   place: 'another-computer' | 'this-computer'
 }
+
+/** What the learner reads of a writer this computer cannot confirm: the host, the recording's start and the place ({@link UnconfirmedWriter} without its directory). */
+export type NamedUnconfirmedWriter = Pick<
+  UnconfirmedWriter,
+  'host' | 'startedAt' | 'place'
+>
+
+/** The writers the removal's cause and dialog name, at least one, in the order the learner reads them. */
+export type NamedUnconfirmedWriters = readonly [
+  NamedUnconfirmedWriter,
+  ...NamedUnconfirmedWriter[],
+]
 
 /** The writers of a study's recordings that this computer cannot confirm, at least one, in the order the learner reads them: those on another computer first ({@link unconfirmedWriterRefusal}). */
 export type UnconfirmedWriters = readonly [
@@ -148,12 +166,12 @@ export type UnconfirmedWriters = readonly [
 ]
 
 /**
- * Words why a removal moved nothing of a study whose recordings have writers this computer cannot confirm, for {@link StudyWriterUnconfirmedError}: the cause this API answers to its callers, after which an outcome line would read "Nothing was deleted." The editor never shows it: it asks the learner in a dialog whose detail begins with the same sentences ({@link unconfirmedWriterSentences}).
+ * Words why a removal moved nothing of a study whose recordings have writers this computer cannot confirm, for {@link StudyWriterUnconfirmedError}: the cause this API answers to its callers, after which an outcome line reads "Nothing was deleted." The editor shows it only when the writers changed after the learner's dialog; otherwise it asks the learner in a dialog whose detail begins with the same sentences ({@link unconfirmedWriterSentences}).
  * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers.
  * @returns The sentences, with each start in this editor's local time.
  * @example unconfirmedWriterCause([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }]) // => 'Its recording was started on laptop.home-network at 10/5/2026, 9:00:00 AM. Codebook cannot tell from this computer whether it is still recording.'
  */
-function unconfirmedWriterCause(writers: UnconfirmedWriters): string {
+function unconfirmedWriterCause(writers: NamedUnconfirmedWriters): string {
   return unconfirmedWriterSentences(unconfirmedWritersInLocalTime(writers))
 }
 
@@ -171,37 +189,59 @@ class StudyWriterUnconfirmedError extends Error {
   }
 }
 
-/** A writer of another window that this computer cannot confirm, as {@link recordingWriterOf} answers it for one recording. */
-type UnconfirmedWriterOfDirectory = Extract<
-  RecordingWriterOfDirectory,
-  { kind: 'on-another-host' | 'unconfirmed-here' }
->
+/** The writer of another window that may still write one recording directory, with that directory ({@link LearningLibrary.writersOfOtherWindows}). */
+type WriterOfRecording = { directory: string; writer: WriterOfAnotherWindow }
 
 /**
- * Builds the refusal for the writers of other windows that this computer cannot confirm, for {@link LearningLibrary.refuseUnlessRemovable} once the plain refusal of a writer of this machine is ruled out. Every such recording is named, so the learner agrees to each one that moves.
- * @param lead - The first such writer, as {@link recordingWriterOf} answered for its recording: `on-another-host` or `unconfirmed-here`.
- * @param others - The writers of the study's other such recordings.
- * @returns The refusal with each host, recording start and place; the writers on another computer come first, since the dialog's title and its warning follow the first.
- * @example unconfirmedWriterRefusal({ kind: 'on-another-host', host: 'laptop.home-network', createdAt }, []) // => StudyWriterUnconfirmedError with place 'another-computer'
+ * Names the writers of other windows that this computer cannot confirm, for {@link LearningLibrary.refuseUnlessRemovable} once the plain refusal of a writer of this machine is ruled out: every such recording, so the learner agrees to each one that moves.
+ * @param writers - The writers of the study's recordings that another window may still write, with their directories.
+ * @returns Each such recording's directory, host, start and place; the writers on another computer come first, since the dialog's title and its warning follow the first. None when no writer is unconfirmed.
+ * @example unconfirmedWritersOf([{ directory, writer: { kind: 'on-another-host', host: 'laptop.home-network', createdAt } }]) // => [{ directory, host: 'laptop.home-network', startedAt: createdAt, place: 'another-computer' }]
  */
-function unconfirmedWriterRefusal(
-  lead: UnconfirmedWriterOfDirectory,
-  others: UnconfirmedWriterOfDirectory[],
-): StudyWriterUnconfirmedError {
-  const named = (writer: UnconfirmedWriterOfDirectory): UnconfirmedWriter => ({
-    host: writer.host,
-    startedAt: writer.createdAt,
-    place:
-      writer.kind === 'on-another-host' ? 'another-computer' : 'this-computer',
-  })
-  const [first, ...rest] = [lead, ...others]
-    .map(named)
+function unconfirmedWritersOf(
+  writers: WriterOfRecording[],
+): UnconfirmedWriter[] {
+  return writers
+    .flatMap(({ directory, writer }): UnconfirmedWriter[] =>
+      writer.kind === 'may-run'
+        ? []
+        : [
+            {
+              directory,
+              host: writer.host,
+              startedAt: writer.createdAt,
+              place:
+                writer.kind === 'on-another-host'
+                  ? 'another-computer'
+                  : 'this-computer',
+            },
+          ],
+    )
     .sort(
       (one, other) =>
         Number(one.place !== 'another-computer') -
         Number(other.place !== 'another-computer'),
     )
-  return new StudyWriterUnconfirmedError([first!, ...rest])
+}
+
+/**
+ * Says whether the writers the learner agreed to are exactly the writers the removal finds under its lock; called by {@link LearningLibrary.refuseUnlessRemovable} for the learner's `move`.
+ * @param found - The unconfirmed writers found under the lock.
+ * @param agreed - The writers the learner's dialog named.
+ * @returns `true` when both name the same recordings, each with the same host, start and place, in any order; `false` when a recording appeared, went, or changed since the dialog.
+ * @example isSameWriterSet(found, removal.unconfirmedWriters) // => false once a recording of another host appeared while the dialog was open
+ */
+function isSameWriterSet(
+  found: readonly UnconfirmedWriter[],
+  agreed: readonly UnconfirmedWriter[],
+): boolean {
+  const keys = (writers: readonly UnconfirmedWriter[]): string[] =>
+    writers
+      .map(({ directory, host, startedAt, place }) =>
+        JSON.stringify([directory, host, startedAt, place]),
+      )
+      .sort()
+  return JSON.stringify(keys(found)) === JSON.stringify(keys(agreed))
 }
 
 /**
@@ -477,23 +517,25 @@ export class LearningLibrary {
    * Finds the writers of other editor windows that may still write a study's recording directories, as the removal judged them ({@link writerOfAnotherWindowUnderLock}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link refuseUnlessRemovable} before the first move, which lets a writer of this machine that may still run (`may-run`) win over every writer this machine cannot probe.
    * @param recordings - The study's recording directories.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns The writer of each recording that another window may still write (`may-run`, `on-another-host`, `unconfirmed-here`), in the order of the recordings; none when no other window may write any of them.
-   * @example await this.writersOfOtherWindows(['/…/recordings.v2/<id>'], verdicts) // => [{ kind: 'may-run', createdAt }] while another window of this machine records that run
+   * @returns The writer of each recording that another window may still write (`may-run`, `on-another-host`, `unconfirmed-here`), with the recording's directory, in the order of the recordings; none when no other window may write any of them.
+   * @example await this.writersOfOtherWindows(['/…/recordings.v2/<id>'], verdicts) // => [{ directory: '/…/recordings.v2/<id>', writer: { kind: 'may-run', createdAt } }] while another window of this machine records that run
    */
   private async writersOfOtherWindows(
     recordings: string[],
     verdicts: RemovalWriterVerdicts,
-  ): Promise<WriterOfAnotherWindow[]> {
+  ): Promise<WriterOfRecording[]> {
     const writers = await Promise.all(
-      recordings.map((recording) =>
-        this.writerOfAnotherWindowUnderLock(recording, verdicts),
-      ),
+      recordings.map(async (directory) => ({
+        directory,
+        writer: await this.writerOfAnotherWindowUnderLock(directory, verdicts),
+      })),
     )
-    return writers.filter(
-      (writer): writer is WriterOfAnotherWindow =>
-        writer.kind === 'may-run' ||
-        writer.kind === 'on-another-host' ||
-        writer.kind === 'unconfirmed-here',
+    return writers.flatMap(({ directory, writer }): WriterOfRecording[] =>
+      writer.kind === 'may-run' ||
+      writer.kind === 'on-another-host' ||
+      writer.kind === 'unconfirmed-here'
+        ? [{ directory, writer }]
+        : [],
     )
   }
 
@@ -575,11 +617,11 @@ export class LearningLibrary {
    * Refuses the removal of a study before its first move; called by {@link removeStudy} under the storage lock, with the writers it judged before it ({@link writerVerdictsOf}).
    * @param paths - The study's paths as {@link studyPaths} found them.
    * @param verdicts - The writers of the study's recordings, as judged before the lock.
-   * @param unconfirmedWriterRule - Whether a recording whose writer this computer cannot confirm keeps the study (`refuse`) or moves with it (`move`, the learner's choice after the refusal).
+   * @param unconfirmedWriterRule - Whether a recording whose writer this computer cannot confirm keeps the study (`refuse`) or moves with it (`{ move }`, the learner's choice after the refusal, which names the writers they agreed to).
    * @throws
    * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
    * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings ({@link writerOfAnotherWindow}): that window would fail its next append and save the archive again
-   * - {@link StudyWriterUnconfirmedError} with `refuse` while one of its recordings has a writer this computer cannot confirm (`on-another-host`, `unconfirmed-here`)
+   * - {@link StudyWriterUnconfirmedError} with `refuse` while one of its recordings has a writer this computer cannot confirm (`on-another-host`, `unconfirmed-here`), and with `{ move }` when those writers are not exactly the ones the learner agreed to
    * @example await this.refuseUnlessRemovable(paths, verdicts, 'refuse') // returns for a saved study whose recordings nobody else writes
    */
   private async refuseUnlessRemovable(
@@ -597,15 +639,16 @@ export class LearningLibrary {
       throw new StudyArchiveUnavailableError()
     const writers = await this.writersOfOtherWindows(paths.recordings, verdicts)
     // A writer of this machine that may still run wins over every writer this machine cannot probe: the plain refusal, without the learner's dialog.
-    if (writers.some((writer) => writer.kind === 'may-run'))
+    if (writers.some(({ writer }) => writer.kind === 'may-run'))
       throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
-    const [lead, ...others] = writers.filter(
-      (writer): writer is UnconfirmedWriterOfDirectory =>
-        writer.kind !== 'may-run',
+    const [lead, ...others] = unconfirmedWritersOf(writers)
+    if (lead === undefined) return
+    // The writers this machine cannot confirm are the learner's to judge, each by name: the removal waits for their choice, and moves only the writers they agreed to.
+    if (
+      unconfirmedWriterRule === 'refuse' ||
+      !isSameWriterSet([lead, ...others], unconfirmedWriterRule.move)
     )
-    // The writers this machine cannot confirm are the learner's to judge, each by name: the removal waits for their choice.
-    if (lead !== undefined && unconfirmedWriterRule === 'refuse')
-      throw unconfirmedWriterRefusal(lead, others)
+      throw new StudyWriterUnconfirmedError([lead, ...others])
   }
 
   /**

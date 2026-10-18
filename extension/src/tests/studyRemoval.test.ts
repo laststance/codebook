@@ -1625,18 +1625,75 @@ test('a study whose recordings name two other hosts is refused with both hosts a
         outcome: 'nothing-moved',
         cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording.`,
         unconfirmedWriter: {
+          directory: join(storage.directory, 'recordings.v3', study.id),
           host: 'host-one',
           startedAt: '2026-10-01T08:00:00.000Z',
           place: 'another-computer',
         },
         otherUnconfirmedWriters: [
           {
+            directory: join(storage.directory, 'recordings.v2', study.id),
             host: 'host-two',
             startedAt: '2026-10-17T08:00:00.000Z',
             place: 'another-computer',
           },
         ],
       },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=the learner's consent to each recording a removal moves although its writer may still run elsewhere, also when a recording appears after their dialog; fails_when="Move to Trash Anyway" judges the writers again in its move and moves a recording of another host that the dialog never named (S2, probe: host-two written while the dialog was open, and both moved); why_new=Cycle 0046 Claude adversarial review #3 (S2): the learner's move names the writers it agreed to; seam=two recordings of one study, each a header of another host without a record, the second written between the refusal and the learner's move, and the injected mover
+test('a learner’s move that names the writers of a dialog keeps the study when a recording of another host appeared since, and names the writers anew', async (context) => {
+  // Arrange: the study has a recording of host-one; the removal is refused with it; then a recording of host-two appears.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v3', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-one',
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const refusal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const agreed =
+    refusal.outcome !== 'moved' && refusal.unconfirmedWriter
+      ? [refusal.unconfirmedWriter]
+      : []
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-two',
+    createdAt: '2026-10-17T08:00:00.000Z',
+  })
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    undefined,
+    { move: agreed },
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      agreedHosts: agreed.map((writer) => writer.host),
+      outcome: removal.outcome,
+      named:
+        removal.outcome === 'moved'
+          ? []
+          : [
+              removal.unconfirmedWriter?.host,
+              ...(removal.otherUnconfirmedWriters ?? []).map(
+                (writer) => writer.host,
+              ),
+            ],
+      moved: storage.moved,
+    },
+    {
+      agreedHosts: ['host-one'],
+      outcome: 'nothing-moved',
+      named: ['host-one', 'host-two'],
       moved: [],
     },
   )
@@ -1673,12 +1730,14 @@ test('a study whose recordings have a writer on another computer and one of this
         },
     {
       unconfirmedWriter: {
+        directory: join(storage.directory, 'recordings.v2', study.id),
         host: 'host-two',
         startedAt: '2026-10-17T08:00:00.000Z',
         place: 'another-computer',
       },
       otherUnconfirmedWriters: [
         {
+          directory: join(storage.directory, 'recordings.v3', study.id),
           host: hostname(),
           startedAt: '2026-10-01T08:00:00.000Z',
           place: 'this-computer',
@@ -1763,6 +1822,7 @@ test('a recording whose header names an editor of another machine is listed but 
         outcome: 'nothing-moved',
         cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether it is still recording.`,
         unconfirmedWriter: {
+          directory: join(storage.directory, 'recordings.v2', ofAnotherMachine),
           host: 'another-machine',
           startedAt: header.createdAt,
           place: 'another-computer',
