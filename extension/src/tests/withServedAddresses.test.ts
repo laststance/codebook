@@ -945,12 +945,14 @@ test('a </table> in a template closes the open caption, table section or row tho
   ])
 })
 
-// Value: protects=the learner against an editor link after a formatting end that removes the entry of a formatting element closed earlier, or a form end that forgets a form left in a table, though no element of the end's name is open; fails_when=the reader's count of the active formatting list's names misses an entry (a pushed one, or one the adoption agency inserts after its bookmark), or the form end is skipped while the form pointer is set, so a later end closes the svg and a live `vscode://file` link in svg's style is served as written; why_new=Cycle 0046 second /ship testing review TEST1 and PERF1's list index; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
-test('a formatting end removes the entry of a formatting element closed earlier and a form end forgets a form left in a table, so a link in a later svg style loses its link', () => {
-  // Arrange: in the first two pages the second </b> removes the entry of a b that </div> closed, so the next svg is not put in a b again and the last </b> leaves it open; in the last page </form> clears the pointer, so the later form is inserted and stops </x> before the svg.
+// Value: protects=the learner against an editor link after a formatting end that removes the entry of a formatting element closed earlier, also once a caption or a cell closed after it, or a form end that forgets a form left in a table, though no element of the end's name is open; fails_when=the reader's count of the active formatting list's names misses an entry (a pushed one, or one the adoption agency inserts after its bookmark), a caption's or a cell's end takes off the count an entry listed before its marker, or the form end is skipped while the form pointer is set, so a later end closes the svg and a live `vscode://file` link in svg's style is served as written; why_new=Cycle 0046 second /ship testing review TEST1 and PERF1's list index; the caption and cell pages came from the second Step 7 audit, where the reader stayed green with the clear's count running past the marker; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the first two and the last expected page; the caption and cell pages were fixed by the pinned parse5's own tree)
+test('a formatting end removes the entry of a formatting element closed earlier, also after a caption or a cell closed, and a form end forgets a form left in a table, so a link in a later svg style loses its link', () => {
+  // Arrange: in the first four pages the second </b> removes the entry of a b that </div> closed, so the next svg is not put in a b again and the last </b> leaves it open; in the third and fourth a caption or a cell opened and closed in between, whose end clears the list only back to its own marker; in the last page </form> clears the pointer, so the later form is inserted and stops </x> before the svg.
   const pages = [
     '<svg><foreignObject><div><b><svg><g></div></b><svg><g></b><style><a href="vscode://file/etc/hosts">hosts</a></style>',
     '<svg><foreignObject><div><b><address><address><address><address><address><address><address><address><address>x</b><svg><g></div></b><svg><g></b><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><foreignObject><div><b><svg><g></div><table><caption></caption></table></b><svg><g></b><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><foreignObject><div><b><svg><g></div><table><tr><td></td></tr></table></b><svg><g></b><style><a href="vscode://file/etc/hosts">hosts</a></style>',
     '<table><form></table></form><x><form><svg><g></x><style><a href="vscode://file/etc/hosts">hosts</a></style>',
   ]
 
@@ -961,6 +963,8 @@ test('a formatting end removes the entry of a formatting element closed earlier 
   assert.deepEqual(served, [
     '<svg><foreignObject><div><b><svg><g></div></b><svg><g></b><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
     '<svg><foreignObject><div><b><address><address><address><address><address><address><address><address><address>x</b><svg><g></div></b><svg><g></b><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><foreignObject><div><b><svg><g></div><table><caption></caption></table></b><svg><g></b><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><foreignObject><div><b><svg><g></div><table><tr><td></td></tr></table></b><svg><g></b><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
     '<table><form></table></form><x><form><svg><g></x><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
   ])
 })
