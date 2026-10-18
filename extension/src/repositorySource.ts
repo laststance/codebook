@@ -9,6 +9,7 @@ import {
   BOOK_MAX_SOURCES,
   BOOK_PREPARE_TIMEOUT_MS,
   BOOK_SOURCE_CONCURRENCY,
+  GIT_CONFIGURATION_IN_OPENED_FOLDER,
   REPOSITORY_GIT_LIMIT_BYTES,
   REPOSITORY_GIT_TIMEOUT_MS,
   REPOSITORY_MAX_TRACKED_FILES,
@@ -431,7 +432,7 @@ export class RepositorySourceService {
         this.assertActive(control)
         return executeFile(
           gitProgram,
-          ['-c', 'core.fsmonitor=false', ...arguments_],
+          [...GIT_CONFIGURATION_IN_OPENED_FOLDER, ...arguments_],
           {
             ...options,
             timeout: Math.min(

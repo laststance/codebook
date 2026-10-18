@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve, win32 } from 'node:path'
 import { test } from 'node:test'
@@ -874,4 +883,47 @@ test('the Wiki freshness check starts every Git command by the absolute path fou
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+// Value: protects=the learner's machine when the opened folder is a repository that a clone did not make (an archive, a copy, a share) and whose own config names an fsmonitor hook: the freshness check's Git commands in that folder (`rev-parse`, `diff`, `ls-files --others`) run with the fsmonitor switched off, so the hook never runs (R7, /ship third review, Claude adversarial #7; probed with git 2.53.0); fails_when=a Git command of the check runs without `-c core.fsmonitor=false`, and Git starts the repository's hook with the learner's rights; why_new=only source discovery passed that configuration; seam=none (real Git, a real hook script that notes each start)
+test('the Wiki freshness check runs no fsmonitor hook that the repository’s own config names', async (context) => {
+  // Arrange: a committed repository with an added file, whose config names a hook that writes a file when Git starts it.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-freshness-fsmonitor-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const root = join(await realpath(directory), 'project')
+  await mkdir(root)
+  const source = 'export const answer = 1;\n'
+  await writeFile(join(root, 'source.ts'), source)
+  const revision = await commitAll(root)
+  await writeFile(join(root, 'added.ts'), 'export const added = 1;\n')
+  const hookRan = join(directory, 'fsmonitor-ran')
+  const hook = join(directory, 'fsmonitor-hook.sh')
+  await writeFile(hook, `#!/bin/sh\necho ran >> '${hookRan}'\n`)
+  await chmod(hook, 0o755)
+  await runGit('git', ['config', 'core.fsmonitor', hook], { cwd: root })
+  // Act
+  const freshness = await inspectDeepWikiFreshness(
+    root,
+    [
+      {
+        path: 'source.ts',
+        sha256: createHash('sha256').update(source).digest('hex'),
+      },
+    ],
+    revision,
+    [],
+  )
+  // Assert: the check still finds the added file.
+  assert.deepEqual(
+    {
+      status: freshness.status,
+      hookRan: await access(hookRan).then(
+        () => true,
+        () => false,
+      ),
+    },
+    { status: 'changed', hookRan: false },
+  )
 })

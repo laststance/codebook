@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import filesystem, {
+  access,
+  chmod,
   mkdir,
+  mkdtemp,
   rename,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
@@ -664,5 +668,34 @@ test('source discovery starts every Git command by the absolute path found on PA
       started: [git, git, git],
       gitIsAbsolute: true,
     },
+  )
+})
+
+// Value: protects=the learner's machine when the opened folder is a repository that a clone did not make and whose own config names an fsmonitor hook: source discovery's Git commands run with the configuration every Git command in the opened folder shares, so the hook never runs (R7, /ship third review, Claude adversarial #7); fails_when=discovery's Git commands lose `-c core.fsmonitor=false`, for example when the shared list is not used here; why_new=the freshness check lacked it, and discovery had no test of it; seam=none (real Git, a real hook script that notes each start)
+test('source discovery runs no fsmonitor hook that the repository’s own config names', async (context) => {
+  // Arrange: a repository with one tracked source, whose config names a hook that writes a file when Git starts it.
+  const { directory, sources, track } = await sourceHarness(context)
+  await track('src/module.ts')
+  const hookFolder = await mkdtemp(join(tmpdir(), 'codebook-source-hook-'))
+  context.after(() => rm(hookFolder, { recursive: true, force: true }))
+  const hookRan = join(hookFolder, 'fsmonitor-ran')
+  const hook = join(hookFolder, 'fsmonitor-hook.sh')
+  await writeFile(hook, `#!/bin/sh\necho ran >> '${hookRan}'\n`)
+  await chmod(hook, 0o755)
+  await executeFile('git', ['config', 'core.fsmonitor', hook], {
+    cwd: directory,
+  })
+  // Act
+  const page = await sources.list()
+  // Assert
+  assert.deepEqual(
+    {
+      files: [...page.files],
+      hookRan: await access(hookRan).then(
+        () => true,
+        () => false,
+      ),
+    },
+    { files: ['src/module.ts'], hookRan: false },
   )
 })

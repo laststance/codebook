@@ -1178,6 +1178,11 @@ export const MANAGED_PROFILE_ROOT_UNDER_LOCAL_APP_DATA = [
   'Codebook',
   'browser-profiles',
 ]
+/** The configuration every Git command Codebook runs in the opened folder starts with ({@link RepositorySourceService}, {@link inspectDeepWikiFreshness}): a repository's own config can name an fsmonitor hook (`core.fsmonitor`), a program Git starts for `diff` and `ls-files`, which a folder that a clone did not make (an archive, a copy, a share) may carry; it is switched off. */
+export const GIT_CONFIGURATION_IN_OPENED_FOLDER = [
+  '-c',
+  'core.fsmonitor=false',
+] as const
 /** What the name of every managed browser profile folder begins with; the rest is random. */
 export const MANAGED_PROFILE_PREFIX = 'codebook-browser-'
 /** The file in a managed browser profile folder that names the editor process, the machine and the boot that made it. Only a folder that carries it is ever removed by a later run. */

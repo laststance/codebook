@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
+  GIT_CONFIGURATION_IN_OPENED_FOLDER,
   WIKI_FRESHNESS_HASH_CONCURRENCY,
   WIKI_GIT_OUTPUT_LIMIT_BYTES,
   WIKI_GIT_TIMEOUT_MS,
@@ -257,9 +258,16 @@ async function findAddedSources(
   }
   // Git is started by its absolute path from PATH alone, never found in the opened folder; no Git found answers as a Git that cannot start.
   let git: string
+  /** Runs one Git command in the opened folder, with the configuration that keeps the repository's own config from starting a program there. */
+  const gitInFolder = (gitArguments: string[]) =>
+    runGit(
+      git,
+      [...GIT_CONFIGURATION_IN_OPENED_FOLDER, ...gitArguments],
+      options,
+    )
   try {
     git = await gitExecutablePath()
-    await runGit(git, ['rev-parse', '--show-toplevel'], options)
+    await gitInFolder(['rev-parse', '--show-toplevel'])
   } catch (error) {
     return repositoryFailure(error)
   }
@@ -268,26 +276,18 @@ async function findAddedSources(
   try {
     // Both commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
     const [committed, untracked] = await Promise.all([
-      runGit(
-        git,
-        [
-          'diff',
-          '--name-only',
-          '--diff-filter=A',
-          // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
-          '--no-renames',
-          '--relative',
-          '-z',
-          revision,
-          '--',
-        ],
-        options,
-      ),
-      runGit(
-        git,
-        ['ls-files', '--others', '--exclude-standard', '-z'],
-        options,
-      ),
+      gitInFolder([
+        'diff',
+        '--name-only',
+        '--diff-filter=A',
+        // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
+        '--no-renames',
+        '--relative',
+        '-z',
+        revision,
+        '--',
+      ]),
+      gitInFolder(['ls-files', '--others', '--exclude-standard', '-z']),
     ])
     return {
       kind: 'checked',
