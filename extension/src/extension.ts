@@ -75,6 +75,7 @@ import {
   REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
 } from './utils/cursorCatalogCleanupNotice'
 import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
+import { deepWikiOpenFailureNotice } from './utils/deepWikiOpenFailureNotice'
 import { describeBrokenWikiWatch } from './utils/describeBrokenWikiWatch'
 import {
   describeSecondWikiUpdateStart,
@@ -137,7 +138,6 @@ import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { watchWikiUpdateSigns } from './utils/watchWikiUpdateSigns'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
-import { WikiPathRefusedError } from './utils/wikiPathRefusedError'
 import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
 import {
   WikiUpdateRun,
@@ -1973,13 +1973,7 @@ export function activate(
         } catch (error) {
           await deepWikiReader?.close()
           deepWikiReader = undefined
-          // A refusal of the Wiki's path carries its own step; any other failure gets the step of a missing Wiki.
-          void showNotice(
-            'error',
-            error instanceof WikiPathRefusedError
-              ? `Codebook could not open DeepWiki: ${error.message}`
-              : `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
-          )
+          void showNotice('error', deepWikiOpenFailureNotice(error))
           throw error
         }
       }),
