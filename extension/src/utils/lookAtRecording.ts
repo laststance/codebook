@@ -41,8 +41,13 @@ export type RecordingLook = {
 async function readHeaderOwner(
   directory: string,
 ): Promise<RecordingLook['header']> {
-  const read = await readWikiRegularFile(join(directory, RECORDING_HEADER_FILE))
-  if (!read || read.bytes.length > MAX_RECORDING_HEADER_BYTES) return undefined
+  // A header larger than a header may be is refused by its size, before it is read.
+  const read = await readWikiRegularFile(
+    join(directory, RECORDING_HEADER_FILE),
+    undefined,
+    MAX_RECORDING_HEADER_BYTES,
+  )
+  if (!read) return undefined
   try {
     return headerOwnerSchema.parse(JSON.parse(read.bytes.toString()))
   } catch {

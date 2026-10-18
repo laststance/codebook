@@ -50,10 +50,13 @@ export async function readRecordingWriterRecord(
   const learningDirectory = dirname(dirname(directory))
   // A record is read only from a real folder of records; one behind a link or a junction is none.
   if (!(await hasOwnWriterRecordFolder(learningDirectory))) return undefined
+  // A record is written within the header's bound; a larger file is refused by its size, before it is read.
   const read = await readWikiRegularFile(
     recordingOwnerRecordPath(learningDirectory, basename(directory)),
+    undefined,
+    MAX_RECORDING_HEADER_BYTES,
   )
-  if (!read || read.bytes.length > MAX_RECORDING_HEADER_BYTES) return undefined
+  if (!read) return undefined
   let parsed: z.infer<typeof writerRecordSchema>
   try {
     parsed = writerRecordSchema.parse(JSON.parse(read.bytes.toString('utf8')))

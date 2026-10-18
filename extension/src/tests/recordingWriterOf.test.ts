@@ -26,7 +26,10 @@ import { RecordingStore } from '../recordingStore'
 import { useEditorMachineId } from '../utils/currentStorageOwner'
 import type * as judgeModule from '../utils/isRecordingWriterLive'
 import type { ProcessStartsOfList } from '../utils/isRecordingWriterLive'
+import type * as lookModule from '../utils/lookAtRecording'
+import { openWithoutFollowing } from '../utils/openWithoutFollowing'
 import { readProcessStart } from '../utils/readProcessStart'
+import type * as regularFileModule from '../utils/readWikiRegularFile'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import type * as writerModule from '../utils/recordingWriterOf'
 import { recordingWriterOf } from '../utils/recordingWriterOf'
@@ -1029,6 +1032,54 @@ async function withinBound<Answer>(
     clearTimeout(timer)
   }
 }
+
+// Value: protects=the memory and the time of every list and removal while a recording's header.json is a large file (a damaged or hostile storage folder); fails_when=the header is read whole under the Wiki's 64 MiB bound and only then refused for passing the header's bound, so a 48 MiB header is read five times per removal, two of them under the storage lock (S5); why_new=Cycle 0046 third review PD3-2 (S5); seam=the opener of a loaded readWikiRegularFile, whose handle counts the bytes it reads, under a loaded lookAtRecording
+test('a recording’s header larger than a header may be is refused by its size, and none of its bytes is read', async (context) => {
+  // Arrange: a run that saved no study, whose header.json is 1 MiB; the opener counts what is read through it.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await writeFile(
+    join(recording.folder, 'header.json'),
+    Buffer.alloc(1024 * 1024, 0x20),
+  )
+  let bytesRead = 0
+  const regularFiles = await loadModule<typeof regularFileModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...opening: Parameters<typeof openWithoutFollowing>
+        ) => {
+          const file = await openWithoutFollowing(...opening)
+          const read = file.read.bind(file)
+          file.read = async (...reading: Parameters<typeof file.read>) => {
+            const result = await read(...reading)
+            bytesRead += result.bytesRead
+            return result
+          }
+          return file
+        },
+      },
+    },
+    { Error, RangeError },
+  )
+  const { lookAtRecording: lookWithCountedReads } = await loadModule<
+    typeof lookModule
+  >(
+    resolve(__dirname, '../utils/lookAtRecording.js'),
+    { './readWikiRegularFile': regularFiles },
+    { Error },
+  )
+
+  // Act
+  const look = await lookWithCountedReads(recording.folder)
+
+  // Assert
+  assert.deepEqual(
+    { header: look.header, bytesRead },
+    { header: undefined, bytesRead: 0 },
+  )
+})
 
 // Value: protects=every list of Saved studies and every removal while a named pipe stands at a recording's header.json (a damaged or hostile storage folder); fails_when=the header is opened as a file that may block, so the open waits for a writer of the pipe for good and holds the list, the removal and the editor's process; why_new=Cycle 0046 adversarial review AD11; seam=a named pipe made at the header's path; on Windows, which has no named pipes in a folder, the test is skipped
 test('a named pipe at a recording’s header neither holds the list of saved studies nor the removal of its study', async (context) => {
