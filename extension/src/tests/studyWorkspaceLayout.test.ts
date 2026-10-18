@@ -666,6 +666,68 @@ test('repeating article Return preserves its borrowed App group without draining
 })
 
 // Value: protects=the replay's following of its Application pane after two quick presses of Return to Wiki from a recording: the second press reaches the article Return while the first one's layout work still places the panes, and is queued behind it; once both ended Codebook places nothing, so after the next evidence visit a file the learner opens over the Application pane hides the replay; fails_when=restoreRepositoryLayout reads the placement flag at its entry, outside the layout queue, so the second press reads the first one's own flag and sets it back to set after the first one cleared it: the flag stays set until a later presentation change, publishes are suppressed and the replay goes on behind the learner's file; why_new=Cycle 0046 R4 (the red team review of /ship); seam=articleRecordingLayoutHarness, the reader's openRepositoryEvidence and action('return-wiki'), holdNextCommand on vscode.setEditorLayout (the first Return's restore of the article's layout), focusMutableDraft in the Application pane's group, the pane's notifyViewState and the controller's state; no_claim=the native timing of two presses within one layout restore
+// Value: protects=Codebook's account of its own placements when a Return to Wiki and an agent's presentation change overlap: the Return's queued restore of the article's layout ends while the change, admitted after the Return began, still places its panes, and the change's placement is still counted as Codebook's own until the change ends, after which nothing is; fails_when=the placement flag is saved and set back by each owner (the Return's whilePlacing inside the layout queue, performPresentation outside it), so the Return sets back the false it saved over the change's true, and the change places its panes with the flag clear (its own group events and the learner's moves read as nobody's), or, in the mirrored order, the flag stays set after both ended (R4's symptom); why_new=Cycle 0046 AD27 (/ship's adversarial review: an interleaving of a palette Return and an agent presentation; the probe showed the Return's write of false while the change still placed); seam=articleRecordingLayoutHarness with an observation's evidence visit, holdNextCommand on vscode.setEditorLayout (the Return's restore), holdNextSource on the captured source (the change's source open after it set the flag), the reader's changePresentation as an agent's, and the reader's own placingPresentation read; no_claim=the native timing of such an overlap
+test('a Return to Wiki that ends while an agent’s presentation change places its panes leaves that placement counted as Codebook’s own until the change ends, and nothing counted after both', async () => {
+  // Arrange: an observation's evidence visit; the Return's restore of the article's layout is held; an agent's change to the Living book is admitted and waits for its captured source, after it began placing.
+  const harness = await articleRecordingLayoutHarness(true, true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      false,
+      undefined,
+      harness.origin,
+    )
+    await harness.controller.settle()
+    const restore = harness.holdNextCommand('vscode.setEditorLayout')
+    const returning = harness.reader.action('return-wiki')
+    await restore.started
+    const state = harness.reader.presentationState()
+    const sourceOpen = harness.holdNextSource({
+      uri: harness.reader.inspect().sourceUri!,
+    })
+    const change = harness.reader
+      .changePresentation(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'living-book',
+          action: 'select',
+        },
+        'agent',
+      )
+      .then(
+        () => 'answered',
+        (error: unknown) => String(error),
+      )
+    await sourceOpen.started
+
+    // Act: the Return's restore ends while the change still waits for its source; then the change goes on and ends.
+    restore.release()
+    await returning
+    const placingWhileTheChangeGoesOn = harness.reader['placingPresentation']
+    sourceOpen.release()
+    const outcome = await change
+    await harness.controller.settle()
+
+    // Assert: the change's placement stayed counted after the Return ended, and nothing is counted after both.
+    assert.deepEqual(
+      {
+        placingWhileTheChangeGoesOn,
+        outcome,
+        placingAfterBoth: harness.reader['placingPresentation'],
+      },
+      {
+        placingWhileTheChangeGoesOn: true,
+        outcome: 'answered',
+        placingAfterBoth: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('two quick Return to Wiki presses from a recording leave Codebook placing nothing, so the next visit’s replay hides behind a file the learner opens over its Application pane', async () => {
   // Arrange: a recording's evidence visit; the first Return's restore of the article's layout is held while the second Return is pressed.
   const harness = await articleRecordingLayoutHarness(true, true)

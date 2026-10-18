@@ -978,7 +978,8 @@ export class StudyWorkspace {
   /** The playback presentation revision of the read that {@link open}'s reveal restarted, for {@link loadPlayback}: that read leaves the arrangement to the entry. */
   private recordingRevealedByEntry?: number
   private presentationWrite?: Promise<void>
-  private placingPresentation = false
+  /** How many of Codebook's own placements are under way: a presentation change's ({@link performPresentation}), an Application group's reservation ({@link reserveApplicationGroup}) and an article Return's queued work ({@link whilePlacing}). Each counts itself in and out ({@link beginPlacing}), so one that ends while another goes on leaves the other counted (Cycle 0046 AD27). */
+  private placementsUnderWay = 0
   private presentationEditorScope?: {
     signal: AbortSignal
     lifetime: number
@@ -5029,6 +5030,8 @@ export class StudyWorkspace {
       keyboardHolder: this.keyboardHolderAtChange(),
     }
     const previousMode = this.presentationMode
+    // Counts this change's own placement out once it ends (AD27).
+    let endPlacing: (() => void) | undefined
     let evidenceConfirmed = false,
       restoreFocusAttempted = false
     let assertViewportOwnership: (() => void) | undefined
@@ -5231,7 +5234,7 @@ export class StudyWorkspace {
           assertCurrent()
         }
         assertRetainedPlacement()
-        this.placingPresentation = true
+        endPlacing = this.beginPlacing()
         this.presentationConfirmed = false
         assertSourceFocus = await this.placePresentation(
           input.mode,
@@ -5403,7 +5406,7 @@ export class StudyWorkspace {
     } finally {
       windowFocus?.dispose()
       for (const release of releaseViewports.splice(0)) release()
-      this.placingPresentation = false
+      endPlacing?.()
       this.presentationEditorScope = undefined
       this.presentationMovedFocus = false
       this.presentationYieldedToLearner = false
@@ -11739,6 +11742,33 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Says whether one of Codebook's own placements is under way ({@link placementsUnderWay}); read wherever the reader tells its own native changes from the learner's: {@link isArrangingPresentation}, {@link endSourceKeyboardPlacementAtLearnersMove}, {@link followReplaySurfaceVisibility}, {@link observeEditorGroups} and {@link retainsEditorTabs}.
+   * @returns `true` while at least one placement is counted in.
+   * @example if (!this.recordingActive || this.placingPresentation) return
+   */
+  private get placingPresentation(): boolean {
+    return this.placementsUnderWay > 0
+  }
+
+  /**
+   * Counts one of Codebook's own placements in, until the function it answers counts it out; called by {@link performPresentation} before it places its panes, by {@link reserveApplicationGroup} and by {@link whilePlacing}, each of which counts itself out in a `finally`.
+   * An owner that saved the flag and set it back could set back a value over another owner's placement: an article Return's queued work that ended while an agent's presentation change still placed its panes set the flag clear under that change, and in the mirrored order a value saved during the change stayed set after both ended (Cycle 0046 AD27, R4).
+   * @returns The function that counts this placement out; a second call does nothing.
+   * @example
+   * const endPlacing = this.beginPlacing()
+   * try { await this.arrange(signal) } finally { endPlacing() }
+   */
+  private beginPlacing(): () => void {
+    this.placementsUnderWay++
+    let ended = false
+    return (): void => {
+      if (ended) return
+      ended = true
+      this.placementsUnderWay--
+    }
+  }
+
   /** Says whether an arrangement or a change of the presentation is under way; asked by {@link changesTabsItself}. @example this.isArrangingPresentation() // => true while Restore applies its layout */
   private isArrangingPresentation(): boolean {
     return (
@@ -13483,8 +13513,7 @@ export class StudyWorkspace {
     }))
     let allocated: symbol | undefined,
       createdPanel: vscode.WebviewPanel | undefined
-    const wasPlacing = this.placingPresentation
-    this.placingPresentation = true
+    const endPlacing = this.beginPlacing()
     try {
       const sourceFocus = await this.focusApplicationSourceGroup(
           grid.groups.length,
@@ -13599,7 +13628,7 @@ export class StudyWorkspace {
       await this.retireFailedApplicationPreparation(allocated, createdPanel)
       throw error
     } finally {
-      this.placingPresentation = wasPlacing
+      endPlacing()
     }
   }
 
@@ -18956,7 +18985,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Runs layout work that Codebook places itself with {@link placingPresentation} set, and sets the flag back to what it was when that work began; called inside the {@link withLayout} queue by {@link restoreRepositoryLayout}, so that a Return to Wiki queued behind another reads the flag only after the earlier one set it back (Cycle 0046 R4: read at the Return's entry, outside the queue, the second of two quick presses read the first one's `true` and set it back to `true` after the first one's end, which left the learner's moves and the replay's visibility unfollowed).
+   * Runs layout work that Codebook places itself counted as one of its own placements ({@link beginPlacing}), and counts it out when the work ends; called inside the {@link withLayout} queue by {@link restoreRepositoryLayout}, so that a Return to Wiki queued behind another reads the flag only after the earlier one set it back (Cycle 0046 R4: read at the Return's entry, outside the queue, the second of two quick presses read the first one's `true` and set it back to `true` after the first one's end, which left the learner's moves and the replay's visibility unfollowed).
    * @param work - The layout work, run at once.
    * @returns What the work answers.
    * @throws What the work throws; the flag is set back first.
@@ -18965,12 +18994,11 @@ export class StudyWorkspace {
   private async whilePlacing<Result>(
     work: () => Promise<Result>,
   ): Promise<Result> {
-    const wasPlacing = this.placingPresentation
-    this.placingPresentation = true
+    const endPlacing = this.beginPlacing()
     try {
       return await work()
     } finally {
-      this.placingPresentation = wasPlacing
+      endPlacing()
     }
   }
 
