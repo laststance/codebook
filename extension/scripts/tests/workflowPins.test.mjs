@@ -202,11 +202,9 @@ function loadFormOf(call) {
   )
     return 'require.resolve'
   // `join(__dirname, …)` and `path.join(__dirname, …)` alike, as the pattern of compiled modules in loadedPathsOf matches both.
-  const name = ts.isPropertyAccessExpression(callee)
-    ? callee.name.text
-    : ts.isIdentifier(callee)
-      ? callee.text
-      : undefined
+  let name
+  if (ts.isPropertyAccessExpression(callee)) name = callee.name.text
+  else if (ts.isIdentifier(callee)) name = callee.text
   const [base] = call.arguments
   return name !== undefined &&
     ['resolve', 'join'].includes(name) &&
