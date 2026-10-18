@@ -149,27 +149,25 @@ test('the dialog about a recording whose writer this computer cannot confirm nam
   // Arrange
   const messages = studyRemovalMessages('Trash'),
     onWindows = studyRemovalMessages('Recycle Bin')
+  const ofOldLaptop = {
+      host: 'old-laptop.local',
+      startedAt: '10/1/2026, 10:00:00 AM',
+      place: 'another-computer',
+    } as const,
+    ofThisComputer = {
+      host: 'workstation',
+      startedAt: '10/1/2026, 10:00:00 AM',
+      place: 'this-computer',
+    } as const
   // Act
   const dialogs = {
     anotherComputer: {
-      title: messages.unconfirmedWriterTitle('another-computer'),
-      detail: messages.unconfirmedWriterDetail([
-        {
-          host: 'old-laptop.local',
-          startedAt: '10/1/2026, 10:00:00 AM',
-          place: 'another-computer',
-        },
-      ]),
+      title: messages.unconfirmedWriterTitle([ofOldLaptop]),
+      detail: messages.unconfirmedWriterDetail([ofOldLaptop]),
     },
     thisComputer: {
-      title: messages.unconfirmedWriterTitle('this-computer'),
-      detail: messages.unconfirmedWriterDetail([
-        {
-          host: 'workstation',
-          startedAt: '10/1/2026, 10:00:00 AM',
-          place: 'this-computer',
-        },
-      ]),
+      title: messages.unconfirmedWriterTitle([ofThisComputer]),
+      detail: messages.unconfirmedWriterDetail([ofThisComputer]),
     },
     button: messages.unconfirmedWriterButton,
     buttonOnWindows: onWindows.unconfirmedWriterButton,
@@ -180,13 +178,13 @@ test('the dialog about a recording whose writer this computer cannot confirm nam
       title:
         "This study's recording may still be running on another computer. Move the study to the Trash anyway?",
       detail:
-        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether it is still recording. If an editor window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it. If a window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
     },
     thisComputer: {
       title:
         "This study's recording may still be running in another editor window. Move the study to the Trash anyway?",
       detail:
-        'Its recording was started on workstation at 10/1/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer is still recording it. If one still does, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+        'Its recording was started on workstation at 10/1/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer still records it. If a window still records it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
     },
     button: 'Move to Trash Anyway',
     buttonOnWindows: 'Move to Recycle Bin Anyway',
@@ -227,8 +225,50 @@ test('the dialog about several recordings whose writers this computer cannot con
   // Assert
   assert.deepEqual(details, {
     anotherComputerFirst:
-      'Its recordings were started on host-one at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell from this computer whether they are still recording. If an editor window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+      'Its recordings were started on host-one at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records them. If a window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
     thisComputerOnly:
-      'Its recordings were started on workstation at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer is still recording them. If one still records one of them, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+      'Its recordings were started on workstation at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer still records them. If a window still records one of them, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+  })
+})
+
+// Value: protects=the learner reading the title of the dialog about several recordings, which names how many and only the places that apply; fails_when=the title takes the first writer's place alone, so it is singular for several recordings and names only another computer when one of them is of this computer (S6); why_new=Cycle 0046 third review PD3-4 (S6); seam=none
+test('the title of the dialog about several recordings says some of them may still be running, on another computer, in another editor window, or in both', () => {
+  // Arrange
+  const messages = studyRemovalMessages('Trash')
+  const ofHostOne = {
+      host: 'host-one',
+      startedAt: '10/1/2026, 10:00:00 AM',
+      place: 'another-computer',
+    } as const,
+    ofHostTwo = {
+      host: 'host-two',
+      startedAt: '10/2/2026, 10:00:00 AM',
+      place: 'another-computer',
+    } as const,
+    ofThisComputer = {
+      host: 'workstation',
+      startedAt: '10/17/2026, 10:00:00 AM',
+      place: 'this-computer',
+    } as const
+  // Act
+  const titles = {
+    bothOnOtherComputers: messages.unconfirmedWriterTitle([
+      ofHostOne,
+      ofHostTwo,
+    ]),
+    bothOnThisComputer: messages.unconfirmedWriterTitle([
+      ofThisComputer,
+      ofThisComputer,
+    ]),
+    inBothPlaces: messages.unconfirmedWriterTitle([ofHostOne, ofThisComputer]),
+  }
+  // Assert
+  assert.deepEqual(titles, {
+    bothOnOtherComputers:
+      "Some of this study's recordings may still be running on another computer. Move the study to the Trash anyway?",
+    bothOnThisComputer:
+      "Some of this study's recordings may still be running in another editor window. Move the study to the Trash anyway?",
+    inBothPlaces:
+      "Some of this study's recordings may still be running on another computer or in another editor window. Move the study to the Trash anyway?",
   })
 })

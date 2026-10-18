@@ -21810,7 +21810,7 @@ export class StudyWorkspace {
 
   /**
    * Asks the learner, in a modal dialog, whether to move a study whose recordings have writers this computer cannot confirm (on another computer, or in an editor window of this computer it cannot tell from another process): the dialog names the host each recording gives and the time it started, and offers "Move to Trash Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
-   * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers; the first one's place words the title.
+   * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers, which the title names.
    * @returns `true` for "Move to Trash Anyway"; `false` for Cancel or a dismissed dialog.
    * @example await this.askRemovalOfUnconfirmedWriters([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }]) // => true after "Move to Trash Anyway"
    */
@@ -21819,7 +21819,7 @@ export class StudyWorkspace {
   ): Promise<boolean> {
     const messages = studyRemovalMessages()
     const answer = await vscode.window.showWarningMessage(
-      messages.unconfirmedWriterTitle(writers[0].place),
+      messages.unconfirmedWriterTitle(writers),
       {
         modal: true,
         detail: messages.unconfirmedWriterDetail(

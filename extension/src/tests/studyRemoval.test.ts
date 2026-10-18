@@ -1623,7 +1623,7 @@ test('a study whose recordings name two other hosts is refused with both hosts a
     {
       removal: {
         outcome: 'nothing-moved',
-        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording.`,
+        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
         unconfirmedWriter: {
           directory: join(storage.directory, 'recordings.v3', study.id),
           host: 'host-one',
@@ -1820,7 +1820,7 @@ test('a recording whose header names an editor of another machine is listed but 
       listed: [{ id: ofAnotherMachine, format: 'archive-missing' }],
       removal: {
         outcome: 'nothing-moved',
-        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether it is still recording.`,
+        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it.`,
         unconfirmedWriter: {
           directory: join(storage.directory, 'recordings.v2', ofAnotherMachine),
           host: 'another-machine',

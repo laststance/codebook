@@ -1106,18 +1106,36 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
 
   // Act
   const delivered = heldSentences(section, [
-    `\`${messages.unconfirmedWriterTitle('another-computer')}\``,
+    `\`${messages.unconfirmedWriterTitle([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
     `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
     `**${messages.unconfirmedWriterButton}**`,
-    `\`${messages.unconfirmedWriterTitle('this-computer')}\``,
+    `\`${messages.unconfirmedWriterTitle([{ host: '<host>', startedAt: '<start>', place: 'this-computer' }])}\``,
     `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'this-computer' }])}\``,
-    'A study with several such recordings names each host and start. Nothing moves while the dialog is open.',
+    `\`${
+      messages
+        .unconfirmedWriterTitle([
+          { host: '<host>', startedAt: '<start>', place: 'another-computer' },
+          { host: '<host>', startedAt: '<start>', place: 'this-computer' },
+        ])
+        .split(' on another computer')[0]
+    }\``,
+    'and names the places that apply (`on another computer`, `in another editor window`, or `on another computer or in another editor window`), and the detail names each host and start. Nothing moves while the dialog is open.',
     '`The saved study could not be moved to the Trash. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`',
     `\`${messages.moveUnknown('').trimEnd()}\``,
   ])
 
   // Assert
-  assert.deepEqual(delivered, [true, true, true, true, true, true, true, true])
+  assert.deepEqual(delivered, [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+  ])
 })
 
 // Value: protects=a learner whose library holds the recording of a run that saved no study, reading that Saved studies lists it and Delete removes it; fails_when=the README still counts "a recording that has no study" among what deletion does not cover, although such a recording is listed and moved since AF2, or no longer says that a recording a run of this computer may still write is that run's and is not listed (AF11); why_new=Cycle 0046 review AF11: the claim was stale; seam=none

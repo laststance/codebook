@@ -8134,7 +8134,7 @@ const DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST = {
   title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
   options: {
     modal: true,
-    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether it is still recording. If an editor window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it. If a window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
   },
   items: [`Move to ${TRASH} Anyway`],
 }
@@ -8273,10 +8273,10 @@ test('a saved study whose recordings name two other hosts is moved with both aft
       {
         dialogs: [
           {
-            title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+            title: `Some of this study's recordings may still be running on another computer. Move the study to the ${TRASH} anyway?`,
             options: {
               modal: true,
-              detail: `Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording. If an editor window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`,
+              detail: `Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them. If a window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`,
             },
             items: [`Move to ${TRASH} Anyway`],
           },
@@ -8447,7 +8447,7 @@ test('a recording of another host that appears while the dialog is open keeps th
         studyRemoval: {
           status: 'failed',
           studyId: study.id,
-          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether they are still recording.`,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
         },
       },
     )
@@ -8564,7 +8564,7 @@ test('the dialog about a recording that a live process of this computer begun af
         title: `This study's recording may still be running in another editor window. Move the study to the ${TRASH} anyway?`,
         options: {
           modal: true,
-          detail: `Its recording was started on ${hostname()} at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell whether an editor window of this computer is still recording it. If one still does, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+          detail: `Its recording was started on ${hostname()} at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell whether an editor window of this computer still records it. If a window still records it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
         },
         items: [`Move to ${TRASH} Anyway`],
       },
