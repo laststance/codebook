@@ -172,6 +172,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(patch_hash=d189ea81b9fc663a9209ef13abaccda8ce69b604b61dc008db18880db223f206)(supports-color@7.2.0)(zod@4.6.5)
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
       ws:
         specifier: 8.21.3
         version: 8.21.3

@@ -1227,3 +1227,44 @@ export const SUMMARY_FOCUS_RELEASE_WAIT_MS = 300
 export const PANE_RETURN_PRESS_WINDOW_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
+
+/** Insertion mode identifiers of pinned parse5 8.0.1; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
+export const HTML_PARSER_IN_BODY_MODE = 6
+export const HTML_PARSER_IN_ROW_MODE = 13
+export const HTML_PARSER_IN_SELECT_MODE = 15
+export const HTML_PARSER_IN_SELECT_IN_TABLE_MODE = 16
+/** Table-section ends for which {@link readHtmlStartTags} checks both the section and the row scope before the pinned parser can close either. */
+export const HTML_PARSER_TABLE_SECTION_NAMES = new Set([
+  'tbody',
+  'tfoot',
+  'thead',
+])
+/** Ends that {@link readHtmlStartTags} must still dispatch in IN_BODY without an exact open-name match: foreign exits, shared heading scope, formatting entries, form pointers and conservative document/select/template handling. Other insertion modes always keep their own rules. */
+export const HTML_PARSER_ABSENT_END_STATE_NAMES = new Set([
+  'a',
+  'b',
+  'big',
+  'br',
+  'code',
+  'em',
+  'font',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'html',
+  'i',
+  'nobr',
+  'p',
+  's',
+  'select',
+  'small',
+  'strike',
+  'strong',
+  'template',
+  'tt',
+  'u',
+])

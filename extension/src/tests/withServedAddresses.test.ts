@@ -9,19 +9,27 @@ import { browserAttributeText } from '../utils/browserAttributeText'
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
-/** The longest the reader may take to filter one page of the timing test, in milliseconds. Its slowest page took 75 ms on the development host (16 CPUs, Node 22); the bound leaves about five times that for a two-core CI runner under load, while a reading from every `<` took 20 to 28 s for a page of 48 to 74 KB. */
-const FILTER_BOUND_MS = 400
-/** How long the timing test waits for its worker before it takes the filtering for unfinished, in milliseconds. */
-const FILTER_DEADLINE_MS = 10_000
+/** How many times as long as {@link ORDINARY_PAGE} the reader may take for one crafted page of the timing tests. On the development host (16 CPUs, Node 24) no crafted page took more than 1.2 times as long as the ordinary page, with or without coverage, while a reading that rescans a deep stack took many times as long. A fixed bound in milliseconds measured only the speed of the host: the full HTML parser of row 1058 takes 128 ms for the ordinary page alone, and 446 ms under coverage. */
+const CRAFTED_PAGE_BOUND_RATIO = 4
+/** How long the timing test waits for its worker before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
+const FILTER_DEADLINE_MS = 30_000
+/** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
+const ORDINARY_PAGE =
+  '<section><h2 id="s">Title</h2><p>Some text with <a href="https://example.com/x">a link</a> and <code>code</code>.</p></section>'.repeat(
+    9_000,
+  )
+/** A small page the worker serves first, so that compiling the reader is not counted in the time of the ordinary page. */
+const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
 
 /**
  * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load.
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
- * @param pages - The pages, by name.
- * @returns Each page's time in milliseconds, or `unfinished`.
+ * @param pages - The crafted pages, by name.
+ * @returns The time of the ordinary page and of each crafted page in milliseconds, or `unfinished`.
  * @example
- * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { small: 0.1 }
+ * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { ordinary: 128, small: 0.1 }
  */
 async function servingTimes(
   moduleName: string,
@@ -29,21 +37,28 @@ async function servingTimes(
   pages: Record<string, string>,
 ): Promise<Record<string, number | 'unfinished'>> {
   const times: Record<string, number | 'unfinished'> = Object.fromEntries(
-    Object.keys(pages).map((name) => [name, 'unfinished']),
+    ['ordinary', ...Object.keys(pages)].map((name) => [name, 'unfinished']),
   )
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const serve = require(workerData.module)[workerData.exportName]
-for (const [name, page] of Object.entries(workerData.pages)) {
+const timeOf = (page) => {
   const started = performance.now()
   serve(page, 'cursor')
-  parentPort.postMessage([name, performance.now() - started])
+  return performance.now() - started
+}
+timeOf(workerData.warmUp)
+parentPort.postMessage(['ordinary', Math.min(timeOf(workerData.ordinary), timeOf(workerData.ordinary))])
+for (const [name, page] of Object.entries(workerData.pages)) {
+  parentPort.postMessage([name, timeOf(page)])
 }`,
     {
       eval: true,
       workerData: {
         module: join(__dirname, '..', 'utils', `${moduleName}.js`),
         exportName,
+        warmUp: WARM_UP_PAGE,
+        ordinary: ORDINARY_PAGE,
         pages,
       },
     },
@@ -63,8 +78,8 @@ for (const [name, page] of Object.entries(workerData.pages)) {
   return times
 }
 
-// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags rescan the page or unmatched end tags rescan the open foreign elements; why_new=W1 plus row 1044's absent and already closed foreign names; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker)
-test('the reader filters a page of more than 1 MB built to make a reading from every < slow in under 400 ms', async () => {
+// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size; why_new=W1 and row1044 plus row1058's observed non-top insertion callback; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+test('the reader filters a page of more than 1 MB built to make a reading from every < slow within four times the time of an ordinary page of that size', async () => {
   // Arrange: large values and links, SVG markup, and absent or already closed names after deep foreign nesting.
   const pages = {
     nestedTagStarts: `<p title="${'<b '.repeat(350_000)}">x</p>`,
@@ -93,6 +108,16 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
       '<x>'.repeat(20_000) +
       '</g>'.repeat(20_000)
     ).padEnd(1_000_001, ' '),
+    formattingAdoptionForeignEnds: (
+      '<b><p><g></b></g></p><svg>' +
+      '<x>'.repeat(20_000) +
+      '</g>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedKnownForeignEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</span>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
   }
 
   // Act
@@ -102,17 +127,23 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
     pages,
   )
 
-  // Assert: every page is over 1 MB, and each was filtered within the bound.
+  // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the ordinary page's time.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
-    [true, true, true, true, true, true, true, true],
+    [true, true, true, true, true, true, true, true, true, true],
   )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
   assert.deepEqual(
     Object.entries(times).filter(
-      ([, milliseconds]) =>
-        milliseconds === 'unfinished' || milliseconds >= FILTER_BOUND_MS,
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
     ),
     [],
+    `the ordinary page took ${ordinary} ms`,
   )
 })
 
@@ -181,7 +212,7 @@ test('an unknown constructor element stays readable and its refused link loses i
 })
 
 // Value: protects=the editor's extension host, which rewrites every page the Wiki reader serves synchronously, Codebook's addresses and the rail's entry included; fails_when=the rebinding of Codebook's addresses reads the page by a pattern that backtracks over quotes and slashes, or the entry's description id is looked for once per number in the whole page, so a page of 1 MB stalls the host for minutes; why_new=Cycle 0046 /ship third review W1 and W5 (the rebinding joins the filter's single pass); seam=a worker thread, so the deadline can stop a rewrite that does not end
-test('the reader serves a page of more than 1 MB built to make a pattern of its tags or its ids slow, Codebook’s addresses and the rail’s entry included, in under 400 ms', async () => {
+test('the reader serves a page of more than 1 MB built to make a pattern of its tags or its ids slow, Codebook’s addresses and the rail’s entry included, within four times the time of an ordinary page of that size', async () => {
   // Arrange: values that run into slashes, quotes that open values, and a page whose headings carry the numbered ids of the entry's description, with an entry of 0.2.29.0 that needs one.
   const pages = {
     slashValues: '<x/href=<x/href='.repeat(70_000),
@@ -201,17 +232,23 @@ test('the reader serves a page of more than 1 MB built to make a pattern of its 
     pages,
   )
 
-  // Assert: every page is over 1 MB, and each was served within the bound.
+  // Assert: every page is over 1 MB, and each crafted page was served within the bound of the ordinary page's time.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [true, true, true],
   )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not served before the deadline')
   assert.deepEqual(
     Object.entries(times).filter(
-      ([, milliseconds]) =>
-        milliseconds === 'unfinished' || milliseconds >= FILTER_BOUND_MS,
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
     ),
     [],
+    `the ordinary page took ${ordinary} ms`,
   )
 })
 
@@ -274,6 +311,164 @@ test('the reader reads the same attributes and values as the shipped publisher i
   assert.deepEqual(
     readings.map(({ reader }) => reader.length),
     [4, 3, 3, 1, 5],
+  )
+})
+
+// Value: protects=the reader's handling of links after foreign/HTML tree boundaries; fails_when=an ignored outer end hides a real anchor; why_new=row1058 inert Chromium comparison; seam=none; no_claim=native editor or visual acceptance
+test('an ignored outer SVG end does not hide a link after an HTML child closes', () => {
+  // Arrange: the div keeps the outer SVG end from closing foreignObject.
+  const page =
+    '<svg><foreignObject><div></svg></div></foreignObject>' +
+    '<style><p><a href="vscode://file/example">marker</a></p></style>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert: Chromium reads the anchor after p leaves the SVG style element.
+  assert.equal(
+    served,
+    '<svg><foreignObject><div></svg></div></foreignObject>' +
+      '<style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style>',
+  )
+})
+
+// Value: protects=served Wiki links after HTML tree recovery; fails_when=full tree construction retains the marker across implicit and non-top closes is lost; why_new=row1058 browser comparisons; seam=none; no_claim=native or visual acceptance
+test('HTML form, button, heading, table and formatting rules keep later foreign links visible', () => {
+  // Arrange: each expected result is fixed by the inert-browser comparison.
+  const cases: readonly [string, string][] = [
+    [
+      '<svg><foreignObject><form><form></form></foreignObject><style><p><a href="vscode://file/example">marker</a></p></style>',
+      '<svg><foreignObject><form><form></form></foreignObject><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style>',
+    ],
+    [
+      '<svg><foreignObject><button><button></button></foreignObject><style><p><a href="vscode://file/example">marker</a></p></style>',
+      '<svg><foreignObject><button><button></button></foreignObject><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style>',
+    ],
+    [
+      '<svg><foreignObject><h1><h2></h2></foreignObject><style><p><a href="vscode://file/example">marker</a></p></style>',
+      '<svg><foreignObject><h1><h2></h2></foreignObject><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style>',
+    ],
+    [
+      '<svg><foreignObject><table><tr><td></table></foreignObject><style><p><a href="vscode://file/example">marker</a></p></style>',
+      '<svg><foreignObject><table><tr><td></table></foreignObject><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style>',
+    ],
+    [
+      '<svg><foreignObject><b><p><i>x</b></i></p></foreignObject><style><p><a href="vscode://file/example">marker</a></p></style></svg>',
+      '<svg><foreignObject><b><p><i>x</b></i></p></foreignObject><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg>',
+    ],
+    [
+      '<svg><foreignObject><form><div></form></div></foreignObject><style><p><a href="vscode://file/example">marker</a></p></style></svg>',
+      '<svg><foreignObject><form><div></form></div></foreignObject><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg>',
+    ],
+  ]
+
+  // Act / Assert
+  for (const [page, expected] of cases)
+    assert.equal(withServedAddresses(page, 'vscode'), expected, page)
+})
+
+// Value: protects=served Wiki links after HTML tree recovery; fails_when=select compatibility stays in HTML dispatch and survives insertion-mode resets is lost; why_new=row1058 browser comparisons; seam=none; no_claim=native or visual acceptance
+test('current select rules keep foreign elements, end tags, table resets and templates', () => {
+  // Arrange: each expected result is fixed by the inert-browser comparison.
+  const cases: readonly [string, string][] = [
+    [
+      '<select><svg><style><p><a href="vscode://file/example">marker</a></p></style></svg></select>',
+      '<select><svg><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg></select>',
+    ],
+    [
+      '<select><svg><select><style><p><a href="vscode://file/example">marker</a></p></style></select></svg></select>',
+      '<select><svg><select><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></select></svg></select>',
+    ],
+    [
+      '<select><svg><select></select><style><p><a href="vscode://file/example">marker</a></p></style></svg></select>',
+      '<select><svg><select></select><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg></select>',
+    ],
+    [
+      '<select><div></select><svg><style><p><a href="vscode://file/example">marker</a></p></style></svg>',
+      '<select><div></select><svg><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg>',
+    ],
+    [
+      '<select><table><tr><td>x</td></tr></table><svg><style><p><a href="vscode://file/example">marker</a></p></style></svg></select>',
+      '<select><table><tr><td>x</td></tr></table><svg><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg></select>',
+    ],
+    [
+      '<select><template><svg><style><p><a href="vscode://file/example">marker</a></p></style></svg></template></select>',
+      '<select><template><svg><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg></template></select>',
+    ],
+  ]
+
+  // Act / Assert
+  for (const [page, expected] of cases)
+    assert.equal(withServedAddresses(page, 'vscode'), expected, page)
+})
+
+// Value: protects=literal text after a heading-family end from foreign content; fails_when=the no-match shortcut discards an h2 end while h1 is open; why_new=row1058 browser capture054; seam=none
+test('a heading-family end from a foreign child restores HTML style text', () => {
+  // Arrange
+  const page =
+    '<svg><foreignObject><h1><svg><g></h2><style><a href="vscode://file/example">marker</a></style>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert: the apparent anchor is raw text after h2 closes the open h1.
+  assert.equal(
+    served,
+    '<svg><foreignObject><h1><svg><g></h2><style><a href="vscode://file/example">marker</a></style>',
+  )
+})
+
+// Value: protects=active Wiki links after an unmatched table-section end; fails_when=the parser closes a row because tr alone is in scope; why_new=row1058 inert Chromium captures055/056; seam=none; no_claim=native editor or visual acceptance
+test('an absent table section cannot hide a foreign link while a matching section restores style text', () => {
+  // Arrange: the implicit section is tbody; thead is absent.
+  const unmatched =
+    '<table><tr><svg><g></thead><style><a href="vscode://file/example">marker</a></style>'
+  const matched =
+    '<table><tr><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>'
+
+  // Act
+  const unmatchedResult = withServedAddresses(unmatched, 'vscode')
+  const matchedResult = withServedAddresses(matched, 'vscode')
+
+  // Assert: only the unmatched end leaves an active SVG anchor to filter.
+  assert.equal(
+    unmatchedResult,
+    '<table><tr><svg><g></thead><style><a data-codebook-unlinked="vscode://file/example">marker</a></style>',
+  )
+  assert.equal(
+    matchedResult,
+    '<table><tr><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+  )
+})
+
+// Value: protects=the browser from promoting a duplicate href after the first is renamed; fails_when=only parse5's first normalized attribute is kept; why_new=row1058 original-offset contract; seam=none
+test('all original duplicate URL attributes lose their effects', () => {
+  // Arrange
+  const page =
+    '<a href="vscode://file/first" HREF="vscode://file/second">marker</a>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert: changing the first name cannot activate an unedited second href.
+  assert.equal(
+    served,
+    '<a data-codebook-unlinked="vscode://file/first" data-codebook-unlinked="vscode://file/second">marker</a>',
+  )
+})
+
+test('a style inside a select keeps its text under current browser parsing rules', () => {
+  // Arrange: current Chromium treats style as HTML raw text inside select.
+  const page =
+    '<select><style></select><a href="vscode://file/example">marker</a>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert: the apparent anchor is still style text, not a link.
+  assert.equal(
+    served,
+    '<select><style></select><a href="vscode://file/example">marker</a>',
   )
 })
 
