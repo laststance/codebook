@@ -301,3 +301,84 @@ test('in Cursor the stop handled again at an invalidation is the oldest stored s
     },
   )
 })
+
+/** Asks a stopped thread to continue and lets the adapter answer with success, saying `allThreadsContinued` when given, as the editor's `continue` request and its answer pass the tracker. */
+function continueThread(
+  stops: StoredDebugStops,
+  seq: number,
+  threadId: number,
+  allThreadsContinued?: boolean,
+): void {
+  stops.readEditorsMessage('learner-node', {
+    type: 'request',
+    seq,
+    command: 'continue',
+    arguments: { threadId },
+  })
+  stops.readAdaptersMessage('learner-node', {
+    type: 'response',
+    seq: seq + 1,
+    request_seq: seq,
+    success: true,
+    command: 'continue',
+    body: allThreadsContinued === undefined ? {} : { allThreadsContinued },
+  })
+}
+
+// Value: protects=the editor's remembered word on all threads after a continued event that does not say not all threads go on: both editors read it as every thread going on, and their next `continue` without the word drops every stop again; fails_when=the store keeps remembering an earlier answer's allThreadsContinued false through such an event, so the next continue drops only one thread's stop and an invalidation is noted with a stale stop; why_new=Cycle 0046 TT1 (the third testing review: the reset at a continued event survived the suite); seam=none, the store alone
+test('a continued event that does not say not all threads go on makes the next continue without the word drop every stop again', () => {
+  // Arrange: threads 1 and 2 stopped; a continue of thread 1 was answered with allThreadsContinued false; then the adapter said that every thread goes on, and both threads stopped again.
+  const stops = new StoredDebugStops()
+  stops.noteStop('learner-node', thread1Stop)
+  stops.noteStop('learner-node', thread2Stop)
+  continueThread(stops, 11, 1, false)
+  stops.readAdaptersMessage('learner-node', {
+    type: 'event',
+    event: 'continued',
+    body: { threadId: 2 },
+  })
+  stops.noteStop('learner-node', thread1Stop)
+  stops.noteStop('learner-node', thread2Stop)
+
+  // Act: a continue of thread 1 answered without the word.
+  continueThread(stops, 13, 1)
+
+  // Assert: no stop is stored.
+  assert.equal(stops.lastStopOf('learner-node'), undefined)
+})
+
+// Value: protects=the editor's remembered word on all threads after a continue answered with allThreadsContinued true: the editor remembers true from then on, so its next `continue` without the word drops every stop; fails_when=the store keeps an earlier false through that answer, so the answer itself and the next continue drop only one thread's stop; why_new=Cycle 0046 TT1 (the reset at a true answer survived the suite); seam=none
+test('a continue answered with allThreadsContinued true makes the next continue without the word drop every stop again', () => {
+  // Arrange: threads 1 and 2 stopped; a continue of thread 1 was answered with allThreadsContinued false; a continue of thread 2 was answered with true; both threads stopped again.
+  const stops = new StoredDebugStops()
+  stops.noteStop('learner-node', thread1Stop)
+  stops.noteStop('learner-node', thread2Stop)
+  continueThread(stops, 21, 1, false)
+  continueThread(stops, 23, 2, true)
+  stops.noteStop('learner-node', thread1Stop)
+  stops.noteStop('learner-node', thread2Stop)
+
+  // Act: a continue of thread 1 answered without the word.
+  continueThread(stops, 25, 1)
+
+  // Assert: no stop is stored.
+  assert.equal(stops.lastStopOf('learner-node'), undefined)
+})
+
+// Value: protects=a new session under the id of one that ended: the editor's word on all threads begins as true for it, so its first `continue` without the word drops every stop; fails_when=forget keeps the ended session's allThreadsContinued false, so the new session's continue drops only one thread's stop; why_new=Cycle 0046 TT1 (the reset at forget survived the suite); seam=none
+test('a session forgotten after a continue answered with allThreadsContinued false begins again with every thread going on at a continue', () => {
+  // Arrange: a continue of thread 1 was answered with allThreadsContinued false; the session ended, and a new one under the same id stopped on threads 1 and 2.
+  const stops = new StoredDebugStops()
+  stops.noteStop('learner-node', thread1Stop)
+  stops.noteStop('learner-node', thread2Stop)
+  continueThread(stops, 31, 1, false)
+  stops.forget('learner-node')
+  stops.noteStop('learner-node', thread1Stop)
+  stops.noteStop('learner-node', thread2Stop)
+
+  // Act: a continue of thread 1 answered without the word.
+  continueThread(stops, 33, 1)
+
+  // Assert: no stop is stored.
+  assert.equal(stops.lastStopOf('learner-node'), undefined)
+})
