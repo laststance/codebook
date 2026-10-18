@@ -3,6 +3,8 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants as openConstants } from 'node:fs'
 import {
+  appendFile,
+  lstat,
   mkdtemp,
   mkdir,
   open,
@@ -1111,6 +1113,72 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
       small: { status: 200, body: '<p>Prepared page</p>' },
       filesTheReaderRead: ['small.html'],
       preparedPageCount: 1,
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
+test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
+  // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-growing-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const growingFileSystem = {
+    ...fileSystemPromises,
+    lstat: async (...parameters: Parameters<typeof lstat>) => {
+      const status = await lstat(...parameters)
+      if (basename(String(parameters[0])) === 'index.html')
+        await appendFile(parameters[0], 'x'.repeat(2_000))
+      return status
+    },
+  }
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithGrowingPage } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
+      'node:fs/promises': growingFileSystem,
+      './wikiPageWorker': countingWorker,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithGrowingPage(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(reader.url)
+  const answer = {
+    status: response.status,
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { answer, preparedPageCount },
+    {
+      answer: {
+        status: 503,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      preparedPageCount: 0,
     },
   )
 })
