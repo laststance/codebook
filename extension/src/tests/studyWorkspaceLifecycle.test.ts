@@ -4150,6 +4150,57 @@ test('a live run that ends while its Application pane has the keyboard and the S
   }
 })
 
+// Value: protects=the whole of a Close of the Live arrangement when the editor refuses to close the empty group the Application pane leaves: the Close still ends, reports the refusal on the reader's layout line, and still clears what a closed reader must not keep (its layout receipt and captured source); fails_when=close() does not catch the refused group close, so it rejects after the panes were disposed and skips everything after the release, leaving a receipt and a source of a reader that is closed (Cycle 0046 OCR1-4); why_new=Cycle 0046 OCR1-4; seam=the workspace harness with the reader's open and returnToCurrent (the Live arrangement with the Application's own group), refuseNextGroupClose, the reader's close, its error lines and fields
+test('a Close of the Live arrangement whose empty Application group the editor refuses to close still ends, reports the refusal and leaves no layout receipt or source behind', async () => {
+  // Arrange: the learner returned an open Study to the current run, so the Live arrangement holds the Application in a group of its own; the editor will refuse to close that group once it is empty.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    const live = harness.reader.presentationState()
+    harness.refuseNextGroupClose()
+
+    // Act
+    const answer = await harness.reader.close().then(
+      () => 'closed',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: the Close ended and told the refusal on the layout line, and the closed reader keeps no layout receipt and no captured source.
+    assert.deepEqual(
+      {
+        liveAppColumn: live.panes.appColumn,
+        answer,
+        state: harness.reader.presentationState().state,
+        panels: harness.counts().panels,
+        layoutLine: harness.reader['errors'].get('layout'),
+        keepsLayoutReceipt: harness.reader['layoutReceipt'] !== undefined,
+        keepsSource: harness.reader['sourceUri'] !== undefined,
+      },
+      {
+        liveAppColumn: 1,
+        answer: 'closed',
+        state: 'closed',
+        panels: 0,
+        layoutLine:
+          'Error: The editor refused to retire an empty Codebook group.',
+        keepsLayoutReceipt: false,
+        keepsSource: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the extension host and the learner's keyboard at the end of a live run whose Application pane had the keyboard, with the Study workspace closed, when the editor refuses to close the empty group the pane leaves: the refusal is reported on the reader's layout line, no rejection is left unhandled, and the active editor group still gets the keyboard with its one sentence; fails_when=the run's end does not catch the refused group close, so the rejection is unhandled and the keyboard settle after it never runs, which leaves the keyboard on the page body (Cycle 0046 OCR1-3); why_new=Cycle 0046 OCR1-3; seam=the workspace harness with the controlled runtime, a live run's viewport and its close, the Application pane's reveal with the focus, refuseNextGroupClose, process unhandledRejection, the reader's error lines, keyboardOnBody, command log and information messages
 test('a live run that ends while its Application pane has the keyboard, and whose empty group the editor refuses to close, reports the refusal and still leaves the keyboard in the active editor group', async () => {
   // Arrange: the learner's file is the tab of the first group; a live run shows its Application pane in its own group with the Study workspace closed, and the pane has the keyboard. The editor will refuse to close the group the pane leaves empty.

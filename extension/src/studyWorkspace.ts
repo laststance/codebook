@@ -8841,7 +8841,7 @@ export class StudyWorkspace {
    * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: beside a learner's own file that close moves no keyboard and tells nothing; when it takes away the active editor (one of the reader's panes or its captured source) the active editor group gets the keyboard and the learner is told, as at a Close ({@link settlesKeyboardAtThisClose}). One exception holds for every close, a disposal's and one in a window without the focus too: a close that ends a Read shows the side bars the Read hid again ({@link endEnlargementAtClose}), and the editor shows a bar only with a command that gives that bar the keyboard. The chat that had the keyboard as a tab of another editor part then gets it back and nothing is told; in every other case the active editor group takes the keyboard once the panes are closed and the learner is told ({@link movesKeyboardAfterClose}).
    * Native owned-tab closes use {@link closeOwnedEditorTabs} before final panel disposal: the host restores an actual editor input only when an owned close ends its group, while terminal/sidebar-chat input stays outside that native focus guard.
    * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
-   * @throws When the editor refused an owned tab close or a rebuilt pane cannot be distinguished from another pane of the same kind.
+   * @throws When the editor refused an owned tab close or a rebuilt pane cannot be distinguished from another pane of the same kind. A refused or late close of the Application's emptied group does not end the Close: it is reported on the layout line and the rest of the cleanup runs (Cycle 0046 OCR1-4).
    * @example await workspace.close()
    */
   async close(): Promise<void> {
@@ -8951,7 +8951,10 @@ export class StudyWorkspace {
       applicationPanel?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
-      await this.releaseApplicationGroup()
+      // A refused or late close of the Application's group is told and ends nothing: the cleanup below still runs (Cycle 0046 OCR1-4).
+      await this.releaseApplicationGroup().catch((error: unknown) =>
+        this.report('layout', error),
+      )
       // An editor that keeps emptied groups leaves the other groups Codebook created empty: they go too, before the layout of before the Open is given back (finding 597).
       await this.retireEmptyCreatedGroups()
       // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
