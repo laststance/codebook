@@ -3758,6 +3758,70 @@ test('a second window’s Update is refused while the first window’s stopped w
   }
 })
 
+// Value: protects=a learner whose press finds two chats that may still publish at once (another window's stopped watch and this window's own): Update anyway passes only the chat its notification named, so a second chat is named before it is overridden; fails_when=Update anyway passes every leftover the refusal found while its sentence names only the first, so the update starts past this window's own stopped chat, which no notification named; why_new=Cycle 0046 second ship, state-machine review SM2; seam=none
+test('a press that finds another window’s stopped watch and this window’s own at once names the other window’s chat, and Update anyway on it is refused again naming this window’s own chat, with no chat request', async () => {
+  // Arrange: the first window stops its watch; the second window takes the update over with Update anyway and stops its watch too, so the first window's next press finds the second window's reservation and its own stopped watch.
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+    cancellable: progress,
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Update anyway'),
+  })
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    await secondWindow.clickUpdate()
+    const deadline = Date.now() + 2_000
+    while (secondWindow.status().state !== 'running' && Date.now() < deadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+    progress[1]!.cancel()
+    await waitForEnd(secondWindow.status)
+    const requestsBefore = wiki.chatRequests.length
+    const refusalsBefore = wiki.offeredActions.length
+
+    // Act: the first window presses Update and chooses Update anyway on the first refusal only.
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    isOverrideChosen = false
+    const refusalDeadline = Date.now() + 2_000
+    while (
+      wiki.offeredActions.length < refusalsBefore + 2 &&
+      wiki.status().state !== 'running' &&
+      Date.now() < refusalDeadline
+    )
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+
+    // Assert
+    const refusals = wiki.offeredActions
+      .slice(refusalsBefore)
+      .map(({ message }) => message)
+    assert.equal(refusals.length, 2)
+    assert.match(
+      refusals[0] ?? '',
+      /The VS Code chat another editor window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; that window stopped watching it at /,
+    )
+    assert.match(
+      refusals[1] ?? '',
+      /The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at /,
+    )
+    assert.equal(wiki.chatRequests.length, requestsBefore)
+    assert.equal(wiki.status().state, 'failed')
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
 test('a stopped watch’s reservation leaves the disk when its window closes, and not the marker of a window that took the update over', async () => {
   // Arrange: two windows stop their watches; in the second case another window takes the update over with Update anyway.
   const progress: CancellableProgress[] = []

@@ -1347,7 +1347,7 @@ export function activate(
   /**
    * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
    *
-   * The order: what makes the publisher refuse (a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusal named, and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
+   * The order: what makes the publisher refuse (a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusals named (a refusal names one, so two leftovers at once are named in two refusals, one after the other), and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
    *
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
@@ -1464,7 +1464,7 @@ export function activate(
       if (otherWindow && otherWindow.watchEndedAtMs === undefined)
         return refuse(describeOtherWindow(otherWindow), {})
       const nowMs = Date.now()
-      // Every leftover in the way now, each with the sentence that names it; "Update anyway" is bound to all of them.
+      // Every leftover in the way now, each with the sentence that names it; a refusal names one, and its "Update anyway" passes only that one.
       const leftovers: Array<{ leftover: WikiLeftover; reason: string }> = []
       // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on. A site published since that watch's end ended the wait: the reservation names no candidate, so this window knows no more of that chat's publish than its time.
       if (
@@ -1507,7 +1507,7 @@ export function activate(
           leftover: { kind: 'last-run', endedAtMs: lastRun.endedAtMs },
           reason: `The VS Code chat this window asked at ${formatClockTime(lastRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(lastRun.endedAtMs, {})} and waits for it until ${formatClockTime(lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
         })
-      // A press of "Update anyway" passes only the leftovers its refusal named; one that appeared since is named in a new refusal.
+      // A press of "Update anyway" passes only the leftovers its refusals named; another one, there already or appeared since, is named in a refusal of its own.
       const unacknowledged = leftovers.find(
         ({ leftover }) =>
           !isAcknowledgedWikiLeftover(leftover, acknowledgedLeftovers),
@@ -1515,7 +1515,7 @@ export function activate(
       if (unacknowledged)
         return refuse(unacknowledged.reason, {
           onUpdateAnyway: () =>
-            updateAnyway(leftovers.map(({ leftover }) => leftover)),
+            updateAnyway([...acknowledgedLeftovers, unacknowledged.leftover]),
         })
       // A publish that landed while the checks ran made them about two generations: check the new one.
       if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart) {
