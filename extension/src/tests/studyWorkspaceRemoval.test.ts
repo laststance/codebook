@@ -1286,6 +1286,48 @@ test('a study the Trash took only partly stays listed and shown, and deleting it
   }
 })
 
+// Value: protects=the learner is told that it is unknown whether the study moved when the removal could not look at a path after the Trash rejected it, and can delete it again; fails_when=the pane says "Nothing was deleted" for a recording that is in the Trash, or shows the line of a partly moved study as if what moved were known (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the editor's Trash, stubbed at the vscode boundary: before it rejects the study's recording folder, the test moves that folder away and puts a file where the recordings folder was, so the look afterwards answers ENOTDIR
+test('a study whose recording folder could not be looked at after the Trash rejected it shows that Codebook could not tell whether it moved, and deleting it again finishes the removal', async () => {
+  // Arrange: a saved study with an empty recording folder; the Trash takes the folder, then a file stands where the recordings folder was, then the call rejects.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const directory = harness.reader.inspect().libraryDirectory!
+    const recordingsRoot = join(directory, 'recordings.v2'),
+      recordingFolder = join(recordingsRoot, shown.id)
+    await mkdir(recordingFolder, { recursive: true })
+    await chooseStudy(harness, shown.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.beforeTrashMoves(async (path) => {
+      if (path !== recordingFolder) return
+      await rename(path, join(harness.directory, 'moved-recording'))
+      await rm(recordingsRoot, { recursive: true })
+      await writeFile(recordingsRoot, '')
+    })
+    harness.rejectTrashMoves((path) => path === recordingFolder)
+    // Act
+    await requestRemoval(harness, shown.id)
+    const afterUnknownMove = harness.reader.inspect().view!
+    harness.beforeTrashMoves(async () => {})
+    harness.rejectTrashMoves(() => false)
+    await requestRemoval(harness, shown.id)
+    const afterSecondRemoval = harness.reader.inspect().view!
+    // Assert
+    assert.deepEqual(structuredClone(afterUnknownMove.studyRemoval), {
+      status: 'failed',
+      studyId: shown.id,
+      text: `Codebook could not tell whether the saved study was moved to the ${TRASH}; delete it again to finish. Trash refused ${shown.id}; whether ${recordingFolder} left the library could not be checked: ENOTDIR: not a directory, lstat '${recordingFolder}'`,
+    })
+    assert.equal(afterSecondRemoval.studyRemoval?.status, 'moved')
+    assert.deepEqual(
+      structuredClone(afterSecondRemoval.studies.map((entry) => entry.id)),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a checkpoint whose capture was in flight when the removal was confirmed does not bring the study back; fails_when=only the write queues are drained, which never held that capture; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('a checkpoint that was capturing a study when its removal was confirmed writes nothing for it afterwards', async () => {
   // Arrange: a recorded, stopped and saved run with a captured image; the learner confirms while the next capture reads it.

@@ -1111,6 +1111,65 @@ test('a Trash move that rejects after the file already left the library is count
   assert.deepEqual(await storage.library.list(), [])
 })
 
+// Value: protects=a recording folder the Trash took is counted as moved, also when something made the folder again at its path before the editor's call rejected; fails_when=any entry at the path after a rejected move counts as the Trash's refusal, so the removal reports that nothing was deleted although the recording is in the Trash, and the window offers no removal any more (AD10 case c); why_new=Cycle 0046 adversarial review AD10: the entry at the path is compared with the one there before the move; seam=the injected mover, which moves the folder, makes an empty folder at its path and rejects
+test('a Trash move that rejects after the folder left the library and another was made at its path counts the folder as moved, and the removal completes', async (context) => {
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then an empty folder appears at its path, then the call rejects.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const recordingFolder = join(storage.directory, 'recordings.v2', study.id)
+  const moverThatRejectsAfterThePathWasMadeAgain: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path !== recordingFolder) return
+    await mkdir(path)
+    throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverThatRejectsAfterThePathWasMadeAgain,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v2', study.id),
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  assert.deepEqual(await readdir(recordingFolder), [])
+})
+
+// Value: protects=a removal whose moved folder cannot be looked at afterwards never tells the learner that nothing was deleted; fails_when=a look that fails after a rejected move counts as the path still being there, so the outcome reads "Nothing was deleted" and the Trash's refusal, although the recording is in the Trash (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the injected mover, which moves the recording folder, puts a file where its parent folder was (so the look answers ENOTDIR, as a folder this user may not read answers EACCES) and rejects
+test('a Trash move that rejects for a folder that cannot be looked at afterwards ends as partly moved and says that whether it moved is unknown', async (context) => {
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then a file stands where the recordings folder was, then the call rejects.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const recordingsRoot = join(storage.directory, 'recordings.v2'),
+    recordingFolder = join(recordingsRoot, study.id)
+  const moverWhoseFolderCannotBeLookedAt: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path !== recordingFolder) return
+    await rm(recordingsRoot, { recursive: true })
+    await writeFile(recordingsRoot, '')
+    throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverWhoseFolderCannotBeLookedAt,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'partly-moved',
+    cause: `Trash answered late; whether ${recordingFolder} left the library could not be checked: ENOTDIR: not a directory, lstat '${recordingFolder}'`,
+    moveUnknown: true,
+  })
+  assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
+  assert.deepEqual(
+    (await storage.library.list()).map((entry) => entry.id),
+    [study.id],
+  )
+})
+
 // Value: protects=moving the last run's evidence leaves no empty instance directory in the agent storage; fails_when=the instance directory stays behind after its only run's evidence went to the Trash (0040-N9-5); why_new=the evidence test asserted only the run directory; seam=the injected mover
 test('moving the evidence of an instance’s only run also removes the instance directory that is left empty, and keeps one that still holds another run', async (context) => {
   // Arrange: two studies; the first instance has one run, the second instance has two.

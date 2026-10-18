@@ -45,6 +45,7 @@ import { atomicPrivateBytes } from './utils/atomicPrivateBytes'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from './utils/decodeLearnerProgress'
 import { decodeRetainedStudy } from './utils/decodeRetainedStudy'
+import { entryAfterRejectedMove } from './utils/entryAfterRejectedMove'
 import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
@@ -79,7 +80,7 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
  * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `unconfirmedWriter` when a recording of the study names another host whose run may still write it.
- * - `partly-moved`: a step failed after at least one path went to the Trash; the study is still listed and a second removal finishes it.
+ * - `partly-moved`: a step failed after at least one path went to the Trash; the study is still listed and a second removal finishes it. With `moveUnknown` when a path whose move the mover rejected could not be looked at afterwards: whether it went to the Trash is unknown.
  * Either failure carries `trashRefused` when the Trash itself refused a move, so the caller tells that from a refusal before any move.
  */
 export type StudyRemoval =
@@ -89,8 +90,10 @@ export type StudyRemoval =
       cause: string
       /** Only for `nothing-moved` refused because a recording's writer may still run and this computer cannot confirm it ({@link UnconfirmedWriter}): one on another host, or a live process of this computer whose start, by the clock, is after the recording's; the caller asks the learner whether to move it anyway. */
       unconfirmedWriter?: UnconfirmedWriter
-      /** `true` when the Trash itself refused a move: the mover threw for a path, and that path is still in the library. Absent for every refusal before a move (another window's recording, a study of which nothing is left, a held storage lock). */
+      /** `true` when the Trash itself refused a move: the mover threw for a path, and the same entry (its device and inode from the look right before the move) is still at that path. Absent for every refusal before a move (another window's recording, a study of which nothing is left, a held storage lock), and for a path made again after its move. */
       trashRefused?: true
+      /** Only for `partly-moved`: the mover threw for a path, and the look at it afterwards failed, so whether that path went to the Trash is unknown ({@link entryAfterRejectedMove}). The study counts as partly moved: the caller says that the state is unknown, and a second removal finishes what is left. */
+      moveUnknown?: true
     }
 
 /** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another host, or a live process of this computer whose start does not fit the recording's) is no such reservation: the learner decides about it when they delete the study. */
@@ -199,8 +202,10 @@ type StudyRemovalChanges = {
   movedPathCount: number
   /** The ledger's bytes before this removal rewrote it; absent while the ledger is untouched, `null` when the rewrite created the repository ledger file (it was projected from a historical file). */
   ledgerBytesBefore?: Buffer | null
-  /** Set when the mover threw for a path that is still in the library: the Trash itself refused it. */
+  /** Set when the mover threw for a path at which the same entry is still in place: the Trash itself refused it. */
   trashRefused?: true
+  /** Set when the mover threw for a path that could not be looked at afterwards: whether it moved is unknown. */
+  moveUnknown?: true
 }
 
 /** The format of a study that has an archive: a known format, or `newer` for one this Codebook does not know yet. */
@@ -1091,13 +1096,25 @@ export class LearningLibrary {
             ledger = progress && withoutStudyReferences(progress, identity)
           const changes: StudyRemovalChanges = { movedPathCount: 0 }
           const trash = (path: string) => async (): Promise<void> => {
+            // The look right before the move tells the entry that stays from one made again at the path after the move.
+            const before = await lstat(path, { bigint: true }).catch(
+              () => undefined,
+            )
             try {
               await moveToTrash(path)
             } catch (error) {
-              // A mover that rejects after the path left the library still moved it; one whose path stays is the Trash's own refusal.
-              if (!(await this.isGone(path))) {
+              const after = await entryAfterRejectedMove(path, before)
+              // Only the same entry still in place is the Trash's own refusal; a mover that rejects after the entry left the library still moved it.
+              if (after.kind === 'still-there') {
                 changes.trashRefused = true
                 throw error
+              }
+              // A path that cannot be looked at may or may not have moved: the removal stops there and says so.
+              if (after.kind === 'unknown') {
+                changes.moveUnknown = true
+                throw new Error(
+                  `${thrownMessage(error)}; whether ${path} left the library could not be checked: ${after.cause}`,
+                )
               }
             }
             changes.movedPathCount += 1
@@ -1309,11 +1326,6 @@ export class LearningLibrary {
     return paths
   }
 
-  /** Says whether a path no longer exists, read after a mover rejected; a path that cannot be inspected counts as still there. @example await this.isGone(path) // => true once the path is in the Trash */
-  private async isGone(path: string): Promise<boolean> {
-    return (await this.optionalStat(path).catch(() => true)) === undefined
-  }
-
   /**
    * Rewrites the ledger without the removed study's references and remembers its bytes from before, so {@link failedRemoval} can write them back when no path moved.
    * @param ledger - The ledger without the references.
@@ -1338,6 +1350,7 @@ export class LearningLibrary {
    * @param cause - The failed step's message.
    * @param changes - What the removal changed before the failure.
    * @returns
+   * - `partly-moved` with `moveUnknown` when whether the last path moved could not be checked: the ledger keeps its rewrite, as for a study that partly moved
    * - `partly-moved` when at least one path went to the Trash
    * - `nothing-moved` when no path moved; a rewritten ledger is written back to its bytes first, and the cause names both failures when that write-back fails
    * Either carries `trashRefused` when the Trash itself refused the move that stopped the removal.
@@ -1348,6 +1361,9 @@ export class LearningLibrary {
     changes: StudyRemovalChanges,
   ): Promise<StudyRemoval> {
     const refusal = changes.trashRefused ? { trashRefused: true as const } : {}
+    // A path whose move could not be checked may have left the library: no "nothing moved" is claimed, and a second removal finishes what is left.
+    if (changes.moveUnknown)
+      return { outcome: 'partly-moved', cause, moveUnknown: true }
     if (changes.movedPathCount > 0)
       return { outcome: 'partly-moved', cause, ...refusal }
     if (changes.ledgerBytesBefore === undefined)

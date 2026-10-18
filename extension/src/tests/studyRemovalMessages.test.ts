@@ -124,3 +124,22 @@ test('the moved line of a library still at or above its limit says that it is st
     'Saved study moved to the Trash. The library now holds 64 of 64 saved studies and is still full; delete 1 more before another study can be saved.',
   )
 })
+
+// Value: protects=a removal that stopped at a path it could not look at again says that nobody knows whether the study moved, and what to do; fails_when=the learner reads "Nothing was deleted" or "only partly moved" for a study that may be in the Trash, whole or in part (AD10); why_new=Cycle 0046 adversarial review AD10: the outcome of an unknown move is new; seam=none
+test('a removal whose move could not be checked says that Codebook could not tell whether the study moved, in the Trash’s word, with the next step', () => {
+  // Arrange
+  const onMacAndLinux = studyRemovalMessages('Trash'),
+    onWindows = studyRemovalMessages('Recycle Bin')
+  // Act
+  const lines = {
+    trash: onMacAndLinux.moveUnknown('EACCES: permission denied'),
+    recycleBin: onWindows.moveUnknown('EACCES: permission denied'),
+  }
+  // Assert
+  assert.deepEqual(lines, {
+    trash:
+      'Codebook could not tell whether the saved study was moved to the Trash; delete it again to finish. EACCES: permission denied',
+    recycleBin:
+      'Codebook could not tell whether the saved study was moved to the Recycle Bin; delete it again to finish. EACCES: permission denied',
+  })
+})

@@ -56,6 +56,9 @@ export function studyRemovalMessages(
       `The saved study could not be moved to the ${trashName}. Nothing was deleted. ${cause}`,
     partlyMoved: (cause: string): string =>
       `The saved study was only partly moved to the ${trashName}; delete it again to finish. ${cause}`,
+    /** The line after a removal that stopped at a path it could not look at once the Trash had rejected it: whether that path moved is unknown, so neither "nothing was deleted" nor "partly moved" is claimed. */
+    moveUnknown: (cause: string): string =>
+      `Codebook could not tell whether the saved study was moved to the ${trashName}; delete it again to finish. ${cause}`,
     /** What "Remove by hand" shows, in a window without a Trash, when the study's files could not be listed: what failed, the next step, and the cause as the system gave it. */
     filesNotListed: (cause: string): string =>
       `Codebook could not list this study's files. Press Retry storage / refresh to try again. ${cause}`,

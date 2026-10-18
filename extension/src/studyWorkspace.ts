@@ -21633,11 +21633,13 @@ export class StudyWorkspace {
     }
     await this.forgetRemovedStudy(studyId, 'removed-by-learner')
     if (removal.outcome !== 'moved') {
-      // Partly moved: the study is still listed and stays chosen, so deleting it again finishes the removal.
+      // Partly moved, or not known to have moved: the study is still listed and stays chosen, so deleting it again finishes the removal.
       this.settleStudyRemoval({
         status: 'failed',
         studyId,
-        text: messages.partlyMoved(removal.cause),
+        text: removal.moveUnknown
+          ? messages.moveUnknown(removal.cause)
+          : messages.partlyMoved(removal.cause),
       })
       return
     }
