@@ -183,7 +183,7 @@ function withoutComments(source) {
 }
 
 /**
- * Names the way a call loads a file by a path, for {@link unreadableLoadsOf}: a dynamic `import(…)`, `require(…)`, `require.resolve(…)`, or a path built from `__dirname` with `resolve` or `join`.
+ * Names the way a call loads a file by a path, for {@link unreadableLoadsOf}: a dynamic `import(…)`, `require(…)`, `require.resolve(…)`, or a path built from `__dirname` with `resolve` or `join`, called bare or as a method (`path.join`).
  * @param call - A call expression of the source.
  * @returns `import`, `require`, `require.resolve` or `__dirname`; `undefined` for every other call.
  * @example
@@ -194,15 +194,22 @@ function loadFormOf(call) {
   const callee = call.expression
   if (callee.kind === ts.SyntaxKind.ImportKeyword) return 'import'
   if (ts.isIdentifier(callee) && callee.text === 'require') return 'require'
-  if (ts.isPropertyAccessExpression(callee))
-    return ts.isIdentifier(callee.expression) &&
-      callee.expression.text === 'require' &&
-      callee.name.text === 'resolve'
-      ? 'require.resolve'
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === 'require' &&
+    callee.name.text === 'resolve'
+  )
+    return 'require.resolve'
+  // `join(__dirname, …)` and `path.join(__dirname, …)` alike, as the pattern of compiled modules in loadedPathsOf matches both.
+  const name = ts.isPropertyAccessExpression(callee)
+    ? callee.name.text
+    : ts.isIdentifier(callee)
+      ? callee.text
       : undefined
   const [base] = call.arguments
-  return ts.isIdentifier(callee) &&
-    ['resolve', 'join'].includes(callee.text) &&
+  return name !== undefined &&
+    ['resolve', 'join'].includes(name) &&
     base !== undefined &&
     ts.isIdentifier(base) &&
     base.text === '__dirname'
@@ -1234,9 +1241,9 @@ test('a script test the Windows job runs is followed with the script modules it 
   }
 })
 
-// Cycle 0046 row 125: a load whose path the closure could not read (a template literal, a variable, require.resolve) was left out silently, so the file it names could be missing from a path filter unseen.
+// Cycle 0046 row 125: a load whose path the closure could not read (a template literal, a variable, require.resolve) was left out silently, so the file it names could be missing from a path filter unseen. Second /ship CodeRabbit CR8-1: path.join(__dirname, …) with a variable was left out the same way.
 test('a load whose path is a template literal, a variable or an expression fails the pin with the file, the line and the load, while a document read below a folder named by a variable does not', async () => {
-  // Arrange: four test files that each load by a path the closure cannot read, and one that only reads a document that way and resolves a module by a quoted path.
+  // Arrange: five test files that each load by a path the closure cannot read (the last through path.join), and one that only reads a document that way and resolves a module by a quoted path.
   const root = await mkdtemp(join(tmpdir(), 'codebook-workflow-pins-'))
   try {
     await mkdir(join(root, 'src/tests'), { recursive: true })
@@ -1268,6 +1275,14 @@ test('a load whose path is a template literal, a variable or an expression fails
       ].join('\n'),
     )
     await writeFile(
+      join(root, 'src/tests/fromPathJoin.test.ts'),
+      [
+        "import path from 'node:path'",
+        "const folder = '../utils'",
+        "const lockPath = path.join(__dirname, folder, 'lock.js')",
+      ].join('\n'),
+    )
+    await writeFile(
       join(root, 'src/tests/readable.test.ts'),
       [
         "const folder = '../..'",
@@ -1288,6 +1303,7 @@ test('a load whose path is a template literal, a variable or an expression fails
       variable: await failureOf('src/tests/variable.test.ts'),
       resolved: await failureOf('src/tests/resolved.test.ts'),
       fromDirname: await failureOf('src/tests/fromDirname.test.ts'),
+      fromPathJoin: await failureOf('src/tests/fromPathJoin.test.ts'),
     }
     const readableSources = await sourcesLoadedBy(
       ['src/tests/readable.test.ts'],
@@ -1304,6 +1320,8 @@ test('a load whose path is a template literal, a variable or an expression fails
         "src/tests/resolved.test.ts:3 loads a file by a path this pin cannot read: require.resolve('../utils/' + name). Write the path as one string in quotes, so that the path filter can name the file.",
       fromDirname:
         'src/tests/fromDirname.test.ts:3 loads a file by a path this pin cannot read: resolve(__dirname, target.relativePath). Write the path as one string in quotes, so that the path filter can name the file.',
+      fromPathJoin:
+        "src/tests/fromPathJoin.test.ts:3 loads a file by a path this pin cannot read: path.join(__dirname, folder, 'lock.js'). Write the path as one string in quotes, so that the path filter can name the file.",
     })
     assert.deepEqual(readableSources, [
       'src/tests/readable.test.ts',
