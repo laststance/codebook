@@ -265,7 +265,8 @@ fi
       scenario === 'success' ? result.stdout : result.stderr,
       scenario === 'success' ? /fixture finished\n/ : /ELIFECYCLE|exit code 2/,
     )
-    assert.deepEqual(await readdir(standInDirectory), ['asked', 'ps'])
+    // Node does not promise a listing's order, so the names are compared in name order.
+    assert.deepEqual((await readdir(standInDirectory)).sort(), ['asked', 'ps'])
     for (const name of ['lifecycle.json', 'writer.json']) {
       const { pid } = JSON.parse(
         await readFile(join(fixture.directory, name), 'utf8'),
