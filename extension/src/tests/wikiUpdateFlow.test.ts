@@ -3683,7 +3683,6 @@ test('after a stopped watch on one Wiki output and an update of another output, 
   }
 })
 
-// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes
 // Value: protects=the reloaded window and other windows after a stopped watch on one Wiki output and a finished update of another, when the window closes within the first watch's bound; fails_when=the shutdown takes the stored record of the later run for the record of the stopped watch, so it removes that watch's reservation although the workspace state no longer holds its record, and the reloaded window starts a second chat beside one that may still work; why_new=Cycle 0046 /ship repeat testing review TR2 (R7's per-output rule had no test); seam=none
 test('a window that closes within a stopped watch’s bound keeps that watch’s reservation on disk when a later finished update of another output took its record’s place in storage', async () => {
   // Arrange: a watch on the first output is stopped; the setting names a second output, whose update finishes with a publish.
@@ -3731,6 +3730,7 @@ test('a window that closes within a stopped watch’s bound keeps that watch’s
   }
 })
 
+// Value: protects=other windows and this window's later presses after a stopped watch's bound, on every output the learner updated; fails_when=the claim of a run on another output clears the timer of the first output's reservation, so this window never removes that reservation from the disk at the watch bound; why_new=Cycle 0046 /ship red team finding R7; seam=the watch bound, 3 seconds instead of 15 minutes
 test('the reservation a stopped watch left on one Wiki output leaves the disk at its watch bound, also after an update of another output began in the meantime', async () => {
   // Arrange: the watch bound is 3 seconds; a watch on the first output is stopped, then the setting names a second output, whose update begins and is stopped too.
   const progress: CancellableProgress[] = []
