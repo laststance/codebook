@@ -3132,7 +3132,7 @@ export class StudyWorkspace {
       )
       // A newer pause, replay or learner choice can revoke a return while native command discovery waits.
       if (stillCurrent && !stillCurrent()) return false
-      // A click or key the learner gave in a text editor since this capture, also where the arrangement or its measurement left the keyboard, is the learner's newer place (row 741); a pause's return keeps its own rules for the learner's signs ({@link keepsPauseReturnCurrent}).
+      // A click or key the learner gave in a text editor since this capture, also where the arrangement or its measurement left the keyboard, is the learner's newer place (row 741); a pause's return keeps its own rules for the learner's signs ({@link keepsPauseReturnCurrent}, {@link keepsPauseEndReturnCurrent}).
       if (
         toldCause !== 'pause' &&
         this.learnerWorkedInEditorAtMs !== learnerSignBefore
@@ -4014,23 +4014,45 @@ export class StudyWorkspace {
     const pause = remembered.pause
     remembered.pause = undefined
     if (this.leavesRecordAfterPause(pause)) return false
-    // A return the editor refuses leaves the keyboard where it is.
-    void this.giveKeyboardBackAtPause(remembered).catch(() => false)
+    const learnerSignAtEnd = this.learnerWorkedInEditorAtMs
+    // A return the editor refuses leaves the keyboard where it is; a learner's click or key, a new stop or a lost window focus while the return looks up its command revokes it (OCR1-10).
+    void this.giveKeyboardBackAtPause(remembered, () =>
+      this.keepsPauseEndReturnCurrent(remembered, learnerSignAtEnd),
+    ).catch(() => false)
     return true
+  }
+
+  /**
+   * Rechecks, after native command discovery, that the return a pause's end owes the chat is still owed; the `stillCurrent` {@link endsPauseOfRecord} gives {@link giveKeyboardBackAtPause}, as {@link keepsPauseReturnCurrent} is for the return of a reveal.
+   * @param remembered - The chat's record the pause's end gave the return to.
+   * @param learnerSignAtEnd - The learner's last click or key in a text editor when the pause ended ({@link noteLearnersSelection}).
+   * @returns `true` while the window has the focus, the record is still that one, no new pause is noted on it and the learner gave no new sign; `false` otherwise.
+   * @example this.keepsPauseEndReturnCurrent(remembered, learnerSignAtEnd) // => false right after the learner clicked into the paused file
+   */
+  private keepsPauseEndReturnCurrent(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+    learnerSignAtEnd: number | undefined,
+  ): boolean {
+    return (
+      vscode.window.state.focused &&
+      this.keyboardOutsideEditors === remembered &&
+      remembered.pause === undefined &&
+      this.learnerWorkedInEditorAtMs === learnerSignAtEnd
+    )
   }
 
   /**
    * Gives the chat of the record its keyboard back at a pause, and tells the learner once where it went ({@link CHAT_EDITOR_TAB_KEYBOARD_RETURNED_MESSAGE}); the return of {@link returnKeyboardOfPause} and {@link endsPauseOfRecord}.
    * Neither editor tells an extension whether its chat input or a view (the terminal, the Call Stack) had the keyboard while the chat is the active editor: Cursor names the chat's group as the active one until another editor part takes the focus, and no text editor is active in either case (Cursor 3.23.12 `workbench.desktop.main.js` 17269:31242, 17501:84373, 17264:2840, 17264:3411; VS Code 1.140.0 705:2504). So a return to Cursor's chat with Focus Agent is told once, as the return to VS Code's chat editor tab is (rows 632 and 635), by {@link runFocusReturnCommand} with the pause's cause.
    * @param remembered - The chat's record.
-   * @param stillCurrent - Revokes the return while native command discovery waits; left out for a pause that is over.
+   * @param stillCurrent - Revokes the return while native command discovery waits: {@link keepsPauseReturnCurrent} for the return of a reveal, {@link keepsPauseEndReturnCurrent} for the return a pause's end owes.
    * @returns `true` when the chat's focus command ran.
    * @throws What the editor's layout read, its command list or the chat's focus command rejected with.
    * @example await this.giveKeyboardBackAtPause(remembered, stillCurrent) // => true in Cursor, and the sentence is told once
    */
   private async giveKeyboardBackAtPause(
     remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
-    stillCurrent?: () => boolean,
+    stillCurrent: () => boolean,
   ): Promise<boolean> {
     return remembered.giveBack(true, stillCurrent, 'pause')
   }
