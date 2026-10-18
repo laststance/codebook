@@ -1350,7 +1350,7 @@ export function activate(
   /**
    * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
    *
-   * The order: what makes the publisher refuse (a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusals named (a refusal names one, so two leftovers at once are named in two refusals, one after the other), and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
+   * The order: what makes the publisher refuse (a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusals named (a refusal names one chat's leftovers: another window's stopped watch, a candidate, or this window's own stopped watch together with the candidate that watch saw; the leftovers of two chats at once are named in two refusals, one after the other), and which no longer counts once that chat's own publish came after its watch's end ({@link hasWikiPublishEndedWait}); and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
    *
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
@@ -1467,8 +1467,8 @@ export function activate(
       if (otherWindow && otherWindow.watchEndedAtMs === undefined)
         return refuse(describeOtherWindow(otherWindow), {})
       const nowMs = Date.now()
-      // Every leftover in the way now, each with the sentence that names it; a refusal names one, and its "Update anyway" passes only that one.
-      const leftovers: Array<{ leftover: WikiLeftover; reason: string }> = []
+      // Every leftover in the way now, each entry with the sentence that names it; a refusal names one entry, and its "Update anyway" passes only that entry's leftovers.
+      const leftovers: Array<{ named: WikiLeftover[]; reason: string }> = []
       // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on. A site published since that watch's end ended the wait: the reservation names no candidate, so this window knows no more of that chat's publish than its time.
       if (
         otherWindow?.watchEndedAtMs !== undefined &&
@@ -1479,11 +1479,13 @@ export function activate(
         }))
       )
         leftovers.push({
-          leftover: {
-            kind: 'reservation',
-            windowId: otherWindow.windowId,
-            startedAtMs: otherWindow.startedAtMs,
-          },
+          named: [
+            {
+              kind: 'reservation',
+              windowId: otherWindow.windowId,
+              startedAtMs: otherWindow.startedAtMs,
+            },
+          ],
           reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(otherWindow.watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
         })
       // The record of another output says nothing about this one's candidates.
@@ -1492,33 +1494,53 @@ export function activate(
         await listWikiCandidates(outputDirectory),
         { nowMs, activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS, lastRun },
       )
-      if (activeCandidate)
-        leftovers.push({
-          leftover: { kind: 'candidate', name: activeCandidate.name },
-          reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-        })
-      // A watch that stopped before the chat staged anything left no candidate, yet the chat may still work. Its own publish since the watch's end ended the wait: the page has shown that publish, and nothing is left to wait for.
-      if (
+      // This window's own stopped watch, whose chat may still work; a watch that stopped before the chat staged anything left no candidate. Its own publish since the watch's end ended the wait: the page has shown that publish, and nothing is left to wait for.
+      const awaitedOwnRun =
         lastRun?.mayAgentStillWork &&
         nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS &&
         !(await hasWikiPublishEndedWait(outputDirectory, {
           watchEndedAtMs: lastRun.endedAtMs,
           candidateNames: lastRun.candidateNames ?? [],
         }))
-      )
+          ? lastRun
+          : undefined
+      const ownRunLeftover: WikiLeftover | undefined = awaitedOwnRun && {
+        kind: 'last-run',
+        endedAtMs: awaitedOwnRun.endedAtMs,
+      }
+      // A candidate this window's stopped watch saw is that watch's chat's: one refusal names both, and its "Update anyway" passes both. A candidate the watch never saw is named in a refusal of its own.
+      const isCandidateOfOwnRun =
+        activeCandidate !== undefined &&
+        (awaitedOwnRun?.candidateNames ?? []).includes(activeCandidate.name)
+      if (activeCandidate) {
+        const candidateLeftover: WikiLeftover = {
+          kind: 'candidate',
+          name: activeCandidate.name,
+        }
         leftovers.push({
-          leftover: { kind: 'last-run', endedAtMs: lastRun.endedAtMs },
-          reason: `The VS Code chat this window asked at ${formatClockTime(lastRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(lastRun.endedAtMs, {})} and waits for it until ${formatClockTime(lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+          named:
+            isCandidateOfOwnRun && ownRunLeftover
+              ? [candidateLeftover, ownRunLeftover]
+              : [candidateLeftover],
+          reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+        })
+      }
+      if (awaitedOwnRun && ownRunLeftover && !isCandidateOfOwnRun)
+        leftovers.push({
+          named: [ownRunLeftover],
+          reason: `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatClockTime(awaitedOwnRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
         })
       // A press of "Update anyway" passes only the leftovers its refusals named; another one, there already or appeared since, is named in a refusal of its own.
-      const unacknowledged = leftovers.find(
-        ({ leftover }) =>
-          !isAcknowledgedWikiLeftover(leftover, acknowledgedLeftovers),
+      const unacknowledged = leftovers.find(({ named }) =>
+        named.some(
+          (leftover) =>
+            !isAcknowledgedWikiLeftover(leftover, acknowledgedLeftovers),
+        ),
       )
       if (unacknowledged)
         return refuse(unacknowledged.reason, {
           onUpdateAnyway: () =>
-            updateAnyway([...acknowledgedLeftovers, unacknowledged.leftover]),
+            updateAnyway([...acknowledgedLeftovers, ...unacknowledged.named]),
         })
       // A publish that landed while the checks ran made them about two generations: check the new one.
       if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart) {

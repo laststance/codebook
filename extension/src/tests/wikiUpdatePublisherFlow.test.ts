@@ -364,8 +364,8 @@ test('a retry after this window’s own run ended with the chat’s reply starts
   }
 })
 
-// Value: protects=the learner whose VS Code chat has stopped after the watch ended on a file of theirs; fails_when=Update anyway on the refused press starts no update, or the new run takes the earlier chat's abandoned candidate for its own; why_new=Cycle 0046 row 343 (the step the sentence names for a start again); seam=none
-test('after a VS Code watch ended on a learner’s file, Update anyway on the refused press starts the update again, and the new run does not take the earlier chat’s candidate for its own', async () => {
+// Value: protects=the learner whose VS Code chat has stopped after the watch ended on a file of theirs; fails_when=Update anyway on the refused press starts no update, or the new run takes the earlier chat's abandoned candidate for its own, or the chat's candidate (which the watch saw) and the chat's stopped watch are named in two refusals, so one stopped chat needs Update anyway twice; why_new=Cycle 0046 row 343 (the step the sentence names for a start again), second ship P2SM2 (the refusal count); seam=none
+test('after a VS Code watch ended on a learner’s file, Update anyway on the one refusal of the next press starts the update again, and the new run does not take the earlier chat’s candidate for its own', async () => {
   // Arrange: the first run ends as a conflict and leaves its candidate behind.
   let isOverrideChosen = false
   const wiki = await openPublishedWikiWindow({
@@ -385,6 +385,7 @@ test('after a VS Code watch ended on a learner’s file, Update anyway on the re
       extraPages: ['pages/notes.html'],
     })
     const firstRun = await waitForStatus(wiki.status, hasEnded)
+    const offersBefore = wiki.offeredActions.length
 
     // Act: the press is refused, and Update anyway is chosen on its notification.
     isOverrideChosen = true
@@ -398,6 +399,17 @@ test('after a VS Code watch ended on a learner’s file, Update anyway on the re
 
     // Assert
     assert.equal(firstRun.state, 'conflict')
+    const refusals = wiki.offeredActions
+      .slice(offersBefore)
+      .filter(({ actions }) => actions.includes('Update anyway'))
+      .map(({ message }) => message)
+    assert.equal(refusals.length, 1)
+    assert.match(
+      refusals[0] ?? '',
+      new RegExp(
+        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(stage)}, written `,
+      ),
+    )
     assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
       'Update anyway',
       'Open LLM Wiki',
