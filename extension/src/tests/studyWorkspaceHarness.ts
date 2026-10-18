@@ -717,10 +717,16 @@ export async function workspaceHarness(
         return
       }
       historicalStopSource = sourceUri
-      await this.editor.commands.executeCommand(
-        NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
-        null,
-      )
+      // As for the real owner, the host's refusal fails no frame and leaves the selection unsettled for the next frame (AD25).
+      try {
+        await this.editor.commands.executeCommand(
+          NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
+          null,
+        )
+      } catch (error) {
+        this.failed(error)
+        return
+      }
       this.modelSelectionSettledFor = selection
     }
     /**

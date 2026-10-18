@@ -439,13 +439,26 @@ test('the frames of one recorded stop ask the host for its commands once and sel
 
 // Value: protects=the one rule of the native model selection that the real historical debugger and the workspace harness's fake share (F6): the real owner is driven through the scenario table the fake is held to (REPLAY_MODEL_SELECTION_SCENARIO: the same selection again, another label, another snapshot, an invalidation), so a change of the real rule fails this table, and the workspace tests that rest on the fake's reveal of the captured source (row 721) cannot pass on a rule the real owner no longer has; fails_when=the real owner selects the model again for the same selection, or not for a new label, a new snapshot or after an invalidation; why_new=TR8, Cycle 0046 repeat testing review (N8's fidelity test checked only the fake); seam=the editor's command port, which counts selections and lets the client load the values, and the native client's threads and stackTrace requests after each presentation
 test('the real historical debugger follows the model-selection scenario the workspace harness’s fake is held to', async () => {
-  // Arrange: a client that fetches the stack after each presentation and loads the values when the model is selected; two recorded stops.
+  // Arrange: a client that fetches the stack after each presentation and loads the values when the model is selected; two recorded stops; a host that refuses, or holds, one selection when the scenario says so.
   const fixture = harness(undefined, undefined, 0, false, true)
-  let selections = 0
+  let selections = 0,
+    refusesNextSelection = false,
+    holdsNextSelection = false,
+    answerHeldSelection = (): void => {}
   fixture.editor.commands = {
     getCommands: async () => ['workbench.action.debug.focusProcess'],
     executeCommand: async () => {
       selections += 1
+      if (refusesNextSelection) {
+        refusesNextSelection = false
+        throw new Error('focusProcess failed')
+      }
+      if (holdsNextSelection) {
+        holdsNextSelection = false
+        await new Promise<void>((resolve) => {
+          answerHeldSelection = resolve
+        })
+      }
       fixture.inspect()
       return undefined
     },
@@ -455,18 +468,30 @@ test('the real historical debugger follows the model-selection scenario the work
     second: structuredClone(inspectedSnapshot),
   }
   const driver: ReplayModelSelectionDriver = {
-    present: async (stop, label) => {
-      const presenting = fixture.owner.present(
-        snapshots[stop],
-        label,
-        new AbortController().signal,
-      )
+    present: async (stop, label, circumstance) => {
+      refusesNextSelection = circumstance === 'host refuses'
+      holdsNextSelection = circumstance === 'abandoned while the host answers'
+      if (circumstance === 'live session owns the view')
+        fixture.startForeignSession()
+      const abandon = new AbortController()
+      const presenting = fixture.owner
+        .present(snapshots[stop], label, abandon.signal)
+        .catch(() => undefined)
       // The owned session starts with the first presentation; later ones find it started.
       await fixture.started
       await flushNative()
       const thread = fixture.request('threads').body.threads[0]
       fixture.request('stackTrace', { threadId: thread.id })
+      // The presentation is abandoned while the host still answers its selection, which it answers afterwards.
+      if (circumstance === 'abandoned while the host answers') {
+        await flushNative()
+        abandon.abort(new Error('New playback frame'))
+        answerHeldSelection()
+      }
       await presenting
+      await flushNative()
+      if (circumstance === 'live session owns the view')
+        fixture.terminateForeign('learner-foreign-session')
     },
     invalidate: () => fixture.owner.invalidate(),
     selections: () => selections,

@@ -1,10 +1,26 @@
-/** One step of {@link REPLAY_MODEL_SELECTION_SCENARIO}: a presentation of one of two recorded stops (two snapshot objects) under a label, or an invalidation that empties the native session. */
+/**
+ * What surrounds a presentation of {@link REPLAY_MODEL_SELECTION_SCENARIO} besides the stop and the label (Cycle 0046 AD26):
+ * - `host refuses`: the host rejects the presentation's `workbench.action.debug.focusProcess`; the frame is still shown, and the selection stays unsettled (AD25).
+ * - `abandoned while the host answers`: the presentation is abandoned while the host still answers its selection; the answer settles the stop's selection all the same (AD25).
+ * - `live session owns the view`: a debug session of the learner's own is active beside the replay, so no model is selected for the stop and the selection stays unsettled.
+ */
+export type ReplayModelSelectionCircumstance =
+  | 'host refuses'
+  | 'abandoned while the host answers'
+  | 'live session owns the view'
+
+/** One step of {@link REPLAY_MODEL_SELECTION_SCENARIO}: a presentation of one of two recorded stops (two snapshot objects) under a label, maybe in one of the {@link ReplayModelSelectionCircumstance}s, or an invalidation that empties the native session. */
 export type ReplayModelSelectionStep =
-  | { action: 'present'; stop: 'first' | 'second'; label: string }
+  | {
+      action: 'present'
+      stop: 'first' | 'second'
+      label: string
+      circumstance?: ReplayModelSelectionCircumstance
+    }
   | { action: 'invalidate' }
 
 /**
- * The scenario of F6's rule of the native model selection, with the model selections (`workbench.action.debug.focusProcess`) counted after each step: a presentation selects the model once per selection, a selection being the snapshot object, the label and the source; the same selection presented again selects nothing, and an invalidation drops the selection. Both the real {@link ReplayDebugger} (replayDebugger.test) and the workspace harness's fake (studyWorkspaceReplay.test) are driven through it, so a change of either rule fails the table (TR8, Cycle 0046).
+ * The scenario of F6's rule of the native model selection, with the model selections (`workbench.action.debug.focusProcess`) counted after each step: a presentation selects the model once per selection, a selection being the snapshot object, the label and the source; the same selection presented again selects nothing, and an invalidation drops the selection. A selection the host refused, or one not made while a live debug session owns the view, is made at the stop's next frame; one whose presentation was abandoned while the host answered is made all the same (AD25, AD26). Both the real {@link ReplayDebugger} (replayDebugger.test) and the workspace harness's fake (studyWorkspaceReplay.test) are driven through it, so a change of either rule fails the table (TR8, Cycle 0046).
  */
 export const REPLAY_MODEL_SELECTION_SCENARIO: ReadonlyArray<{
   step: ReplayModelSelectionStep
@@ -55,12 +71,80 @@ export const REPLAY_MODEL_SELECTION_SCENARIO: ReadonlyArray<{
     },
     selectionsAfter: 4,
   },
+  // A new selection the host refuses: the command ran, and the selection stays unsettled.
+  {
+    step: {
+      action: 'present',
+      stop: 'first',
+      label: 'Recorded pause · 4.00 s',
+      circumstance: 'host refuses',
+    },
+    selectionsAfter: 5,
+  },
+  // Its next frame selects the model, and the frame after that nothing.
+  {
+    step: {
+      action: 'present',
+      stop: 'first',
+      label: 'Recorded pause · 4.00 s',
+    },
+    selectionsAfter: 6,
+  },
+  {
+    step: {
+      action: 'present',
+      stop: 'first',
+      label: 'Recorded pause · 4.00 s',
+    },
+    selectionsAfter: 6,
+  },
+  // A new selection whose presentation is abandoned while the host answers: the answer settles it.
+  {
+    step: {
+      action: 'present',
+      stop: 'second',
+      label: 'Recorded pause · 5.00 s',
+      circumstance: 'abandoned while the host answers',
+    },
+    selectionsAfter: 7,
+  },
+  {
+    step: {
+      action: 'present',
+      stop: 'second',
+      label: 'Recorded pause · 5.00 s',
+    },
+    selectionsAfter: 7,
+  },
+  // A new selection while a live debug session owns the view: none is made.
+  {
+    step: {
+      action: 'present',
+      stop: 'first',
+      label: 'Recorded pause · 6.00 s',
+      circumstance: 'live session owns the view',
+    },
+    selectionsAfter: 7,
+  },
+  // Its next frame, once that session ended, selects the model.
+  {
+    step: {
+      action: 'present',
+      stop: 'first',
+      label: 'Recorded pause · 6.00 s',
+    },
+    selectionsAfter: 8,
+  },
 ]
 
 /** What a test drives the scenario through: one owner of the historical debugger, the real one or the harness's fake. */
 export type ReplayModelSelectionDriver = {
-  /** Presents a stop under a label and waits until the presentation ended. */
-  present(stop: 'first' | 'second', label: string): Promise<void>
+  /** Presents a stop under a label, in the given circumstance if any, and waits until the presentation ended; a live session that owned the view ends with it. */
+  present(
+    stop: 'first' | 'second',
+    label: string,
+    circumstance?: ReplayModelSelectionCircumstance,
+  ): Promise<void>
   /** Empties the native session, as the reader's playback does for a hidden or covered moment. */
   invalidate(): void
   /** How many model selections ran since the scenario began. */
@@ -80,7 +164,8 @@ export async function selectionsThroughScenario(
   const counted: number[] = []
   for (const { step } of REPLAY_MODEL_SELECTION_SCENARIO) {
     // A presentation waits for its end; an invalidation takes effect at once.
-    if (step.action === 'present') await driver.present(step.stop, step.label)
+    if (step.action === 'present')
+      await driver.present(step.stop, step.label, step.circumstance)
     else driver.invalidate()
     counted.push(driver.selections())
   }

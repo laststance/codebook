@@ -919,13 +919,34 @@ test('the workspace harness’s historical debugger follows the model-selection 
       ).length
     const selectionsBefore = modelSelections()
     const driver: ReplayModelSelectionDriver = {
-      present: async (stop, label) => {
-        await debuggerView.present(
-          snapshots[stop],
-          label,
-          new AbortController().signal,
-          shown.sourceDocument,
-        )
+      present: async (stop, label, circumstance) => {
+        if (circumstance === 'host refuses')
+          harness.failNextCommand('workbench.action.debug.focusProcess')
+        const held =
+          circumstance === 'abandoned while the host answers'
+            ? harness.holdNextCommand('workbench.action.debug.focusProcess')
+            : undefined
+        // A live debug session of the learner's own owns the view: its stop is the frame Run and Debug shows.
+        if (circumstance === 'live session owns the view') {
+          harness.pauseDebugger({
+            session: 'learner-node',
+            staysInBackground: true,
+          })
+          harness.reportStopFrame('learner-node')
+        }
+        const abandon = new AbortController()
+        const presenting = debuggerView
+          .present(snapshots[stop], label, abandon.signal, shown.sourceDocument)
+          .catch(() => undefined)
+        // The presentation is abandoned while the host still answers its selection, which it answers afterwards.
+        if (held) {
+          await held.started
+          abandon.abort(new Error('New playback frame'))
+          held.release()
+        }
+        await presenting
+        if (circumstance === 'live session owns the view')
+          harness.endDebugSession('learner-node')
       },
       invalidate: () => debuggerView.invalidate(),
       selections: () => modelSelections() - selectionsBefore,
