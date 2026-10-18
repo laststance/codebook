@@ -104,7 +104,7 @@ async function requireRegularFolder(path, root, isOutputInProject, refusalOf) {
   if (stat && !(await isOwnFolder(path, stat, root, isOutputInProject))) throw new Error(refusalOf(path));
 }
 
-/** The folders one recursive mkdir made, deepest first: from the folder it was asked for up to the first one it created, which it answers; none when it created none. Called by {@link createParentOf}. @example madeFoldersOf('/repo/.codebook', '/repo/.codebook/sub') // => ['/repo/.codebook/sub', '/repo/.codebook'] */
+/** The folders one recursive mkdir made, deepest first: from the folder it was asked for up to the first one it created, which it answers; none when it created none. Called by {@link createParentOf} and {@link makeFolderHeld}. @example madeFoldersOf('/repo/.codebook', '/repo/.codebook/sub') // => ['/repo/.codebook/sub', '/repo/.codebook'] */
 function madeFoldersOf(made, parent) {
   const folders = [];
   // From the folder asked for up to the first one made.
@@ -112,7 +112,7 @@ function madeFoldersOf(made, parent) {
   return folders;
 }
 
-/** Removes folders the preparation made, in the order given, each with rmdir: that removes only an empty folder and follows no link at its own name, so a folder that holds something now, or is gone, stays as it is. Called by {@link createParentOf} and {@link requireStageWhereItWasMade} before they refuse. @example await removeMadeFolders(['/repo/.codebook/wiki.stage-1', '/repo/.codebook']) */
+/** Removes folders the preparation or the publish made, in the order given, each with rmdir: that removes only an empty folder and follows no link at its own name, so a folder that holds something now, or is gone, stays as it is. Called by {@link createParentOf}, {@link requireStageWhereItWasMade} and {@link makeFolderHeld} before they refuse. @example await removeMadeFolders(['/repo/.codebook/wiki.stage-1', '/repo/.codebook']) */
 async function removeMadeFolders(folders) {
   for (const folder of folders) await rmdir(folder).catch(() => undefined);
 }
@@ -206,15 +206,30 @@ async function requireNoJournal(journal) {
   if (await regularBytes(journal, true)) throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
 }
 
-/** Whether the stage and the output's parent still lie where the preparation resolved them: both real paths inside the project, and the parent still the folder, by device and inode, it was when the paths were resolved. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade}. @example await isWhereItWasMade('/repo', '/repo/.codebook', '/repo/.codebook/wiki.stage-1', parentIdentity) // => false once .codebook was swapped for a link */
-const isWhereItWasMade = (root, parent, stage, identity) => Promise.all([realpath(parent), realpath(stage), stat(parent)]).then(
-  ([realParent, realStage, now]) => isInProject(root, realParent) && isInProject(root, realStage) && now.dev === identity.dev && now.ino === identity.ino,
+/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example await isWhereItWasResolved('/repo', '/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1']) // => false once .codebook was swapped for a link */
+const isWhereItWasResolved = (root, parent, identity, entries) => Promise.all([stat(parent), ...[parent, ...entries].map(path => realpath(path))]).then(
+  ([now, ...realPaths]) => realPaths.every(real => isInProject(root, real)) && now.dev === identity.dev && now.ino === identity.ino,
   () => false);
 
-/** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasMade}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
+/** Takes the look at the output's parent once the paths are resolved, for a publish or a recovery, and answers the check that holds every later write to it: for an output inside the project, the parent and `entries` must still be where they were ({@link isWhereItWasResolved}), or the step is refused with the parent's sentence. The race left is the one {@link requireStageWhereItWasMade} names. Called by {@link publishWiki} and {@link recoverWikiPublication}. @returns The check, which resolves when the path still holds and throws otherwise. @example const requirePathHeld = await holdOfPath(paths, [paths.stage]); await requirePathHeld() // throws once .codebook was swapped for a link */
+async function holdOfPath(paths, entries) {
+  const parent = dirname(paths.output), identity = await stat(parent);
+  return async () => {
+    if (!paths.isOutputInProject || await isWhereItWasResolved(paths.root, parent, identity, entries)) return;
+    throw new Error(linkedPathRefusalOf(parent));
+  };
+}
+
+/** Makes a folder in the stage, then holds the path ({@link holdOfPath}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page and each kept manual file. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld) */
+async function makeFolderHeld(folder, requirePathHeld) {
+  const madeFolders = madeFoldersOf(await mkdir(folder, { recursive: true }), folder);
+  try { await requirePathHeld(); } catch (error) { await removeMadeFolders(madeFolders); throw error; }
+}
+
+/** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasResolved}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
 async function requireStageWhereItWasMade(paths, stage, parentIdentity) {
   const parent = dirname(paths.output);
-  if (!paths.isOutputInProject || await isWhereItWasMade(paths.root, parent, stage, parentIdentity)) return;
+  if (!paths.isOutputInProject || await isWhereItWasResolved(paths.root, parent, parentIdentity, [stage])) return;
   await removeMadeFolders([stage, ...paths.madeFolders]);
   throw new Error(linkedPathRefusalOf(parent));
 }
@@ -252,8 +267,10 @@ async function removeOwnedRecord(path, bytes) {
 
 /** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
 export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false }) {
-  const { root, output, stage, journal } = await locations(projectRoot, outputDirectory, stageDirectory);
+  const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
   if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
+  // Every write below is held to the look the paths were resolved with.
+  const requirePathHeld = await holdOfPath(paths, [stage]);
   await requireNoJournal(journal);
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
@@ -267,7 +284,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
   for (const [path, html] of rendered) {
-    await mkdir(dirname(join(stage, path)), { recursive: true });
+    await makeFolderHeld(dirname(join(stage, path)), requirePathHeld);
     await writeFile(join(stage, path), html);
   }
   if (renderOnly) return { stage, renderedPages: rendered.size };
@@ -281,6 +298,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   await writeFile(journal, journalBytes, { flag: 'wx' });
   let movedOld = false, swapped = false;
   try {
+    await requirePathHeld();
     prior = await inspectPrior();
     assertBaseline(receipt.baseline, prior);
     const manual = prior ? prior.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !prior.owned.has(path)) : [];
@@ -290,9 +308,10 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
         throw new Error('A manual Wiki file conflicts with the update: ' + path);
       const content = await regularBytes(join(output, path));
       manualHashes[path] = digest(content);
-      await mkdir(dirname(join(stage, path)), { recursive: true });
+      await makeFolderHeld(dirname(join(stage, path)), requirePathHeld);
       await writeFile(join(stage, path), content, { flag: 'wx' });
     }
+    await requirePathHeld();
     await writeFile(join(stage, MANIFEST), manifestText);
     await writeFile(join(stage, RECEIPT), JSON.stringify({ ...receipt, kind: 'published', manifestSha256: record.manifestSha256, manifestText }));
     // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
@@ -301,6 +320,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     const currentManual = current ? current.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !current.owned.has(path)) : [];
     if (currentManual.length !== manual.length) throw new Error('Manual Wiki files changed during publication; output was preserved.');
     for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
+    await requirePathHeld();
     if (backup) { await rename(output, backup); movedOld = true; }
     await rename(stage, output);
     swapped = true;
@@ -381,12 +401,15 @@ async function restoreManifest(record, paths) {
 /** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, journal } = paths;
+  // Every write and move below is held to the look the paths were resolved with.
+  const requirePathHeld = await holdOfPath(paths, []);
   let bytes = await regularBytes(journal, true), record, claims = [];
   if (bytes) {
     record = JSON.parse(bytes);
     if (record?.projectRoot !== root || record.output !== output || !['publish', 'restore-manifest', undefined].includes(record.operation))
       throw new Error('The Wiki publication journal does not identify this output; inspect it without moving files.');
     requireExited(record.pid);
+    await requirePathHeld();
     claims = await claimRecovery(journal, bytes);
   } else {
     const state = await recoveryState(root, output, paths.stage);
@@ -397,10 +420,14 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
       modifiedManifestSha256: state.actual ? digest(state.actual) : null,
       modifiedManifestBackup: output + '.modified-manifest-' + id + '.json', temporaryManifest: join(output, '.codebook-restore-' + id + '.json'), sourceStage: state.legacyRecovery ? paths.stage : undefined };
     bytes = Buffer.from(JSON.stringify(record));
+    await requirePathHeld();
     await writeFile(journal, bytes, { flag: 'wx' });
+    // A journal written after a swap is this recovery's own; it is removed with the refusal.
+    await requirePathHeld().catch(async error => { await removeOwnedRecord(journal, bytes); throw error; });
   }
   let completed = false;
   try {
+    await requirePathHeld();
     if (!(await regularBytes(journal)).equals(bytes)) throw new Error('The Wiki publication journal changed during recovery.');
     let result;
     if (record.operation === 'restore-manifest') {
@@ -429,6 +456,7 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
         await requireRegularFolder(record.backup, root, paths.isOutputInProject, backupRefusalOf);
         const prior = await inspectOutput(record.backup, root, { allowLegacy: true });
         if (!prior || record.priorManifestSha256 && digest(prior.bytes) !== record.priorManifestSha256) throw new Error('The prior Wiki does not match the publication journal.');
+        await requirePathHeld();
         await rename(record.backup, output);
         result = { status: 'previous-restored', output };
       } else result = { status: 'no-prior-wiki', stage: record.stage };
