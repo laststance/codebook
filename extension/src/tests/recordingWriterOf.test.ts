@@ -779,6 +779,27 @@ test('a valid recording header padded past a header’s bound is no header: the 
   assert.deepEqual(writer, { kind: 'finished' })
 })
 
+// Value: protects=every judgement of a recording's writer while its writer record is a valid record padded past a record's bound (a damaged or hostile storage folder); fails_when=the record's bound is not applied, so a record of any size up to the Wiki's 64 MiB is read whole and judges the recording (here as another machine's) (TT41, S5); why_new=Cycle 0046 third testing review TT41: the writer record's bound had no test; seam=the record, which the test makes name machine-b and pads past 65 536 bytes, and the header, which names this host and a process id of no process
+test('a valid writer record padded past a record’s bound is no record: the recording is judged by its header', async (context) => {
+  // Arrange: the record names machine-b and is padded to more than 64 KiB; the header names this host and a process id of no process.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, sessionId: randomUUID() },
+  })
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
+    pid: ID_OF_NO_PROCESS,
+    machineId: 'machine-b',
+    padding: 'x'.repeat(70_000),
+  })
+
+  // Act
+  const writer = await writerOf(recording.folder)
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'gone' })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
