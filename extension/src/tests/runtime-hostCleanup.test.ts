@@ -1409,6 +1409,51 @@ test('a managed close waits for a sweep that never ends 2 s at most, journals th
   )
 })
 
+// Value: protects=the journal of a run whose close stopped waiting for its sweep at the 2 s bound: the run is over, its journal ends with its cleanup, and the sweep that ends later, having removed a folder, writes nothing into it (R14, the third OCR review); fails_when=the sweep's result is journaled whatever the close did, so an entry lands after the run's `browser.cleanup-verified`; why_new=the bound's test used a sweep that never ends, so the guard was never reached; seam=the sweep's stand-in, which ends with one removed folder when the test releases it, the journal's verified exit, and the faked setTimeout of the close's bounded wait
+test('a sweep that ends after its run’s close stopped waiting for it journals nothing into that run, although it removed a folder', async (context) => {
+  // Arrange: the close stops waiting at the bound while the sweep still runs.
+  let releaseSweep!: (removed: string[]) => void
+  const sweep = new Promise<string[]>((resolve) => {
+    releaseSweep = resolve
+  })
+  let reportBrowserExitVerified!: () => void
+  const browserExitVerified = new Promise<void>((resolve) => {
+    reportBrowserExitVerified = resolve
+  })
+  const managed = await managedBrowser(context, {
+    removeAbandonedProfiles: () => sweep,
+    onEvent: (type) => {
+      if (type === 'browser.managed-exit-verified') reportBrowserExitVerified()
+    },
+  })
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const closing = managed.browser.close()
+  await browserExitVerified
+  await nextEventLoopTurn()
+  context.mock.timers.tick(2_000)
+  await closing
+  // Act: the sweep ends with a removed folder; its handling settles within one turn of the event loop, since it does no file work.
+  releaseSweep([join(managed.root, 'codebook-browser-left-by-a-killed-editor')])
+  await sweep
+  await nextEventLoopTurn()
+  // Assert
+  assert.deepEqual(
+    managed.events.map((event) => event.type),
+    [
+      'browser.managed-profile',
+      'host.debugger-started',
+      'browser.managed-exit-verified',
+      'browser.abandoned-profile-sweep-left-running',
+      'browser.managed-profile-removed',
+      'browser.cleanup-verified',
+    ],
+  )
+})
+
 // Value: protects=the next managed run after a close that stopped waiting for its sweep at the 2 s bound: its launch joins the sweep of the same root that still runs instead of starting a second one, which would read every marker's process start again (on Windows a PowerShell query of up to 3 s each) and remove nothing the first does not (R5, /ship third review, PD3-3); fails_when=the guard against a second sweep is kept per HostBrowser, which every ConfiguredBrowserRun makes anew, so each run starts a sweep of the root beside the one that runs; why_new=every sweep test used one browser; seam=the sweep's stand-in, which counts its starts and ends only when the test releases it, a later run of the same loaded adapter (`laterRun`), the journal's verified exit, and the faked setTimeout of the first close's bounded wait
 test('a managed launch while the sweep of its root outlives an earlier run’s close joins that sweep and starts no second one', async (context) => {
   // Arrange: the first run's close stops waiting for its sweep at the bound; the sweep still runs.
