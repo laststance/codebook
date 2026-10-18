@@ -1,10 +1,36 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // Read as text and never imported: loading the script publishes a Wiki, starts its reader and opens a browser.
 const scriptUrl = new URL('../wiki-reader-dom-qa.mjs', import.meta.url)
+
+/** A module for `--import` that makes the second server a process starts fail to listen, as a port the system refuses would; the Wiki reader DOM check starts its update-state control first and the other host second, and the publisher starts none. */
+const SECOND_LISTEN_FAILS = `import { Server } from 'node:net'
+
+const listen = Server.prototype.listen
+let listenCalls = 0
+Server.prototype.listen = function (...listenArguments) {
+  listenCalls += 1
+  if (listenCalls !== 2) return listen.apply(this, listenArguments)
+  process.nextTick(() =>
+    this.emit('error', Object.assign(new Error('listen EACCES: refused by the test'), { code: 'EACCES' })),
+  )
+  return this
+}
+`
 
 // Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout), and the cases that read the rail entry's link in Chrome's accessibility tree (the unit suites compare the entry as text, never what Chrome computes from it); fails_when=a case is removed or renamed without notice, so a size, a focus ring or a description the cycle's rows and findings name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83, 84, 132 and 137 (design review DR-8 to DR-11, ND-3), rows 330 and 343 (the sentences of a watch past its bound and of a learner's file in the way grew; their case holds the rail's bound), finding 600 (Chrome for Testing on C55 described the entry's link as "package.json :31"), /ship finding F2, follow-up N5 and repeat review SC1 (script in a page's content, or written straight into a page file, must not run under the reader nor from disk), Codex review CX5 (the shell's script of a page published from a shell with CRLF line endings must run), repeat code review OC5 (a link of a page file to a file or another extension in the editor must lose its link), Codex review CX16 (a script file written into the Wiki folder must not run, also through a script tag left open before the reader's own), finding AF6 (an address the publisher refuses today and a refresh must lose their effect), third review W2 (a refresh written with references, a frame's own page and an svg animation of an address must lose their effect), and W3 (a served page and one opened from disk fetch nothing from another host); seam=none
 test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600 with a refused start, the watch-bound and learner-file end sentences and a conflict, a long source path, the open control’s name and description in Chrome’s accessibility tree, the single column, the missing-page line, two pages whose headings carry the reader’s ids, a page whose content carries script, served and opened from disk, a page file with a script written into it, two page files that point at a script file written into the Wiki folder, a page file with links to a file and to another extension in the editor, of another editor’s scheme and a refresh, a page file with a refresh written with a reference, a frame’s own page and an animated link, two page files with references to another host, and a Wiki published from a reader shell with CRLF line endings', async () => {
@@ -133,5 +159,56 @@ test('the Wiki reader DOM check runs the steps of a page a second time on the sa
   assert.equal(
     digest,
     'eb35cdfedadf3542fa601391c34c21bc56d0736c7798d21f2ab7b6b3f4b67442',
+  )
+})
+
+// Value: protects=a developer's or a CI runner's temporary folder, which a Reader DOM run that fails before its browser opens must not fill with published Wikis; fails_when=a setup step after the first publish (the second publish, a server's listen, the rewrite of a page) fails and the check exits without removing the temporary projects it already published; why_new=OCR6-3: the setup ran before the try whose finally releases each resource, so a failed listen left both temporary projects behind; seam=a module in --import that makes the second listen of the process fail; no_claim=the release after a failure in the browser, which needs playwright-cli
+test('the Wiki reader DOM check removes the temporary projects it already published when a server of its setup cannot listen', async (context) => {
+  // Arrange: an empty temporary folder of the run's own, and an output folder beside it.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-dom-setup-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const temporary = join(directory, 'temporary'),
+    output = join(directory, 'output'),
+    preload = join(directory, 'second-listen-fails.mjs')
+  await mkdir(temporary)
+  await writeFile(preload, SECOND_LISTEN_FAILS)
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => name !== 'NODE_TEST_CONTEXT',
+    ),
+  )
+
+  // Act
+  const result = await new Promise((resolveResult, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        `--import=${pathToFileURL(preload).href}`,
+        fileURLToPath(scriptUrl),
+        'verify',
+        output,
+      ],
+      {
+        env: {
+          ...inherited,
+          TMPDIR: temporary,
+          TMP: temporary,
+          TEMP: temporary,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    let stderr = ''
+    child.stderr.on('data', (chunk) => (stderr += chunk))
+    child.on('error', reject)
+    child.on('close', (code) => resolveResult({ code, stderr }))
+  })
+
+  // Assert: the run failed on the refused listen, and neither the sample Wiki's nor the CRLF Wiki's project is left.
+  assert.equal(result.code, 1, result.stderr)
+  assert.match(result.stderr, /listen EACCES: refused by the test/)
+  assert.deepEqual(
+    (await readdir(temporary)).filter((name) => name.startsWith('codebook-')),
+    [],
   )
 })

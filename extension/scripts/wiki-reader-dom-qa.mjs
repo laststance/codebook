@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import {
   appendFile,
   readFile,
@@ -2496,8 +2497,9 @@ const report = {
     'Real Chromium and a Wiki published by the shipped publisher, served by the compiled reader; no editor takes part, so this is not native acceptance.',
   cases: [],
 }
-const wiki = await publishSampleWiki()
-const crlfWiki = await publishWikiFromCrlfShell()
+/** The sample Wiki and the Wiki published from a reader shell with CRLF line endings, each set once it is published, so the release removes only what exists. */
+let wiki
+let crlfWiki
 /** The update states the check's reader can answer, each as the extension's window would hold it when the page asks; an ended run ends at the moment it is chosen, after the sample Wiki was published, so no publish counts as one that came after it. */
 const updateStatuses = {
   idle: () => ({ state: 'idle' }),
@@ -2551,9 +2553,6 @@ const updateStatusControl = createServer((request, response) => {
   response.statusCode = chosen ? 204 : 404
   response.end()
 })
-await new Promise((resolveListening) =>
-  updateStatusControl.listen(0, '127.0.0.1', resolveListening),
-)
 // Another host on this machine, which notes every path a page fetches from it; the check asks it what was fetched (`/fetched`) and has it forget (`/forget`).
 let fetchedFromOtherHost = []
 const otherHost = createServer((request, response) => {
@@ -2563,25 +2562,30 @@ const otherHost = createServer((request, response) => {
   response.setHeader('Content-Type', 'application/json')
   response.end(JSON.stringify(path === '/fetched' ? fetchedFromOtherHost : []))
 })
-await new Promise((resolveListening) =>
-  otherHost.listen(0, '127.0.0.1', resolveListening),
-)
-const otherHostOrigin = `http://127.0.0.1:${otherHost.address().port}`
-// Two chapters get references to that host after the publish, with the Wiki's own image.
-for (const pagePath of Object.values(PAGES_WITH_OTHER_HOST_REFERENCES)) {
-  const pageFile = join(wiki.outputDirectory, pagePath)
-  await writeFile(
-    pageFile,
-    (await readFile(pageFile, 'utf8')).replace(
-      '</article>',
-      `${otherHostReferences(otherHostOrigin)}</article>`,
-    ),
-  )
-}
 let reader
 let crlfReader
 let isBrowserOpen = false
+// Every step that makes a resource runs inside the try, so a failed publish, listen or page rewrite still releases what was made before it.
 try {
+  wiki = await publishSampleWiki()
+  crlfWiki = await publishWikiFromCrlfShell()
+  // `once` rejects on the server's `error`, so a listen that fails ends the setup instead of waiting forever.
+  updateStatusControl.listen(0, '127.0.0.1')
+  await once(updateStatusControl, 'listening')
+  otherHost.listen(0, '127.0.0.1')
+  await once(otherHost, 'listening')
+  const otherHostOrigin = `http://127.0.0.1:${otherHost.address().port}`
+  // Two chapters get references to that host after the publish, with the Wiki's own image.
+  for (const pagePath of Object.values(PAGES_WITH_OTHER_HOST_REFERENCES)) {
+    const pageFile = join(wiki.outputDirectory, pagePath)
+    await writeFile(
+      pageFile,
+      (await readFile(pageFile, 'utf8')).replace(
+        '</article>',
+        `${otherHostReferences(otherHostOrigin)}</article>`,
+      ),
+    )
+  }
   reader = await startDeepWikiReader(
     wiki.outputDirectory,
     wiki.projectRoot,
@@ -2657,11 +2661,23 @@ try {
     async () => {
       if (crlfReader) await crlfReader.close()
     },
-    () =>
-      new Promise((resolveClosed) => updateStatusControl.close(resolveClosed)),
-    () => new Promise((resolveClosed) => otherHost.close(resolveClosed)),
-    wiki.remove,
-    crlfWiki.remove,
+    // A server whose listen failed, or never ran, has nothing to close.
+    async () => {
+      if (updateStatusControl.listening)
+        await new Promise((resolveClosed) =>
+          updateStatusControl.close(resolveClosed),
+        )
+    },
+    async () => {
+      if (otherHost.listening)
+        await new Promise((resolveClosed) => otherHost.close(resolveClosed))
+    },
+    async () => {
+      if (wiki) await wiki.remove()
+    },
+    async () => {
+      if (crlfWiki) await crlfWiki.remove()
+    },
   ])
 }
 console.log(
