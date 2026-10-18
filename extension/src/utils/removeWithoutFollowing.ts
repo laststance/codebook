@@ -46,7 +46,7 @@ async function namesIn(path: string): Promise<string[]> {
 type LookedDirectory = { dev: bigint; ino: bigint }
 
 /**
- * Confirms that a path still names the original directory before listing, removal and marker recovery; called by {@link removeEntriesOf}, {@link removeNamedEntries} and {@link removeLastEntryAndDirectory}.
+ * Confirms that a path still names the original directory before listing, removal and marker recovery; called by {@link removeEntriesOf}, {@link removeNamedEntries}, {@link removeLastEntryAndDirectory} and {@link restoreKeptEntry}.
  * Why: the walk removes an entry by its path below the directory's path, and a path whose directory was renamed and replaced by a link leads into the folder the link names, where the walk would remove that folder's entries of the same names.
  * @param path - The directory's path.
  * @param looked - Its device and file id at the walk's look.
@@ -160,13 +160,39 @@ async function keptEntryAt(path: string): Promise<KeptEntry | undefined> {
 }
 
 /**
+ * Tries to restore the saved marker after final directory removal fails; called by {@link removeLastEntryAndDirectory} before it reports the original error.
+ * @param path - The directory whose removal failed.
+ * @param looked - Its original device and file id, which must still match.
+ * @param lastEntryPath - The marker's path below that directory.
+ * @param kept - The captured bytes and mode; absent when no regular marker could be read.
+ * @returns After the restore attempt, or without writing when the marker was not captured or the directory no longer matches. Recovery errors are ignored so the original removal error stays visible.
+ * @example
+ * await restoreKeptEntry('/tmp/codebook-browser-x', looked, '/tmp/codebook-browser-x/codebook-owner.json', kept)
+ */
+async function restoreKeptEntry(
+  path: string,
+  looked: LookedDirectory,
+  lastEntryPath: string,
+  kept: KeptEntry | undefined,
+): Promise<void> {
+  // A failed identity check must not write below the path or hide the removal error.
+  if (!kept || !(await isStillTheDirectory(path, looked).catch(() => false)))
+    return
+  // Exclusive creation preserves a new marker placed after the old one was removed.
+  await writeFile(lastEntryPath, kept.bytes, {
+    flag: 'wx',
+    mode: kept.mode,
+  }).catch(() => undefined)
+}
+
+/**
  * Removes the entry that goes last and then the directory, once nothing else is left in it; called by {@link removeWithoutFollowing} for a directory with a {@link RemovalOrder.lastEntry} after its listed entries are removed.
- * Why: another program may make an entry in the directory after the walk's listing (Chrome writing a file as it ends, an antivirus scan). Before the last entry goes, the directory is listed again, up to {@link REMOVAL_RELISTS_BEFORE_LAST_ENTRY} times, and the new entries are removed first; the last entry is removed only when it is all that is left. An entry made after that, before the directory's own removal, makes the system answer "not empty": the last entry is written back then, so a later removal still knows the directory.
+ * Why: another program may make an entry in the directory after the walk's listing (Chrome writing a file as it ends, an antivirus scan). Before the last entry goes, the directory is listed again, up to {@link REMOVAL_RELISTS_BEFORE_LAST_ENTRY} times, and the new entries are removed first; the last entry is removed only when it is all that is left. A late entry, a busy directory or another refusal can still stop the final removal. If the same directory remains, the walk tries to restore the saved marker's bytes and mode without overwriting a new marker, so a later removal still knows the directory.
  * @param path - The directory, shown to be its parent's own.
  * @param looked - Its device and file id at the walk's look ({@link isStillTheDirectory}).
  * @param lastEntry - The entry that goes last (the owner marker of a profile folder).
  * @returns After the directory is gone; also when it went meanwhile.
- * @throws When the directory still gains entries after its last listing: its last entry stays. The system's error of the directory's removal, after the last entry was written back. Every error of {@link removeNamedEntries}.
+ * @throws When the directory still gains entries after its last listing: its last entry stays. The system's error of the directory's removal, after trying to restore the last entry in the original directory. Every error of {@link removeNamedEntries} and {@link isStillTheDirectory} before the final removal.
  * @example
  * await removeLastEntryAndDirectory('/tmp/codebook-browser-a1b2c3', looked, 'codebook-owner.json') // the folder and its marker are gone
  */
@@ -198,16 +224,7 @@ async function removeLastEntryAndDirectory(
   try {
     await rmdir(path)
   } catch (error) {
-    // Restore only in the original directory; a failed identity check must not hide the removal error.
-    if (
-      kept &&
-      NOT_EMPTY_CODES.includes(systemErrorCode(error)) &&
-      (await isStillTheDirectory(path, looked).catch(() => false))
-    )
-      await writeFile(lastEntryPath, kept.bytes, {
-        flag: 'wx',
-        mode: kept.mode,
-      }).catch(() => undefined)
+    await restoreKeptEntry(path, looked, lastEntryPath, kept)
     passIfMissing(error)
   }
 }

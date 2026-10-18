@@ -751,3 +751,179 @@ test('a folder removed during the last listing still counts as removed', async (
   // Assert
   assert.deepEqual(await readdir(parent), ['kept'])
 })
+
+// Value: protects=a managed profile whose final directory removal is busy or refused after its marker was removed; fails_when=the remaining folder loses its marker and no later sweep can identify it; why_new=Cycle 0046 row 1061: recovery handled only not-empty answers; seam=final rmdir refuses once in an owned folder, then uses the real file system on retry
+for (const code of ['EBUSY', 'EPERM']) {
+  test(`a final ${code} failure keeps the marker bytes and mode, reports the same error, and allows a later cleanup`, async (context) => {
+    // Arrange
+    const parent = await folderWithKeptFiles(context)
+    const folder = join(parent, 'codebook-browser-x')
+    const marker = join(folder, 'codebook-owner.json')
+    await mkdir(folder)
+    await writeFile(marker, '{"pid":4242}\n', { mode: 0o600 })
+    const refusal = Object.assign(new Error('Final removal refused.'), {
+      code,
+    })
+    let wasMarkerRemoved = false
+    let hasRefused = false
+    const removeWithOneRefusal = await loadWalkOn({
+      ...realFileSystem,
+      unlink: async (path: string) => {
+        await unlink(path)
+        if (path === marker) wasMarkerRemoved = true
+      },
+      rmdir: async (path: string) => {
+        if (path === folder && wasMarkerRemoved && !hasRefused) {
+          hasRefused = true
+          throw refusal
+        }
+        await realFileSystem.rmdir(path)
+      },
+    })
+
+    // Act
+    const failure = await removeWithOneRefusal(folder, {
+      lastEntry: 'codebook-owner.json',
+    }).catch((error: unknown) => error)
+
+    // Assert: the same error stays visible, and a later sweep still has its marker.
+    assert.equal(failure, refusal)
+    assert.deepEqual(
+      await readFile(marker).catch(() => undefined),
+      Buffer.from('{"pid":4242}\n'),
+    )
+    // Windows exposes the writable-file mode instead of POSIX owner permissions.
+    assert.equal(
+      (await lstat(marker)).mode & 0o777,
+      process.platform === 'win32' ? 0o666 : 0o600,
+    )
+
+    // Act: the next cleanup gets a successful final removal.
+    await removeWithOneRefusal(folder, { lastEntry: 'codebook-owner.json' })
+
+    // Assert
+    assert.deepEqual(await readdir(parent), ['kept'])
+  })
+}
+
+// Value: protects=a newly created marker after a refused final removal; fails_when=recovery overwrites the new marker with the captured old bytes; why_new=Cycle 0046 row 1061 extends recovery to busy/refused removals; seam=the owned fixture gets a new marker after unlink and final rmdir reports EPERM
+test('a refused final removal leaves a newly created marker unchanged', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(folder)
+  await writeFile(marker, '{"pid":4242}')
+  const refusal = Object.assign(new Error('Final removal refused.'), {
+    code: 'EPERM',
+  })
+  let wasMarkerRemoved = false
+  const removeBesideNewMarker = await loadWalkOn({
+    ...realFileSystem,
+    unlink: async (path: string) => {
+      await unlink(path)
+      if (path === marker) {
+        wasMarkerRemoved = true
+        await writeFile(marker, '{"pid":8000}')
+      }
+    },
+    rmdir: async (path: string) => {
+      if (path === folder && wasMarkerRemoved) throw refusal
+      await realFileSystem.rmdir(path)
+    },
+  })
+
+  // Act
+  const failure = await removeBesideNewMarker(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).catch((error: unknown) => error)
+
+  // Assert
+  assert.equal(failure, refusal)
+  assert.equal(await readFile(marker, 'utf8'), '{"pid":8000}')
+})
+
+// Value: protects=the original cleanup error when the attempt to restore the marker also fails; fails_when=the restore error replaces the final rmdir error or recovery is skipped; why_new=Cycle 0046 row 1061 restores after every final failure in a remaining owned directory; seam=final rmdir reports EBUSY and the marker write reports EACCES
+test('a marker restore failure leaves the original final removal error visible', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(folder)
+  await writeFile(marker, '{"pid":4242}')
+  const refusal = Object.assign(new Error('Final removal is busy.'), {
+    code: 'EBUSY',
+  })
+  let wasMarkerRemoved = false
+  let restorationAttempts = 0
+  const removeWithoutWriteAccess = await loadWalkOn({
+    ...realFileSystem,
+    unlink: async (path: string) => {
+      await unlink(path)
+      if (path === marker) wasMarkerRemoved = true
+    },
+    rmdir: async (path: string) => {
+      if (path === folder && wasMarkerRemoved) throw refusal
+      await realFileSystem.rmdir(path)
+    },
+    writeFile: async (...args: Parameters<typeof realFileSystem.writeFile>) => {
+      if (args[0] === marker) {
+        restorationAttempts += 1
+        throw Object.assign(new Error('Marker write refused.'), {
+          code: 'EACCES',
+        })
+      }
+      await realFileSystem.writeFile(...args)
+    },
+  })
+
+  // Act
+  const failure = await removeWithoutWriteAccess(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).catch((error: unknown) => error)
+
+  // Assert
+  assert.equal(failure, refusal)
+  assert.equal(restorationAttempts, 1)
+  assert.deepEqual(await readdir(folder), [])
+})
+
+// Value: protects=a directory that is already gone when final removal reports a failure; fails_when=recovery tries to create a marker without a matching remaining directory; why_new=Cycle 0046 row 1061 checks directory identity before recovery for all final failures; seam=final rmdir removes its owned fixture and then reports EBUSY
+test('a final removal error for a folder already gone is preserved without a marker write', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(folder)
+  await writeFile(marker, '{"pid":4242}')
+  const refusal = Object.assign(new Error('Final removal is busy.'), {
+    code: 'EBUSY',
+  })
+  let wasMarkerRemoved = false
+  let restorationAttempts = 0
+  const removeWithLateError = await loadWalkOn({
+    ...realFileSystem,
+    unlink: async (path: string) => {
+      await unlink(path)
+      if (path === marker) wasMarkerRemoved = true
+    },
+    rmdir: async (path: string) => {
+      await realFileSystem.rmdir(path)
+      if (path === folder && wasMarkerRemoved) throw refusal
+    },
+    writeFile: async (...args: Parameters<typeof realFileSystem.writeFile>) => {
+      if (args[0] === marker) restorationAttempts += 1
+      await realFileSystem.writeFile(...args)
+    },
+  })
+
+  // Act
+  const failure = await removeWithLateError(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).catch((error: unknown) => error)
+
+  // Assert
+  assert.equal(failure, refusal)
+  assert.equal(restorationAttempts, 0)
+  assert.deepEqual(await readdir(parent), ['kept'])
+})
