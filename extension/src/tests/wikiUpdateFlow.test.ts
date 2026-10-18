@@ -2028,6 +2028,40 @@ test('at the 30 second bound Codebook stops its unanswered request with the chat
   }
 })
 
+// Value: protects=the truth of the sentence when the chat completes its reply in the moment the 30 second bound passes, before Codebook takes its request back; fails_when=that end says that Codebook "took its request back" and tells the learner to check that Copilot Chat is enabled, although Codebook ran no command and the chat answered; why_new=Cycle 0046 second ship, state-machine review P2SM3 (the OCR8-2 fix reported this end as a withdrawal); seam=the sleep of the wait for the chat's answer, on a manual clock, and the chat's reply, which the test completes right after the clock passed the bound
+test('a chat that completes its reply in the moment the 30 second bound passes ends the update with the sentence that the chat finished its reply without publishing, not that Codebook took its request back, and no chat command runs', async () => {
+  // Arrange: the chat takes the request and shows no sign of the update.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: the bound passes, and in the same moment the chat's response completes.
+    clock.advance(30_000)
+    request.end({})
+    await press
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : status.state,
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
 // Value: protects=the learner who retries after a chat that did not answer and whose request could not be stopped; fails_when=the chat's Cancel throws and the page and the notice still say "so the update was not started", although the request is still loading in the chat; why_new=Cycle 0046 row 82; seam=the editor's commands, of which the chat's Cancel throws
 test('a chat whose Cancel fails ends the update with the sentence that the request may still be in the chat and is stopped there before a retry, on the page and in the notice', async () => {
   // Arrange: the request stays in the chat, and the chat's Cancel throws.

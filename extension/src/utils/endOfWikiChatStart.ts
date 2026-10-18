@@ -15,14 +15,30 @@ export type WikiChatStartEnd =
   | Record<string, never>
 
 /**
+ * Says whether the chat's response completed: within the bound of the first sign, or in the moment after it, before the withdrawal ran any command (`replied`, {@link withdrawWikiChatRequest}); called by {@link endWithoutFailure}, after {@link failureOfWikiChatStart} found no failure (it words no `unanswered` start whose withdrawal is `replied`).
+ * Why: a request that ended by itself was neither taken back by Codebook nor left in the chat, so it ends as a complete reply does, with one look at the disk.
+ * @param start - How the start ended.
+ * @returns `true` for `replied`, and for `unanswered` whose withdrawal is `replied`; `false` for every other outcome.
+ * @example
+ * hasChatReplied({ outcome: 'unanswered', session: 'own', withdrawal: 'replied' }) // => true
+ * hasChatReplied({ outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn' }) // => false
+ */
+function hasChatReplied(start: WikiChatStartOutcome): boolean {
+  return (
+    start.outcome === 'replied' ||
+    (start.outcome === 'unanswered' && start.withdrawal === 'replied')
+  )
+}
+
+/**
  * Words the failure of a start that did not bring the chat to work; called by {@link endOfWikiChatStart}.
  * @param start - How the start ended.
  * @param answerTimeoutMs - The bound of the first sign, which the sentence of a start without one names.
  * @returns
  * - `failed` (the chat command threw): the sentence of {@link describeWikiChatOpenFailure}
- * - `unanswered`: the sentence of {@link describeUnansweredWikiChat}
+ * - `unanswered` whose request the chat did not end by itself: the sentence of {@link describeUnansweredWikiChat}
  * - `error-reply`: the sentence of {@link describeWikiChatErrorReply}
- * - Any other outcome: `undefined`
+ * - Any other outcome, and `unanswered` whose reply completed before the withdrawal ({@link hasChatReplied}): `undefined`
  * @example
  * failureOfWikiChatStart({ outcome: 'error-reply', message: 'Quota exceeded.' }, 30_000)
  * // => 'The editor chat answered the update request with an error and stopped (Quota exceeded.). Read its message in the Chat view, then press Update LLM Wiki again.'
@@ -33,7 +49,8 @@ function failureOfWikiChatStart(
 ): string | undefined {
   if (start.outcome === 'failed')
     return describeWikiChatOpenFailure(thrownMessage(start.error))
-  if (start.outcome === 'unanswered')
+  // A reply that completed in the moment after the bound ended the request by itself: no sentence of a start without a sign fits it.
+  if (start.outcome === 'unanswered' && start.withdrawal !== 'replied')
     return describeUnansweredWikiChat(
       start.withdrawal,
       start.session,
@@ -46,22 +63,22 @@ function failureOfWikiChatStart(
 
 /**
  * Says how a start without a failure ends the run, if it does; called by {@link endOfWikiChatStart}.
- * @param outcome - The start's outcome.
+ * @param start - How the start ended.
  * @param isWindowClosing - Whether the window began to close meanwhile.
  * @returns
- * - `replied` (the chat's response completed): an end without facts, so the run ends with what is on disk
+ * - The chat's response completed, also in the moment after the bound ({@link hasChatReplied}): an end without facts, so the run ends with what is on disk
  * - `cancelled`, or any outcome in a closing window: a cancel
  * - `working` in a window that stays: `undefined`, the watch goes on
  * @example
- * endWithoutFailure('replied', false) // => {}
- * endWithoutFailure('working', false) // => undefined
+ * endWithoutFailure({ outcome: 'replied' }, false) // => {}
+ * endWithoutFailure({ outcome: 'working' }, false) // => undefined
  */
 function endWithoutFailure(
-  outcome: WikiChatStartOutcome['outcome'],
+  start: WikiChatStartOutcome,
   isWindowClosing: boolean,
 ): WikiChatStartEnd | undefined {
-  if (outcome === 'replied') return {}
-  return outcome === 'cancelled' || isWindowClosing
+  if (hasChatReplied(start)) return {}
+  return start.outcome === 'cancelled' || isWindowClosing
     ? { cancelled: true }
     : undefined
 }
@@ -81,7 +98,7 @@ function mayChatStillHoldRequest(start: WikiChatStartOutcome): boolean {
 /**
  * Decides whether the start of a VS Code Wiki update in the editor chat already ended the run, and with what; called by the extension right after {@link startWikiChatUpdate}, before it starts the watch for the publish.
  *
- * Why: only a chat that works on the request is watched. A chat command that threw, a start without a sign, and a reply that reports an error each end the run as failed with their own sentence; a reply that says the response is complete ends it with one look at the disk (updated, or finished without publishing), with no watch and no reservation; a window that closes starts no watch its shutdown no longer finds.
+ * Why: only a chat that works on the request is watched. A chat command that threw, a start without a sign, and a reply that reports an error each end the run as failed with their own sentence; a reply that says the response is complete ends it with one look at the disk (updated, or finished without publishing), with no watch and no reservation, also when it came in the moment after the bound of the first sign, before Codebook ran any command to take the request back; a window that closes starts no watch its shutdown no longer finds.
  *
  * @param start - How the start ended.
  * @param answerTimeoutMs - The bound of the first sign.
@@ -90,6 +107,7 @@ function mayChatStillHoldRequest(start: WikiChatStartOutcome): boolean {
  * @example
  * endOfWikiChatStart({ outcome: 'working' }, 30_000, false) // => undefined
  * endOfWikiChatStart({ outcome: 'replied' }, 30_000, false) // => {}
+ * endOfWikiChatStart({ outcome: 'unanswered', session: 'own', withdrawal: 'replied' }, 30_000, false) // => {}
  * endOfWikiChatStart({ outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn' }, 30_000, false)
  * // => { failure: 'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.', isFailureCodebookSentence: true }
  */
@@ -99,8 +117,7 @@ export function endOfWikiChatStart(
   isWindowClosing: boolean,
 ): WikiChatStartEnd | undefined {
   const failure = failureOfWikiChatStart(start, answerTimeoutMs)
-  if (failure === undefined)
-    return endWithoutFailure(start.outcome, isWindowClosing)
+  if (failure === undefined) return endWithoutFailure(start, isWindowClosing)
   // A request Codebook did not see leave the chat can still be worked on and published: the mark also makes the run leave the reservation of a stopped watch.
   return mayChatStillHoldRequest(start)
     ? { failure, isFailureCodebookSentence: true, mayBeReplacedLater: true }

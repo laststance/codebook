@@ -79,8 +79,8 @@ test('a hand-over command that threw before the withdrawal is reported as a requ
   assert.deepEqual(ranCommands, [])
 })
 
-// Value: protects=the learner's own requests in the chat focused last when Codebook's request ended with a complete reply in the moment between the bound of the first answer and the withdrawal; fails_when=the withdrawal runs "Remove All Queued" or the chat's Cancel although its request has ended, so they remove the learner's queued requests or stop the learner's request in progress; why_new=Cycle 0046 second ship, OCR batch 8 finding 2; seam=none
-test('a hand-over command that has already returned a complete reply is reported as a request that ended, and no chat command runs, in a shared session or in one of its own', async () => {
+// Value: protects=the learner's own requests in the chat focused last when Codebook's request ended with a complete reply in the moment between the bound of the first answer and the withdrawal, and the truth of the end's sentence; fails_when=the withdrawal runs "Remove All Queued" or the chat's Cancel although its request has ended, so they remove the learner's queued requests or stop the learner's request in progress, or the request that ended by itself is reported as one Codebook took back (`withdrawn`); why_new=Cycle 0046 second ship, OCR batch 8 finding 2, and state-machine review P2SM3 (its own outcome); seam=none
+test('a hand-over command that has already returned a complete reply is reported as a request that ended by itself with a reply, and no chat command runs, in a shared session or in one of its own', async () => {
   // Arrange: the chat's response is complete ({} is a reply that waits for nothing).
   const ranCommands: string[] = []
   const { sleep } = manualSleep()
@@ -103,7 +103,7 @@ test('a hand-over command that has already returned a complete reply is reported
   }
 
   // Assert
-  assert.deepEqual(withdrawals, { shared: 'withdrawn', own: 'withdrawn' })
+  assert.deepEqual(withdrawals, { shared: 'replied', own: 'replied' })
   assert.deepEqual(ranCommands, [])
 })
 

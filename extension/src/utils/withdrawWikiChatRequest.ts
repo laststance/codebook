@@ -10,8 +10,8 @@ const REMOVE_QUEUED_CHAT_REQUESTS_COMMAND =
 /** VS Code's command behind the chat's Cancel button: stops the one request in progress of the chat the learner focused last, and touches no queued request. */
 const CANCEL_CHAT_REQUEST_COMMAND = 'workbench.action.chat.cancel'
 
-/** How the withdrawal of an unanswered Wiki update request ended: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `withdrawn` when Codebook saw the hand-over command return with the end of its request, before the withdrawal or after one of the chat's commands, so nothing of the request is loading or queued; `left` when it did not, so the request may still be in the chat. */
-export type WikiChatWithdrawal = 'not-sent' | 'withdrawn' | 'left'
+/** How the withdrawal of an unanswered Wiki update request ended: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `replied` when it had already returned a complete reply before the withdrawal, so the request ended by itself and no command ran; `withdrawn` when Codebook saw the hand-over command return with the end of its request after one of the chat's commands, so nothing of the request is loading or queued; `left` when it did not, so the request may still be in the chat. */
+export type WikiChatWithdrawal = 'not-sent' | 'replied' | 'withdrawn' | 'left'
 
 /** What one of the chat's commands did to the request: `ended` (the hand-over command returned), `pending` (the command ran and the hand-over command is still pending) or `not-run` (the command threw, did not return in time or was not started because the withdrawal was aborted, so nothing can be said about the chat). */
 type WithdrawalStep = 'ended' | 'pending' | 'not-run'
@@ -182,7 +182,8 @@ function withdrawalAfter(step: WithdrawalStep): WikiChatWithdrawal {
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
  * @returns
  * - `not-sent`: the hand-over command had returned without a reply; no command ran
- * - `withdrawn`: the hand-over command had returned a complete reply, and no command ran; or it returned with the end of its request after one of the chat's commands
+ * - `replied`: the hand-over command had returned a complete reply (the chat answered in the moment after the bound), with or without an error; no command ran
+ * - `withdrawn`: the hand-over command returned with the end of its request after one of the chat's commands
  * - `left`: a command threw or did not return in time, the signal aborted, or after the Cancel the hand-over command stayed pending or had returned a reply that waits for a confirmation
  *
  * @example
@@ -208,8 +209,8 @@ export async function withdrawWikiChatRequest(options: {
   // A hand-over command that returned before this call is seen one turn after the watch was set.
   await Promise.resolve()
   if (isRequestNotSent(handOver)) return 'not-sent'
-  // A request that already ended leaves the chat's commands only the learner's requests to act on.
-  if (hasEndedWithReply(handOver)) return 'withdrawn'
+  // A request that already ended by itself leaves the chat's commands only the learner's requests to act on.
+  if (hasEndedWithReply(handOver)) return 'replied'
   const queueStep = await clearSharedQueue(
     options.session,
     options.runChatCommand,
