@@ -850,6 +850,39 @@ async function check(page, options, collected) {
         .selection.location.focusId,
     })),
   )
+
+  // Cycle 0046 D1. Arrange: an open article that has had no error yet.
+  await openPane(undefined)
+  await publish(options.message)
+  /** Reads the pane's error status region: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor is `display:none`; a region that is rendered exists for assistive technology before its first text. */
+  const errorRegion = () =>
+    page.evaluate(() => {
+      const region = document.getElementById('errors')
+      return {
+        role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+        text: region.textContent,
+        isRendered: region.checkVisibility(),
+      }
+    })
+  const beforeTheError = await errorRegion()
+  // Act: the host reports an error with the article on screen.
+  await publish({
+    ...options.message,
+    error: 'Learning storage unavailable: disk full',
+  })
+  // Assert: the error changes a region that was in the page, rendered and empty, before it, so a screen reader announces it.
+  addCase(
+    'the error status region of the Repository Wiki pane is in the page, rendered and empty, before its first error, and that error is written into it',
+    {
+      beforeTheError: { role: 'status/polite', text: '', isRendered: true },
+      afterTheError: {
+        role: 'status/polite',
+        text: 'Learning storage unavailable: disk full',
+        isRendered: true,
+      },
+    },
+    { beforeTheError, afterTheError: await errorRegion() },
+  )
 }
 
 const report = {
