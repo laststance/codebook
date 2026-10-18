@@ -2221,21 +2221,22 @@ async function check(page, options, collected) {
     await page.goto(`${options.url}${options.pageWithForeignEditorLinks}`)
     // Act: past the second of the refresh, what the browser holds as the page's address, its links and the image's address, and the text of the three links; a page the refresh moved holds none of them.
     await page.waitForTimeout(options.refreshWaitMs)
-    const used = await page.evaluate(() => ({
-      address: location.pathname.split('/').at(-1),
-      links: [...document.links].map((link) => link.href),
-      fileLinkText:
-        document.querySelector('#foreign-file-link')?.textContent ?? null,
-      extensionLinkText:
-        document.querySelector('#foreign-extension-link')?.textContent ?? null,
-      schemeLinkText:
-        document.querySelector('#foreign-scheme-link')?.textContent ?? null,
-      imageAddress:
-        document.querySelector('#foreign-image')?.currentSrc ?? null,
-      entryAddress: document
-        .querySelector('.open-in-editor a')
-        .getAttribute('href'),
-    }))
+    const used = await page.evaluate(() => {
+      /** The property of the element a selector names; null on a page that holds no such element. */
+      const propertyOf = (selector, property) =>
+        document.querySelector(selector)?.[property] ?? null
+      return {
+        address: location.pathname.split('/').at(-1),
+        links: [...document.links].map((link) => link.href),
+        fileLinkText: propertyOf('#foreign-file-link', 'textContent'),
+        extensionLinkText: propertyOf('#foreign-extension-link', 'textContent'),
+        schemeLinkText: propertyOf('#foreign-scheme-link', 'textContent'),
+        imageAddress: propertyOf('#foreign-image', 'currentSrc'),
+        entryAddress: document
+          .querySelector('.open-in-editor a')
+          .getAttribute('href'),
+      }
+    })
     // Assert
     record(
       'a page whose file got links to a file and to another extension in the editor, a link of another editor’s scheme and a refresh to another page is served with the links’ text but without their links and without the refresh, and the rail entry still opens its source in the editor through Codebook',
