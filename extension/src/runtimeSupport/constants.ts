@@ -72,11 +72,18 @@ export const DEEMPHASIZED_FRAME_STOP_REASONS: ReadonlySet<string> = new Set([
  * @example frames.slice(0, EDITOR_STOP_FOCUS_FRAME_COUNT)
  */
 export const EDITOR_STOP_FOCUS_FRAME_COUNT = 20
+/**
+ * The editor's debug requests that let a stopped thread run, forward or backward: after the adapter grants one, both editors fire a simulated `continued` event for it unless the session stopped again first (`RawDebugSession` of VS Code 1.142.0 and Cursor 3.23.23: `continue`, `next`, `stepIn`, `stepOut`, `stepBack` and `reverseContinue`, which the editor sends only to an adapter that supports stepping back, and `restartFrame` and `goto`).
+ * Read by {@link isDebugResumeMessage} (a session that goes on), {@link StoredDebugStops} (a request whose granted answer drops its thread's stored stop), and the owned runs' trackers (a client resume that revokes a captured pause).
+ * @example RESUME_COMMANDS.has('reverseContinue') // => true
+ */
 export const RESUME_COMMANDS = new Set([
   'continue',
   'next',
   'stepIn',
   'stepOut',
+  'stepBack',
+  'reverseContinue',
   'restartFrame',
   'goto',
 ])

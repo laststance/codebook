@@ -196,3 +196,30 @@ test('a forgotten session keeps no stop, and another session keeps its own', () 
     { forgotten: undefined, other: thread2Stop },
   )
 })
+
+for (const command of ['stepBack', 'reverseContinue'] as const)
+  // Value: protects=the stored stops of a session whose thread the learner runs backward (an adapter that supports stepping back): the editors fire their simulated continued for that thread after a granted stepBack or reverseContinue, so they drop its details, and an invalidation afterwards handles the other thread's stop; fails_when=the store does not read stepBack or reverseContinue as a request that lets a thread run, so the thread's old stop stays stored through the reverse run; why_new=Cycle 0046 Q9 (the third OCR review: commit 827664c1 lists both as requests that fire the simulated continued); seam=none, the store alone
+  test(`a granted ${command} drops its thread’s stop, as the editors’ simulated continued does`, () => {
+    // Arrange: thread 2 stopped, then thread 1; the editor asks thread 1 to run backward.
+    const stops = new StoredDebugStops()
+    stops.noteStop('learner-node', thread2Stop)
+    stops.noteStop('learner-node', thread1Stop)
+    stops.readEditorsMessage('learner-node', {
+      type: 'request',
+      seq: 7,
+      command,
+      arguments: { threadId: 1 },
+    })
+
+    // Act: the adapter grants it.
+    stops.readAdaptersMessage('learner-node', {
+      type: 'response',
+      seq: 8,
+      request_seq: 7,
+      success: true,
+      command,
+    })
+
+    // Assert: thread 2's stop is the one still stored.
+    assert.deepEqual(stops.lastStopOf('learner-node'), thread2Stop)
+  })
