@@ -1,17 +1,23 @@
 import { realpath } from 'node:fs/promises'
-import { win32 } from 'node:path'
+import { posix, win32 } from 'node:path'
 
+import { linuxCommandLineArguments } from './linuxCommandLineArguments'
 import { listProcesses, type ListedProcess } from './listProcesses'
 import { windowsCommandLineArguments } from './windowsCommandLineArguments'
 
 /** What {@link profileProcesses} matches with; each is the real one unless a test names its own. */
 export type ProfileProcessInputs = {
-  /** The system whose command lines are read: Windows rules on `win32`, the text as `ps` prints it on every other system; `process.platform` unless a test names its own. */
+  /** The system whose command lines are read: Windows rules on `win32`, each process's exact arguments on `linux` where they can be read, the text as `ps` prints it on every other system; `process.platform` unless a test names its own. */
   platform?: NodeJS.Platform
+  /** Reads a Linux process's exact arguments; {@link linuxCommandLineArguments} unless a test names its own. */
+  readArguments?: (pid: number) => Promise<string[] | undefined>
 }
 
 /** A profile switch as `ps` prints it on macOS and Linux: after the white space that ends the argument before it, with each prefix Chrome reads a switch by there (`--`, `-`). */
 const POSIX_PROFILE_SWITCH = /(?<=\s)--?user-data-dir=/g
+
+/** Says whether a text holds a profile switch at all ({@link POSIX_PROFILE_SWITCH}, without its state of a global search). */
+const HOLDS_POSIX_PROFILE_SWITCH = new RegExp(POSIX_PROFILE_SWITCH.source)
 
 /** Where a switch terminator (`--`) may stand in the text `ps` prints: two dashes between white space, or before the line's end. */
 const POSIX_SWITCH_TERMINATOR = /(?<=\s)--(?=\s|$)/g
@@ -68,6 +74,75 @@ function namesProfileByText(command: string, folder: string): boolean {
     const value = lastProfileValueIn(command.slice(0, end))
     return value !== undefined && isFolderValue(value, folder)
   })
+}
+
+/** The white space Chrome trims from both ends of each argument on macOS and Linux before it reads a switch (`TrimWhitespaceASCII` with `kWhitespaceASCII`). */
+const ASCII_WHITESPACE_AT_ENDS = /^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g
+
+/** The prefixes by which Chrome reads a switch on macOS and Linux (`kSwitchPrefixes`), the longest first. */
+const POSIX_SWITCH_PREFIXES = ['--', '-']
+
+/**
+ * Reads the profile folder Chrome takes from its exact arguments on macOS and Linux, by `base::CommandLine`'s rules there: each argument trimmed of ASCII white space, no switch after `--`, a switch after `--` or `-` named as written up to its `=`, and the last `user-data-dir` switch deciding, also one without a value, which gives none; called by {@link namesProfileOnLinux}.
+ * @param switchArguments - The arguments after the program.
+ * @returns The value of the last profile switch before the terminator, `''` for one without a value; `undefined` when none stands there.
+ * @example
+ * profileFolderOfArguments(['--user-data-dir=/tmp/a', '--', '--user-data-dir=/tmp/b']) // => '/tmp/a'
+ */
+function profileFolderOfArguments(
+  switchArguments: string[],
+): string | undefined {
+  let profileFolder: string | undefined
+  for (const written of switchArguments) {
+    const argument = written.replace(ASCII_WHITESPACE_AT_ENDS, '')
+    // Chrome reads no switch after the terminator.
+    if (argument === SWITCH_TERMINATOR) break
+    const prefix = POSIX_SWITCH_PREFIXES.find((candidate) =>
+      argument.startsWith(candidate),
+    )
+    if (prefix === undefined || prefix.length === argument.length) continue
+    const equals = argument.indexOf('=')
+    const name = argument.slice(
+      prefix.length,
+      equals === -1 ? undefined : equals,
+    )
+    // A later profile switch replaces an earlier one; without `=` its value is empty.
+    if (name === PROFILE_FLAG.slice(2, -1))
+      profileFolder = equals === -1 ? '' : argument.slice(equals + 1)
+  }
+  return profileFolder
+}
+
+/**
+ * Says whether a listed Linux process gives Chrome a profile folder, by its exact arguments where they can be trusted, else by the text `ps` printed; called by {@link profileProcesses} on Linux.
+ * Only a process whose text names a profile switch is read (one file of `/proc` each). Its arguments decide when they are the listed process's: they join, with spaces, to the text `ps` printed (a process id taken by another process since the listing gives another text), and the program's own argument does not hold the switch (a process that wrote its title over its arguments, as Chrome's helper processes may, keeps them all in that one). Otherwise, and when the file cannot be read, the text decides ({@link namesProfileByText}), read in every way it allows.
+ * @param listed - The process as the listing gave it.
+ * @param folder - The resolved profile folder.
+ * @param readArguments - Reads a process's exact arguments.
+ * @returns `true` when the profile switch Chrome takes names the folder: its value is the folder, also written with a trailing `/` or a `.` step.
+ * @example
+ * await namesProfileOnLinux({ pid: 4242, command: 'chrome --user-data-dir=/tmp/a -- --user-data-dir=/tmp/b' }, '/tmp/b', linuxCommandLineArguments) // => false
+ */
+async function namesProfileOnLinux(
+  listed: ListedProcess,
+  folder: string,
+  readArguments: (pid: number) => Promise<string[] | undefined>,
+): Promise<boolean> {
+  // A text without a profile switch names no profile; only the others are read.
+  if (!HOLDS_POSIX_PROFILE_SWITCH.test(listed.command)) return false
+  const commandArguments = await readArguments(listed.pid)
+  const [program, ...switchArguments] = commandArguments ?? []
+  const isListedProcess =
+    program !== undefined &&
+    commandArguments?.join(' ') === listed.command &&
+    !HOLDS_POSIX_PROFILE_SWITCH.test(program)
+  if (!isListedProcess) return namesProfileByText(listed.command, folder)
+  const profileFolder = profileFolderOfArguments(switchArguments)
+  return (
+    profileFolder !== undefined &&
+    profileFolder !== '' &&
+    posix.normalize(profileFolder).replace(/(?<=.)\/+$/, '') === folder
+  )
 }
 
 /** The flag by which Chrome is given its profile folder. */
@@ -184,10 +259,10 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
 
 /**
  * Observes only the exact fresh Chrome profile during owned launch/cleanup; never signals other processes. Called by {@link HostBrowser} for its own profile, and by {@link removeAbandonedProfiles} for each candidate folder with the one listing of its sweep.
- * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the last profile switch before a switch terminator in the text `ps` printed decides, read in every way the text allows, and its value must be the folder, exactly ({@link namesProfileByText}). On both, Chrome reads no switch after a terminator (on Windows also none after `--single-argument`), and of several profile switches before it the last one counts, as Chrome takes it.
+ * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On Linux each candidate's exact arguments decide, read from `/proc` ({@link namesProfileOnLinux}); on macOS, and on Linux for a process whose arguments cannot be read or trusted, the last profile switch before a switch terminator in the text `ps` printed decides, read in every way the text allows, and its value must be the folder, exactly ({@link namesProfileByText}). On both, Chrome reads no switch after a terminator (on Windows also none after `--single-argument`), and of several profile switches before it the last one counts, as Chrome takes it.
  * @param profile - The profile folder; it is resolved first, so a folder that is gone rejects.
  * @param processes - The processes to match, as {@link listProcesses} listed them; listed now when left out.
- * @param inputs - The system whose command lines are read ({@link ProfileProcessInputs}); this one when left out.
+ * @param inputs - The system whose command lines are read, and the reader of Linux arguments ({@link ProfileProcessInputs}); the real ones when left out.
  * @returns The processes whose command line names the folder as `--user-data-dir`; a profile that only shares a prefix with it does not count.
  * @throws When the folder cannot be resolved, or the processes cannot be listed.
  * @example
@@ -203,10 +278,20 @@ export async function profileProcesses(
   const listed = processes ?? (await listProcesses())
   // Chrome/js-debug resolve /tmp symlinks before spawning on macOS.
   const folder = await realpath(profile)
+  const platform = inputs.platform ?? process.platform
   // Windows keeps a command line as one text with quoted arguments, and compares paths without regard to case or separator.
-  if ((inputs.platform ?? process.platform) === 'win32')
+  if (platform === 'win32')
     return listed.filter(({ command }) =>
       namesProfileOnWindows(command, folder),
     )
-  return listed.filter(({ command }) => namesProfileByText(command, folder))
+  if (platform !== 'linux')
+    return listed.filter(({ command }) => namesProfileByText(command, folder))
+  // Linux keeps each process's arguments apart in /proc.
+  const readArguments = inputs.readArguments ?? linuxCommandLineArguments
+  const named = await Promise.all(
+    listed.map((candidate) =>
+      namesProfileOnLinux(candidate, folder, readArguments),
+    ),
+  )
+  return listed.filter((_, index) => named[index])
 }

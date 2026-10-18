@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 import { windowsCommandLineArguments } from '../runtimeSupport/utils/windowsCommandLineArguments'
 
@@ -378,5 +379,98 @@ test('on Windows no switch after --single-argument counts, as Chrome reads it, w
       linux: observed.linux.map((listed) => listed.pid),
     },
     { windows: [71, 72, 73], linux: [73] },
+  )
+})
+
+// Value: protects=a live profile on Linux whose Chrome holds a real `--` argument: the process's exact arguments, read from /proc, tell that argument from two dashes inside another, so the switch before it is Chrome's and a loose `--user-data-dir=` after it names nothing (BB4, the fixes of the third review; R1 kept the text reading, which keeps such a folder); fails_when=Linux reads only the text `ps` printed, where every reading counts, so a folder named only after the terminator is taken for one in use, or a folder named before it is missed; why_new=the profile match read the text alone on every system but Windows; seam=none (a real process, the real listing and /proc of this machine)
+test(
+  'on Linux the exact arguments of a running process decide: the folder named before its real -- is in use, and the one named after it is not',
+  {
+    skip:
+      process.platform !== 'linux' &&
+      'the exact arguments are read from /proc, which Linux alone has',
+  },
+  async (context) => {
+    // Arrange: a process whose arguments name one folder before a `--` argument and another after it.
+    const parent = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-profile-exact-')),
+    )
+    context.after(() => rm(parent, { recursive: true, force: true }))
+    const before = join(parent, 'codebook-browser-before')
+    const after = join(parent, 'codebook-browser-after')
+    await mkdir(before)
+    await mkdir(after)
+    // A loose argument ends Node's own options, so the arguments after it stand as in Chrome's command line.
+    const browser = spawn(
+      process.execPath,
+      [
+        '-e',
+        'process.stdout.write("ready"); setInterval(() => {}, 1000)',
+        'chrome',
+        `--user-data-dir=${before}`,
+        '--',
+        `--user-data-dir=${after}`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+    context.after(() => browser.kill('SIGKILL'))
+    await once(browser.stdout, 'data')
+    // Act
+    const processes = await listProcesses()
+    const named = {
+      before: (await profileProcesses(before, processes)).some(
+        (listed) => listed.pid === browser.pid,
+      ),
+      after: (await profileProcesses(after, processes)).some(
+        (listed) => listed.pid === browser.pid,
+      ),
+    }
+    // Assert
+    assert.deepEqual(named, { before: true, after: false })
+  },
+)
+
+// Value: protects=the profile match on Linux where a process's exact arguments cannot be trusted or read: a process that wrote its title over its arguments (Chrome's helpers may), a process id another process took since the listing, and a process whose /proc file cannot be read are matched by the text `ps` printed, so no live profile is missed; where they can be, Chrome's own rules decide (a trailing `/` names the same folder, a later switch without a value names none), and only the processes whose text names a profile switch are read (BB4, the fixes of the third review); fails_when=a rewritten title, another process's arguments or a failed read decides the match, so a live profile is missed, the exact rules differ from Chrome's, or every listed process costs a read of /proc; why_new=the exact reading is new; seam=the system the command lines are read for (`linux`), a listing of the test's own, and the reader of exact arguments, which answers by process id and notes each read
+test('on Linux a process whose exact arguments cannot be trusted or read is matched by its text, the others by Chrome’s rules, and only processes that name a profile switch are read', async (context) => {
+  // Arrange
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-exact-rules-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'codebook-browser-x')
+  await mkdir(profile)
+  const listing = [
+    // 81: a helper that wrote its title over its arguments; 82: another process has the id now; 83: its file cannot be read.
+    { pid: 81, command: `chrome --type=renderer --user-data-dir=${profile}` },
+    { pid: 82, command: `chrome --user-data-dir=${profile}` },
+    { pid: 83, command: `chrome --user-data-dir=${profile}` },
+    // 84: the folder with a trailing `/`; 85: a later switch without a value; 86: no profile switch, which is never read.
+    { pid: 84, command: `chrome --user-data-dir=${profile}/` },
+    {
+      pid: 85,
+      command: `chrome --user-data-dir=${profile} --user-data-dir`,
+    },
+    { pid: 86, command: 'node server.js' },
+  ]
+  const argumentsByProcess = new Map<number, string[]>([
+    [81, [`chrome --type=renderer --user-data-dir=${profile}`]],
+    [82, ['/usr/bin/bash', '-c', 'sleep 60']],
+    [84, ['chrome', `--user-data-dir=${profile}/`]],
+    [85, ['chrome', `--user-data-dir=${profile}`, '--user-data-dir']],
+    [86, ['node', 'server.js']],
+  ])
+  const read: number[] = []
+  // Act
+  const observed = await profileProcesses(profile, listing, {
+    platform: 'linux',
+    readArguments: async (pid) => {
+      read.push(pid)
+      return argumentsByProcess.get(pid)
+    },
+  })
+  // Assert
+  assert.deepEqual(
+    { matched: observed.map((listed) => listed.pid), read: read.toSorted() },
+    { matched: [81, 82, 83, 84], read: [81, 82, 83, 84, 85] },
   )
 })

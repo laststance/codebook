@@ -789,6 +789,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/scripts/utils/openWithoutFollowing.mjs',
     'extension/scripts/utils/packageConstants.mjs',
     'extension/scripts/utils/readVsixBytes.mjs',
+    'extension/src/runtimeSupport/utils/linuxCommandLineArguments.ts',
     'extension/src/runtimeSupport/utils/listProcesses.ts',
     'extension/src/runtimeSupport/utils/profileProcesses.ts',
     'extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts',
