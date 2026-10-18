@@ -177,11 +177,9 @@ function sequenceSvg(diagram, prefix) {
 
 /** A comment of authored HTML as a browser reads it: it ends at `-->` or at `--!>`, at once when it is `<!-->` or `<!--->`, and otherwise never: a browser then reads everything after its start as comment, up to the end of the document. */
 const COMMENT = /<!--(?:-?>|[\s\S]*?(?:--!?>|$))/;
-/** A comment that has an end, the whole of what {@link COMMENT} matched. */
-const CLOSED_COMMENT = /^<!--(?:-?>|[\s\S]*?--!?>)$/;
 /** A start tag of authored HTML, read up to the `>` that ends it as a browser reads it: a quoted attribute value may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
 const START_TAG = /<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/;
-/** A comment or a start tag of authored HTML, the two things {@link withAttributeValues}, {@link hasEndlessComment} and {@link scriptingClauseOf} tell apart from text. A comment is passed over whole, so an element inside it is no element of the page. */
+/** A comment or a start tag of authored HTML, the two things {@link withAttributeValues} and {@link scriptingClauseOf} tell apart from text. A comment is passed over whole, so an element inside it is no element of the page. */
 const COMMENT_OR_START_TAG = new RegExp(`${COMMENT.source}|${START_TAG.source}`, 'g');
 /** White space inside a tag is what a browser separates at there: tab, line feed, form feed, carriage return and space. Another space character (a no-break space) is a character of a name or of a bare value, so the patterns below name these five and never JavaScript's wider class. */
 /** One attribute of a start tag, read in the order a browser reads them: what stands before its name (spaces, a slash, or nothing after a closing quote), its name, and, when it has a value, its equals sign and the value in double quotes, in single quotes or bare. */
@@ -189,8 +187,6 @@ const ATTRIBUTE = /([\t\n\f\r /]*)([^\t\n\f\r "'<>/=]+)(?:([\t\n\f\r ]*=[\t\n\f\
 /** A character reference in an attribute value: decimal, hexadecimal, or one of the five named ones an author writes into an address or an id. */
 const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g;
 const NAMED_CHARACTERS = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-/** Says whether authored HTML holds a comment that never ends. In a published page such a comment takes everything after it, the reader's question form, rail and script included, so the page renderer refuses the page. A `<!--` inside a quoted attribute value or in a bare one is a character of its tag and starts no comment. @example hasEndlessComment('<p>Explained.</p><!-- to do') // => true; hasEndlessComment('<!-- done --!><p title="<!--">Explained.</p>') // => false */
-export const hasEndlessComment = html => [...html.matchAll(COMMENT_OR_START_TAG)].some(([markup]) => markup.startsWith('<!--') && !CLOSED_COMMENT.test(markup));
 /** The character a numeric reference names; the replacement character for a number that names none. Called by {@link attributeText}. @example referencedCharacter('45', 10) // => '-' */
 const referencedCharacter = (digits, radix) => { const codePoint = Number.parseInt(digits, radix); return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '�'; };
 /** Reads an attribute value as a browser does: every character reference becomes its character, so an id or an address written with an entity compares as the text it means. Called by {@link withAttributeValues} and {@link attributeScriptingClauseOf}. @example attributeText('a&amp;b.html#qa&#45;form') // => 'a&b.html#qa-form' */

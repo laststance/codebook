@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { contentIdsOf, escapeHtml, hasEndlessComment, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
+import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -66,10 +66,10 @@ function validatePages(manifest) {
     const unwanted = /<\/?(html|head|body|main|article|form|script|style|iframe|object|embed|base|meta|link|title|h1|textarea|xmp|noembed|noframes|plaintext|noscript|template|select|frame|frameset)(?![\w-])/i.exec(page.contentHtml);
     if (unwanted) throw new Error(`Wiki page ${page.path} must contain article sections, not a document, form or script: it holds <${unwanted[1].toLowerCase()}>.`);
     if (/<\/?svg(?![\w-])/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must use diagram records and figure slots instead of authored SVG.`);
-    // A browser reads everything after a comment that never ends as comment: the rest of the article and, after it, the reader's question form, rail and script.
-    if (hasEndlessComment(page.contentHtml)) throw new Error(`Wiki page ${page.path} has a comment that never ends; close it with -->.`);
-    // A page is published only when every `<` of its content begins something the publisher reads exactly as a browser does; otherwise the two would not agree on the page's tags and ids, and markup that never ends would take the reader's own controls with it.
+    // A page is published only when every `<` of its content begins something the publisher reads exactly as a browser does; otherwise the two would not agree on the page's tags and ids, and markup that never ends would take the reader's own controls with it. The reading is linear in the content's size, so it runs before any check that reads tags by a pattern.
     const unread = unreadMarkupOf(page.contentHtml);
+    // A browser reads everything after a comment that never ends as comment: the rest of the article and, after it, the reader's question form, rail and script. Every comment read exactly ends, so the first place not read exactly is such a comment when it starts one.
+    if (unread?.startsWith('<!--')) throw new Error(`Wiki page ${page.path} has a comment that never ends; close it with -->.`);
     if (unread !== undefined) throw new Error(`Wiki page ${page.path} has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: ${unread}`);
     // The content is one balanced piece of the page: what it opens it closes, so nothing of it reaches the reader's own form, rail and layout around it.
     const unbalanced = unbalancedClauseOf(page.contentHtml);

@@ -5591,6 +5591,91 @@ for (const [form, comment] of [
     }
   })
 
+/** How many times as long as an ordinary refused page of the same size the publisher may take to refuse a crafted one. On the development host (16 CPUs, Node 24) the crafted page took less time than the ordinary one, with or without coverage, while the endless-comment check that ran first took about 6.5 s for it, more than 700 times as long. */
+const CRAFTED_REFUSAL_BOUND_RATIO = 4
+
+/**
+ * The shortest of three times the page renderer takes to refuse a page whose content is `contentHtml`, so a pause of the process in one run does not count; called by the timing test of a crafted page.
+ * @param {string} root - The project of the test, with the source {@link readerInput} writes.
+ * @param {string} contentHtml - The page's content.
+ * @returns {Promise<number>} The time in milliseconds.
+ * @throws When the renderer publishes the page.
+ * @example
+ * await shortestRefusalMs(root, '<p>a</p><? end') // => 5.5
+ */
+async function shortestRefusalMs(root, contentHtml) {
+  const manifest = await readerInput(root)
+  manifest.pages[0].contentHtml = contentHtml
+  const times = []
+  // Three runs, each refused.
+  for (let run = 0; run < 3; run += 1) {
+    const startedMs = performance.now()
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+    )
+    times.push(performance.now() - startedMs)
+  }
+  return Math.min(...times)
+}
+
+// Value: protects=the agent publishing a Wiki, whose page content a repository's text may shape: the publisher must answer it at once, not stall; fails_when=a check that reads start tags by a pattern which also crosses `<` runs before the linear reading, so content of many start tags that never end (`<a "x" ` repeated, about 220 KB) is scanned to its end from every `<` and takes seconds (6.5 s on the development host, plain and under coverage), where an ordinary page of that size is refused in about 6 ms; why_new=Cycle 0046 second /ship OCR2-1; seam=none (the shipped page renderer); no_claim=the time of a page the publisher accepts
+test('a page of about 220 KB of start tags that never end is refused within four times the time of an ordinary refused page of that size', async () => {
+  // Arrange: the crafted content, and an ordinary content of about the same size that a `<?` at its end has refused.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-crafted-refusal-')),
+  )
+  const crafted = '<h2 id="flow">Source flow</h2>' + '<a "x" '.repeat(32_000)
+  const ordinary =
+    '<h2 id="flow">Source flow</h2>' +
+    '<p>Some text with <a href="https://example.com/x">a link</a>.</p>'.repeat(
+      3_500,
+    ) +
+    '<? end'
+  try {
+    // Act
+    const ordinaryMs = await shortestRefusalMs(root, ordinary)
+    const craftedMs = await shortestRefusalMs(root, crafted)
+
+    // Assert
+    assert.ok(
+      craftedMs <= ordinaryMs * CRAFTED_REFUSAL_BOUND_RATIO,
+      `the crafted page took ${craftedMs} ms, the ordinary page ${ordinaryMs} ms`,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the agent told how to mend a refused page: the sentence must name what a browser reads there; fails_when=the endless-comment sentence is given for a `<!--` that stands inside markup a browser reads by other rules (here in what a browser reads as a comment of its own from `<?` to the next `>`), so the agent closes a comment no browser sees and is refused again; why_new=Cycle 0046 second /ship OCR2-1 (the endless-comment sentence now follows the linear reading); seam=none (the shipped page renderer)
+test('a page whose `<!--` without an end stands after a `<?` is refused with the sentence that names the `<?`, not with the sentence about the comment', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-comment-after-unread-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><? a note <!-- to do'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: <? a note <!-- to do',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=a page with comments in every form a browser ends, and the headings after them; fails_when=the publisher takes a comment that ends with "--!>", or the comments "<!-->" and "<!--->", or a "<!--" inside an attribute value for a comment that runs on, so it refuses a page a browser reads whole, or no longer sees the anchors after such a place; why_new=Cycle 0046 row 194 (each form was run in the DOM check's browser); seam=none
 test('a page whose comments end is published in every form a browser takes for the end of a comment, and the anchors after each are read', async () => {
   // Arrange: a comment that ends with -->, one that ends with --!>, the comments <!--> and <!--->, and a title that only shows the start of a comment; a heading follows each.
