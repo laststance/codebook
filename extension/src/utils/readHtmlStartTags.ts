@@ -133,9 +133,9 @@ function readAttributeAt(html: string, at: number): HtmlAttribute | undefined {
 }
 
 /**
- * Reads a start tag or an end tag from its `<`, as a browser's tokenizer does: the name up to white space, a slash or `>`, then each attribute up to the `>` that ends the tag; a slash before `>` closes the tag itself, and a slash elsewhere separates. Called by {@link HtmlPageReader.onStartTag} to retain every original attribute, including duplicates.
+ * Reads a start tag from the character after its `<`, as a browser's tokenizer does: the name up to white space, a slash or `>`, then each attribute up to the `>` that ends the tag; a slash before `>` closes the tag itself, and a slash elsewhere separates. Called only by {@link HtmlPageReader.onStartTag}, at the start token's offset, to retain every original attribute, including duplicates.
  * @param html - The page.
- * @param nameAt - Where the tag's name starts (after `<`, or `</` for an end tag).
+ * @param nameAt - Where the tag's name starts, right after its `<`.
  * @returns The tag, or `undefined` when the page ends inside it, as a browser then drops it.
  * @example
  * readTagAt('<a href="x">', 1) // => { name: 'a', attributes: [{ name: 'href', … }] }
