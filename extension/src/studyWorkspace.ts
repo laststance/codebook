@@ -3496,7 +3496,7 @@ export class StudyWorkspace {
   /**
    * Reads one message of a debug adapter for what it says about the session's stops; called by the tracker of {@link followStopsOf} for every message the adapter sends.
    * - A `stopped` event is noted ({@link noteStopOf}).
-   * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle the stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it. The stop is noted again as the adapter reported it last among the stops the editor still stores, per thread ({@link storedStops}): the editor handles it again from the details it stored, so a stop whose adapter asked to keep the focus still arms no keyboard hand-over, and an armed one keeps its thread and reason (Cycle 0046 R5). Without a stored stop it is noted as a stop that does not keep the focus.
+   * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle stored stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it. The stop noted is the one this editor handles again from the details it stored ({@link StoredDebugStops.stopHandledAgainOf}): VS Code handles every stored stop, Cursor its oldest (Cycle 0046 Q8). So a stop whose adapter asked to keep the focus still arms no keyboard hand-over, and an armed one keeps its thread and reason (Cycle 0046 R5). Without a stored stop it is noted as a stop that does not keep the focus.
    * - A `continued` event is noted as the moment the session went on, which puts its noted stop in doubt ({@link noteSessionWentOn}).
    * - An answer to the editor's `stackTrace` request goes to the stop's keyboard hand-over, which learns from it the frame the editor focuses for the stop ({@link StopKeyboardHandOver}).
    * @param sessionId - The session of the adapter.
@@ -3515,7 +3515,10 @@ export class StudyWorkspace {
     } else if (isDebugStopsInvalidation(message))
       this.noteStopOf(
         sessionId,
-        this.storedStops.lastStopOf(sessionId) ?? {
+        this.storedStops.stopHandledAgainOf(
+          sessionId,
+          this.isCursorHost() ? 'Cursor' : 'VS Code',
+        ) ?? {
           reason: undefined,
           keepsFocus: false,
           threadId: undefined,

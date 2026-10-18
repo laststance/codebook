@@ -6,6 +6,9 @@ import type { debugStopOf } from './utils/debugStopOf'
 /** A stop as the adapter's `stopped` event reported it ({@link debugStopOf}). */
 type DebugStop = NonNullable<ReturnType<typeof debugStopOf>>
 
+/** The editor the reader runs in, whose handling of an `invalidated` event {@link StoredDebugStops.stopHandledAgainOf} follows. */
+export type DebugStopsEditor = 'VS Code' | 'Cursor'
+
 const resumeRequestSchema = z.object({
   type: z.literal('request'),
   seq: z.number(),
@@ -36,7 +39,7 @@ interface PendingResume {
 }
 
 /**
- * The stops each debug session's adapter reported, kept as both editors keep their details for their stop handling: per thread, until that thread goes on (VS Code 1.142.0 and Cursor 3.23.23 `stoppedDetails` of their debug sessions). An `invalidated` event makes the editor handle the stored stops again, so the reader notes the stop again from {@link lastStopOf} (Cycle 0046 R5).
+ * The stops each debug session's adapter reported, kept as both editors keep their details for their stop handling: every stop in the order it came, until its thread goes on (VS Code 1.142.0 and Cursor 3.23.23 `stoppedDetails` of their debug sessions). An `invalidated` event makes the editor handle stored stops again, so the reader notes the stop that editor handles again ({@link stopHandledAgainOf}; Cycle 0046 R5, Q8).
  * A stored stop is dropped as the editors drop it (Cycle 0046 AD12):
  * - the adapter's `continued` event drops its thread's stop, or every stop of the session unless it says `allThreadsContinued: false`;
  * - the editor's resume or step request ({@link RESUME_COMMANDS}) drops its thread's stop once the adapter answered it with success, and a `continue` drops every stop of the session while the adapter has not said that not all threads go on (the editor's remembered `allThreadsContinued`, true at first);
@@ -46,27 +49,24 @@ interface PendingResume {
  * const stops = new StoredDebugStops()
  * stops.noteStop('learner-node', { reason: 'breakpoint', keepsFocus: true, threadId: 1 })
  * stops.readAdaptersMessage('learner-node', { type: 'event', event: 'continued', body: { threadId: 2, allThreadsContinued: false } })
- * stops.lastStopOf('learner-node') // => { reason: 'breakpoint', keepsFocus: true, threadId: 1 }
+ * stops.stopHandledAgainOf('learner-node', 'Cursor') // => { reason: 'breakpoint', keepsFocus: true, threadId: 1 }
  */
 export class StoredDebugStops {
-  /** Each session's stored stops by thread, the latest last. */
-  private readonly stops = new Map<string, Map<number | undefined, DebugStop>>()
+  /** Each session's stored stops in the order the adapter reported them, the latest last, as the editors' `stoppedDetails` hold them. */
+  private readonly stops = new Map<string, DebugStop[]>()
   /** Each session's pending resume and step requests by sequence number. */
   private readonly pending = new Map<string, Map<number, PendingResume>>()
   /** The sessions whose adapter said that not all threads go on, which the editor remembers for its later `continue` answers. */
   private readonly notAllThreadsContinue = new Set<string>()
 
   /**
-   * Stores a stop the adapter reported, in place of an earlier stop of its thread.
+   * Stores a stop the adapter reported after the stops stored before, as the editors' stop handling adds it to `stoppedDetails`.
    * @param sessionId - The session that stopped.
    * @param stop - What the adapter's `stopped` event said.
    * @example stops.noteStop('learner-node', { reason: 'step', keepsFocus: false, threadId: 1 })
    */
   noteStop(sessionId: string, stop: DebugStop): void {
-    const threads = this.stops.get(sessionId) ?? new Map()
-    threads.delete(stop.threadId)
-    threads.set(stop.threadId, stop)
-    this.stops.set(sessionId, threads)
+    this.stops.set(sessionId, [...(this.stops.get(sessionId) ?? []), stop])
     // A request answered after a new stop drops nothing: the editors simulate no `continued` for it.
     this.pending.delete(sessionId)
   }
@@ -78,7 +78,32 @@ export class StoredDebugStops {
    * @example stops.lastStopOf('learner-node') // => { reason: 'breakpoint', keepsFocus: true, threadId: 1 }
    */
   lastStopOf(sessionId: string): DebugStop | undefined {
-    return [...(this.stops.get(sessionId)?.values() ?? [])].at(-1)
+    return this.stops.get(sessionId)?.at(-1)
+  }
+
+  /**
+   * Names the stop an `invalidated` event of the session makes the editor handle again, for the reader's note of it (Cycle 0046 Q8), and keeps what that editor keeps:
+   * - VS Code handles every stored stop again (1.142.0 `onDidInvalidated`: `stoppedDetails.slice()`, then `handleStop` for each), and each stop without the adapter's preserveFocusHint focuses its frame, which opens its paused file: the latest such stop stands for them, else the latest stop, and every stop stays stored.
+   * - Cursor handles only its oldest stored stop again (3.23.23 `onDidInvalidated`: `stoppedDetails.length = 1`, then `handleStop` for it) and keeps only that one.
+   * @param sessionId - The session whose stacks the adapter declared invalid.
+   * @param editor - The editor the reader runs in.
+   * @returns The stop the editor handles again; `undefined` when none is stored.
+   * @example stops.stopHandledAgainOf('learner-node', 'VS Code') // => { reason: 'breakpoint', keepsFocus: false, threadId: 1 } while thread 2's later stop keeps the focus
+   */
+  stopHandledAgainOf(
+    sessionId: string,
+    editor: DebugStopsEditor,
+  ): DebugStop | undefined {
+    const stored = this.stops.get(sessionId) ?? []
+    // Cursor handles its oldest stop again and stores it alone.
+    if (editor === 'Cursor') {
+      const oldest = stored[0]
+      if (oldest) this.stops.set(sessionId, [oldest])
+      return oldest
+    }
+    return (
+      stored.findLast((stop) => !stop.keepsFocus) ?? this.lastStopOf(sessionId)
+    )
   }
 
   /**
@@ -159,7 +184,14 @@ export class StoredDebugStops {
     allThreads: boolean,
     threadId: number | undefined,
   ): void {
+    const stored = this.stops.get(sessionId)
+    if (!stored) return
+    // As the editors do: every stop of the session, or every stored stop of that thread.
     if (allThreads) this.stops.delete(sessionId)
-    else this.stops.get(sessionId)?.delete(threadId)
+    else
+      this.stops.set(
+        sessionId,
+        stored.filter((stop) => stop.threadId !== threadId),
+      )
   }
 }

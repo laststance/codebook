@@ -939,6 +939,7 @@ export async function workspaceHarness(
   /** The sequence number of the next Debug Adapter Protocol message the fake editor or a fake adapter sends; see `answerStackTraceOf`. */
   let nextDebugMessageSeq = 1
   /** The id of the top frame of each session's current stop, as the adapter answered the editor's `stackTrace` request for it (`answerStackTraceOf`). */
+  /** The top frame each stopped thread's adapter answered last, by session and thread (`answerStackTraceOf`), which `reportFrameOf` reports for that thread. */
   const stopTopFrameIds = new Map<string, number>()
   /**
    * The settings the fake editor answers, by their full key; every other setting is unset. Read at each `get`, so a test that changes one of the values is answered with the new one.
@@ -1944,11 +1945,13 @@ export async function workspaceHarness(
    * Lets the editor ask a stopped session's adapter for the top frame of its thread and the adapter answer, as both editors do right after every `stopped` event, also for a stop they keep in the background (`refreshTopOfCallstack`, `fetchCallStack(1)`: a `stackTrace` request with `startFrame` 0 and `levels` 1); the trackers see the request and the response. The answered frame is the one the editor focuses for that stop, by its own handling or later by its pass of the focus or a click on the session's row, so its id is kept for `reportFrameOf`.
    * @param session - The stopped session.
    * @param top - The top frame's file in the harness's folder, and whether skipFiles or smartStep deemphasize it (js-debug's `presentationHint: 'deemphasize'`).
+   * @param threadId - The stopped thread whose stack the editor asks for (left out, thread 1).
    * @example answerStackTraceOf({ id: 'learner-node' }, { filename: 'actions.ts', deemphasized: false })
    */
   function answerStackTraceOf(
     session: { id: string },
     top: { filename: string; deemphasized: boolean },
+    threadId = 1,
   ): void {
     const frameId = nextStackFrameId++
     const requestSeq = nextDebugMessageSeq++
@@ -1957,7 +1960,7 @@ export async function workspaceHarness(
         type: 'request',
         seq: requestSeq,
         command: 'stackTrace',
-        arguments: { threadId: 1, startFrame: 0, levels: 1 },
+        arguments: { threadId, startFrame: 0, levels: 1 },
       })
       tracker?.onDidSendMessage?.({
         type: 'response',
@@ -1983,18 +1986,20 @@ export async function workspaceHarness(
         },
       })
     }
-    stopTopFrameIds.set(session.id, frameId)
+    stopTopFrameIds.set(`${session.id}#${threadId}`, frameId)
   }
   /**
    * Reports a frame of a session as Run and Debug's active stack item and tells the reader's listeners: the top frame of that session's current stop (`answerStackTraceOf`), which the editor focuses for the stop, or a new frame when the reader heard no stop of it; the frame step of `pauseDebugger`, `showStopKeepingFocus`, which sends it after the file's opening, and of `passFocusToStoppedSession`, which sends it before or after.
    * @param sessionId - The session whose frame the editor focuses.
+   * @param threadId - The thread of that frame (left out, thread 1).
    * @example reportFrameOf('live-next-browser')
    */
-  function reportFrameOf(sessionId: string): void {
+  function reportFrameOf(sessionId: string, threadId = 1): void {
     activeStackItem = {
       session: { id: sessionId },
-      threadId: 1,
-      frameId: stopTopFrameIds.get(sessionId) ?? nextStackFrameId++,
+      threadId,
+      frameId:
+        stopTopFrameIds.get(`${sessionId}#${threadId}`) ?? nextStackFrameId++,
     }
     for (const listener of [...activeStackItemListeners]) listener()
   }
@@ -5547,7 +5552,7 @@ export async function workspaceHarness(
     },
     /**
      * Pauses the fake debugger: Run and Debug's active stack item is a stack frame, and the reader's listeners are told. Both editors report three states of that item, and this method with `resumeDebugger` is the only way to set them: none before a session's first stop (the state every harness starts in), a frame while the focused thread is stopped (this method), and that thread without a frame once the session runs again (`resumeDebugger`). Called again while a frame is active, it reports the next frame with no thread between the two, as an editor does for a thread that stops again within the 200 ms it waits before it reports a running session, and for a frame the learner selects in the Call Stack view. The editor has opened the paused file with the keyboard before it reports the frame (see `focusMutableDraft`; Cursor's and VS Code's debugger await that opening and select the frame after it), so a test focuses that file first.
-     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent); `staysInBackground` sends that event and nothing more, for a stop the editor does not bring to the front itself (both editors skip a stop while a frame of another session has the focus, which a session that went on keeps for about 200 ms; see `passFocusToStoppedSession` for what follows); `keepsFocus` is the adapter's `preserveFocusHint` in that event, its wish that the editor leave the focus where it is, which a test gives together with `staysInBackground`. After that event the editor asks for the thread's top frame and the adapter answers (`answerStackTraceOf`): `pausedFile` names that frame's file (left out, the file of `opensWithKeyboard`, else a file no test opens), and `framesDeemphasized` marks it deemphasized, as js-debug does for a frame in a file of `skipFiles` (`<node_internals>/**` for Node by default).
+     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent); `staysInBackground` sends that event and nothing more, for a stop the editor does not bring to the front itself (both editors skip a stop while a frame of another session has the focus, which a session that went on keeps for about 200 ms; see `passFocusToStoppedSession` for what follows); `keepsFocus` is the adapter's `preserveFocusHint` in that event, its wish that the editor leave the focus where it is, which a test gives together with `staysInBackground`; `threadId` is the stopped thread that event names (left out, thread 1). After that event the editor asks for the thread's top frame and the adapter answers (`answerStackTraceOf`): `pausedFile` names that frame's file (left out, the file of `opensWithKeyboard`, else a file no test opens), and `framesDeemphasized` marks it deemphasized, as js-debug does for a frame in a file of `skipFiles` (`<node_internals>/**` for Node by default).
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
      * harness.pauseDebugger()
@@ -5563,6 +5568,7 @@ export async function workspaceHarness(
         keepsFocus?: boolean
         pausedFile?: string
         framesDeemphasized?: boolean
+        threadId?: number
       } = {},
     ): void {
       const session = { id: options.session ?? 'live-next-server' }
@@ -5574,17 +5580,21 @@ export async function workspaceHarness(
             event: 'stopped',
             body: {
               reason: options.reason ?? 'breakpoint',
-              threadId: 1,
+              threadId: options.threadId ?? 1,
               ...(options.keepsFocus ? { preserveFocusHint: true } : {}),
             },
           })
-        answerStackTraceOf(session, {
-          filename:
-            options.pausedFile ??
-            options.opensWithKeyboard?.filename ??
-            'paused-frame.ts',
-          deemphasized: options.framesDeemphasized === true,
-        })
+        answerStackTraceOf(
+          session,
+          {
+            filename:
+              options.pausedFile ??
+              options.opensWithKeyboard?.filename ??
+              'paused-frame.ts',
+            deemphasized: options.framesDeemphasized === true,
+          },
+          options.threadId,
+        )
       }
       // A stop the editor leaves in the background ends here: it opens no file and reports no frame.
       if (options.staysInBackground) return
@@ -5597,7 +5607,7 @@ export async function workspaceHarness(
           ),
         )
       focusEditorOnBreak = options.focusesEditorOnBreak
-      reportFrameOf(session.id)
+      reportFrameOf(session.id, options.threadId)
     },
     /**
      * Selects another frame of the paused thread, by one of the three gestures the editor offers. The debug adapter reports nothing: no `stopped` event comes with a selection.
@@ -5768,6 +5778,7 @@ export async function workspaceHarness(
      * @param sessionId - The session that stopped.
      * @param filename - The paused file.
      * @param column - The group the editor opens it in.
+     * @param threadId - The stopped thread whose stop the editor shows (left out, thread 1).
      * @example
      * harness.pauseDebugger({ session: 'live-next-browser', reason: 'step', staysInBackground: true })
      * harness.showStopKeepingFocus('live-next-browser', 'login-form.tsx', 2)
@@ -5776,9 +5787,10 @@ export async function workspaceHarness(
       sessionId: string,
       filename: string,
       column: number,
+      threadId = 1,
     ): void {
       openPausedFileKeepingFocus(filename, column)
-      reportFrameOf(sessionId)
+      reportFrameOf(sessionId, threadId)
     },
     /**
      * Opens a stop's paused file the way both editors' own stop handling does under `debug.focusEditorOnBreak: false`, and reports no frame yet: the first half of `showStopKeepingFocus`, for a test that reads the reader between the paused file's opening and the stop's frame, which both editors report 4 to 105 ms later (Cycle 0046, the native observers of C50 to C55). `reportStopFrame` is the second half.
@@ -5880,14 +5892,14 @@ export async function workspaceHarness(
     /**
      * Lets a debug adapter tell the editor that the stacks of a session whose stop the editor keeps in the background are no longer valid. It does two things only: the session's trackers see the `invalidated` event, and the stack the editor asks for again is answered with the given top frame (`answerStackTraceOf`). It opens no file and reports no frame. What the editor then does with the stop (both editors handle it again from what they stored of the adapter's `stopped` event, its `preserveFocusHint` among it) is not modelled here: a test models it with its next step, for example `showStopKeepingFocus` for a stop the editor shows (Cycle 0046 R5).
      * @param sessionId - The session whose stacks are declared invalid.
-     * @param top - The top frame the adapter answers again: its file and whether it is deemphasized.
+     * @param top - The top frame the adapter answers again: its file, whether it is deemphasized, and its thread (left out, thread 1).
      * @example
      * harness.pauseDebugger({ session: 'learner-node', staysInBackground: true, keepsFocus: true, pausedFile: 'actions.ts' })
      * harness.invalidateStacksOfStopInBackground('learner-node', { filename: 'actions.ts', deemphasized: false })
      */
     invalidateStacksOfStopInBackground(
       sessionId: string,
-      top: { filename: string; deemphasized: boolean },
+      top: { filename: string; deemphasized: boolean; threadId?: number },
     ): void {
       const session = { id: sessionId }
       for (const tracker of trackersOf(session))
@@ -5896,7 +5908,21 @@ export async function workspaceHarness(
           event: 'invalidated',
           body: { areas: ['stacks'] },
         })
-      answerStackTraceOf(session, top)
+      answerStackTraceOf(session, top, top.threadId)
+    },
+    /**
+     * Lets the editor ask for a stopped thread's stack again and the adapter answer it, as the Call Stack view does when it shows a thread whose stack an invalidation cleared (both editors' `clearThreads` at `invalidated`); the trackers see the request and the response, and the frame is the one `reportFrameOf` reports for that thread (Cycle 0046 Q8).
+     * @param sessionId - The stopped session.
+     * @param top - The top frame's file and whether it is deemphasized.
+     * @param threadId - The thread whose stack the editor asks for.
+     * @example harness.fetchThreadStackAgain('learner-node', { filename: 'order.ts', deemphasized: false }, 2)
+     */
+    fetchThreadStackAgain(
+      sessionId: string,
+      top: { filename: string; deemphasized: boolean },
+      threadId: number,
+    ): void {
+      answerStackTraceOf({ id: sessionId }, top, threadId)
     },
     /**
      * Shows a stop for which the editor's stop handling finds no frame to focus, so it focuses the stopped thread alone and opens no file: `getTopStackFrame` of both editors skips every frame whose source is deemphasized when the stop's reason is none of `breakpoint`, `step` and `function breakpoint`, as at js-debug's pause of a Node process in Node's own code (`skipFiles` `<node_internals>/**`) or an uncaught exception thrown there. A test sends the adapter's `stopped` event and the frames first (`pauseDebugger` with `staysInBackground` and `framesDeemphasized`).
@@ -5996,6 +6022,7 @@ export async function workspaceHarness(
      * @param filename - The frame's file.
      * @param column - The view column of the group the editor opens it in.
      * @param order - `file-then-frame` (left out) is the order both editors send the two reports in; `frame-then-file` reports the frame first, the order Cursor 3.23 was seen to use only for a double click on the row of a frame whose file was not open (Cycle 0046, round 9b of C54 and C55: the file 659 to 660 ms after the frame), for a test that no keyboard is handed over then (finding 602).
+     * @param threadId - The thread of the frame the editor focuses (left out, thread 1).
      * @example
      * harness.pauseDebugger({ staysInBackground: true })
      * harness.passFocusToStoppedSession('live-next-server', 'actions.ts', 1)
@@ -6005,12 +6032,13 @@ export async function workspaceHarness(
       filename: string,
       column: number,
       order: 'file-then-frame' | 'frame-then-file' = 'file-then-frame',
+      threadId = 1,
     ): void {
-      if (order === 'frame-then-file') reportFrameOf(sessionId)
+      if (order === 'frame-then-file') reportFrameOf(sessionId, threadId)
       openDraftTab(filename, nativeDebugColumn(column))
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
       activeTextEditorChanged(focusedSourceEditor())
-      if (order === 'file-then-frame') reportFrameOf(sessionId)
+      if (order === 'file-then-frame') reportFrameOf(sessionId, threadId)
     },
     /**
      * Gives a view that is no editor the keyboard, as a learner's click into the Call Stack view of Run and Debug does. The editor reports nothing of it to an extension: the active tab group, its tab and the active text editor stay as they are; only the chat's own part loses the keyboard.

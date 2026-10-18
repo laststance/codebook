@@ -223,3 +223,81 @@ for (const command of ['stepBack', 'reverseContinue'] as const)
     // Assert: thread 2's stop is the one still stored.
     assert.deepEqual(stops.lastStopOf('learner-node'), thread2Stop)
   })
+
+// Value: protects=the stop the reader notes for an invalidation in VS Code, which handles every stored stop again: a stop without the adapter's preserveFocusHint opens its paused file whatever came after it, so the latest such stop stands for them; fails_when=the store names the stop reported last, so a later stop with the hint hides an earlier one without it; why_new=Cycle 0046 Q8 (VS Code 1.142.0 `onDidInvalidated`: `handleStop` for each of `stoppedDetails`); seam=none, the store alone
+test('in VS Code the stop handled again at an invalidation is the latest stored stop without preserveFocusHint', () => {
+  // Arrange: thread 1 stopped without the hint, then thread 2 with it.
+  const stops = new StoredDebugStops()
+  stops.noteStop('learner-node', {
+    reason: 'breakpoint',
+    keepsFocus: false,
+    threadId: 1,
+  })
+  stops.noteStop('learner-node', {
+    reason: 'pause',
+    keepsFocus: true,
+    threadId: 2,
+  })
+
+  // Act
+  const handled = stops.stopHandledAgainOf('learner-node', 'VS Code')
+
+  // Assert: thread 1's stop, and both stops stay stored.
+  assert.deepEqual(
+    { handled, latest: stops.lastStopOf('learner-node') },
+    {
+      handled: { reason: 'breakpoint', keepsFocus: false, threadId: 1 },
+      latest: { reason: 'pause', keepsFocus: true, threadId: 2 },
+    },
+  )
+})
+
+// Value: protects=the stop the reader notes for an invalidation in VS Code when every stored stop asked to keep the focus: the latest one stands for them, so no hand-over is armed; fails_when=the store names no stop then, and the reader notes a stop that does not keep the focus; why_new=Cycle 0046 Q8; seam=none
+test('in VS Code, when every stored stop has preserveFocusHint, the stop handled again at an invalidation is the latest one', () => {
+  // Arrange
+  const stops = new StoredDebugStops()
+  stops.noteStop('learner-node', {
+    reason: 'breakpoint',
+    keepsFocus: true,
+    threadId: 1,
+  })
+  stops.noteStop('learner-node', {
+    reason: 'pause',
+    keepsFocus: true,
+    threadId: 2,
+  })
+
+  // Act
+  const handled = stops.stopHandledAgainOf('learner-node', 'VS Code')
+
+  // Assert
+  assert.deepEqual(handled, { reason: 'pause', keepsFocus: true, threadId: 2 })
+})
+
+// Value: protects=the stop the reader notes for an invalidation in Cursor, which handles only its oldest stored stop again and keeps only that one; fails_when=the store names the stop reported last, or keeps the other stops after the invalidation, so a later invalidation is noted with a stop Cursor no longer holds; why_new=Cycle 0046 Q8 (Cursor 3.23.23 `onDidInvalidated`: `stoppedDetails.length = 1`); seam=none
+test('in Cursor the stop handled again at an invalidation is the oldest stored stop, and only that stop stays stored', () => {
+  // Arrange: thread 1 stopped with the hint, then thread 2 without it.
+  const stops = new StoredDebugStops()
+  stops.noteStop('learner-node', {
+    reason: 'breakpoint',
+    keepsFocus: true,
+    threadId: 1,
+  })
+  stops.noteStop('learner-node', {
+    reason: 'step',
+    keepsFocus: false,
+    threadId: 2,
+  })
+
+  // Act
+  const handled = stops.stopHandledAgainOf('learner-node', 'Cursor')
+
+  // Assert: thread 1's stop, which is the only one stored now.
+  assert.deepEqual(
+    { handled, latest: stops.lastStopOf('learner-node') },
+    {
+      handled: { reason: 'breakpoint', keepsFocus: true, threadId: 1 },
+      latest: { reason: 'breakpoint', keepsFocus: true, threadId: 1 },
+    },
+  )
+})
