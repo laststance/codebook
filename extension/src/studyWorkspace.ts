@@ -14250,6 +14250,7 @@ export class StudyWorkspace {
 
   /**
    * Drains only failed preparation's owned cleanup for {@link reserveApplicationGroup} before its placement flag is restored and its error escapes.
+   * The pane this preparation created is released before its disposal, as {@link retireRefusedPreparationApplication} releases it: the close handler of {@link bindApplicationPanel} would otherwise read the disposal as the learner closing the pane, cancel the presentation transition and hide a recording's playback whose load this refusal answers (Cycle 0046 OCR1-6).
    * The editor's answer to the close decides nothing here: a refused close leaves the preparation's own error to escape. A record the preparation already wrote goes once its group is gone, whether this close or the editor, with the disposed pane's tab, removed it, and stays with a group that still stands ({@link forgetRecordOfRemovedApplicationGroup}, finding 598).
    * @param allocated - The actually observed new allocation identity; absence supplies no cleanup authority.
    * @param createdPanel - The panel created by this transaction, never a retained or replacement panel.
@@ -14262,6 +14263,10 @@ export class StudyWorkspace {
   ): Promise<void> {
     // Raw accepted creation settles before this cleanup; never close a nonempty or adopted learner group.
     if (createdPanel && this.app === createdPanel) {
+      // Released before its disposal, as at a refused focus return: the close handler would read the disposal as the learner's close and cancel the recording load the refusal answers (Cycle 0046 OCR1-6). The pane's own state goes with it, as that handler clears it.
+      this.app = undefined
+      this.applicationPreparationSource = undefined
+      this.replayApplicationCovered = false
       createdPanel.dispose()
       await this.closedPanesGone('codebook.scopedBrowser')
     }

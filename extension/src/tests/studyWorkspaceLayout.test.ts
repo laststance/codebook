@@ -2414,6 +2414,60 @@ test('a Repository Wiki recording visit refused because the learner typed in the
   }
 })
 
+// Value: protects=the answer a Repository Wiki recording visit gives when its Application preparation is refused inside the layout queue after it created the pane: the recording's load is refused with the preparation's own reason, and the window keeps no Application pane or group; fails_when=the failed preparation disposes the pane while it is still the reader's Application, so the pane's close handler takes the disposal for the learner's close, cancels the load and hides the playback, and the load ends cleared with no reason at all (Cycle 0046 OCR1-6); why_new=Cycle 0046 OCR1-6; seam=articleRecordingLayoutHarness, focusMutableDraft, holdNextCommand on workbench.action.lockEditorGroup and on vscode.getEditorLayout (the layout read after the pane was created), failNextCommand('vscode.getEditorLayout'), openRepositoryEvidence with the recording, the playback state and the groups
+test('a Repository Wiki recording visit whose Application preparation fails after it created the pane refuses the recording with the preparation’s reason and leaves no Application group behind', async () => {
+  // Arrange: the learner's two groups are stacked with the notes in the first; the editor holds the new Application group's lock, and then the layout read that follows the pane's creation.
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    const notes = harness.focusMutableDraft('notes.ts', 1)
+    const lock = harness.holdNextCommand('workbench.action.lockEditorGroup')
+
+    // Act: the visit places its Application; the layout read after the pane exists fails.
+    const visit = harness.reader
+      .openRepositoryEvidence(harness.binding, true, undefined, harness.origin)
+      .then(
+        () => 'opened',
+        (error: unknown) => String(error),
+      )
+    await lock.started
+    const layoutRead = harness.holdNextCommand('vscode.getEditorLayout')
+    lock.release()
+    await layoutRead.started
+    const paneExistedAtTheRead = harness.counts().panels > 0
+    harness.failNextCommand('vscode.getEditorLayout')
+    layoutRead.release()
+    const answer = await visit
+    const playback = harness.controller.state()
+
+    // Assert: the load was refused with the preparation's reason, not cleared as by a closed pane; the learner's two groups stand with no Application pane.
+    assert.deepEqual(
+      {
+        paneExistedAtTheRead,
+        answer,
+        readiness: playback.readiness,
+        refusal: playback.reason,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+        groupCount: harness.groups.length,
+        notesColumn: harness.groups.find((group) =>
+          group.tabs.includes(notes.tab),
+        )?.viewColumn,
+      },
+      {
+        paneExistedAtTheRead: true,
+        answer:
+          'Error: The observation is outside the verified recording range.',
+        readiness: 'failed',
+        refusal: 'Error: Native layout command failed',
+        applicationColumn: undefined,
+        groupCount: 2,
+        notesColumn: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('native minimum-width expansion keeps Wiki Return successful and the next observation in three visible panes', async () => {
   // Arrange
   const harness = await articleRecordingLayoutHarness()
