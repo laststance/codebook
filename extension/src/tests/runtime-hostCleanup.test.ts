@@ -85,6 +85,7 @@ async function loadHostBrowser(
  * @param options.platform - The system the adapter reads from `process.platform`; this machine's by default.
  * @param options.processesOfProfile - The processes a look for the profile finds, by the look's number (1 for the first); none by default.
  * @param options.realpathOfProfileFails - Makes `realpath` of the loaded browser refuse every profile folder (`EISDIR`), as the system does on some Windows volumes; the refused paths are noted in `refusedRealpaths`.
+ * @param options.ownerMarkerWriteFails - Makes the loaded browser's write of an owner marker fail (`EACCES`), as on a volume that refuses new files.
  * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot): its loaded context reads `LOCALAPPDATA` as the test's root then, and answers a home folder and a temp folder (`os.homedir`, `os.tmpdir`) that no system's root may be taken from. By default the browser is given the test's root.
  * @returns The browser, its root, every journal entry as plain data, every profile whose processes were asked for, and the paths `realpath` refused. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
@@ -104,6 +105,7 @@ async function managedBrowser(
     processesOfProfile?: (look: number) => { pid: number; command: string }[]
     rootChosenByTheBrowser?: boolean
     realpathOfProfileFails?: boolean
+    ownerMarkerWriteFails?: boolean
   } = {},
 ) {
   const root = await realpath(
@@ -126,6 +128,18 @@ async function managedBrowser(
       }),
       'node:fs/promises': {
         ...fsPromises,
+        // The adapter writes one file, the owner marker, as text.
+        writeFile: async (path: string, text: string): Promise<void> => {
+          if (
+            options.ownerMarkerWriteFails &&
+            basename(path) === 'codebook-owner.json'
+          )
+            throw Object.assign(
+              new Error(`EACCES: permission denied, open '${path}'`),
+              { code: 'EACCES' },
+            )
+          return writeFile(path, text)
+        },
         realpath: async (path: string): Promise<string> => {
           // A volume whose real paths the system cannot read refuses the new profile folder.
           if (
@@ -1142,6 +1156,64 @@ test('a managed launch whose new profile folder cannot be resolved removes that 
     {
       failure: `The managed browser's profile folder ${refused} could not be resolved, so it was removed again and the browser was not started: Error: EISDIR: illegal operation on a directory, realpath '${refused}'`,
       leftInTheRoot: [],
+    },
+  )
+})
+
+// Value: protects=the profile root of such a machine when the folder cannot be removed either (on Windows a file lock, EPERM): the launch says so instead of saying it removed the folder, and marks the folder by the path it was made at, so a later sweep tries to remove it once this editor has ended; when the marker cannot be written either, the sentence says that no later run removes it (R4 and R9, /ship third review and its maintainability review); fails_when=the launch drops the removal's error and reports a removal that did not happen, and leaves the folder without a marker, which neither the close nor a later sweep removes; why_new=the AD24 test's removal succeeded; seam=the harness's `realpath`, which refuses the new profile folder, the adapter's folder removal, which fails with EPERM, the write of the owner marker, which fails for the second browser, and the sweep's stand-in
+test('a managed launch whose unresolved profile folder cannot be removed either marks it by the path it was made at and says so, or says that it stays unmarked', async (context) => {
+  // Arrange: two browsers on such a volume whose removal fails; the second cannot write a marker either.
+  const refusedRemoval = async (path: string): Promise<void> => {
+    throw Object.assign(
+      new Error(`EPERM: operation not permitted, rmdir '${path}'`),
+      { code: 'EPERM' },
+    )
+  }
+  const marked = await managedBrowser(context, {
+    realpathOfProfileFails: true,
+    removeFolder: refusedRemoval,
+    removeAbandonedProfiles: async () => [],
+  })
+  const unmarked = await managedBrowser(context, {
+    realpathOfProfileFails: true,
+    removeFolder: refusedRemoval,
+    ownerMarkerWriteFails: true,
+    removeAbandonedProfiles: async () => [],
+  })
+  const launch = (browser: typeof marked.browser) =>
+    browser
+      .launch(
+        { type: 'editor-browser', name: 'owned', request: 'launch' },
+        new AbortController().signal,
+      )
+      .then(
+        () => undefined,
+        (error: Error) => error.message,
+      )
+  // Act
+  const failures = {
+    marked: await launch(marked.browser),
+    unmarked: await launch(unmarked.browser),
+  }
+  // Assert
+  const [markedFolder] = marked.refusedRealpaths,
+    [unmarkedFolder] = unmarked.refusedRealpaths
+  const marker = JSON.parse(
+    await readFile(join(markedFolder!, 'codebook-owner.json'), 'utf8'),
+  )
+  assert.deepEqual(
+    {
+      failures,
+      markerNames: { pid: marker.pid, hostname: marker.hostname },
+      unmarkedHolds: await readdir(unmarkedFolder!),
+    },
+    {
+      failures: {
+        marked: `The managed browser's profile folder ${markedFolder} could not be resolved and could not be removed (Error: EPERM: operation not permitted, rmdir '${markedFolder}'); it stays, marked as this editor's, so a later run tries to remove it once this editor has ended, and the browser was not started: Error: EISDIR: illegal operation on a directory, realpath '${markedFolder}'`,
+        unmarked: `The managed browser's profile folder ${unmarkedFolder} could not be resolved, could not be removed (Error: EPERM: operation not permitted, rmdir '${unmarkedFolder}') and could not be marked (Error: EACCES: permission denied, open '${join(unmarkedFolder!, 'codebook-owner.json')}'), so no later run removes it: remove it by hand. The browser was not started: Error: EISDIR: illegal operation on a directory, realpath '${unmarkedFolder}'`,
+      },
+      markerNames: { pid: process.pid, hostname: hostname() },
+      unmarkedHolds: [],
     },
   )
 })

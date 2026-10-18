@@ -85,25 +85,84 @@ function profileProcessPollIntervalMs(platform: NodeJS.Platform): number {
 }
 
 /**
- * Makes a managed run's profile folder in its root and gives the folder's real path, by which Chrome and the debugger name it; called by {@link HostBrowser.launch} before it writes the folder's owner marker.
- * A folder whose real path cannot be read (on some Windows volumes, a RAM disk, a `subst` or a network drive, the system's own resolution fails) would have no marker and no path the run knows, so neither the close nor a later sweep would remove it: it is removed again at once, without following a link ({@link removeWithoutFollowing}), and the launch fails with a sentence that says so.
- * @param root - The managed profile root ({@link managedProfileRoot}).
- * @returns The real path of the new folder.
- * @throws When the folder cannot be made, or when its real path cannot be read: the folder is removed then, and the error names it and the cause.
+ * Writes the owner marker into a managed run's profile folder, the proof by which a later run may remove the folder should this editor be killed before the run closes; called by {@link HostBrowser.launch} for its resolved folder and by {@link leaveUnresolvedProfileFolder} for a folder that could neither be resolved nor removed.
+ * @param folder - The profile folder.
+ * @param owner - The machine, the boot and the start of this process ({@link currentStorageOwner}).
+ * @returns After the marker is written; it names this process, its owner identity, the operating-system user ({@link currentUserName}), whose sweep alone judges it, and the time.
  * @example
- * await madeProfileFolder('/tmp') // => '/private/tmp/codebook-browser-a1b2c3' on macOS
+ * await writeOwnerMarker('/tmp/codebook-browser-a1b2c3', owner) // codebook-owner.json: { pid: 4242, hostname: 'workstation', user: 'learner', … }
  */
-async function madeProfileFolder(root: string): Promise<string> {
+async function writeOwnerMarker(
+  folder: string,
+  owner: StorageOwnerIdentity,
+): Promise<void> {
+  const user = currentUserName()
+  await writeFile(
+    join(folder, MANAGED_PROFILE_OWNER_FILE),
+    JSON.stringify({
+      pid: process.pid,
+      ...owner,
+      ...(user !== undefined && { user }),
+      createdAt: new Date().toISOString(),
+    }),
+  )
+}
+
+/**
+ * Deals with a new profile folder whose real path cannot be read, and words the launch's failure by what happened to it; called by {@link madeProfileFolder}.
+ * The folder is removed again at once, without following a link ({@link removeWithoutFollowing}). When the removal fails too (on Windows a file lock, `EPERM`), the folder gets its owner marker by the path it was made at, so a later sweep tries to remove it once this editor has ended; when the marker cannot be written either, the sentence says that no later run will remove it.
+ * @param made - The folder as `mkdtemp` made it.
+ * @param owner - This process's owner identity, for the marker.
+ * @param cause - The error of `realpath`.
+ * @returns The sentence of the launch's failure.
+ * @example
+ * await leaveUnresolvedProfileFolder('R:\\codebook-browser-a1b2c3', owner, error)
+ * // => "The managed browser's profile folder R:\\codebook-browser-a1b2c3 could not be resolved, so it was removed again and the browser was not started: Error: EISDIR: …"
+ */
+async function leaveUnresolvedProfileFolder(
+  made: string,
+  owner: StorageOwnerIdentity,
+  cause: unknown,
+): Promise<string> {
+  const unresolved = `The managed browser's profile folder ${made} could not be resolved`
+  const notStarted = `the browser was not started: ${String(cause)}`
+  const removal = await removeWithoutFollowing(made).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  if (removal === undefined)
+    return `${unresolved}, so it was removed again and ${notStarted}`
+  // A folder that stays gets its marker by the path it was made at, so a later sweep knows it.
+  const marking = await writeOwnerMarker(made, owner).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  if (marking === undefined)
+    return `${unresolved} and could not be removed (${String(removal)}); it stays, marked as this editor's, so a later run tries to remove it once this editor has ended, and ${notStarted}`
+  return `${unresolved}, could not be removed (${String(removal)}) and could not be marked (${String(marking)}), so no later run removes it: remove it by hand. ${notStarted.charAt(0).toUpperCase()}${notStarted.slice(1)}`
+}
+
+/**
+ * Makes a managed run's profile folder in its root and gives the folder's real path, by which Chrome and the debugger name it; called by {@link HostBrowser.launch} before it writes the folder's owner marker.
+ * A folder whose real path cannot be read (on some Windows volumes, a RAM disk, a `subst` or a network drive, the system's own resolution fails) would have no marker and no path the run knows, so neither the close nor a later sweep would remove it: it is removed again, or marked when it cannot be removed ({@link leaveUnresolvedProfileFolder}), and the launch fails with a sentence that says which.
+ * @param root - The managed profile root ({@link managedProfileRoot}).
+ * @param owner - This process's owner identity, for the marker of a folder that stays.
+ * @returns The real path of the new folder.
+ * @throws When the folder cannot be made, or when its real path cannot be read: the error then says what became of the folder, and names it and the cause.
+ * @example
+ * await madeProfileFolder('/tmp', owner) // => '/private/tmp/codebook-browser-a1b2c3' on macOS
+ */
+async function madeProfileFolder(
+  root: string,
+  owner: StorageOwnerIdentity,
+): Promise<string> {
   const made = await mkdtemp(join(root, MANAGED_PROFILE_PREFIX))
   try {
     return await realpath(made)
   } catch (error) {
-    // A folder without its real path gets no marker: no close and no sweep would ever find it, so it goes now.
-    await removeWithoutFollowing(made).catch(() => undefined)
-    throw new Error(
-      `The managed browser's profile folder ${made} could not be resolved, so it was removed again and the browser was not started: ${String(error)}`,
-      { cause: error },
-    )
+    throw new Error(await leaveUnresolvedProfileFolder(made, owner, error), {
+      cause: error,
+    })
   }
 }
 
@@ -203,18 +262,9 @@ export class HostBrowser {
       const root = this.managedRoot
       // The root of Windows (below the user's local application data folder) is made at the first run; /tmp is always there.
       await mkdir(root, { recursive: true })
-      this.managedProfile = await madeProfileFolder(root)
-      const user = currentUserName()
-      // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes; it names the user, whose sweep alone judges it.
-      await writeFile(
-        join(this.managedProfile, MANAGED_PROFILE_OWNER_FILE),
-        JSON.stringify({
-          pid: process.pid,
-          ...owner,
-          ...(user !== undefined && { user }),
-          createdAt: new Date().toISOString(),
-        }),
-      )
+      this.managedProfile = await madeProfileFolder(root, owner)
+      // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
+      await writeOwnerMarker(this.managedProfile, owner)
       this.record('browser.managed-profile', {
         profile: this.managedProfile,
         chrome: this.host.chrome,
