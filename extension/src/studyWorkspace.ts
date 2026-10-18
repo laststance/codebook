@@ -7233,7 +7233,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a layout entry still owns the window's native work: its layout queue's check ({@link withLayout}: the same reader lifetime, a signal that was not aborted, no newer Wiki navigation) holds and no Close runs; asked by {@link arrangeRepositoryLayout} when its cold layout was refused, before it gives back a borrowed keyboard, as the refusals of {@link open} and {@link performPresentation} ask of their own lifetime (Cycle 0046 CR4-4).
+   * Says whether a layout entry still owns the window's native work: its layout queue's check ({@link withLayout}: the same reader lifetime, a signal that was not aborted, no newer Wiki navigation) holds and no Close runs; asked by {@link arrangeRepositoryLayout} when its cold layout was refused, before it gives back a borrowed keyboard, as the refusals of {@link open} and {@link performPresentation} ask of their own lifetime (Cycle 0046 CR4-4), and by {@link retireLeftoverApplicationGroup} before it gives back the keyboard a refused leftover proof took (Cycle 0046 P2OCR1-1).
    * @param assertCurrent - The layout queue's check of the entry.
    * @returns `true` while the entry is current; `false` once it was cancelled, superseded or closed, whose give-back would move the keyboard a newer entry or the learner holds.
    * @example this.isLayoutEntryCurrent(assertCurrent) // => false after a newer Wiki navigation aborted the entry
@@ -15171,7 +15171,7 @@ export class StudyWorkspace {
   /**
    * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in a proven leftover. An unproven leftover at column 1 can receive the pane of a cold Study select; the next reservation moves the pane into a group of its own ({@link watchGroupLeftByApplication}, row 626). A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. A proof whose focus command took the keyboard is reported; a caller that captures focus afterwards gives the chat its keyboard back first.
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
-   * A retirement that throws after a proof's focus command took the keyboard returns no answer, so its callers' give-backs never run: the tab that had the keyboard (a chat of another editor part) gets it back here, outside the layout queue, before the error escapes, and the learner is told once that the groups were not closed ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}' `refusedLeftoverProof`, Cycle 0046 OCR1-2).
+   * A retirement that throws after a proof's focus command took the keyboard returns no answer, so its callers' give-backs never run: the tab that had the keyboard (a chat of another editor part) gets it back here, inside the layout queue, before the error escapes, and the learner is told once that the groups were not closed ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}' `refusedLeftoverProof`, Cycle 0046 OCR1-2). That happens only while the entry still owns the window ({@link isLayoutEntryCurrent}): a cancelled, superseded or closed entry refused nothing, and a give-back would move the keyboard a newer entry, the Close or the learner holds (Cycle 0046 P2OCR1-1).
    * @param signal - The entry's cancellation.
    * @returns When a proof focused a leftover group and so took the keyboard, the cause the give-back of the tab that had it tells ({@link LeftoverProofKeyboard}): `leftoverProof` once a group was retired, `unprovenLeftoverProof` when the proof closed none (Cycle 0046 FX-D1-1); `undefined` when nothing was issued, and when every proof acted on the group the only editor part named as its active one ({@link retireProvenLeftoverGroups}).
    * @throws When the editor refuses a close, or the grid does not lose exactly that group.
@@ -15199,24 +15199,30 @@ export class StudyWorkspace {
     if (!leftovers.length) return undefined
     // Read before a proof moves the keyboard, as each caller reads its own give-back.
     const giveKeyboardBack = this.retainForeignTabFocus(undefined)
-    let proofTookKeyboard = false
-    return this.withLayout(signal, (_lifetime, assertCurrent) =>
-      this.retireProvenLeftoverGroups(
-        record,
-        leftovers,
-        assertCurrent,
-        signal,
-        () => {
-          proofTookKeyboard = true
-        },
-      ),
-    ).catch(async (error: unknown) => {
-      // A proof that took the keyboard and then failed: the chat gets the keyboard back before the refusal escapes.
-      if (proofTookKeyboard)
-        await giveKeyboardBack?.(true, undefined, 'refusedLeftoverProof').catch(
-          () => false,
+    return this.withLayout(signal, async (_lifetime, assertCurrent) => {
+      let proofTookKeyboard = false
+      const stillCurrent = (): boolean =>
+        this.isLayoutEntryCurrent(assertCurrent)
+      try {
+        return await this.retireProvenLeftoverGroups(
+          record,
+          leftovers,
+          assertCurrent,
+          signal,
+          () => {
+            proofTookKeyboard = true
+          },
         )
-      throw error
+      } catch (error) {
+        // A proof that took the keyboard and then was refused: the chat gets the keyboard back before the refusal escapes. A cancelled, superseded or closed entry refused nothing, and the keyboard is the newer owner's (Cycle 0046 P2OCR1-1).
+        if (proofTookKeyboard && stillCurrent())
+          await giveKeyboardBack?.(
+            true,
+            stillCurrent,
+            'refusedLeftoverProof',
+          ).catch(() => false)
+        throw error
+      }
     })
   }
 

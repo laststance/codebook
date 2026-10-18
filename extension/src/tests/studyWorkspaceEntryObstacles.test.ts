@@ -2930,6 +2930,125 @@ test('a cold Study open after a reload whose resized grid no longer proves the e
   }
 })
 
+// Value: protects=the keyboard of whoever owns the window after a cold Study open from Cursor's chat is cancelled while the proof of the earlier window's leftover group runs its focus command: the cancelled entry gives the chat nothing back and tells no sentence, since nothing was refused; fails_when=the give-back after a proof that took the keyboard runs for every rejection, also the entry's own cancellation, so the cancelled entry runs Focus Agent outside the layout queue it no longer owns and tells that Codebook could not close the groups (Cycle 0046 P2OCR1-1); why_new=Cycle 0046 P2OCR1-1; seam=useNativeLayout, applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, focusMutableDraft, addSeparateEditorPart with the chat's focusTab, holdNextCommand('workbench.action.focusFirstEditorGroup'), the entry's AbortController, the reader's open, the command log and the information messages
+test('in Cursor, a cold Study open from the chat that is cancelled while the leftover proof focuses the earlier window’s group gives the chat nothing back and tells nothing', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1, which stands empty and locked beside the learner's notes; Cursor's chat has the keyboard, and the editor holds the proof's focus command.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+    version: 1,
+    writer: 'the window before the reload',
+    column: 1,
+    groupCount: 2,
+    layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+  })
+  harness.leaveEmptyLockedGroup(1)
+  harness.leaveEmptyGroup(2)
+  harness.focusMutableDraft('learner-notes.ts', 2)
+  chat.focusTab()
+  const proofFocus = harness.holdNextCommand(
+    'workbench.action.focusFirstEditorGroup',
+  )
+  const entry = new AbortController()
+  const messagesBefore = harness.informationMessages.length
+  try {
+    // Act: the entry is cancelled while the proof's focus command runs.
+    const opening = harness.reader.open(entry.signal).then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await proofFocus.started
+    const commandsAfterProofFocus = harness.commands.length
+    entry.abort(new Error('The Study entry was cancelled.'))
+    proofFocus.release()
+    const answer = await opening
+
+    // Assert: the open reports its cancellation, and the cancelled entry ran no focus command after the proof's and told nothing.
+    assert.deepEqual(
+      {
+        answer,
+        keyboardCommands: harness.commands
+          .slice(commandsAfterProofFocus)
+          .filter(
+            (command) =>
+              command === 'composer.focusComposer' ||
+              command.startsWith('workbench.action.focus'),
+          ),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        answer: 'Error: The Study entry was cancelled.',
+        keyboardCommands: [],
+        messages: [],
+      },
+    )
+  } finally {
+    proofFocus.release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the window after the learner closed the Study workspace while a cold Study open from Cursor's chat ran the proof's focus command for the earlier window's leftover group: the closed reader gives the chat nothing back and tells no sentence; fails_when=the give-back after a proof that took the keyboard runs for the lifetime the Close ended, so the closed reader runs Focus Agent beside the Close's own work and tells that Codebook could not close the groups (Cycle 0046 P2OCR1-1); why_new=Cycle 0046 P2OCR1-1; seam=useNativeLayout, applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, focusMutableDraft, addSeparateEditorPart with the chat's focusTab, holdNextCommand('workbench.action.focusFirstEditorGroup'), the reader's open and close, the command log and the information messages
+test('in Cursor, a cold Study open from the chat whose reader closes while the leftover proof focuses the earlier window’s group runs no Focus Agent after the Close and tells nothing', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1, which stands empty and locked beside the learner's notes; Cursor's chat has the keyboard, and the editor holds the proof's focus command.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+    version: 1,
+    writer: 'the window before the reload',
+    column: 1,
+    groupCount: 2,
+    layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+  })
+  harness.leaveEmptyLockedGroup(1)
+  harness.leaveEmptyGroup(2)
+  harness.focusMutableDraft('learner-notes.ts', 2)
+  chat.focusTab()
+  const proofFocus = harness.holdNextCommand(
+    'workbench.action.focusFirstEditorGroup',
+  )
+  const messagesBefore = harness.informationMessages.length
+  try {
+    // Act: the learner closes the reader while the proof's focus command runs.
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await proofFocus.started
+    const closing = harness.reader.close()
+    const commandsAfterClose = harness.commands.length
+    proofFocus.release()
+    const answer = await opening
+    await closing
+
+    // Assert: the open reports the Close, and the closed reader ran no Focus Agent and told nothing.
+    assert.deepEqual(
+      {
+        answer,
+        chatCommands: harness.commands
+          .slice(commandsAfterClose)
+          .filter((command) => command === 'composer.focusComposer'),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        answer:
+          'Error: The study workspace was closed; repeat the action explicitly if needed.',
+        chatCommands: [],
+        messages: [],
+      },
+    )
+  } finally {
+    proofFocus.release()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's own Study Application pane when an agent's run prepares its Application while the layout queue is busy and the learner's Open makes that pane outside the queue meanwhile: the run's preparation, refused afterwards by its focus return, retires only what it made itself, so the Open's pane and the Study stay; fails_when=the preparation decides what it made from the pane it saw before it waited for the queue, so the refused focus return disposes the pane the Open made and closes the group it was moved into, and the Open is left without its Application (Cycle 0046 OCR1-7); why_new=Cycle 0046 OCR1-7; seam=the reader's withLayout held by the test (another layout operation in the queue), focusMutableDraft with workInActiveTextEditor and replaceContent (the learner typing during the placement), holdNextCommand on workbench.action.lockEditorGroup, presentation.createViewport (the MCP-first preparation), the reader's open, counts and panelColumn
 test('a run’s Application preparation refused by its focus return after it waited for the layout queue leaves the Application pane the learner’s Open made meanwhile', async () => {
   // Arrange: the learner works in notes.ts in the second of two groups; another layout operation holds the queue, so an agent's run's preparation waits for it, and the learner's Open makes the Application pane outside the queue meanwhile.
