@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import fsPromises, {
+  chmod,
   readFile,
   readdir,
   mkdir,
@@ -24,6 +25,7 @@ import type { BrowserViewportFactory } from '../runtimeSupport/browserViewport'
 import { Cdp } from '../runtimeSupport/cdp'
 import type * as HostModule from '../runtimeSupport/hostBrowser'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 
@@ -76,7 +78,7 @@ async function loadHostBrowser(
  * @param context - The test, which removes the root when it ends.
  * @param options.startDebugging - The editor's answer to the debugger launch; started at once by default.
  * @param options.onEvent - Called with the type of every journal entry as it is recorded, for a test that cancels at one.
- * @param options.removeFolder - Stands in for the adapter's folder removal; the real one by default.
+ * @param options.removeFolder - Stands in for the adapter's folder removal ({@link removeWithoutFollowing}, which the close and the launch call); the real one by default.
  * @param options.removeAbandonedProfiles - Stands in for the sweep of the profile folders a killed editor left; the real one by default.
  * @param options.currentStorageOwner - Stands in for the read of this process's machine, boot and start, for a test that holds it; the real one by default.
  * @param options.createViewport - Holds or rejects the real factory boundary while the test observes launch and cleanup ordering.
@@ -94,7 +96,7 @@ async function managedBrowser(
   options: {
     startDebugging?: () => Promise<boolean>
     onEvent?: (type: string) => void
-    removeFolder?: typeof rm
+    removeFolder?: typeof removeWithoutFollowing
     removeAbandonedProfiles?: (root: string) => Promise<string[]>
     currentStorageOwner?: () => Promise<{ hostname: string }>
     createViewport?: BrowserViewportFactory
@@ -117,9 +119,13 @@ async function managedBrowser(
       window: { tabGroups: { all: [] } },
     },
     {
+      ...(options.removeFolder && {
+        '../utils/removeWithoutFollowing': {
+          removeWithoutFollowing: options.removeFolder,
+        },
+      }),
       'node:fs/promises': {
         ...fsPromises,
-        rm: options.removeFolder ?? rm,
         realpath: async (path: string): Promise<string> => {
           // A volume whose real paths the system cannot read refuses the new profile folder.
           if (
@@ -716,17 +722,104 @@ test("a profile folder that cannot be removed is journaled with its path and the
   assert.equal(await exists(profile), true)
 })
 
+// Value: protects=the profile folder of a run whose close cannot remove every file in it (on Windows Chrome may still hold a file, and since AD22 the close also removes the folder when the browser's exit could not be checked, as on every close where PowerShell is blocked): the close removes the folder's other entries first and its owner marker last, so a folder that stays keeps its marker and a later sweep removes it once the file is free (R6, /ship third review, Claude adversarial #6); fails_when=the close removes the folder by the recursive rm of Node.js, which removes the marker beside the entry that refuses, so the folder stays without a marker and every later sweep passes over it for good; why_new=every close test whose removal failed stood in for the whole removal; seam=the real removal over a folder `Default` without write permission (a file in it cannot be unlinked), and the sweep's stand-in, which ends at once
+test(
+  'a managed close whose removal stops at a file it cannot remove keeps the owner marker in the folder it journals as left',
+  {
+    skip:
+      (process.platform === 'win32' &&
+        'Windows lets the owner remove a file of a folder without write permission') ||
+      (process.getuid?.() === 0 &&
+        'root removes a file of a folder without write permission'),
+  },
+  async (context) => {
+    // Arrange: a launched browser whose profile holds a file in a folder this user may not change.
+    const managed = await managedBrowser(context, {
+      removeAbandonedProfiles: async () => [],
+    })
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    const profile = profileOf(managed.events)
+    const browserFolder = join(profile, 'Default')
+    await mkdir(browserFolder)
+    await writeFile(join(browserFolder, 'Preferences'), '{}')
+    await chmod(browserFolder, 0o500)
+    try {
+      // Act
+      await managed.browser.close()
+      // Assert
+      assert.deepEqual(
+        {
+          left: (await readdir(profile)).toSorted(),
+          journal: managed.events.map((event) => event.type),
+          profileLeft: managed.browser.profileLeft?.profile,
+        },
+        {
+          left: ['Default', 'codebook-owner.json'],
+          journal: [
+            'browser.managed-profile',
+            'host.debugger-started',
+            'browser.managed-exit-verified',
+            'browser.managed-profile-left',
+            'browser.cleanup-verified',
+          ],
+          profileLeft: profile,
+        },
+      )
+    } finally {
+      // The root is removed after the test; its folders must be changeable again.
+      await chmod(browserFolder, 0o700)
+    }
+  },
+)
+
+// Value: protects=the profile folder of a run on Windows, which still holds a file of the ended browser for a moment: the close tries the removal again after a busy answer, as the recursive rm of Node.js did with its retries, and removes the folder (R6, /ship third review); fails_when=the close's removal gives up at the first busy answer, so every such run leaves its folder for a later sweep; why_new=the close's removal moved from rm to removeWithoutFollowing, which has no retries of its own; seam=the adapter's folder removal, which answers busy once and then removes the folder for real
+test('a managed close whose removal the system answers as busy once removes the folder at its retry', async (context) => {
+  // Arrange
+  let removals = 0
+  const managed = await managedBrowser(context, {
+    removeAbandonedProfiles: async () => [],
+    removeFolder: async (path, order) => {
+      removals += 1
+      if (removals === 1)
+        throw Object.assign(
+          new Error(`EBUSY: resource busy or locked, rmdir '${String(path)}'`),
+          { code: 'EBUSY' },
+        )
+      return removeWithoutFollowing(path, order)
+    },
+  })
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const profile = profileOf(managed.events)
+  // Act
+  await managed.browser.close()
+  // Assert
+  assert.deepEqual(
+    {
+      removals,
+      exists: await exists(profile),
+      profileLeft: managed.browser.profileLeft,
+    },
+    { removals: 2, exists: false, profileLeft: undefined },
+  )
+})
+
 test('a profile folder that an earlier close had to leave is removed by a later close and is then no longer named', async (context) => {
   // Arrange: the first removal is refused, as while a file of the folder is still busy.
   let isRemovalRefused = true
   const managed = await managedBrowser(context, {
-    removeFolder: async (path, removal) => {
+    removeFolder: async (path, order) => {
       if (isRemovalRefused)
         throw Object.assign(
           new Error(`EBUSY: resource busy or locked, rmdir '${String(path)}'`),
           { code: 'EBUSY' },
         )
-      return rm(path, removal)
+      return removeWithoutFollowing(path, order)
     },
   })
   await managed.browser.launch(

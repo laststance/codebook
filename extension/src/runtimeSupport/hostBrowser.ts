@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -26,6 +25,7 @@ import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { currentUserName } from '../utils/currentUserName'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
+import { retryWhileBusy } from '../utils/retryWhileBusy'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
 import type { Cdp } from './cdp'
@@ -758,7 +758,7 @@ export class HostBrowser {
   /**
    * Removes this run's own profile folder once its browser is verified gone, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list.
    * A folder that cannot be removed is journaled as `browser.managed-profile-left` and kept for {@link profileLeft}; it is never a failed release, so the run's outcome and the next start are not affected. A removed folder is remembered, which makes a repeated close a no-op here.
-   * Why the recursive `rm` of Node.js stays safe here, while the sweep of abandoned folders uses {@link removeWithoutFollowing}: the run made this folder itself with `mkdtemp` (mode 0700 on macOS and Linux) under this user's root ({@link managedProfileRoot}: the user's own local application data folder on Windows), so only this user and its own Chrome write into it, and no other user can put a link there. That `rm` follows a link only on Windows, after the system refused to unlink it, and Chrome makes no link in its profile there; on macOS and Linux it unlinks Chrome's own links (`SingletonLock` and its kin) as names. The `rm` keeps its retries for files Windows still holds a moment after the browser ended. The sweep removes folders it did not make, so it follows no link at all.
+   * The folder is removed by {@link removeWithoutFollowing} with its owner marker ({@link MANAGED_PROFILE_OWNER_FILE}) as the entry that goes last, as the sweep removes a folder: a removal that stops at a file Chrome still holds, or one this user may not remove, leaves a folder that keeps its marker, which a later sweep removes once the file is free. The recursive `rm` of Node.js would remove the marker beside the entry that refuses, and the folder would stay unknown to every sweep. A busy answer is tried again, after 100, 200 and 300 ms ({@link retryWhileBusy}), as `rm` did with its retries, for a file Windows still holds a moment after the browser ended.
    * @example
    * await this.removeManagedProfile() // journal: browser.managed-profile-removed { profile: '/tmp/codebook-browser-a1b2c3' }
    */
@@ -766,12 +766,15 @@ export class HostBrowser {
     if (!this.managedProfile || this.managedProfileRemoved) return
     const profile = this.managedProfile
     try {
-      await rm(profile, {
-        recursive: true,
-        force: true,
-        maxRetries: MANAGED_PROFILE_REMOVAL_RETRIES,
-        retryDelay: MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
-      })
+      // The marker goes last, so a folder that stays keeps it for a later sweep.
+      await retryWhileBusy(
+        () =>
+          removeWithoutFollowing(profile, {
+            lastEntry: MANAGED_PROFILE_OWNER_FILE,
+          }),
+        MANAGED_PROFILE_REMOVAL_RETRIES,
+        MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
+      )
       this.managedProfileRemoved = true
       this.leftProfile = undefined
       this.record('browser.managed-profile-removed', { profile })
