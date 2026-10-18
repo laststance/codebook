@@ -1425,6 +1425,148 @@ test('the end of a run that never gets the claim on the marker gives up after tw
   }
 })
 
+// Value: protects=other editor windows after a run's end could not get the claim on its marker (another window held it longer than the end waits, or the system refused the claim): the window learns that its marker stayed and can ask again; fails_when=the end answers the same for a marker that stayed and one that left, so the window never asks again and every other window is refused as beside a running update until the run's bound has passed (about 16 minutes), or the same end asked a second time no longer removes the marker; why_new=Cycle 0046 second ship, red team RT3; seam=the wait between two attempts, which passes at once
+test('the end of a run says that its marker stayed while another window held the claim at every attempt, and the same end asked again once the claim is free removes the marker and says so', async () => {
+  // Arrange: a window that runs, and another running window's claim that stays for the twenty attempts of the first end.
+  const wiki = await createWikiFolder()
+  const { claimWikiUpdateMarker: claimWithoutWaits } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    'node:timers/promises': { setTimeout: async () => undefined },
+  })
+  try {
+    const claim = await claimWithoutWaits(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: 1_790_000_000_000,
+      },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_000_000 },
+    )
+    assert.ok('release' in claim)
+    await holdClaimAsAnotherRunningWindow(wiki.markerPath)
+
+    // Act
+    const firstEnd = await claim.release()
+    const markerAfterTheFirstEnd = JSON.parse(
+      await readFile(wiki.markerPath, 'utf8'),
+    ).windowId
+    await rm(`${wiki.markerPath}.takeover`, { recursive: true })
+    const secondEnd = await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      { firstEnd, markerAfterTheFirstEnd, secondEnd },
+      { firstEnd: false, markerAfterTheFirstEnd: 'window-a', secondEnd: true },
+    )
+    assert.deepEqual(await readdir(wiki.directory), ['wiki'])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=other editor windows after a stopped watch could not get the claim on its marker: the window learns that the run's marker stayed in place of the reservation and can ask again, so other windows are offered Update anyway instead of a refusal as beside a running update; fails_when=the end of the watch answers the same for a reservation that was written and one that was not, or the same end asked a second time no longer writes it; why_new=Cycle 0046 second ship, red team RT3; seam=the wait between two attempts, which passes at once
+test('the end of a stopped watch says that its reservation was not written while another window held the claim at every attempt, and the same end asked again once the claim is free writes it and says so', async () => {
+  // Arrange: a window that runs, and another running window's claim that stays for the twenty attempts of the first end.
+  const wiki = await createWikiFolder()
+  const { claimWikiUpdateMarker: claimWithoutWaits } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    'node:timers/promises': { setTimeout: async () => undefined },
+  })
+  try {
+    const claim = await claimWithoutWaits(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: 1_790_000_000_000,
+      },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_000_000 },
+    )
+    assert.ok('reserve' in claim)
+    await holdClaimAsAnotherRunningWindow(wiki.markerPath)
+
+    // Act
+    const firstEnd = await claim.reserve(1_790_000_060_000)
+    const markerAfterTheFirstEnd = JSON.parse(
+      await readFile(wiki.markerPath, 'utf8'),
+    ).watchEndedAtMs
+    await rm(`${wiki.markerPath}.takeover`, { recursive: true })
+    const secondEnd = await claim.reserve(1_790_000_060_000)
+
+    // Assert
+    assert.deepEqual(
+      { firstEnd, markerAfterTheFirstEnd, secondEnd },
+      { firstEnd: false, markerAfterTheFirstEnd: undefined, secondEnd: true },
+    )
+    assert.deepEqual(JSON.parse(await readFile(wiki.markerPath, 'utf8')), {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: 1_790_000_000_000,
+      ...OWNER_OF_THIS_WINDOW,
+      watchEndedAtMs: 1_790_000_060_000,
+    })
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the window that took over a run's marker, and the end that must stop asking: a marker that is no longer this run's leaves nothing for its end to remove; fails_when=the end answers that its marker stayed although another window's marker is in its place, so the window asks again and again for a change it may never make; why_new=Cycle 0046 second ship, red team RT3; seam=none
+test('the end of a run whose outlasted marker another window took over says that nothing of this run is left, and leaves that window’s marker in place', async () => {
+  // Arrange: a run that started twenty-three minutes ago, longer than any run's marker counts, and a second window that took its marker over.
+  const wiki = await createWikiFolder()
+  try {
+    const outlasted = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now() - 23 * 60_000,
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in outlasted)
+    const takenOver = await outcomeOf(
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-b',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      ),
+    )
+
+    // Act
+    const ended = await outlasted.release()
+
+    // Assert
+    assert.deepEqual(
+      {
+        takenOver,
+        ended,
+        markerAfterTheEnd: JSON.parse(await readFile(wiki.markerPath, 'utf8'))
+          .windowId,
+      },
+      {
+        takenOver: 'holds the claim',
+        ended: true,
+        markerAfterTheEnd: 'window-b',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the learner's project folder after a window of 0.2.29.0 (or of another machine) was killed while it prepared its claim on the marker; fails_when=the prepared claim folder, whose owner cannot be judged by a process start, is never removed and stays in `.codebook/` for good (row 35, PL-27: removeExpiredPreparedClaims had no test); why_new=Cycle 0046 row 35; seam=the folder's modification time and the clock handed to the claim
 test('a claim folder that a window prepared beside the marker and never put into place is removed by the next start once it is older than 60 s, although a process has its owner’s id', async () => {
   // Arrange: a killed editor's marker, so the start takes the claim, and a prepared claim folder whose owner file records this machine, this test process, which runs, and no process start.

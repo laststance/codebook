@@ -17,7 +17,7 @@ import { removeStaleStorageClaims } from './removeStaleStorageClaims'
 import { removeWithoutFollowing } from './removeWithoutFollowing'
 import { systemErrorCode } from './systemErrorCode'
 
-/** What a rename onto the claim directory answers while another claim is inside: `ENOTEMPTY` or `EEXIST`, and `EPERM` or `EACCES` where a directory cannot be replaced at all. */
+/** What a rename onto the claim directory answers while another claim is inside: `ENOTEMPTY` or `EEXIST`, and `EPERM` or `EACCES` where a directory cannot be replaced at all (Windows). A Windows refusal that passes (a scanner that holds the prepared folder for a moment) gives the same answer and cannot be told from an occupied claim, so it is not retried here: the caller asks again, as for a claim another window holds. */
 const OCCUPIED_CLAIM_CODES = ['ENOTEMPTY', 'EEXIST', 'EPERM', 'EACCES']
 
 /** The claim files this process placed and could not remove when it gave its claim back; {@link removeUnreleasedClaims} removes them before this process's next claim. */

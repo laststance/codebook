@@ -3121,6 +3121,179 @@ test('an Update that meets a marker nobody owns while another window holds the c
   }
 })
 
+/** Waits until a change of the window's own marker has given this answer, polling as {@link waitForEnd} does; it returns at the limit either way, so the test's assertion names what was missing. */
+async function waitForMarkerAnswer(
+  window: { markerChanges: Array<{ answer?: boolean | 'threw' }> },
+  answer: boolean,
+  limitMs = 6_000,
+): Promise<void> {
+  const deadline = Date.now() + limitMs
+  while (
+    !window.markerChanges.some((change) => change.answer === answer) &&
+    Date.now() < deadline
+  )
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+}
+
+/** Sums up the changes a window made of its own marker: their kinds, the first answer and the last one; an attempt more or less between them depends on how long a test step took. */
+function summedMarkerChanges(window: {
+  markerChanges: Array<{ kind: string; answer?: boolean | 'threw' }>
+}): { kinds: string[]; firstAnswer: unknown; lastAnswer: unknown } {
+  return {
+    kinds: [...new Set(window.markerChanges.map((change) => change.kind))],
+    firstAnswer: window.markerChanges[0]?.answer,
+    lastAnswer: window.markerChanges.at(-1)?.answer,
+  }
+}
+
+/** Puts a claim on the Wiki's marker as a window of another machine holds it: this machine cannot judge it by a process and leaves it in place for 60 s, so every change of the marker waits for it. @returns The claim folder, which the test removes to free the claim. */
+async function holdMarkerClaimAsAWindowOfAnotherMachine(
+  outputDirectory: string,
+): Promise<string> {
+  const claimDirectory = `${outputDirectory}.update-run.json.takeover`
+  await mkdir(claimDirectory)
+  await writeFile(
+    join(claimDirectory, 'held-by-a-window-of-another-machine'),
+    JSON.stringify({
+      pid: process.pid,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: '5f0c1a8d2e3b4a69',
+      processStart: 'linux:777',
+    }),
+  )
+  return claimDirectory
+}
+
+// Value: protects=other editor windows on the same project after a run's end could not remove its marker, because another window held the claim on it longer than the end waits (or the system refused the claim); fails_when=the end drops what the removal answered, so the marker stays on disk as a running update and every other window is refused with no Update anyway until the run's bound has passed (about 16 minutes), and nothing tries again; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, shortened to 500 ms; no_claim=a removal whose claim stays refused for over two minutes is left to the marker's expiry
+test('an update whose end could not remove its marker because another window held the claim on it shows its end at once, refuses another window as beside a running update meanwhile, and removes the marker at its next attempt once the claim is free, after which that window starts', async () => {
+  // Arrange: a claim on the marker held by a window of another machine, and a second window on the same project.
+  const wiki = await openWikiWindow({
+    constants: { WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS: 500 },
+  })
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+  })
+  try {
+    const claimDirectory = await holdMarkerClaimAsAWindowOfAnotherMachine(
+      wiki.outputDirectory,
+    )
+    await wiki.clickUpdate()
+    wiki.setFreshness(CURRENT)
+    await wiki.publish('b'.repeat(64))
+    const ended = await waitForEnd(wiki.status)
+    await waitForMarkerAnswer(wiki, false)
+
+    // Act: the second window presses Update while the end waits for its next attempt; then the claim is freed and a next attempt comes.
+    await secondWindow.clickUpdate()
+    const refusedMeanwhile = secondWindow.status()
+    await rm(claimDirectory, { recursive: true })
+    await waitForMarkerAnswer(wiki, true)
+    await secondWindow.clickUpdate()
+
+    // Assert
+    assert.equal(ended.state, 'succeeded')
+    assert.deepEqual(wiki.errors, [])
+    assert.match(
+      refusedMeanwhile.state === 'failed' ? refusedMeanwhile.reason : '',
+      /^Another editor window is updating this Wiki \(VS Code, started \d{1,2}:\d{2}[^)]*\)\. Wait for it to finish, then press Update LLM Wiki again\.$/,
+    )
+    assert.deepEqual(summedMarkerChanges(wiki), {
+      kinds: ['release'],
+      firstAnswer: false,
+      lastAnswer: true,
+    })
+    assert.equal(secondWindow.status().state, 'running')
+    assert.equal(secondWindow.chatRequests.length, 1)
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
+// Value: protects=other editor windows after a stopped VS Code watch could not turn its marker into the watch's reservation, because another window held the claim on it; fails_when=the end drops what the change answered, so the run's marker stays in place of the reservation and another window is refused as beside a running update with no Update anyway, although only a stopped watch's chat may still publish; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, shortened to 200 ms
+test('a stopped watch whose reservation could not be written because another window held the claim on the marker writes it at the next attempt once the claim is free, and another window is then refused for the chat that may still publish, with Update anyway', async () => {
+  // Arrange: a claim on the marker held by a window of another machine, a first window whose watch the learner stops, and a second window on the same project.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    constants: { WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS: 200 },
+  })
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+  })
+  try {
+    const claimDirectory = await holdMarkerClaimAsAWindowOfAnotherMachine(
+      wiki.outputDirectory,
+    )
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    await waitForMarkerAnswer(wiki, false)
+
+    // Act: the claim is freed, a next attempt comes, and the second window presses Update.
+    await rm(claimDirectory, { recursive: true })
+    await waitForMarkerAnswer(wiki, true)
+    await secondWindow.clickUpdate()
+
+    // Assert
+    assert.deepEqual(summedMarkerChanges(wiki), {
+      kinds: ['reserve'],
+      firstAnswer: false,
+      lastAnswer: true,
+    })
+    const refused = secondWindow.status()
+    assert.match(
+      refused.state === 'failed' ? refused.reason : '',
+      /^The VS Code chat another editor window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; that window stopped watching it at \d{1,2}:\d{2}[^.]* and Codebook waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
+    )
+    assert.deepEqual(secondWindow.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
+// Value: protects=other editor windows after a window closes while the removal of its marker waits for its next attempt; fails_when=the closing window leaves that attempt to a timer that never runs, so its marker stays on disk as a running update and refuses every other window until the run's bound has passed; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, set longer than the test
+test('a window that closes while the removal of its marker waits for its next attempt makes that attempt as it closes, and the marker leaves the disk with the window', async () => {
+  // Arrange: a claim on the marker held by a window of another machine, and an update whose end could not remove its marker.
+  const wiki = await openWikiWindow({
+    constants: { WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS: 600_000 },
+  })
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  try {
+    const claimDirectory = await holdMarkerClaimAsAWindowOfAnotherMachine(
+      wiki.outputDirectory,
+    )
+    await wiki.clickUpdate()
+    wiki.setFreshness(CURRENT)
+    await wiki.publish('b'.repeat(64))
+    await waitForEnd(wiki.status)
+    await waitForMarkerAnswer(wiki, false)
+    await rm(claimDirectory, { recursive: true })
+
+    // Act
+    await wiki.closeWindow()
+
+    // Assert
+    assert.deepEqual(wiki.markerChanges, [
+      { kind: 'release', answer: false },
+      { kind: 'release', answer: true },
+    ])
+    assert.equal(
+      await access(markerPath).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    )
+  } finally {
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
 test('Update anyway is not offered while another window’s update is running', async () => {
   // Arrange
   const wiki = await openWikiWindow()

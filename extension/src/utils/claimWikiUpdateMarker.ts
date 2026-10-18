@@ -47,11 +47,11 @@ type WikiUpdateMarkerInChange = { isMarkerInChange: true }
 type WikiUpdateHolder =
   WikiUpdateMarker | WikiUpdateMarkerBeingWritten | WikiUpdateMarkerInChange
 
-/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker, or the note that another window is changing the marker. */
+/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound; each answers `false` while this run's marker stayed as it was because the claim on it could not be had, and may be asked again), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker, or the note that another window is changing the marker. */
 export type WikiUpdateMarkerClaim =
   | {
-      release: () => Promise<void>
-      reserve: (watchEndedAtMs: number) => Promise<void>
+      release: () => Promise<boolean>
+      reserve: (watchEndedAtMs: number) => Promise<boolean>
     }
   | { heldBy: WikiUpdateHolder }
 
@@ -415,7 +415,7 @@ async function removeUnownedMarker(
  * @param ownText - What this window last wrote into the marker file.
  * @param change - The removal or the replacement; it runs while the claim is held.
  * @param judgement - The identity of this process, the reader of process starts and the clock.
- * @returns `true` when the change was made; `false` when the file no longer holds this window's text, when this window's claim was removed meanwhile, or another window held the claim at each of {@link WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS} attempts (the marker then stays as it is).
+ * @returns `true` when the change was made, and when the file no longer holds this window's text (another window took the marker over, or it is gone), which leaves nothing of this window's to change; `false` when this window's claim was removed meanwhile, or the claim could not be had at any of {@link WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS} attempts (another window held it, or the system refused it): the marker then stays as it is, and the same change may be asked for again.
  * @throws What `change` throws; the claim is released first.
  * @example
  * await changeOwnMarker(markerPath, written, () => removeWithoutFollowing(markerPath), judgement) // => true
@@ -433,7 +433,8 @@ async function changeOwnMarker(
   )
   if (!claim) return false
   try {
-    if ((await readMarkerText(markerPath)) !== ownText) return false
+    // A marker that is no longer this window's text leaves this window nothing to change.
+    if ((await readMarkerText(markerPath)) !== ownText) return true
     // The claim is this window's only while its claim file is in place.
     if (!(await claim.isStillHeld())) return false
     await change()
@@ -480,7 +481,7 @@ async function replaceMarker(markerPath: string, text: string): Promise<void> {
  * @param marker - This window's process id, window id, host and the run's start; the claim adds how this process names its machine and itself ({@link machineAndProcessOf}).
  * @param inputs - What other windows' markers and claims are judged by; the real identity, reader and clock unless a test names its own.
  * @returns
- * - The marker was created: `release`, which removes it, and `reserve`, which replaces it by a stopped watch's reservation; both leave a marker another window has written since, and a reservation that cannot be written leaves the run's marker, which `release` still removes
+ * - The marker was created: `release`, which removes it, and `reserve`, which replaces it by a stopped watch's reservation; both leave a marker another window has written since, and a reservation that cannot be written leaves the run's marker, which `release` still removes. Each answers `true` once nothing of this run is left to change, and `false` while the claim on the marker could not be had, so the caller may ask again ({@link changeOwnMarker})
  * - Another window's live run holds the Wiki, or another window is writing its marker at this moment: `heldBy` with that marker, or with the time since which it is being written
  * - A marker that is nobody's run is still in the way at the second attempt, because another window holds the claim on it (it is removing a stale marker or releasing its own at that moment, or a killed window of another machine left its claim less than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} ago): `heldBy` with `isMarkerInChange`, and the marker file stays
  * @throws The file system's error when the marker cannot be created for another reason than a marker in the way (for example a read-only folder).
@@ -506,17 +507,17 @@ export async function claimWikiUpdateMarker(
     try {
       await placeStorageLock(markerPath, record, WIKI_UPDATE_MARKER_FILE_MODE)
       return {
-        async release(): Promise<void> {
-          await changeOwnMarker(
+        async release(): Promise<boolean> {
+          return changeOwnMarker(
             markerPath,
             written,
             () => removeWithoutFollowing(markerPath),
             await judgementFrom(inputs),
           )
         },
-        async reserve(watchEndedAtMs: number): Promise<void> {
+        async reserve(watchEndedAtMs: number): Promise<boolean> {
           const reservation = JSON.stringify({ ...record, watchEndedAtMs })
-          await changeOwnMarker(
+          return changeOwnMarker(
             markerPath,
             written,
             async () => {

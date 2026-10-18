@@ -795,6 +795,10 @@ export const WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE = 0o777
 export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
 /** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */
 export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
+/** How long a window waits before it asks once more to remove its own Wiki update marker, or to turn it into a stopped watch's reservation, after the change could not be made: the claim on the marker could not be had at any of {@link WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS} attempts (another window held it, or the system refused it), or the file system refused the change. Until then other windows read the marker as it stands. */
+export const WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS = 10_000
+/** How often a window asks once more for such a change of its marker before it leaves the marker to its own expiry; with {@link WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS} two minutes, longer than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}, after which the claim a killed window of another machine left no longer counts. */
+export const WIKI_UPDATE_MARKER_CHANGE_RETRIES = 12
 /** How old a claim on a Wiki update's marker file must be to count as left by a killed window, where its owner cannot be judged by this process ({@link canJudgeOwnerHere}: a claim of another machine, of 0.2.29.0, or of a window whose process start could not be read); a running window holds the claim for milliseconds. */
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */

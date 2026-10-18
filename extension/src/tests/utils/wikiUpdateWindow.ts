@@ -4,6 +4,7 @@ import { setTimeout as sleepFor } from 'node:timers/promises'
 import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
+import { claimWikiUpdateMarker } from '../../utils/claimWikiUpdateMarker'
 import { findWikiUpdateStartBlock } from '../../utils/findWikiUpdateStartBlock'
 import {
   inspectDeepWikiFreshness,
@@ -51,6 +52,12 @@ type FakeTextDocument = { uri: { scheme: string; fsPath: string } }
 /** A command the fake editor reports as started in a terminal: only the command line the extension looks at. */
 type FakeShellExecution = { execution: { commandLine: { value: string } } }
 
+/** One change the window made of its own Wiki update marker: its removal (`release`) or its turn into a stopped watch's reservation (`reserve`), with what the change answered once it settled (`true` once nothing of the run was left to change, `false` while the claim on the marker could not be had, `threw` for a change that threw); no answer while it runs. */
+type WikiMarkerChange = {
+  kind: 'release' | 'reserve'
+  answer?: boolean | 'threw'
+}
+
 /** Names of the extension's numeric constants, the ones a test may replace by a shorter value. */
 type NumericConstantName = {
   [Name in keyof typeof constants]: (typeof constants)[Name] extends number
@@ -93,7 +100,7 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
- * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles, the text of every status bar entry it showed (`statusBarTexts`) and of those on screen now (`visibleStatusBarTexts`)), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
+ * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles, the text of every status bar entry it showed (`statusBarTexts`) and of those on screen now (`visibleStatusBarTexts`)), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, each change of its own update marker with what it answered (`markerChanges`), the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
  *
  * @example
  * ```ts
@@ -155,6 +162,7 @@ export async function openWikiUpdateWindow(options: {
     stampReads: number
     stampReadsDone: number
   }
+  markerChanges: WikiMarkerChange[]
   openWorkspace(nextProjectRoot: string): void
   openDocument(path: string, scheme?: string): void
   openTerminal(): void
@@ -215,6 +223,25 @@ export async function openWikiUpdateWindow(options: {
   const statusBarTexts: string[] = []
   const statusBarEntries: FakeStatusBarEntry[] = []
   const looks = { candidateListings: 0, stampReads: 0, stampReadsDone: 0 }
+  const markerChanges: WikiMarkerChange[] = []
+  /** Records one change of this window's marker, and what it answered once it settled. */
+  const recordMarkerChange = (
+    kind: WikiMarkerChange['kind'],
+    changing: Promise<boolean>,
+  ): Promise<boolean> => {
+    const change: WikiMarkerChange = { kind }
+    markerChanges.push(change)
+    return changing.then(
+      (answer) => {
+        change.answer = answer
+        return answer
+      },
+      (error: unknown) => {
+        change.answer = 'threw'
+        throw error
+      },
+    )
+  }
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
     HeldUpdateStep,
@@ -439,6 +466,20 @@ export async function openWikiUpdateWindow(options: {
           return candidates
         },
       },
+      // The real claim on the marker runs; the window records each change of its marker (its removal, its turn into a stopped watch's reservation) and what that change answered.
+      './utils/claimWikiUpdateMarker': {
+        claimWikiUpdateMarker: async (
+          ...claimed: Parameters<typeof claimWikiUpdateMarker>
+        ) => {
+          const claim = await claimWikiUpdateMarker(...claimed)
+          if (!('release' in claim)) return claim
+          return {
+            release: () => recordMarkerChange('release', claim.release()),
+            reserve: (watchEndedAtMs: number) =>
+              recordMarkerChange('reserve', claim.reserve(watchEndedAtMs)),
+          }
+        },
+      },
       // The real stamp is read; the window only counts the looks of a watch or of a Cursor run.
       './utils/readWikiWatchStamp': {
         readWikiWatchStamp: async (outputDirectory: string) => {
@@ -564,6 +605,7 @@ export async function openWikiUpdateWindow(options: {
         .filter((entry) => entry.isShown)
         .map((entry) => entry.text),
     looks,
+    markerChanges,
     openWorkspace(nextProjectRoot: string): void {
       openedWorkspace = nextProjectRoot
     },

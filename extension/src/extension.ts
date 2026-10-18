@@ -28,6 +28,8 @@ import {
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
+  WIKI_UPDATE_MARKER_CHANGE_RETRIES,
+  WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
   WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
@@ -235,8 +237,61 @@ export function activate(
   // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound.
   const wikiReservations = new Map<
     string,
-    { release: () => Promise<void>; timer: NodeJS.Timeout }
+    { release: () => Promise<boolean>; timer: NodeJS.Timeout }
   >()
+  // The latest change of this window's own marker on each Wiki output (its removal, or its turn into a stopped watch's reservation), while it runs or waits for its next attempt, with the timer of that attempt.
+  const wikiMarkerChanges = new Map<
+    string,
+    { change: () => Promise<boolean>; timer?: NodeJS.Timeout }
+  >()
+  /**
+   * Makes a change of this window's own marker beside a Wiki (its removal, or its turn into a stopped watch's reservation), and while the change cannot be made asks for it again later; called by {@link settleWikiRunMarker} at a run's end and by {@link dropWikiReservation} at a reservation's bound or at shutdown.
+   * Why: the change runs under the claim on the marker, which another window can hold longer than the change waits (a killed window of another machine leaves its claim for {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}), and the system can refuse the claim or the change. A run's marker left as it stands counts for every other window as a running update, with no Update anyway, until the run's bound has passed. A later change of the same output, and a start that takes the marker over, replace a change that waits: they name what the marker must be now.
+   * @param outputDirectory - The Wiki output whose marker changes.
+   * @param change - The removal or the turn into a reservation; it answers `true` once nothing of the run is left to change ({@link claimWikiUpdateMarker}).
+   * @param retriesLeft - How often the change is asked for again after this attempt.
+   * @returns Nothing, and it never rejects: a change still not made after {@link WIKI_UPDATE_MARKER_CHANGE_RETRIES} more attempts, {@link WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS} apart, leaves the marker to its own expiry, and a closing window makes a waiting change once more at shutdown ({@link retryWikiMarkerChangesNow}).
+   * @example await changeWikiMarker('/repo/.codebook/wiki', run.releaseMarker)
+   */
+  const changeWikiMarker = async (
+    outputDirectory: string,
+    change: () => Promise<boolean>,
+    retriesLeft = WIKI_UPDATE_MARKER_CHANGE_RETRIES,
+  ): Promise<void> => {
+    clearTimeout(wikiMarkerChanges.get(outputDirectory)?.timer)
+    const pending: { change: () => Promise<boolean>; timer?: NodeJS.Timeout } =
+      { change }
+    wikiMarkerChanges.set(outputDirectory, pending)
+    const isChanged = await change().catch(() => false)
+    // A later change of this output, or a start that took its marker over, replaced this one meanwhile.
+    if (wikiMarkerChanges.get(outputDirectory) !== pending) return
+    // A closing window keeps no timer: its shutdown makes the waiting changes once more.
+    if (isChanged || retriesLeft === 0 || isExtensionStopping) {
+      wikiMarkerChanges.delete(outputDirectory)
+      return
+    }
+    pending.timer = setTimeout(() => {
+      void changeWikiMarker(outputDirectory, change, retriesLeft - 1)
+    }, WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS).unref()
+  }
+  /** Drops the change of an output's marker that runs or waits for its next attempt; called when a start of this window took that marker over, which leaves the earlier run nothing to change. @param outputDirectory - The Wiki output whose marker this window's new run now holds. @example cancelWikiMarkerChange('/repo/.codebook/wiki') */
+  const cancelWikiMarkerChange = (outputDirectory: string): void => {
+    clearTimeout(wikiMarkerChanges.get(outputDirectory)?.timer)
+    wikiMarkerChanges.delete(outputDirectory)
+  }
+  /** Makes every change of this window's markers that waits for its next attempt once more, now; called by {@link stopExtension} at shutdown, since a closing window keeps no timer and such a marker would otherwise count for other windows until it expires. A change that is running at that moment is not made twice. @example await retryWikiMarkerChangesNow() */
+  const retryWikiMarkerChangesNow = async (): Promise<void> => {
+    const waiting = [...wikiMarkerChanges.entries()].filter(
+      ([, pending]) => pending.timer !== undefined,
+    )
+    await Promise.all(
+      waiting.map(([outputDirectory, pending]) => {
+        clearTimeout(pending.timer)
+        wikiMarkerChanges.delete(outputDirectory)
+        return pending.change().catch(() => false)
+      }),
+    )
+  }
   /** Checks whether a reload needs the stopped watch's disk reservation; called by {@link dropWikiReservation} before releasing it. @param isWindowClosing - Whether this removal is part of shutdown. @param mayAgentStillWork - Whether the last run of the reservation's output left a chat that may publish. @param recordWritten - Whether the workspace state holds that run's record ({@link storedWikiRunWriteOf}), which never rejects. @returns `true` only at shutdown when a chat may still publish and its record could not be stored. @example await doesReloadNeedWikiReservation(true, true, Promise.resolve(false)) // => true */
   const doesReloadNeedWikiReservation = async (
     isWindowClosing: boolean,
@@ -269,7 +324,7 @@ export function activate(
       )
     )
       return
-    await reservation.release().catch(() => undefined)
+    await changeWikiMarker(outputDirectory, reservation.release)
   }
   /** Removes every reservation this window holds, each by {@link dropWikiReservation}; called by {@link stopExtension} at shutdown. @example await dropWikiReservations() */
   const dropWikiReservations = async (): Promise<void> => {
@@ -298,10 +353,10 @@ export function activate(
     uncoveredAtStart: string[]
     /** Whether the Wiki folder lies outside the opened project, where VS Code's chat asks to approve each step. */
     isOutputOutsideProject: boolean
-    /** Removes this run's marker beside the Wiki, so another window may start. */
-    releaseMarker: () => Promise<void>
-    /** Leaves the marker as the reservation of a watch that was stopped while its chat may still work, for other windows to read. */
-    reserveMarker: (watchEndedAtMs: number) => Promise<void>
+    /** Removes this run's marker beside the Wiki, so another window may start; `false` while the claim on the marker could not be had and the marker stayed. */
+    releaseMarker: () => Promise<boolean>
+    /** Leaves the marker as the reservation of a watch that was stopped while its chat may still work, for other windows to read; `false` while the claim on the marker could not be had and the run's marker stayed. */
+    reserveMarker: (watchEndedAtMs: number) => Promise<boolean>
     startedAtMs: number
     /** Folder names of the candidates the run's looks saw that were written since its start; a stopped VS Code watch keeps them for the next start, which tells the chat's own publish by them ({@link hasWikiPublishEndedWait}). */
     seenCandidateNames: Set<string>
@@ -817,7 +872,7 @@ export function activate(
     )
   }
   /**
-   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, settles the Wiki reservations and closes the DeepWiki reader; called by {@link deactivate}. A stopped watch whose record the workspace state does not hold keeps its bounded reservation for the reloaded window.
+   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, settles the Wiki reservations, makes once more each change of its Wiki markers that waits for its next attempt, and closes the DeepWiki reader; called by {@link deactivate}. A stopped watch whose record the workspace state does not hold keeps its bounded reservation for the reloaded window.
    * Every step runs whatever the step before it did. A stop that threw used to end the first three steps, so the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, did not run, and a write under way was not waited for before the extension host ended.
    * It is kept apart from {@link replaceReadersAfterFolderChange}: the two share only "stop, then dispose two readers", and that handling also hands archives over, clears the readers' variables, makes new readers and names each failed step for its notice, none of which a closing window may do.
    * @throws The first failure of its steps, after all of them ran, so that the editor still logs it.
@@ -844,6 +899,8 @@ export function activate(
           WIKI_CURSOR_TERMINATION_GRACE_MS,
         ),
       (): Promise<void> => dropWikiReservations(),
+      // A marker whose change waits for its next attempt would otherwise count for other windows until it expires.
+      (): Promise<void> => retryWikiMarkerChangesNow(),
       (): Promise<void> | undefined => deepWikiReader?.close(),
     ]) {
       try {
@@ -1041,18 +1098,20 @@ export function activate(
         siteAtEnd.publicationAtEnd !== run.publicationAtStart,
     }
   }
-  /** Frees the Wiki for other windows at a run's end, or leaves the run's marker as the reservation of a chat that may still work; called by {@link finishWikiUpdate} last. It never rejects: a marker that cannot be written or removed is left to its own expiry. @param endedAtMs - When the run ended, which the reservation names as the end of the watch. @param mayAgentStillWork - Whether the run's chat can still publish ({@link mayWikiChatStillPublish}). @example await settleWikiRunMarker(run, Date.now(), false) */
+  /** Frees the Wiki for other windows at a run's end, or leaves the run's marker as the reservation of a chat that may still work; called by {@link finishWikiUpdate} last. It never rejects: a change of the marker that cannot be made now is asked for again later ({@link changeWikiMarker}), and one that still cannot be made is left to the marker's own expiry. @param endedAtMs - When the run ended, which the reservation names as the end of the watch. @param mayAgentStillWork - Whether the run's chat can still publish ({@link mayWikiChatStillPublish}). @example await settleWikiRunMarker(run, Date.now(), false) */
   const settleWikiRunMarker = async (
     run: WikiRun,
     endedAtMs: number,
     mayAgentStillWork: boolean,
   ): Promise<void> => {
     if (!mayAgentStillWork) {
-      await run.releaseMarker().catch(() => undefined)
+      await changeWikiMarker(run.outputDirectory, run.releaseMarker)
       return
     }
     // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
-    await run.reserveMarker(endedAtMs).catch(() => undefined)
+    await changeWikiMarker(run.outputDirectory, () =>
+      run.reserveMarker(endedAtMs),
+    )
     // The reservation of this output only; one this window left on another output keeps its own timer.
     clearTimeout(wikiReservations.get(run.outputDirectory)?.timer)
     wikiReservations.set(run.outputDirectory, {
@@ -1479,6 +1538,8 @@ export function activate(
       // This window's own reservation of this output, if it left one, is now this run's marker; its timer must not remove it. A reservation of another output shares no marker with this run and keeps its timer.
       clearTimeout(wikiReservations.get(outputDirectory)?.timer)
       wikiReservations.delete(outputDirectory)
+      // A change of an earlier run's marker that waits for its next attempt has nothing left to change: this run holds the marker now.
+      cancelWikiMarkerChange(outputDirectory)
       return {
         tokenAtStart,
         publicationAtStart,
