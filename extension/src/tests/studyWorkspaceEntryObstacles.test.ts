@@ -2693,6 +2693,191 @@ test('in Cursor, a cold Study select after a reload that retired the earlier win
   }
 })
 
+// Value: protects=the chat's keyboard when an agent's cold Study select in Cursor after a reload ends because the editor refuses to close the earlier window's leftover group: the proof focused that group before the close, so the chat gets its keyboard back before the refusal reaches the agent, and the learner is told once why, without saying that the groups closed; fails_when=the proof's fact that it took the keyboard is lost with the throw, so the selection gives nothing back and tells nothing, and the keyboard stays in the leftover group (Cycle 0046 OCR1-2); why_new=Cycle 0046 OCR1-2; seam=applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, focusMutableDraft, addSeparateEditorPart with the chat's focusTab, refuseNextGroupClose, the reader's changePresentation for an agent, the command log and the information messages
+test('in Cursor, an agent’s cold Study select from the chat whose leftover group the editor refuses to close gives the chat its keyboard back and says once that Codebook could not close the groups', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1, which stands empty and locked beside the learner's notes; Cursor's chat has the keyboard, and the editor will refuse to close the leftover group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 2,
+      layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    chat.focusTab()
+    harness.refuseNextGroupClose()
+    const commandsBefore = harness.commands.length
+    const state = harness.reader.presentationState()
+
+    // Act: the agent's codebook_presentation select, as the service passes it on.
+    const answer = await harness.reader
+      .changePresentation(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      .then(
+        () => 'selected',
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the selection is refused, the proof focused the leftover and Focus Agent gave the chat its keyboard back, and the learner is told once that the groups could not be closed.
+    assert.deepEqual(
+      {
+        answer,
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter(
+            (command) =>
+              command.startsWith('workbench.action.focus') ||
+              command === 'composer.focusComposer',
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        answer:
+          'Error: The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
+        focusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'composer.focusComposer',
+        ],
+        chatHasKeyboard: true,
+        messages: [
+          'Codebook gave the keyboard back to the chat after it could not close the editor groups an earlier window had left: proving them moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat's keyboard when an agent's cold Study select in Cursor after a reload meets a dead pane of the earlier host, so the selection closes the leftover tabs itself, and the editor refuses to close the earlier window's leftover group: the proof focused that group before the close, so the chat gets its keyboard back before the refusal reaches the agent, and the learner is told once why; fails_when=the close of the leftover tabs throws with the proof's fact that it took the keyboard, so the selection's own give-back after that close never runs (Cycle 0046 OCR1-2); why_new=Cycle 0046 OCR1-2; seam=applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, leaveDeadCodebookPane, focusMutableDraft, addSeparateEditorPart with the chat's focusTab, refuseNextGroupClose, the reader's changePresentation for an agent and the information messages
+test('in Cursor, an agent’s cold Study select from the chat beside a dead pane, whose leftover group the editor refuses to close, gives the chat its keyboard back and says once that Codebook could not close the groups', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1, which stands empty and locked; the old host's Repository Wiki pane is left dead in column 2 behind the learner's notes; Cursor's chat has the keyboard, and the editor will refuse to close the leftover group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 2,
+      layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.leaveDeadCodebookPane('codebook.repositoryWiki', 2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    chat.focusTab()
+    harness.refuseNextGroupClose()
+    const state = harness.reader.presentationState()
+
+    // Act: the agent's codebook_presentation select, as the service passes it on.
+    const answer = await harness.reader
+      .changePresentation(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      .then(
+        () => 'selected',
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the selection reports the refused close, the chat has the keyboard again, and the learner is told once that the groups could not be closed.
+    assert.deepEqual(
+      {
+        answer,
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        answer:
+          'Error: The editor refused to retire the empty Application group an earlier window left.',
+        chatHasKeyboard: true,
+        messages: [
+          'Codebook gave the keyboard back to the chat after it could not close the editor groups an earlier window had left: proving them moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the chat's keyboard when an agent's first run in Cursor after a reload, before any Study select, fails because the editor refuses to close the earlier window's leftover group: the proof focused that group before the close, so the chat gets its keyboard back before the preparation's refusal reaches the run, and the learner is told once why; fails_when=the retirement before the preparation loses the fact that its proof took the keyboard with the throw, so no return is owed and the keyboard stays in the leftover group without a word (Cycle 0046 OCR1-2); why_new=Cycle 0046 OCR1-2; seam=applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, focusMutableDraft, addSeparateEditorPart with the chat's focusTab, refuseNextGroupClose, presentation.createViewport (the MCP-first preparation) and the information messages
+test('in Cursor, the first Application preparation of a reloaded window whose leftover group the editor refuses to close gives the chat its keyboard back before the run fails', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1, which stands empty and locked beside the learner's notes; Cursor's chat has the keyboard, and the editor will refuse to close the leftover group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 2,
+      layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    chat.focusTab()
+    harness.refuseNextGroupClose()
+
+    // Act
+    let answer: string
+    try {
+      const viewport = await harness.reader.presentation.createViewport(
+        'mcp-first-run',
+        () => {},
+        () => {},
+        'normal',
+      )
+      viewport.close()
+      answer = 'prepared'
+    } catch (error) {
+      answer = String(error)
+    }
+
+    // Assert: the run's preparation reports the refused close, the chat has the keyboard again, and the learner is told once that the groups could not be closed.
+    assert.deepEqual(
+      {
+        answer,
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages.map((message) => message.message),
+      },
+      {
+        answer:
+          'Error: The editor refused to retire the empty Application group an earlier window left.',
+        chatHasKeyboard: true,
+        messages: [
+          'Codebook gave the keyboard back to the chat after it could not close the editor groups an earlier window had left: proving them moved the keyboard to another group. The editor does not tell Codebook whether you were typing in that chat or in the terminal or another view: if you were typing elsewhere, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of why VS Code's chat editor tab has the keyboard again after an agent's cold Study select retired the earlier window's leftover group: the proof focused that group, its removal gave the keyboard to the group before it, and the chat tab's group gets it back through its focus command; the sentence told once names the leftover's close and no pause; fails_when=the leftover proof's give-back tells row 632's pause sentence, "(at a pause, to the paused file the debugger opened)", for a pause that did not happen; why_new=Cycle 0046 row 648; seam=applicationGroupMarkers, leaveEmptyGroup, leaveDeadCodebookPane, focusChatEditorTab (VS Code's TabInputChat), closeDisposedPanelTabsLater, the reader's changePresentation for an agent (codebook_presentation), the command log and the information messages
 test('an agent’s cold Study select in VS Code that retires the earlier window’s leftover group while the chat editor tab has the keyboard gives that chat its keyboard back and says once that closing the leftover moved it, naming no pause', async () => {
   // Arrange: the earlier window recorded its Application group at column 1, where the old host's Application pane is left dead; the learner's notes stand in column 2, and VS Code's chat editor tab in column 3 has the keyboard.

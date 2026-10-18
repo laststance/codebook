@@ -3200,7 +3200,7 @@ export class StudyWorkspace {
    * Finds the group of a remembered tab after a leftover proof, when the column shift the return assumes missed it; asked by the function {@link retainForeignTabFocus} answers once its shifted column shows no such tab (row 648's further finding).
    * A leftover proof places no pane, it only removes groups an earlier window left: a removed group after the remembered tab's group leaves that group's column as it was, which the shift by the group count does not see, so VS Code's chat editor tab in a group before the leftover got nothing back.
    * @param showsThatTab - Tells whether a group shows the remembered tab in front.
-   * @param toldCause - The return's cause; only a leftover proof's return looks further.
+   * @param toldCause - The return's cause; only a leftover proof's return, also a refused one's, looks further.
    * @returns The one group that shows the tab after a leftover proof; `undefined` for any other cause, and when no group or several groups show it.
    * @example this.onlyGroupShowingAfterLeftoverProof(showsThatTab, 'leftoverProof') // => the chat tab's group at column 1 after the leftover at column 3 was removed
    */
@@ -3208,7 +3208,9 @@ export class StudyWorkspace {
     showsThatTab: (candidate: vscode.TabGroup) => boolean,
     toldCause: ChatKeyboardReturnCause | undefined,
   ): vscode.TabGroup | undefined {
-    if (toldCause !== 'leftoverProof') return undefined
+    // A refused proof may have removed a group before the one the editor kept.
+    if (toldCause !== 'leftoverProof' && toldCause !== 'refusedLeftoverProof')
+      return undefined
     const showing = vscode.window.tabGroups.all.filter(showsThatTab)
     return showing.length === 1 ? showing[0] : undefined
   }
@@ -14996,6 +14998,7 @@ export class StudyWorkspace {
   /**
    * Retires the leftover groups an earlier window of this workspace created, recorded and left behind after Developer: Reload Window or a quit and relaunch of the editor, which restore the same grid (findings 590 and 599): the Application's group, the Study Context's created group and the created Source group the record names; {@link closeLeftoverTabs} calls it in every cold path before any leftover tab closes, whose group an editor that removes emptied groups would take away from the recorded grid (rows 599 and 608), and {@link prepareApplicationGroup} before a closed reader's first Application allocation (row 609); so {@link ensureApp} never places the Application in a proven leftover. An unproven leftover at column 1 can receive the pane of a cold Study select; the next reservation moves the pane into a group of its own ({@link watchGroupLeftByApplication}, row 626). A group that holds only the earlier session's leftover tabs (its restored captured source, a dead pane) is retired with them. A proof whose focus command took the keyboard is reported; a caller that captures focus afterwards gives the chat its keyboard back first.
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
+   * A retirement that throws after a proof's focus command took the keyboard returns no answer, so its callers' give-backs never run: the tab that had the keyboard (a chat of another editor part) gets it back here, outside the layout queue, before the error escapes, and the learner is told once that the groups were not closed ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}' `refusedLeftoverProof`, Cycle 0046 OCR1-2).
    * @param signal - The entry's cancellation.
    * @returns `true` when a proof focused a leftover group and so took the keyboard; `false` when nothing was issued, and when every proof acted on the group the only editor part named as its active one ({@link retireProvenLeftoverGroups}).
    * @throws When the editor refuses a close, or the grid does not lose exactly that group.
@@ -15021,9 +15024,27 @@ export class StudyWorkspace {
     )
     // No leftover group at a recorded column, or one the editor cannot focus: no native effect is issued.
     if (!leftovers.length) return false
+    // Read before a proof moves the keyboard, as each caller reads its own give-back.
+    const giveKeyboardBack = this.retainForeignTabFocus(undefined)
+    let proofTookKeyboard = false
     return this.withLayout(signal, (_lifetime, assertCurrent) =>
-      this.retireProvenLeftoverGroups(record, leftovers, assertCurrent, signal),
-    )
+      this.retireProvenLeftoverGroups(
+        record,
+        leftovers,
+        assertCurrent,
+        signal,
+        () => {
+          proofTookKeyboard = true
+        },
+      ),
+    ).catch(async (error: unknown) => {
+      // A proof that took the keyboard and then failed: the chat gets the keyboard back before the refusal escapes.
+      if (proofTookKeyboard)
+        await giveKeyboardBack?.(true, undefined, 'refusedLeftoverProof').catch(
+          () => false,
+        )
+      throw error
+    })
   }
 
   /**
@@ -15034,6 +15055,7 @@ export class StudyWorkspace {
    * @param leftovers - The empty groups at its columns, from the last column to the first.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
+   * @param onKeyboardTaken - Called before each focus command a proof runs, so {@link retireLeftoverApplicationGroup} still knows that a proof took the keyboard when the retirement throws afterwards (Cycle 0046 OCR1-2).
    * @returns `true` when a proof focused its group and so took the keyboard, `false` when none did.
    * @throws When the editor refuses a close, or the grid does not lose exactly that group; the record is forgotten all the same once an earlier group of it is gone.
    * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal) // => false for the active leftover of VS Code's only editor part
@@ -15043,6 +15065,7 @@ export class StudyWorkspace {
     leftovers: readonly RecordedLeftoverGroup[],
     assertCurrent: () => void,
     signal: AbortSignal | undefined,
+    onKeyboardTaken?: () => void,
   ): Promise<boolean> {
     let grid: { groupCount: number; layout: unknown } = record,
       retired = false,
@@ -15056,6 +15079,8 @@ export class StudyWorkspace {
           vscode.window.tabGroups.all.length === grid.groupCount
         )
         tookKeyboard ||= takesKeyboard
+        // Told before the focus command: a proof that throws after it moved the keyboard returns nothing.
+        if (takesKeyboard) onKeyboardTaken?.()
         const left = await this.retireProvenLeftoverGroup(
           { column, groupCount: grid.groupCount, layout: grid.layout },
           takesKeyboard ? focusCommand : undefined,
