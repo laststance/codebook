@@ -8171,6 +8171,100 @@ test('a saved study whose recordings name two other hosts is moved with both aft
   }
 })
 
+// Value: protects=the Saved studies line while the learner reads the dialog about a recording that may still run on another computer, and after their Cancel; fails_when=the line says "Moving the saved study to the Trash…" while nothing moves and the learner has not chosen yet, or the removal stays held after Cancel (PD4); why_new=Cycle 0046 design review PD4; seam=the recording's header (another host, no record of its writer), and the editor's dialogs, stubbed at the vscode boundary: the test reads the line when the second dialog opens
+test('while the dialog about a recording on another computer is open the removal waits for the learner’s confirmation, and Cancel ends it with no line', async () => {
+  // Arrange: the learner confirms the removal, then cancels the dialog about the recording; the line is read as that dialog opens.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    let lineWhileTheDialogIsOpen: unknown
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button !== `Move to ${TRASH} Anyway`) return button
+      lineWhileTheDialogIsOpen = structuredClone(
+        harness.reader.inspect().view!.studyRemoval,
+      )
+      return undefined
+    })
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        lineWhileTheDialogIsOpen,
+        lineAfterCancel: harness.reader.inspect().view!.studyRemoval,
+        moved: harness.trashMoves,
+      },
+      {
+        lineWhileTheDialogIsOpen: { status: 'confirming', studyId: study.id },
+        lineAfterCancel: undefined,
+        moved: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Saved studies line once the learner chose to move a study whose recording may still run on another computer; fails_when=the line stays "confirming" while the files move, or the move starts before the line says so (PD4); why_new=Cycle 0046 design review PD4; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary: the test reads the line as the first file moves
+test('after Move to Trash Anyway the removal is shown as moving again while the files move, and ends as moved', async () => {
+  // Arrange: the learner confirms both dialogs; the line is read as the dialog opens and as the first file moves.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    let lineWhileTheDialogIsOpen: unknown
+    const linesWhileMoving: unknown[] = []
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button === `Move to ${TRASH} Anyway`)
+        lineWhileTheDialogIsOpen = structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        )
+      return button
+    })
+    harness.beforeTrashMoves(async () => {
+      linesWhileMoving.push(
+        structuredClone(harness.reader.inspect().view!.studyRemoval),
+      )
+    })
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        lineWhileTheDialogIsOpen,
+        lineAsTheFirstFileMoves: linesWhileMoving[0],
+        lineAtTheEnd: harness.reader.inspect().view!.studyRemoval?.status,
+      },
+      {
+        lineWhileTheDialogIsOpen: { status: 'confirming', studyId: study.id },
+        lineAsTheFirstFileMoves: {
+          status: 'moving',
+          studyId: study.id,
+          text: `Moving the saved study to the ${TRASH}…`,
+        },
+        lineAtTheEnd: 'moved',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's Cancel in the dialog about a recording that may still run on another computer; fails_when=Cancel moves the study or its recording anyway, or leaves the removal shown as failed or still moving; why_new=Cycle 0046 OCR review OC1; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('Cancel in the dialog about a recording that names another host moves nothing and leaves the study as it was', async () => {
   // Arrange: the learner confirms the removal, then cancels the dialog about the recording.

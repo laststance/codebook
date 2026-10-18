@@ -21730,6 +21730,7 @@ export class StudyWorkspace {
    * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link UnconfirmedWriterRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
+   * While that dialog is open the removal is `confirming` again; it is `moving` once more only after the learner chose to move, and ends without a line after Cancel.
    * @returns What the removal changed on disk; `undefined` when the learner chose Cancel, and nothing changed.
    * @example await this.moveStudyFilesWithLearnersChoice(studyId, evidenceDirectory) // => { outcome: 'moved' } after "Move to Trash Anyway"
    */
@@ -21740,14 +21741,35 @@ export class StudyWorkspace {
     const removal = await this.moveStudyFiles(studyId, evidenceDirectory)
     if (removal.outcome !== 'nothing-moved' || !removal.unconfirmedWriter)
       return removal
-    // Every recording whose writer this computer cannot confirm is named, so the learner agrees to each one that moves.
-    if (
-      !(await this.askRemovalOfUnconfirmedWriters([
+    // Nothing moves while the learner reads the dialog: the removal waits for their confirmation again, as during the first dialog.
+    this.studyRemoval = this.withRemovalRequest({
+      status: 'confirming',
+      studyId,
+    })
+    this.publish()
+    let isMoveChosen = false
+    try {
+      // Every recording whose writer this computer cannot confirm is named, so the learner agrees to each one that moves.
+      isMoveChosen = await this.askRemovalOfUnconfirmedWriters([
         removal.unconfirmedWriter,
         ...(removal.otherUnconfirmedWriters ?? []),
-      ]))
-    )
-      return undefined
+      ])
+    } finally {
+      // Cancel, Escape and a dialog the host could not show end the removal with the study as it was, as the first dialog's Cancel does.
+      if (!isMoveChosen) {
+        this.studyRemoval = undefined
+        this.publish()
+      }
+    }
+    if (!isMoveChosen) return undefined
+    this.studyRemoval = this.withRemovalRequest({
+      status: 'moving',
+      studyId,
+      text: studyRemovalMessages().moving,
+    })
+    this.publish()
+    // A write this window accepted while the dialog was open settles before the first move.
+    await this.settleStudyWrites(studyId)
     return this.moveStudyFiles(studyId, evidenceDirectory, 'move')
   }
 
