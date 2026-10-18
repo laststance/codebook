@@ -21757,11 +21757,11 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because a recording of the study names another host whose run may still write it, asks the learner whether to move it anyway ({@link askRemovalOfUnconfirmedWriters}); called by {@link moveSavedStudy}.
+   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because recordings of the study have writers this computer cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), asks the learner whether to move it anyway, naming every one of them ({@link askRemovalOfUnconfirmedWriters}); called by {@link moveSavedStudy}.
    * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link UnconfirmedWriterRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
+   * While that dialog is open the removal is `confirming` again, as during the first dialog: the study is whole, and what the learner does meanwhile is answered after the dialog. After "Move to Trash Anyway" the same refusals as after the first dialog ({@link refuseStudyRemoval}) are asked again, so a Recording opened or loading meanwhile refuses the removal; a write accepted meanwhile settles before the first move ({@link settleStudyWrites}). The removal is `moving` once more only after both, and ends without a line after Cancel.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
-   * While that dialog is open the removal is `confirming` again, as during the first dialog: the study is whole, and what the learner does meanwhile is answered after the dialog. After "Move to Trash Anyway" the same refusals as after the first dialog ({@link refuseStudyRemoval}) are asked again, so a Recording opened or loading meanwhile refuses the removal; a write accepted meanwhile settles before the first move ({@link settleStudyWrites}). The removal is `moving` once more only after both, and ends without a line after Cancel.
    * @returns What the removal changed on disk; `undefined` when the learner chose Cancel, or the removal was refused after the second dialog (its line says why), and nothing changed.
    * @example await this.moveStudyFilesWithLearnersChoice(studyId, evidenceDirectory) // => { outcome: 'moved' } after "Move to Trash Anyway"
    */

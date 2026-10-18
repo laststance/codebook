@@ -304,7 +304,7 @@ export class RecordingStore {
     const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
     try {
       await mkdir(folder, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-      // Only a real folder of the storage takes the record; nothing is written through a link or a junction.
+      // Only a real folder of the storage takes the record; nothing is written through a link or a junction that stands there at this look (one put there after it can only be this user's own: hasOwnWriterRecordFolder).
       if (!(await hasOwnWriterRecordFolder(this.learningDirectory))) return
       await atomicPrivateWrite(
         recordingOwnerRecordPath(this.learningDirectory, header.studyId),

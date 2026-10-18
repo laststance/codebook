@@ -81,7 +81,7 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
 /**
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
- * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `unconfirmedWriter` when a recording of the study names another host whose run may still write it.
+ * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `unconfirmedWriter` (and `otherUnconfirmedWriters`) when recordings of the study have writers this computer cannot confirm, each named by its host, its start and its place ({@link UnconfirmedWriter}).
  * - `partly-moved`: a step failed after at least one path went to the Trash; the study is still listed and a second removal finishes it. With `moveUnknown` when a path whose move the mover rejected could not be looked at afterwards: whether it went to the Trash is unknown.
  * Either failure carries `trashRefused` when the Trash itself refused a move, so the caller tells that from a refusal before any move.
  */
@@ -90,7 +90,7 @@ export type StudyRemoval =
   | {
       outcome: 'nothing-moved' | 'partly-moved'
       cause: string
-      /** Only for `nothing-moved` refused because a recording's writer may still run and this computer cannot confirm it ({@link UnconfirmedWriter}): one on another host, or a live process of this computer whose start, by the clock, is after the recording's; the caller asks the learner whether to move it anyway. */
+      /** Only for `nothing-moved` refused because recordings' writers may still run and this computer cannot confirm them ({@link UnconfirmedWriter}): one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule). The first of them, one on another computer before one of this computer; the caller asks the learner whether to move the study anyway, naming every one. */
       unconfirmedWriter?: UnconfirmedWriter
       /** With `unconfirmedWriter`, the writers of the study's other recordings that this computer cannot confirm, when there are more than one; the dialog names each of them too. `unconfirmedWriter` leads: one on another computer before one of this computer. */
       otherUnconfirmedWriters?: UnconfirmedWriter[]
@@ -100,7 +100,7 @@ export type StudyRemoval =
       moveUnknown?: true
     }
 
-/** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another host, or a live process of this computer whose start does not fit the recording's) is no such reservation: the learner decides about it when they delete the study. */
+/** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule)) is no such reservation: the learner decides about it when they delete the study. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
 /**
@@ -138,7 +138,7 @@ export type UnconfirmedWriterRule =
  * A recording whose writer may still run and this computer cannot confirm, as {@link LearningLibrary.removeStudy} answers it with its refusal, so the caller can ask the learner.
  * - `directory`: the recording's directory, which the learner's agreement names ({@link UnconfirmedWriterRule})
  * - `host` and `startedAt`: the host the recording names and the time it was started
- * - `place`: `another-computer` for a writer on another host, which this computer cannot probe; `this-computer` for a live process of this computer that has the writer's id and began, by the clock, after the recording (another process that got the id, or the writer itself after a step of the clock)
+ * - `place`: `another-computer` for a writer on another host, which this computer cannot probe; `this-computer` for a live process of this computer that has the writer's id and that this computer cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording (another process that got the id, or the writer itself, run with other rights or seen after a step of the clock); for a recording without its writer's record, or with a record without the writer's start, also a process of another user, as its header's rule says
  */
 export type UnconfirmedWriter = {
   directory: string
@@ -176,7 +176,7 @@ function unconfirmedWriterCause(writers: NamedUnconfirmedWriters): string {
 }
 
 /**
- * The refusal of a removal whose study has a recording whose writer may still run and this computer cannot confirm: its header names another host (a recording of 0.2.29.0, or one whose record of its writer could not be written), or its record names another machine, or a live process of this computer has the writer's id and began, by the clock, after the recording. This computer cannot tell whether that run still records (a host name may also be its own earlier one, and a clock step moves a computed start), so the learner decides; thrown by {@link LearningLibrary.refuseUnlessRemovable} and answered by {@link LearningLibrary.removeStudy} with the host, the start and the place.
+ * The refusal of a removal whose study has recordings whose writers may still run and this computer cannot confirm: a header names another host (a recording of 0.2.29.0, another format's recording of the same id, or one whose record of its writer could not be written), or a record names another machine, or a live process of this computer has a writer's id and is of another user whose start cannot be read, or began, by the clock, after the recording (for a record without the writer's start, judged as its header is). This computer cannot tell whether that run still records (a host name may also be its own earlier one, a clock step moves a computed start, and a writer run with other rights is another user's), so the learner decides; thrown by {@link LearningLibrary.refuseUnlessRemovable} and answered by {@link LearningLibrary.removeStudy} with the host, the start and the place.
  * @example throw new StudyWriterUnconfirmedError([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }])
  */
 class StudyWriterUnconfirmedError extends Error {
@@ -266,7 +266,7 @@ function isSameRecordingLook(
 /** The {@link RemovalWriterVerdict} of each recording directory of a study. */
 type RemovalWriterVerdicts = Map<string, RemovalWriterVerdict>
 
-/** A writer of another window that may still write a study's recording ({@link LearningLibrary.writerOfAnotherWindow}): one of this machine (`may-run`), or one this computer cannot confirm (`on-another-host`, `unconfirmed-here`). */
+/** A writer of another window that may still write a study's recording ({@link LearningLibrary.writersOfOtherWindows}): one of this machine (`may-run`), or one this computer cannot confirm (`on-another-host`, `unconfirmed-here`). */
 type WriterOfAnotherWindow = Extract<
   RecordingWriterOfDirectory,
   { kind: 'may-run' | 'on-another-host' | 'unconfirmed-here' }
@@ -464,7 +464,7 @@ export class LearningLibrary {
     starts: ProcessStartsOfList,
   ): Promise<StudyCatalogEntry | undefined> {
     const paths = await this.studyPaths(id, undefined)
-    // A recording that a run on another host may still write is listed: the learner reaches the dialog about it with Delete.
+    // A recording whose writer this computer cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer) is listed: the learner reaches the dialog about it with Delete.
     const isLeft = await this.isLeftWithoutArchive(paths, (recording) =>
       isReservedByRunHere(recording, starts),
     )
@@ -485,7 +485,7 @@ export class LearningLibrary {
 
   /**
    * Says whether the paths of a study are what is left of a saved study without its archive, which is listed ({@link entriesWithoutArchive}) and may be removed ({@link removeStudy}).
-   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it ({@link RecordingJudge}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run. A recording that a run on another host may still write is such a rest too: this machine cannot probe that run, and Delete asks the learner about it ({@link removeStudy}).
+   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it ({@link RecordingJudge}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run. A recording whose writer this machine cannot confirm (a run on another computer, which it cannot probe, or a live process of this computer it cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording) is such a rest too, and Delete asks the learner about it ({@link removeStudy}).
    * The list and the removal ask the same question: the list with {@link recordingWriterOf} for every candidate, the removal with what it judged before its lock ({@link isReservedHereUnderLock}).
    * @param paths - The study's paths as {@link studyPaths} found them.
    * @param isReservedHere - Says whether a run of this machine may still write one recording directory ({@link RecordingJudge}).
@@ -503,7 +503,7 @@ export class LearningLibrary {
     )
   }
 
-  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed, abandoned, or written on another host this machine cannot probe; asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
+  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed, abandoned, or with a writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer); asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
   private async hasRecordingNoRunHereHolds(
     recordings: string[],
     isReservedHere: RecordingJudge,
@@ -598,7 +598,7 @@ export class LearningLibrary {
   }
 
   /**
-   * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock ({@link verdictUnderLock}); called by {@link writerOfAnotherWindow}.
+   * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock ({@link verdictUnderLock}); called by {@link writersOfOtherWindows}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `finished` for a recording sealed since; the verdict for any other.
@@ -620,7 +620,7 @@ export class LearningLibrary {
    * @param unconfirmedWriterRule - Whether a recording whose writer this computer cannot confirm keeps the study (`refuse`) or moves with it (`{ move }`, the learner's choice after the refusal, which names the writers they agreed to).
    * @throws
    * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
-   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings ({@link writerOfAnotherWindow}): that window would fail its next append and save the archive again
+   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings ({@link writersOfOtherWindows}): that window would fail its next append and save the archive again
    * - {@link StudyWriterUnconfirmedError} with `refuse` while one of its recordings has a writer this computer cannot confirm (`on-another-host`, `unconfirmed-here`), and with `{ move }` when those writers are not exactly the ones the learner agreed to
    * @example await this.refuseUnlessRemovable(paths, verdicts, 'refuse') // returns for a saved study whose recordings nobody else writes
    */
@@ -1132,11 +1132,11 @@ export class LearningLibrary {
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
    * What is left of a study whose archive is gone, as {@link list} shows it, is moved in the same order ({@link isLeftWithoutArchive}); the recording of a run that has not saved its study yet is not.
-   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link writerOfAnotherWindow}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `unconfirmedWriter` for one this machine cannot probe because the recording names another host, unless `unconfirmedWriterRule` is `move`.
+   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link writersOfOtherWindows}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `unconfirmedWriter` and `otherUnconfirmedWriters`, which name every writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), unless `unconfirmedWriterRule` is `{ move }` with exactly those writers.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
-   * @param unconfirmedWriterRule - `refuse` (the default) keeps a study one of whose recordings a run on another host may still write, and answers with that host and the recording's start; `move` moves it, after the learner chose so in the dialog that names them. No agent or tool path passes `move`.
+   * @param unconfirmedWriterRule - `refuse` (the default) keeps a study whose recordings have writers this computer cannot confirm, and answers with each one's host, recording start and place; `{ move }` moves it, after the learner chose so in the dialog that names them, and only while the writers found are the ones it names. No agent or tool path passes `move`.
    * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, an id of which no file is left and a study in a newer format (`nothing-moved` with the sentence of {@link NewerStudyFormatError}), is a result and not a rejection.
    * @throws When `id` is not a study identity.
    * @example
