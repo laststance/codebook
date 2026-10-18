@@ -15237,7 +15237,7 @@ export class StudyWorkspace {
    * @param onKeyboardTaken - Called before each focus command a proof runs, so {@link retireLeftoverApplicationGroup} still knows that a proof took the keyboard when the retirement throws afterwards (Cycle 0046 OCR1-2).
    * @returns When a proof focused its group and so took the keyboard, the cause of the give-back it owes ({@link LeftoverProofKeyboard}): `leftoverProof` once a group was retired, `unprovenLeftoverProof` when the first proof failed and nothing was closed (Cycle 0046 FX-D1-1); `undefined` when none took the keyboard, and when a failed first proof gave a text editor its keyboard back.
    * @throws When the editor refuses a close, the grid does not lose exactly that group, or the entry was cancelled, superseded or closed; the record is forgotten all the same once an earlier group of it is gone.
-   * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal) // => false for the active leftover of VS Code's only editor part
+   * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all, new Set(this.leftoverTabs())), assertCurrent, signal) // => undefined for the active leftover of VS Code's only editor part, which no focus command took the keyboard for
    */
   private async retireProvenLeftoverGroups(
     record: RecordedStudyGroups,
