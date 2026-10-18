@@ -62,3 +62,38 @@ test('a notebook, a notebook diff, a custom editor, a diff or a terminal in fron
     vsCodeChat: false,
   })
 })
+
+// Value: protects=a merge editor, a multi-file diff or an interactive window in front of a group is the learner's editor, not Cursor's chat, also alone in its group; fails_when=editorTabInputKinds reads only the names the API's typings give, so the runtime-only classes both hosts build for these editors (TabInputTextMerge, TabInputTextMultiDiff, TabInputInteractiveWindow) are left out and such a tab reads as the chat's; why_new=Cycle 0046 Q7 (the third OCR review: both hosts export the three classes, read in VS Code 1.142.0's and Cursor 3.23.23's extension-host bundles); seam=none; no_claim=what the reader does with the answer, which the workspace's merge-editor test pins
+test('a merge editor, a multi-file diff or an interactive window in front of a group is an editor tab, never the chat’s tab', () => {
+  // Arrange: a host that exports the runtime-only classes too, as both editors' extension hosts do.
+  class TabInputTextMerge {}
+  class TabInputTextMultiDiff {}
+  class TabInputInteractiveWindow {}
+  const kinds = editorTabInputKinds({
+    ...host,
+    TabInputTextMerge,
+    TabInputTextMultiDiff,
+    TabInputInteractiveWindow,
+  })
+  const groupShowing = (input: unknown) => ({ tabs: [{ input }] })
+
+  // Act
+  const answers = {
+    mergeEditor: holdsEditorTab(groupShowing(new TabInputTextMerge()), kinds),
+    multiFileDiff: holdsEditorTab(
+      groupShowing(new TabInputTextMultiDiff()),
+      kinds,
+    ),
+    interactiveWindow: holdsEditorTab(
+      groupShowing(new TabInputInteractiveWindow()),
+      kinds,
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    mergeEditor: true,
+    multiFileDiff: true,
+    interactiveWindow: true,
+  })
+})

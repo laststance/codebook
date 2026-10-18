@@ -298,6 +298,15 @@ export async function workspaceHarness(
   class TabInputChat {}
   /** The input of a terminal in the editor area (Terminal: Create Terminal in Editor Area), which both editors type as `TabInputTerminal`. */
   class TabInputTerminal {}
+  /** The input of a merge editor's tab, which both editors' extension hosts export as `vscode.TabInputTextMerge` while the API's typings do not name it (VS Code 1.142.0 and Cursor 3.23.23 `extensionHostProcess.js`; Cycle 0046 Q7). */
+  class TabInputTextMerge {
+    constructor(
+      readonly base: Uri,
+      readonly input1: Uri,
+      readonly input2: Uri,
+      readonly result: Uri,
+    ) {}
+  }
   /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
   class Position {
     constructor(
@@ -3582,6 +3591,7 @@ export async function workspaceHarness(
       TabInputWebview,
       TabInputChat,
       TabInputTerminal,
+      TabInputTextMerge,
       TreeItem: class {},
       TreeItemCollapsibleState: { None: 0 },
       TreeItemCheckboxState: { Unchecked: 0, Checked: 1 },
@@ -6698,8 +6708,8 @@ export async function workspaceHarness(
       )
     },
     /**
-     * Opens an editor whose tab the extension API gives no input (VS Code 1.142's Settings editor, its merge editor; the API types neither) in a group and gives it the keyboard, as the learner's Preferences: Open Settings (UI) or Merge Editor's open does: as `focusEditorTerminal` does for a terminal, with a tab whose input is of no editor's kind, like Cursor's chat tab (Cycle 0046 AD29).
-     * @param label - The tab's label: `Settings`, or `Merging: <file>` for the merge editor.
+     * Opens an editor whose tab the host gives no input (VS Code 1.142's Settings editor, its Keyboard Shortcuts editor: the workbench sends them as kind 0, unknown) in a group and gives it the keyboard, as the learner's Preferences: Open Settings (UI) or Open Keyboard Shortcuts does: as `focusEditorTerminal` does for a terminal, with a tab whose input is of no editor's kind, like Cursor's chat tab (Cycle 0046 AD29). A merge editor has an input at runtime: `focusMergeEditor`.
+     * @param label - The tab's label: `Settings` or `Keyboard Shortcuts`.
      * @param column - The view column of the group.
      * @param keepsTextEditorReport - Whether the text editor that had the keyboard stays reported, as VS Code reports it behind an editor that is no code editor (rows 659 and 671).
      * @returns The editor's tab.
@@ -6715,6 +6725,24 @@ export async function workspaceHarness(
         label,
         column,
         keepsTextEditorReport,
+      )
+    },
+    /**
+     * Opens a merge editor of a file in a group, a new group of its own when that column has none yet (the merge editor opened to the side), and gives it the keyboard, as the learner's Merge Editor open does: its tab's input is `TabInputTextMerge`, which both editors' extension hosts build at runtime although the API's typings do not name it, and no text editor is active (Cycle 0046 Q7).
+     * @param filename - The merged file, in the harness's folder; the tab's label is `Merging: <file>`.
+     * @param column - The view column of the group.
+     * @returns The merge editor's tab.
+     * @example harness.focusMergeEditor('auth.ts', 3) // Merging: auth.ts stands alone in a new group 3, with the keyboard
+     */
+    focusMergeEditor(filename: string, column: number): Tab {
+      const uri = Uri.file(join(harness.directory, filename))
+      // A merge editor opened to the side opens its own group first.
+      nativeGroup(column)
+      return focusEditorAreaTab(
+        new TabInputTextMerge(uri, uri, uri, uri),
+        `Merging: ${filename}`,
+        column,
+        false,
       )
     },
     /**

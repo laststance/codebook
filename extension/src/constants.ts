@@ -469,6 +469,7 @@ export const EDITOR_GROUP_MINIMUM_HEIGHT_PX = 70
 /**
  * The tab input classes of editors besides `TabInputText` and `TabInputWebview`, by the names under which both editors' extension hosts export them on `vscode` (a diff, a custom editor, a notebook and its diff, a terminal in the editor area); a host that exports one of them not is asked for it in vain and skips it. A group that holds such a tab belongs to a part with editors, not to a chat part (Cycle 0046 row 689).
  * Each name must be an export of the editor's API types (`@types/vscode`), so a misspelled name fails the type check instead of being skipped as a missing export (Cycle 0046 T7). The import of those types is erased from the emitted module, which is also loaded where the editor's API does not exist.
+ * The editors' runtime-only classes the API types do not name are {@link UNTYPED_EDITOR_TAB_INPUT_KINDS}.
  * @example EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)) // => [TabInputTextDiff, TabInputCustom, …]
  */
 export const EDITOR_TAB_INPUT_KINDS = [
@@ -478,6 +479,16 @@ export const EDITOR_TAB_INPUT_KINDS = [
   'TabInputNotebookDiff',
   'TabInputTerminal',
 ] as const satisfies readonly (keyof typeof vscode)[]
+/**
+ * The tab input classes of editors that both editors' extension hosts export on `vscode` and build for their tabs although the editor's API types (`@types/vscode`) do not name them: the merge editor, the multi-file diff editor and the interactive window (VS Code 1.142.0 and Cursor 3.23.23 `extensionHostProcess.js`: `TabInputTextMerge`, `TabInputTextMultiDiff` and `TabInputInteractiveWindow` among the API's exports, built by the tab model's `_initInput` from the kinds the workbench's `_editorInputToDto` sends: 3, 11 and 9). A group that holds such a tab belongs to a part with editors, not to a chat part (Cycle 0046 Q7).
+ * Read with `Reflect.get` like {@link EDITOR_TAB_INPUT_KINDS}; a host that does not export one skips it. No type check guards these names: they are the hosts' own, as their bundles export them.
+ * @example UNTYPED_EDITOR_TAB_INPUT_KINDS.map((kind) => Reflect.get(vscode, kind)) // => [TabInputTextMerge, TabInputTextMultiDiff, TabInputInteractiveWindow]
+ */
+export const UNTYPED_EDITOR_TAB_INPUT_KINDS = [
+  'TabInputTextMerge',
+  'TabInputTextMultiDiff',
+  'TabInputInteractiveWindow',
+] as const
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
 export const PRESENTATION_READING_ANCHORS = [

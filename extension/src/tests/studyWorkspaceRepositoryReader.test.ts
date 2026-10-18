@@ -1004,8 +1004,8 @@ test("an agent's citation open beside Cursor's chat part is refused for the lear
   }
 })
 
-for (const editor of ['Settings', 'Merging: auth.ts'] as const)
-  // Value: protects=the learner's newer choice of an editor whose tab the extension API gives no input (VS Code's Settings, its merge editor) during an agent's citation open beside Cursor's chat part: the learner opens it in front of group 2, which holds auth.ts, while the reader shows its copy without the keyboard; a tab without an editor's input in a group that holds an editor's tab is no tab of Cursor's chat part, so the reader's own show does not explain it and the open is refused as the learner's newer focus; fails_when=isOwnQuietCopyShowPlace takes any front tab without an editor's input in another group for the chat's tab, adoptOwnQuietCopyShow takes the learner's group change into the receipt, and the open completes over the learner's choice; why_new=Cycle 0046 AD29 (/ship's adversarial review: a tab with no typed input in the API is taken for Cursor's chat tab, here in row 714's reading); seam=workspaceHarness's Cursor model, Focus Agent, changeAfterNextSourceDisplay with focusEditorWithoutTabInput (the editor in group 2 right after the show), createRepositoryWikiReader's openFromAgent and the named group; no_claim=such an editor alone in a group of its own, which the evidence does not tell from the chat's
+for (const editor of ['Settings', 'Keyboard Shortcuts'] as const)
+  // Value: protects=the learner's newer choice of an editor whose tab the host gives no input (VS Code's Settings, its Keyboard Shortcuts) during an agent's citation open beside Cursor's chat part: the learner opens it in front of group 2, which holds auth.ts, while the reader shows its copy without the keyboard; a tab without an editor's input in a group that holds an editor's tab is no tab of Cursor's chat part, so the reader's own show does not explain it and the open is refused as the learner's newer focus; fails_when=isOwnQuietCopyShowPlace takes any front tab without an editor's input in another group for the chat's tab, adoptOwnQuietCopyShow takes the learner's group change into the receipt, and the open completes over the learner's choice; why_new=Cycle 0046 AD29 (/ship's adversarial review: a tab with no typed input in the API is taken for Cursor's chat tab, here in row 714's reading); seam=workspaceHarness's Cursor model, Focus Agent, changeAfterNextSourceDisplay with focusEditorWithoutTabInput (the editor in group 2 right after the show), createRepositoryWikiReader's openFromAgent and the named group; no_claim=such an editor alone in a group of its own, which the evidence does not tell from the chat's
   test(`an agent's citation open beside Cursor's chat part is refused for ${editor} the learner opened in another group while the copy was shown`, async () => {
     // Arrange: as above; the learner will open the editor in front of group 2, which holds auth.ts, right after the reader shows the second copy.
     const { harness, wiki, selection, books } =
@@ -1049,6 +1049,49 @@ for (const editor of ['Settings', 'Merging: auth.ts'] as const)
   })
 
 // Value: protects=the learner's newer choice of a new empty group during an agent's citation open beside Cursor's chat part: right after the reader shows its copy without the keyboard, the learner opens a new empty group right of the main editor's last group (workbench.action.newGroupRight), which the editor names with no active tab and no active text editor; the reader's own show explains only the first group with its copy and Cursor's chat part's group (row 696), so that choice refuses the open as the learner's newer focus and the empty group stays named; fails_when=isOwnQuietCopyShowPlace asks of the named group's front tab without its guard for a group that has none, so the focus receipt breaks on the empty group and the open answers with "TypeError: Cannot destructure property 'input' of 'undefined' …" instead of the learner's change; why_new=Cycle 0046 row 714 (the coverage audit of /ship: the guard group.activeTab !== undefined had no test); seam=workspaceHarness's Cursor model, Focus Agent, changeAfterNextSourceDisplay with focusEmptyGroup (row 727's seam: the learner's new empty group right after the show), createRepositoryWikiReader's openFromAgent and the named group; no_claim=what Cursor does with the keyboard of a learner's new empty group beyond root's probe (named in its own column, no tab, no active text editor)
+// Value: protects=the learner's newer choice of a merge editor opened to the side during an agent's citation open beside Cursor's chat part: the merge editor stands alone in a new group of its own while the reader shows its copy without the keyboard; its tab has an editor's input at runtime (TabInputTextMerge, which the API's typings do not name), so its group is no group of Cursor's chat part, the reader's own show does not explain it, and the open is refused as the learner's newer focus; fails_when=the reader reads only the typed editor kinds, so a merge editor alone in a group reads as Cursor's chat tab, adoptOwnQuietCopyShow takes the learner's group change into the receipt, and the open completes over the learner's choice; why_new=Cycle 0046 Q7 (the third OCR review: both hosts export TabInputTextMerge, TabInputTextMultiDiff and TabInputInteractiveWindow at runtime); seam=workspaceHarness's Cursor model, Focus Agent, changeAfterNextSourceDisplay with focusMergeEditor (the new seam: a merge editor in a new group 3 right after the show), createRepositoryWikiReader's openFromAgent and the named group; no_claim=which text editor either host reports active inside a merge editor: this model reports none, the case in which the reader asks the group at all
+test("an agent's citation open beside Cursor's chat part is refused for a merge editor the learner opened in a new group of its own while the copy was shown", async () => {
+  // Arrange: as above; the learner will open a merge editor of auth.ts to the side, in a new group 3, right after the reader shows the second copy.
+  const { harness, wiki, selection, books } =
+    await agentFirstCitationBesideCursorChat()
+  harness.changeAfterNextSourceDisplay(() => {
+    harness.focusMergeEditor('auth.ts', 3)
+  })
+  try {
+    // Act
+    const refusal = await wiki
+      .openFromAgent({
+        ...selection,
+        anchorIndex: 1,
+        instanceId: harness.service.instanceId,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+
+    // Assert: refused as the learner's newer focus; the merge editor alone in group 3 is the named group's tab, and no text editor is active.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        refusal,
+        named: named.viewColumn,
+        namedTabs: named.tabs.map((tab) => tab.label),
+        activeTextEditor: harness.editor.window.activeTextEditor,
+      },
+      {
+        refusal: NAVIGATION_FOCUS_REFUSAL,
+        named: 3,
+        namedTabs: ['Merging: auth.ts'],
+        activeTextEditor: undefined,
+      },
+    )
+  } finally {
+    await books.dispose()
+    await harness.close()
+  }
+})
+
 test("an agent's citation open beside Cursor's chat part is refused for the learner's new empty group chosen while the copy was shown", async () => {
   // Arrange: as above; the learner will open a new empty group right of the main editor's last group right after the reader shows the second copy.
   const { harness, wiki, selection, books } =
