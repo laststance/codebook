@@ -97,7 +97,7 @@ const outputRefusalOf = path => 'The Wiki folder ' + path + ' is a link, a file 
 /** The refusal of a stage beside the Wiki folder that is no folder of its own, for {@link locations}; its step is the stage's own. @example stageRefusalOf('/repo/.codebook/wiki.stage-1') // => 'The Wiki stage /repo/.codebook/wiki.stage-1 is a link, a file or a folder that leads out of the project. …' */
 const stageRefusalOf = path => 'The Wiki stage ' + path + ' is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.';
 
-/** The refusal of an output inside the project whose path passes through a folder that is no folder of the project's own, for the path it names; for {@link requireOwnFolder}, {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example linkedPathRefusalOf('/repo/.codebook') // => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: /repo/.codebook. …' */
+/** The refusal of an output inside the project whose path passes through a folder that is no folder of the project's own, for the path it names; for {@link requireOwnFolder} and {@link holdOfPath}. @example linkedPathRefusalOf('/repo/.codebook') // => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: /repo/.codebook. …' */
 const linkedPathRefusalOf = path => 'The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ' + path + '. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.';
 
 /** The refusal of the prior Wiki an interrupted publish kept beside the Wiki folder when it is no folder of its own, for {@link recoverWikiPublication}; recovery moves nothing then. @example backupRefusalOf('/repo/.codebook/wiki.previous-1') // => 'The prior Wiki kept at /repo/.codebook/wiki.previous-1 is a link, a file or a folder that leads out of the project. …' */
@@ -144,7 +144,7 @@ function madeFoldersOf(made, parent) {
   return folders;
 }
 
-/** Removes folders the preparation or the publish made, in the order given, each with rmdir: that removes only an empty folder and follows no link at its own name, so a folder that holds something now, or is gone, stays as it is. Called by {@link createParentOf}, {@link requireStageWhereItWasMade} and {@link makeFolderHeld} before they refuse. @example await removeMadeFolders(['/repo/.codebook/wiki.stage-1', '/repo/.codebook']) */
+/** Removes folders the preparation or the publish made, in the order given, each with rmdir: that removes only an empty folder and follows no link at its own name, so a folder that holds something now, or is gone, stays as it is. Called by {@link createParentOf}, {@link prepareWikiStage} and {@link makeFolderHeld} before they refuse. @example await removeMadeFolders(['/repo/.codebook/wiki.stage-1', '/repo/.codebook']) */
 async function removeMadeFolders(folders) {
   for (const folder of folders) await rmdir(folder).catch(() => undefined);
 }
@@ -238,7 +238,7 @@ async function requireNoJournal(journal) {
   if (await regularBytes(journal, true)) throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
 }
 
-/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. Both are compared as bigints: an NTFS file id may lie above 2^53, where two JavaScript numbers of different ids are equal. A folder that cannot be looked at counts as moved. Called by {@link requireStageWhereItWasMade} and {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
+/** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. Both are compared as bigints: an NTFS file id may lie above 2^53, where two JavaScript numbers of different ids are equal. A folder that cannot be looked at counts as moved. Called by {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
 const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([stat(parent, { bigint: true }), ...[parent, ...entries].map(path => realpath(path))]).then(
   ([now, ...realPaths]) => realPaths.every(real => isInProject(root, real)) && now.dev === identity.dev && now.ino === identity.ino,
   () => false);
@@ -246,7 +246,7 @@ const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([s
 /** A refusal of a step whose path no longer holds, marked so that the step removes what it wrote ({@link removeWritten}). Called by {@link holdOfPath}, {@link makeFolderHeld} and {@link restoreManifestHeld}. @example throw holdRefusalOf(linkedPathRefusalOf('/repo/.codebook')) */
 const holdRefusalOf = sentence => Object.assign(new Error(sentence), { isHoldRefusal: true });
 
-/** Takes the look at the output's parent once the paths are resolved, for a publish or a recovery, and answers the check that holds every later write to it: for an output inside the project, the parent and `entries` must still be where they were ({@link isWhereItWasResolved}), or the step is refused with the parent's sentence. The race left is the one {@link requireStageWhereItWasMade} names. Called by {@link publishWiki} and {@link recoverWikiPublication}. @returns The check, which resolves when the path still holds and throws otherwise. @example const requirePathHeld = await holdOfPath(paths, [paths.stage]); await requirePathHeld() // throws once .codebook was swapped for a link */
+/** Takes the look at the output's parent once the paths are resolved, for a preparation, a publish or a recovery, and answers the check that holds every later write to it: for an output inside the project, the parent and `entries` must still be where they were ({@link isWhereItWasResolved}), or the step is refused with the parent's sentence. The race left: between a check and the write or move after it, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage}, {@link publishWiki} and {@link recoverWikiPublication}. @returns The check, which resolves when the path still holds and throws otherwise. @example const requirePathHeld = await holdOfPath(paths, [paths.stage]); await requirePathHeld() // throws once .codebook was swapped for a link */
 async function holdOfPath(paths, entries) {
   const parent = dirname(paths.output), identity = await stat(parent, { bigint: true });
   return async () => {
@@ -319,27 +319,20 @@ async function* candidateFilesOf(stage, receipt, prior, output) {
   }
 }
 
-/** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasResolved}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
-async function requireStageWhereItWasMade(paths, stage, parentIdentity) {
-  const parent = dirname(paths.output);
-  if (!paths.isOutputInProject || await isWhereItWasResolved(parent, parentIdentity, [stage], paths.root)) return;
-  await removeMadeFolders([stage, ...paths.madeFolders]);
-  throw new Error(linkedPathRefusalOf(parent));
-}
-
 /** Handles the CLI preparation step before agent edits, retaining current output and an exact recovery baseline. @example await prepareWikiStage({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function prepareWikiStage({ projectRoot, outputDirectory, stageDirectory, adoptExisting = false }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory, true);
   const { root, output, journal } = paths, stage = paths.stage ?? output + '.stage-' + randomUUID();
-  // The folder the paths were resolved in, by device and inode as bigints, which NTFS ids above 2^53 need, so a swap on the path before the stage is written is seen.
-  const parentIdentity = await stat(dirname(output), { bigint: true });
+  // The look at the folder the paths were resolved in, taken now, so a swap on the path before the stage is written is seen ({@link holdOfPath}).
+  const requirePathHeld = await holdOfPath(paths, [stage]);
   await requireNoJournal(journal);
   const prior = await inspectOutput(output, root, { allowLegacy: adoptExisting });
   await mkdir(stage); // An existing candidate is never overwritten or silently reused.
-  await requireStageWhereItWasMade(paths, stage, parentIdentity);
+  // A stage that no longer lies where it was made is refused before anything is written into it, and it and the folders the preparation made are removed, each empty.
+  try { await requirePathHeld(); } catch (error) { await removeMadeFolders([stage, ...paths.madeFolders]); throw error; }
   const receipt = { schemaVersion: 1, kind: 'candidate', repositoryRoot: root, output, baseline: baselineOf(prior) };
   // Every file of the candidate is written only while the path and the candidate's folders hold; a refusal removes what was written.
-  await writeFilesHeld(candidateFilesOf(stage, receipt, prior, output), await holdOfPath(paths, [stage]), await folderLookOf(stage), [stage, ...paths.madeFolders]);
+  await writeFilesHeld(candidateFilesOf(stage, receipt, prior, output), requirePathHeld, await folderLookOf(stage), [stage, ...paths.madeFolders]);
   await requireNoJournal(journal);
   assertBaseline(receipt.baseline, await inspectOutput(output, root, { allowLegacy: adoptExisting }));
   return { stage, manifest: join(stage, MANIFEST), output, legacyAdopted: Boolean(prior && !prior.receipt) };
