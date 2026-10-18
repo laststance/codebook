@@ -520,6 +520,58 @@ for (const entry of ['idle Live selection', 'cold Live reopening'])
     }
   })
 
+// Value: protects=the Study composition of a reader whose explicit Live intent was spent: the learner's Return to the current run asked for the Live composition before any run, a run then started and was stopped by the Close, and the next Open of that stopped run arranges the Study as for any stopped run, with its Study pane; fails_when=the Return's intent never ends, so every later Open that follows the current run arranges the Live composition without the Study pane, also for a run that stopped long ago (Cycle 0046 OCR1-8); why_new=Cycle 0046 OCR1-8; seam=workspaceHarness with the controlled runtime (the service's start and its preparation), readerSeams stopOwnTimer and refresh, the reader's open, returnToCurrent and close, presentationState
+test('an Open after a Return to the current run whose run then started and stopped arranges the Study composition with its Study pane again', async () => {
+  // Arrange: the learner opened the Study and returned it to the current run before any run existed; a run then started, and the Close stopped it.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const run = [...harness.service.records.values()][0]!
+    await run.preparation
+    await readerSeams(harness).refresh()
+    await harness.reader.close()
+
+    // Act
+    await harness.reader.open()
+
+    // Assert: the run is stopped, and the Open arranged the Study composition with its Study pane.
+    const reopened = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        runStopped: run.stopped,
+        followingCurrentRun: reopened.reader.followingCurrentRun,
+        contextColumn: reopened.panes.contextColumn,
+        studyPaneColumn: harness.panelColumn('codebook.studyContext'),
+      },
+      {
+        runStopped: true,
+        followingCurrentRun: true,
+        contextColumn: 3,
+        studyPaneColumn: 3,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('Close during Live preparation keeps its keyboard settlement without an obsolete return to the separate chat', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

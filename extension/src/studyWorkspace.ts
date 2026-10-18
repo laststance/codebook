@@ -728,8 +728,13 @@ export class StudyWorkspace {
   }
   private contextPanel?: vscode.WebviewPanel
   private liveComposition = false
-  /** {@link returnCurrentSelection} records an open reader's explicit Live intent so Open and cold reentry prepare chat layout before a runtime starts. */
-  private liveCompositionRequested = false
+  /**
+   * The explicit Live intent {@link returnCurrentSelection} records for an open reader, so Open and cold reentry, also after a Close, prepare the chat layout before a runtime starts: the record that was current then, and whether it had stopped. A Close keeps it, and so does a Return that arranged nothing, since the selection either leaves follows the current run in Live; a run that starts after it and the stop of the current run end it ({@link isLiveCompositionRequested}, Cycle 0046 OCR1-8).
+   */
+  private liveCompositionRequest?: {
+    record: StudyRecord | undefined
+    stopped: boolean
+  }
   private summaryComposition = false
   private summaryView?: vscode.WebviewView
   private summaryDocumentActive = false
@@ -7646,7 +7651,7 @@ export class StudyWorkspace {
         this.selection.tab === 'live' &&
         Boolean(
           this.liveComposition ||
-          this.liveCompositionRequested ||
+          this.isLiveCompositionRequested() ||
           (currentRecord && !currentRecord.stopped),
         )
       const summaryComposition = this.recordingActive
@@ -8587,8 +8592,14 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       this.readerSelectionRevision++
       this.selection = { ...this.selection, follow: true, tab: 'live' }
-      // An open reader's explicit Live control prepares native chat layout; a closed reader only remembers its source selection.
-      if (this.opened) this.liveCompositionRequested = true
+      // An open reader's explicit Live control prepares native chat layout until a run starts or stops; a closed reader only remembers its source selection.
+      if (this.opened) {
+        const record = this.currentRecord()
+        this.liveCompositionRequest = {
+          record,
+          stopped: Boolean(record?.stopped),
+        }
+      }
       await this.refresh()
       await this.renderSelection(true, true)
       // The explicit selection owns arrangement; a subsequent background start must not borrow the chat keyboard to retire Context.
@@ -8662,6 +8673,26 @@ export class StudyWorkspace {
       this.returningCurrent = undefined
       this.preparationNoticeOwed = undefined
     }
+  }
+
+  /**
+   * Says whether the explicit Live intent of a Return to current ({@link liveCompositionRequest}) still asks {@link open} to arrange the Live composition, and forgets an intent that has ended.
+   * The intent prepares the chat layout before a runtime starts. It holds while the run state it was recorded beside holds: the same current record, stopped or not as then. Once a run started after it, the run's own state chooses the composition, and a run that stopped, also the one that ran when the intent was recorded, opens in the Study composition as for a reader that never asked (Cycle 0046 OCR1-8).
+   * @returns `true` while the intent holds; `false` without one, and once it ended.
+   * @example this.isLiveCompositionRequested() // => false after the run that started since the Return stopped
+   */
+  private isLiveCompositionRequested(): boolean {
+    const request = this.liveCompositionRequest
+    if (!request) return false
+    const record = this.currentRecord()
+    if (
+      record === request.record &&
+      Boolean(record?.stopped) === request.stopped
+    )
+      return true
+    // A run started or stopped since the intent was recorded: it is spent.
+    this.liveCompositionRequest = undefined
+    return false
   }
 
   /**
