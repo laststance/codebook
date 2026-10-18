@@ -532,9 +532,12 @@ export async function startDeepWikiReader(
       }
       // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
       const preparation = new AbortController()
-      response.on('close', () => {
-        if (!response.writableFinished) preparation.abort()
-      })
+      // A request that went while the reader read the files above is closed already, and its page is not prepared; one that goes later stops the preparation when its response closes. Both are looked at in one step, so no close falls between them.
+      if (response.destroyed) preparation.abort()
+      else
+        response.on('close', () => {
+          if (!response.writableFinished) preparation.abort()
+        })
       const served = await servedWikiPageOffThread(
         content.toString('utf8'),
         {

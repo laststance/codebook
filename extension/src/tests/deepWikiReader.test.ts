@@ -1434,6 +1434,92 @@ test('a page whose browser tab goes while the page is prepared has its preparati
   assert.equal(preparationEnd, 'stopped')
 })
 
+// Value: protects=the editor's machine against a crafted page whose tab closes while the reader still reads the page file; fails_when=the reader starts listening for the response's close only after the file read, so a request gone during the read is prepared until the deadline; why_new=the P2T5 test closes the tab after the preparation started; seam=the reader loaded with loadModule, a file system whose open of the page waits for the test, and a stand-in page worker; no_claim=a real browser's close timing
+test('a page whose browser tab goes while the reader reads its file has its preparation stopped', async (context) => {
+  // Arrange: the one-page Wiki, a file system whose open of the overview waits until the test lets it go on, and a page worker that answers only when its request goes.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-read-abort-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let noteOpenAsked = (): void => {}
+  const openAsked = new Promise<void>((resolveAsked) => {
+    noteOpenAsked = resolveAsked
+  })
+  let letOpenGoOn = (): void => {}
+  const openMayGoOn = new Promise<void>((resolveGoOn) => {
+    letOpenGoOn = resolveGoOn
+  })
+  const heldFileSystem = {
+    ...fileSystemPromises,
+    open: async (...parameters: Parameters<typeof open>) => {
+      if (basename(String(parameters[0])) === 'index.html') {
+        noteOpenAsked()
+        await openMayGoOn
+      }
+      return open(...parameters)
+    },
+  }
+  let preparationSignal: AbortSignal | undefined
+  let notePreparationStarted = (): void => {}
+  const preparationStarted = new Promise<void>((resolveStarted) => {
+    notePreparationStarted = resolveStarted
+  })
+  const workerAnsweringOnlyAtAbort: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: (_html, _options, limits) =>
+      new Promise((resolvePage) => {
+        preparationSignal = limits.signal
+        if (limits.signal.aborted) resolvePage({ state: 'failed' })
+        limits.signal.addEventListener(
+          'abort',
+          () => resolvePage({ state: 'failed' }),
+          { once: true },
+        )
+        notePreparationStarted()
+      }),
+  }
+  const { startDeepWikiReader: startReaderWithHeldOpen } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      'node:fs/promises': heldFileSystem,
+      './wikiPageWorker': workerAnsweringOnlyAtAbort,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithHeldOpen(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).catch(
+    () => 'request gone',
+  )
+  await openAsked
+
+  // Act: the tab goes while the page file is opened, then the read goes on.
+  browserTab.abort()
+  await opening
+  await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+  letOpenGoOn()
+  await preparationStarted
+  const preparationEnd = await Promise.race([
+    new Promise<'stopped'>((resolveStop) => {
+      if (preparationSignal?.aborted) resolveStop('stopped')
+      preparationSignal?.addEventListener('abort', () => resolveStop('stopped'))
+    }),
+    new Promise<'still running'>((resolveWait) =>
+      setTimeout(() => resolveWait('still running'), 2_000),
+    ),
+  ])
+
+  // Assert
+  assert.equal(preparationEnd, 'stopped')
+})
+
 // Value: protects=the reader's origin, whose page may ask the editor's model, against a script file written into the Wiki folder and named by the manifest, which a page file points at with a script tag, plainly or through a tag it leaves open before the reader's own; fails_when=the reader serves a `.js` file of the Wiki folder as JavaScript again, so the policy's `'self'` lets it run, or a response of the reader (a page, an asset, its own script, an answer, a refusal) comes without `nosniff`, so a browser may run a file of another type as script; why_new=Cycle 0046 /ship Codex review CX16: under a nonce, a script tag left open before the reader's own takes over its nonce in a browser that does not refuse such a tag (Chromium refuses it, Firefox and Safari were not tried); seam=none (the reader's real responses)
 test('a script file of the Wiki folder is served as plain text, a page that points at it plainly or through a tag left open before the reader’s own gets no secret to run it, and every response of the reader says nosniff', async (context) => {
   // Arrange: a script file in the Wiki folder that the manifest names, an overview that points at it, and a page that leaves a script tag open before the reader's own.
