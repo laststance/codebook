@@ -62,26 +62,23 @@ function readStartOncePerList(starts: ProcessStartsOfList): ProcessStartReader {
 }
 
 /**
- * Judges a recording's writer by the record of its full identity that this build keeps outside the recording ({@link recordingOwnerRecordPath}), as a storage lock's owner is judged ({@link isRecordedOwnerGone}); called by {@link recordingWriterState} when that record exists and names this recording ({@link readRecordingWriterRecord}).
+ * Judges a recording's writer by the record of its full identity that this build keeps outside the recording ({@link recordingOwnerRecordPath}), as a storage lock's owner is judged ({@link isRecordedOwnerGone}); called by {@link recordingWriterState} when that record exists and names this recording ({@link readRecordingWriterRecord}), and the recording is not this process's own ({@link isOwnRecording}).
  * The editor's machine id and the machine's pseudonyms tell this machine after its host name changed (macOS follows the network) and another machine with the same host name; the process start tells a process id that went to another process.
+ * A record without its writer's start (one of a window whose start could not be read) proves no more than the header does once its process id is in use: that live process is judged as the header's is, by the recording's creation time ({@link liveWriterStateHere}). A record with a start proves nothing either when the process with its id belongs to another user and its start cannot be read here ({@link isUnreadableProcessOfAnotherUser}).
  * @param owner - The record of the writer.
  * @param header - What the header says of the writer; its host name names a writer whose record gives none.
- * @param ownProcess - Whether this process's own recording counts.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
- * A record without its writer's start (one of a window whose start could not be read) proves no more than the header does once its process id is in use: that live process is judged as the header's is, by the recording's creation time ({@link liveWriterStateHere}). A record with a start proves nothing either when the process with its id belongs to another user and its start cannot be read here ({@link isUnreadableProcessOfAnotherUser}).
  * @returns
  * - `on-another-host` for a record of another machine, which is not probed
- * - `left-to-caller` with `ignored` for this process's own recording
  * - `gone` once a writer of this machine is gone ({@link isRecordedOwnerGone})
  * - for a record without a start whose process id is in use, what {@link liveWriterStateHere} answers: `unconfirmed-here` or `may-run`
  * - `unconfirmed-here` for a record with a start whose process id a process of another user has, whose start cannot be read here
  * - `may-run` otherwise, while it may still run
- * @example await writerStateByRecord({ pid: 4242, hostname: 'laptop.lan', machineId: 'f3a1…', processStart: 'ps:Mon Oct  5 09:12:33 2026' }, header, 'counts', readStart) // => { kind: 'gone' } once process 4242 is another process
+ * @example await writerStateByRecord({ pid: 4242, hostname: 'laptop.lan', machineId: 'f3a1…', processStart: 'ps:Mon Oct  5 09:12:33 2026' }, header, readStart) // => { kind: 'gone' } once process 4242 is another process
  */
 async function writerStateByRecord(
   owner: RecordedOwner,
   header: RecordingWriterOfHeader,
-  ownProcess: OwnProcessRule,
   readStart: ProcessStartReader,
 ): Promise<RecordingWriterState> {
   const identity = await currentStorageOwner()
@@ -91,9 +88,6 @@ async function writerStateByRecord(
       kind: 'on-another-host',
       host: owner.hostname ?? header.owner.hostname,
     }
-  // This process's own recording, by the session its header names, is left to the caller's own run state when it asks so.
-  if (ownProcess === 'ignored' && isOwnRecording(header.owner))
-    return { kind: 'left-to-caller' }
   if (await isRecordedOwnerGone(owner, identity, readStart))
     return { kind: 'gone' }
   const host = owner.hostname ?? header.owner.hostname
@@ -181,28 +175,20 @@ async function liveWriterStateHere(
 }
 
 /**
- * Judges a recording's writer by its header alone, for a recording without a record of its full identity (one 0.2.29.0 made, or one whose record could not be written); called by {@link recordingWriterState}.
+ * Judges a recording's writer by its header alone, for a recording without a record of its full identity (one 0.2.29.0 made, one whose record could not be written, or another format's recording of the same id) that is not this process's own ({@link isOwnRecording}); called by {@link recordingWriterState}.
  * @param header - What the header says of the writer.
- * @param ownProcess - Whether this process's own recording counts.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns
- * - for this process's own recording (its header names this process and a writer session of it, {@link isOwnRecording}), whatever host name the header gives: `left-to-caller` with `ignored`, `may-run` with `counts`
  * - `on-another-host` for a writer of another host name, which cannot be probed
  * - `gone` for a process of this host that is gone
  * - for a live process of this host, what {@link liveWriterStateHere} answers: `unconfirmed-here` or `may-run`
- * @example await writerStateByHeader({ owner: { pid: 2 ** 22 + 1, hostname: hostname() }, createdAt }, 'counts', readStart) // => { kind: 'gone' }
+ * @example await writerStateByHeader({ owner: { pid: 2 ** 22 + 1, hostname: hostname(), sessionId }, createdAt }, readStart) // => { kind: 'gone' }
  */
 async function writerStateByHeader(
   header: RecordingWriterOfHeader,
-  ownProcess: OwnProcessRule,
   readStart: ProcessStartReader,
 ): Promise<RecordingWriterState> {
   const { owner } = header
-  // This window's own recording, also one whose host name changed while it records, is told first: it may run, or it is left to the caller's own run state.
-  if (isOwnRecording(owner))
-    return ownProcess === 'ignored'
-      ? { kind: 'left-to-caller' }
-      : { kind: 'may-run' }
   // Only a process of this machine can be probed; any other owner may still be writing.
   if (owner.hostname !== hostname())
     return { kind: 'on-another-host', host: owner.hostname }
@@ -217,7 +203,7 @@ async function writerStateByHeader(
 
 /**
  * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link recordingWriterOf}, through which the library's list ({@link LearningLibrary.entryWithoutArchive}) and the removal of a study ({@link LearningLibrary.writerVerdictsOf}, before its storage lock) tell a writer of this machine from one it cannot confirm, and {@link isRecordingWriterLive}, through which only the status {@link RecordingStore.ownerState} gives a recording another session wrote.
- * The record of the writer's full identity that this build keeps outside the recording decides when it exists and names this recording ({@link readRecordingWriterRecord}: the record is kept by the study id, which recordings of several formats can share); a recording without such a record (made by 0.2.29.0, or another format's recording of the same id) is judged by its header's host name and process id, a process id that a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}).
+ * This process's own recording ({@link isOwnRecording}: its header names this process and one of its writer sessions) is told first, before any machine or host check. Otherwise the record of the writer's full identity that this build keeps outside the recording decides when it exists and names this recording ({@link readRecordingWriterRecord}: the record is kept by the study id, which recordings of several formats can share); a recording without such a record (made by 0.2.29.0, or another format's recording of the same id) is judged by its header's host name and process id, a process id that a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}).
  * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
  * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`; its writer record ({@link recordingOwnerRecordPath}) may not exist, or may name another recording.
  * @param header - What the recording's header says of its writer.
@@ -233,6 +219,11 @@ export async function recordingWriterState(
   ownProcess: OwnProcessRule = 'counts',
   starts: ProcessStartsOfList = new Map(),
 ): Promise<RecordingWriterState> {
+  // This window's own recording, by what this window knows, is told before any machine or host check: one whose host name changed while it records is still this window's.
+  if (isOwnRecording(header.owner))
+    return ownProcess === 'ignored'
+      ? { kind: 'left-to-caller' }
+      : { kind: 'may-run' }
   const recording = `${directory}\n${header.createdAt}`
   if (goneWriters.has(recording)) return { kind: 'gone' }
   const readStart = readStartOncePerList(starts)
@@ -242,8 +233,8 @@ export async function recordingWriterState(
   )
   // The record of this build names the writer fully; a recording of 0.2.29.0, and another format's recording of the same id, has its header alone.
   const state = recordedOwner
-    ? await writerStateByRecord(recordedOwner, header, ownProcess, readStart)
-    : await writerStateByHeader(header, ownProcess, readStart)
+    ? await writerStateByRecord(recordedOwner, header, readStart)
+    : await writerStateByHeader(header, readStart)
   // Only a record's judgement is stable: a header's alone can change once the writer's record appears, so it is not remembered.
   if (state.kind === 'gone' && recordedOwner) goneWriters.add(recording)
   return state

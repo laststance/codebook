@@ -288,6 +288,9 @@ test('a recording without its own writer record is judged by its header, althoug
   // Arrange: recordings.v3/<id> has the record, which names machine-b; recordings.v2/<id> has its header alone, which names this host and a process id of no process.
   const storage = await recordingStorage(context)
   const recorded = await startRecording(storage, 3)
+  await rewriteHeader(recorded.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, sessionId: randomUUID() },
+  })
   await rewriteWriterRecord(storage.directory, recorded.studyId, {
     pid: ID_OF_NO_PROCESS,
     machineId: 'machine-b',
@@ -550,6 +553,52 @@ test('a recording of another computer whose editor has this window’s process i
   assert.deepEqual(answers, {
     counted: { kind: 'on-another-host', host: 'other-computer.lan' },
     leftToThisWindow: { kind: 'on-another-host', host: 'other-computer.lan' },
+  })
+})
+
+// Value: protects=this window's own live recording whose writer record cannot prove one machine (it names no editor's machine id) after the host name changed during the run, and the recording of another computer whose editor has this window's process id and a writer record; fails_when=the record's machine is compared before the recording is told this window's own, so this window's run counts as one of another host (listed, and offered to the learner's dialog), or the record's process id alone makes another computer's recording this window's (S17); why_new=Cycle 0046 third OCR review S17: S1's rule must hold for the record path too; seam=the header and the writer record of two recordings: this window's, with another host name in both and no machine id in the record, and another computer's, with this process's id and another session in the header and another host name and machine id in the record
+test('this window’s recording whose host name changed is its own also when its writer record cannot prove one machine, and another computer’s recording with this window’s process id and a record is another host’s', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const ofThisWindow = await startRecording(storage)
+  await rewriteHeader(ofThisWindow.folder, {
+    owner: { hostname: 'laptop.home-network' },
+  })
+  await rewriteWriterRecord(storage.directory, ofThisWindow.studyId, {
+    hostname: 'laptop.home-network',
+    machineId: undefined,
+  })
+  const ofAnotherComputer = await startRecording(storage)
+  await rewriteHeader(ofAnotherComputer.folder, {
+    owner: {
+      pid: process.pid,
+      hostname: 'other-computer.lan',
+      sessionId: randomUUID(),
+    },
+  })
+  await rewriteWriterRecord(storage.directory, ofAnotherComputer.studyId, {
+    hostname: 'other-computer.lan',
+    machineId: 'machine-b',
+  })
+
+  // Act
+  const answers = {
+    ofThisWindowCounted: await writerOf(ofThisWindow.folder),
+    ofThisWindowLeftToIt: await writerOf(ofThisWindow.folder, 'ignored'),
+    ofAnotherComputerLeftToThisWindow: await writerOf(
+      ofAnotherComputer.folder,
+      'ignored',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    ofThisWindowCounted: { kind: 'may-run' },
+    ofThisWindowLeftToIt: { kind: 'left-to-caller' },
+    ofAnotherComputerLeftToThisWindow: {
+      kind: 'on-another-host',
+      host: 'other-computer.lan',
+    },
   })
 })
 
