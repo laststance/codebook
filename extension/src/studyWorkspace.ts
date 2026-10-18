@@ -501,12 +501,6 @@ interface PreparedApplicationFocus {
 }
 
 /**
- * A pause of the editor's debugger as the chat's record of {@link StudyWorkspace} notes it, from the stack frame that reported it until the next frame or the pause's end.
- * `openedByDebugger`: the document the debugger had opened with the keyboard when the frame was reported, `undefined` when no text editor was active then.
- * `state`: `'unsettled'` until the reader's first reveal at that pause, `'settling'` while its one return of the keyboard to the chat runs, `'settled'` after it: from then an editor that becomes active is the learner's choice or the next stop's paused file.
- * `returned`: that one return, from the moment it began: it resolves to whether the chat got the keyboard. Kept with the pause, because a second reveal of the same stop (the Application pane's, while the captured source's return runs) asks the same question and must get the same answer.
- */
-/**
  * What {@link StudyWorkspace} notes of a stop a debug adapter reported, until the editor reports a stack frame of that session ({@link StudyWorkspace.cameWithStop}).
  * `readAtMs` is the moment the adapter's `stopped` event was read. `isDoubtful` says that the editor's own handling of that stop may not bring it to the front: the adapter asked to keep the focus where it is, or the session went on before a frame of it was reported. Such a stop counts only for a frame that arrives within {@link STOP_OWN_FOCUS_BOUND_MS}. `behindSessionId` names the other debug session whose frame had the focus when the stop was read, if any: the editor's handling skips a stop while such a frame is focused, and the stop counts only for a frame that arrives before the editor can pass the focus to it ({@link StudyWorkspace.cameBeforeFocusPass}).
  */
@@ -516,6 +510,12 @@ interface StopNote {
   behindSessionId?: string
 }
 
+/**
+ * A pause of the editor's debugger as the chat's record of {@link StudyWorkspace} notes it, from the stack frame that reported it until the next frame or the pause's end.
+ * `openedByDebugger`: the document the debugger had opened with the keyboard when the frame was reported, `undefined` when no text editor was active then.
+ * `state`: `'unsettled'` until the reader's first reveal at that pause, `'settling'` while its one return of the keyboard to the chat runs, `'settled'` after it: from then an editor that becomes active is the learner's choice or the next stop's paused file.
+ * `returned`: that one return, from the moment it began: it resolves to whether the chat got the keyboard. Kept with the pause, because a second reveal of the same stop (the Application pane's, while the captured source's return runs) asks the same question and must get the same answer.
+ */
 interface KeyboardPauseOfRecord {
   openedByDebugger: string | undefined
   state: 'unsettled' | 'settling' | 'settled'
