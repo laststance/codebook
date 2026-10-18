@@ -203,6 +203,8 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   readonly startTags: HtmlStartTag[] = []
   /** The open elements' names in ASCII lower case, each with how many elements of that name are open. */
   private readonly openNames = new Map<string, number>()
+  /** How many HTML select elements are open, so that a start tag finds no open select without a scan of the stack. */
+  private openHtmlSelectCount = 0
   /** The element names of the list of active formatting elements, each with how many entries of that name it holds, markers aside. */
   private readonly formattingEntryNames = new Map<string, number>()
 
@@ -327,15 +329,13 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Checks that select actually exists before the library's scope search, which assumes an initialized stack.
+   * Checks that an HTML select is open before the library's scope search, which assumes an initialized stack and walks it; called for each select and input start and each select end.
    * @returns Whether an HTML select remains in ordinary scope.
-   * @example reader.hasOpenSelect() // false before the first source token
+   * @example reader.hasOpenSelect() // false, without a scan, while no HTML select is open
    */
   private hasOpenSelect(): boolean {
-    const { stackTop, tagIDs } = this.openElements
     return (
-      stackTop >= 0 &&
-      tagIDs.lastIndexOf(htmlTree.TAG_ID.SELECT, stackTop) >= 0 &&
+      this.openHtmlSelectCount > 0 &&
       this.openElements.hasInScope(htmlTree.TAG_ID.SELECT)
     )
   }
@@ -397,6 +397,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       const count = this.openNames.get(name) ?? 0
       if (count > 1) this.openNames.set(name, count - 1)
       else this.openNames.delete(name)
+      if (this.isHtmlSelect(node)) this.openHtmlSelectCount -= 1
     }
     super.onItemPop(node, isTop)
   }
@@ -411,6 +412,22 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     if (!this.treeAdapter.isElementNode(node)) return
     const name = asciiLowerCase(this.treeAdapter.getTagName(node))
     this.openNames.set(name, (this.openNames.get(name) ?? 0) + 1)
+    if (this.isHtmlSelect(node)) this.openHtmlSelectCount += 1
+  }
+
+  /**
+   * Tells whether an element is an HTML select, which {@link HtmlPageReader.openHtmlSelectCount} counts; an svg or MathML element named select is not; called by {@link HtmlPageReader.addOpenName} and {@link HtmlPageReader.onItemPop}.
+   * @param element - An element that enters or leaves the stack.
+   * @returns Whether the element is a select in the HTML namespace.
+   * @example reader.isHtmlSelect(svgSelect) // => false
+   */
+  private isHtmlSelect(
+    element: Parse5.DefaultTreeAdapterMap['element'],
+  ): boolean {
+    return (
+      this.treeAdapter.getTagName(element) === 'select' &&
+      this.treeAdapter.getNamespaceURI(element) === htmlTree.NS.HTML
+    )
   }
 
   /**
@@ -420,6 +437,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    */
   private rebuildOpenNames(): void {
     this.openNames.clear()
+    this.openHtmlSelectCount = 0
     for (let index = 0; index <= this.openElements.stackTop; index += 1) {
       const node = this.openElements.items[index]
       if (node) this.addOpenName(node)
