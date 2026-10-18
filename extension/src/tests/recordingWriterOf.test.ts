@@ -800,6 +800,42 @@ test('a valid writer record padded past a record’s bound is no record: the rec
   assert.deepEqual(writer, { kind: 'gone' })
 })
 
+// Value: protects=the judgement of a recording's writer while a link (a junction on Windows) stands at the place of the folder of writer records and leads to a valid record that names the recording; fails_when=the record is read through that link and judges the recording (here as another machine's), so a file a link puts there decides whether a recording is listed and moved (TT37, CX14's read); why_new=Cycle 0046 third testing review TT37: the file behind the link in CX14's test never parsed as a record; seam=a link at `recording-owners` to a folder of the test with a valid record that names the recording and machine-b, and the header, which names this host and a process id of no process
+test('a valid writer record behind a link at the place of the folder of writer records is not read: the recording is judged by its header', async (context) => {
+  // Arrange: the recording's header names this host and a process id of no process; its folder of records is a link to a folder with a valid record of machine-b that names it.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, sessionId: randomUUID() },
+  })
+  const { createdAt } = JSON.parse(
+    await readFile(join(recording.folder, 'header.json'), 'utf8'),
+  )
+  const elsewhere = join(storage.directory, '..', 'elsewhere')
+  await mkdir(elsewhere)
+  await writeFile(
+    join(elsewhere, `${recording.studyId}.json`),
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'other-computer.lan',
+      machineId: 'machine-b',
+      recording: { folder: 'recordings.v2', createdAt },
+    }),
+  )
+  await rm(join(storage.directory, 'recording-owners'), { recursive: true })
+  await symlink(
+    elsewhere,
+    join(storage.directory, 'recording-owners'),
+    'junction',
+  )
+
+  // Act
+  const writer = await writerOf(recording.folder)
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'gone' })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
