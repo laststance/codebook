@@ -2456,11 +2456,12 @@ test('a preparation whose missing .codebook becomes a link to a folder outside t
 
 /**
  * Publishes a Wiki into a new project's `.codebook/wiki` with the real publisher and prepares a candidate `.codebook/next` beside it, for a test that swaps `.codebook` while a copy of the publisher works on it.
+ * @param {string} [extraPage] - The name of a second page of the candidate, under its `pages` folder.
  * @returns {Promise<{ directory: string, root: string, output: string, next: string, wikiPage: string, candidatePage: string }>} The temporary folder, the project, the Wiki folder, the candidate, and the text of the Wiki's and the candidate's `index.html`.
  * @example
  * const wiki = await publishedWikiWithACandidate()
  */
-async function publishedWikiWithACandidate() {
+async function publishedWikiWithACandidate(extraPage) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-during-publish-')),
   )
@@ -2475,7 +2476,7 @@ async function publishedWikiWithACandidate() {
     outputDirectory: output,
     stageDirectory: first,
   })
-  await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+  await writeStage(next, root, '<h1>Next</h1>', extraPage, output)
   return {
     directory,
     root,
@@ -2531,6 +2532,52 @@ test('a publish whose .codebook is swapped for a link to a folder outside the pr
         behindTheLink: ['next', 'wiki'],
         wikiPage: wiki.wikiPage,
         candidatePage: wiki.candidatePage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a file outside the project that a folder of the candidate leads to once another process swapped that folder for a link after the publisher listed the candidate; fails_when=the publish holds only the Wiki folder's parent and the candidate itself, so it writes a page into the folder behind the link and overwrites the file there; why_new=Cycle 0046 /ship third review W6 (Codex R3A2); seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate's `pages` folder for a link just before the publish makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose candidate folder pages is swapped for a link to a folder outside the project before a page is written there is refused with that folder named, and the file behind the link is not overwritten', async () => {
+  // Arrange: a published Wiki with a candidate that holds pages/notes.html; just before the publish makes `pages`, it becomes a link to a folder outside the project whose notes.html is the learner's.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate('notes.html')
+  const outside = join(wiki.directory, 'outside')
+  try {
+    await mkdir(outside)
+    await writeFile(join(outside, 'notes.html'), 'The learner’s own notes')
+    swapBeforeMaking(
+      (path) => path === join(wiki.next, 'pages'),
+      async () => {
+        await rm(join(wiki.next, 'pages'), { recursive: true })
+        await symlink(outside, join(wiki.next, 'pages'), 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        learnersNotes: await readFile(join(outside, 'notes.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki stage ${join(wiki.next, 'pages')} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        learnersNotes: 'The learner’s own notes',
       },
     )
   } finally {

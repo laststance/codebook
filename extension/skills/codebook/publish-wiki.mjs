@@ -253,10 +253,25 @@ async function holdOfPath(paths, entries) {
   };
 }
 
-/** Makes a folder in the stage, then holds the path ({@link holdOfPath}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page and each kept manual file. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld) */
-async function makeFolderHeld(folder, requirePathHeld) {
+/** Whether two statuses, taken with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
+const isSameFile = (status, other) => status.dev === other.dev && status.ino === other.ino;
+
+/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} once, after its paths are resolved. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
+async function folderLookOf(stage) {
+  const realStage = await realpath(stage), firstSeen = new Map();
+  return folder => Promise.all([realpath(folder), stat(folder, { bigint: true })]).then(([real, status]) => {
+    if (!firstSeen.has(folder)) firstSeen.set(folder, status);
+    return real === join(realStage, relative(stage, folder)) && isSameFile(status, firstSeen.get(folder));
+  }, () => false);
+}
+
+/** Makes a folder of the stage, then holds the output's path ({@link holdOfPath}) and the folder itself ({@link folderLookOf}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page, of each kept manual file, and for the stage before its manifest, its record and the moves. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld, isFolderWhereItWas) */
+async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
   const madeFolders = madeFoldersOf(await mkdir(folder, { recursive: true }), folder);
-  try { await requirePathHeld(); } catch (error) { await removeMadeFolders(madeFolders); throw error; }
+  try {
+    await requirePathHeld();
+    if (!(await isFolderWhereItWas(folder))) throw new Error(stageRefusalOf(folder));
+  } catch (error) { await removeMadeFolders(madeFolders); throw error; }
 }
 
 /** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasResolved}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
@@ -303,7 +318,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
   if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
   // Every write below is held to the look the paths were resolved with.
-  const requirePathHeld = await holdOfPath(paths, [stage]);
+  const requirePathHeld = await holdOfPath(paths, [stage]), isFolderWhereItWas = await folderLookOf(stage);
   await requireNoJournal(journal);
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
@@ -319,7 +334,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
   for (const [path, html] of rendered) {
-    await makeFolderHeld(dirname(join(stage, path)), requirePathHeld);
+    await makeFolderHeld(dirname(join(stage, path)), requirePathHeld, isFolderWhereItWas);
     await writeFile(join(stage, path), html);
   }
   if (renderOnly) return { stage, renderedPages: rendered.size };
@@ -343,10 +358,10 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
         throw new Error('A manual Wiki file conflicts with the update: ' + path);
       const content = await regularBytes(join(output, path));
       manualHashes[path] = digest(content);
-      await makeFolderHeld(dirname(join(stage, path)), requirePathHeld);
+      await makeFolderHeld(dirname(join(stage, path)), requirePathHeld, isFolderWhereItWas);
       await writeFile(join(stage, path), content, { flag: 'wx' });
     }
-    await requirePathHeld();
+    await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
     await writeFile(join(stage, MANIFEST), manifestText);
     await writeFile(join(stage, RECEIPT), JSON.stringify({ ...receipt, kind: 'published', manifestSha256: record.manifestSha256, manifestText }));
     // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
@@ -355,7 +370,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     const currentManual = current ? current.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !current.owned.has(path)) : [];
     if (currentManual.length !== manual.length) throw new Error('Manual Wiki files changed during publication; output was preserved.');
     for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
-    await requirePathHeld();
+    await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
     if (backup) { await rename(output, backup); movedOld = true; }
     await rename(stage, output);
     swapped = true;
