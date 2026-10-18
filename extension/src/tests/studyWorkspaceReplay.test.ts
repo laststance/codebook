@@ -422,6 +422,67 @@ test('a new historical seek refuses to recreate a learner-closed source until ex
   }
 })
 
+// Value: protects=the learner's way back to a recorded source they closed: the refusal of a background seek names the command that reopens it, under the name the Command Palette and the Study pane give it, and that command does reopen it; fails_when=the refusal names controls that do not exist ("Source", "Restore Study workspace layout"), or a control that does not reopen the source (Restore and Arrange Study Workspace leave the seek refused); why_new=Cycle 0046 second /ship OCR review OCR1-15; seam=recordedReaderHarness, the controller's seeks, closeTabByHand, the view's errors and the reader action the command codebook.study.source runs (extension.ts registers codebook.study.<action> as the reader's action)
+test('a seek refused because the learner closed the recorded source names Codebook: Focus Captured Source, and that command reopens the source', async () => {
+  // Arrange: the learner closes the actual source tab of the saved recording; a background seek is then refused.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    const sourceTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find(
+        (tab) => 'uri' in tab.input && tab.input.uri.toString() === sourceUri,
+      )
+    assert.ok(sourceTab)
+    harness.closeTabByHand(sourceTab)
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await harness.controller.settle()
+    const refusal = structuredClone(harness.reader.inspect().view!.errors)
+
+    // Act: the command the refusal names (codebook.study.source).
+    await harness.reader.action('source')
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        readiness: harness.controller.state().readiness,
+        presentedMs: harness.controller.state().presentedMs,
+      },
+      {
+        refusal: [
+          'Error: The recorded source input is no longer visible. Run Codebook: Focus Captured Source (Focus source in the Study pane) to reopen it.',
+        ],
+        readiness: 'ready',
+        presentedMs: 20,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('historical source capacity freezes every pinned display and permits explicit recovery after one older view is unpinned', async () => {
   // Arrange: each explicitly opened display is pinned at one captured historical point.
   const harness = await recordedReaderHarness(true, true)

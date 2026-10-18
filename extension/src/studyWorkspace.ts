@@ -12671,7 +12671,7 @@ export class StudyWorkspace {
       )
     )
       throw new Error(
-        'The recorded source input is no longer visible. Use Source or Restore Study workspace layout to reopen it.',
+        'The recorded source input is no longer visible. Run Codebook: Focus Captured Source (Focus source in the Study pane) to reopen it.',
       )
   }
 
