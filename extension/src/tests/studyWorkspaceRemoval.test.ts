@@ -7988,7 +7988,7 @@ test('a saved study chosen during Recording is not answered by a playback change
 
 /**
  * Leaves an unsealed recording of a run, started on 2026-10-01 at 08:00 UTC, and names its writer: an editor that crashed (a process id of no process, another host, or a later process that got the id) or, with a live child process of the test, an editor window of this machine that still writes it.
- * `header-only` makes it a recording of 0.2.29.0 (no record of its writer beside the recordings); `with-record` keeps the record this build writes and names the writer there too, with the writer's own process start.
+ * `header-only` makes it a recording of 0.2.29.0 (no record of its writer beside the recordings); `with-record` keeps the record this build writes and names the writer there too, with the writer's own process start, and the recording by its folder and its creation time.
  * @param harness - The reader whose library holds the study.
  * @param study - The run: a saved study, or a run that saved none ({@link unsavedRunOf}).
  * @param owner - The writer: its process id and its host name.
@@ -8040,6 +8040,10 @@ async function unsealedRecordingOf(
     await rewriteWriterRecord(directory, study.id, {
       ...owner,
       processStart: await readProcessStart(owner.pid),
+      recording: {
+        folder: 'recordings.v2',
+        createdAt: '2026-10-01T08:00:00.000Z',
+      },
     })
   return folder
 }
@@ -8469,25 +8473,18 @@ test('a saved study whose recording a live window of this machine is still writi
   }
 })
 
-// Value: protects=a study one of whose recordings a live window of this machine still writes, while another of its recordings names another host; fails_when=the writer on another host is found first and the learner is offered "Move to Trash Anyway", which moves the recording a live window still writes (TC2: swapping the two checks of the removal survived every test); why_new=Cycle 0046 testing review TC2: no study had both kinds of writer; seam=the recordings.v2 header, which names a live child process of the test that began before the recording, the recordings.v3 header of old-laptop.local, neither with a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
+// Value: protects=a study one of whose recordings a live window of this machine still writes, while another of its recordings names another host; fails_when=the writer on another host is found first and the learner is offered "Move to Trash Anyway", which moves the recording a live window still writes (TC2: swapping the two checks of the removal survived every test); why_new=Cycle 0046 testing review TC2: no study had both kinds of writer, and review AF10: the record of one recording no longer judges the other; seam=the recordings.v2 recording's header and record, which name a live child process of the test with its own start, the recordings.v3 header of old-laptop.local without a record, and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a saved study with a recording a live window of this machine still writes and one that names another host is refused plainly, and no Move to Trash Anyway is offered', async (context: TestContext) => {
-  // Arrange: recordings.v2 is written by a live window of this machine that began before it; recordings.v3 names old-laptop.local. Neither has a record of its writer (the record would be one for both, by the study's id).
+  // Arrange: recordings.v2 is written by a live window of this machine, which its record names with its start; recordings.v3 names old-laptop.local in its header alone. The record names recordings.v2, so it judges that recording only.
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     const otherWindow = await idleChild(context)
-    const ofThisMachine = await unsealedRecordingOf(
+    await unsealedRecordingOf(
       harness,
       study,
       { pid: otherWindow.pid!, hostname: hostname() },
-      'header-only',
-    )
-    const header: Record<string, unknown> = JSON.parse(
-      await readFile(join(ofThisMachine, 'header.json'), 'utf8'),
-    )
-    await writeFile(
-      join(ofThisMachine, 'header.json'),
-      JSON.stringify({ ...header, createdAt: new Date().toISOString() }),
+      'with-record',
     )
     const ofAnotherHost = join(
       harness.reader.inspect().libraryDirectory!,

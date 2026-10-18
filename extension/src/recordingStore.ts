@@ -73,6 +73,7 @@ import {
 } from './utils/isRecordingWriterLive'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
+import { recordingOfDirectory } from './utils/readRecordingWriterRecord'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { recordingPhases } from './utils/recordingPhases'
 import { removeWriterRecord } from './utils/removeWriterRecord'
@@ -268,7 +269,7 @@ export class RecordingStore {
           join(directory, RECORDING_JOURNAL_FILE),
           Buffer.alloc(0),
         )
-        await this.recordWriterIdentity(header.studyId)
+        await this.recordWriterIdentity(directory, header)
         const writer: RecordingWriter = new RecordingWriter(
           directory,
           header,
@@ -288,18 +289,27 @@ export class RecordingStore {
   /**
    * Keeps the full identity of this editor process (the storage lock's record: machine, boot and process start) for a recording it starts, outside the recording ({@link recordingOwnerRecordPath}), so that the judgement of a recording's writer ({@link isRecordingWriterLive} and {@link recordingWriterState}, and through them the library's list and removal ({@link recordingWriterOf}) and this store's {@link ownerState}) tells this machine after its host name changed, another machine, and a process id that went to another process; called by {@link start} under the storage lock, after the header.
    * The record lies where 0.2.29.0 never looks: that version refuses a header or a recording folder that holds anything it does not know. It is a help, not a part of the recording: a record that cannot be written (a link or a file at the folder's path, a full disk) leaves the recording to be judged by its header, as one of 0.2.29.0 is.
-   * @param studyId - The recording's study id.
-   * @example await this.recordWriterIdentity(header.studyId)
+   * The record names the recording it is written for, its format's folder and its creation time ({@link recordingOfDirectory}): it is kept by the study id, and is used only for that recording ({@link readRecordingWriterRecord}).
+   * @param directory - The recording's directory.
+   * @param header - The recording's header, which gives its study id and its creation time.
+   * @example await this.recordWriterIdentity(directory, header)
    */
-  private async recordWriterIdentity(studyId: string): Promise<void> {
+  private async recordWriterIdentity(
+    directory: string,
+    header: RecordingHeader,
+  ): Promise<void> {
     const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
     try {
       await mkdir(folder, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
       // Only a real folder of the storage takes the record; nothing is written through a link or a junction.
       if (!(await hasOwnWriterRecordFolder(this.learningDirectory))) return
       await atomicPrivateWrite(
-        recordingOwnerRecordPath(this.learningDirectory, studyId),
-        { pid: process.pid, ...(await currentStorageOwner()) },
+        recordingOwnerRecordPath(this.learningDirectory, header.studyId),
+        {
+          pid: process.pid,
+          ...(await currentStorageOwner()),
+          recording: recordingOfDirectory(directory, header.createdAt),
+        },
         MAX_RECORDING_HEADER_BYTES,
       )
     } catch {
@@ -994,7 +1004,7 @@ export class RecordingStore {
       return writer.state().status === 'recording' ? 'recording' : 'partial'
     // A writer that may still run (of another machine, or a live process that began before the recording) leaves the end unknown; one that is gone interrupted the recording.
     return (await isRecordingWriterLive(
-      recordingOwnerRecordPath(this.learningDirectory, header.studyId),
+      this.path(header.studyId, header.version),
       header,
       'counts',
       starts,
@@ -1282,6 +1292,7 @@ export class RecordingWriter {
         await removeWriterRecord(
           dirname(dirname(this.directory)),
           this.header.studyId,
+          { directory: this.directory, createdAt: this.header.createdAt },
         )
         this.finalized = true
         this.sealed()

@@ -69,11 +69,13 @@ async function recordingStorage(context: TestContext) {
 /**
  * Starts one recording of a run that has not saved its study, as this window's store starts it, and leaves it unsealed.
  * @param storage - The test's storage.
+ * @param version - The recording format: 2 (the configured runs' `recordings.v2`, the default) or 3 (`recordings.v3`).
  * @returns The recording's study id, its folder, and the writer that can seal it.
  * @example const recording = await startRecording(storage)
  */
 async function startRecording(
   storage: Awaited<ReturnType<typeof recordingStorage>>,
+  version: 2 | 3 = 2,
 ) {
   const instanceId = randomUUID(),
     runId = randomUUID()
@@ -93,10 +95,11 @@ async function startRecording(
       },
     },
     0,
+    version,
   )
   return {
     studyId,
-    folder: join(storage.directory, 'recordings.v2', studyId),
+    folder: join(storage.directory, `recordings.v${version}`, studyId),
     writer,
   }
 }
@@ -172,18 +175,20 @@ test('a recording made by 0.2.29.0 on this host whose writer’s process id a li
 
 // Value: protects=the place of a crashed window's recording whose record of its writer has no process start (the window could not read its own start), once its process id went to a later process of this machine; fails_when=such a record is judged by its process id alone, so the later process keeps the recording "being written" for good and its study can never be removed, where a header alone gives the learner the choice (CX13); why_new=Cycle 0046 adversarial review AD9: a record without a start proves no more than the header; seam=the record of the writer without its start, and the header, which both name a live child process of the test that began after the recording's creation time
 test('a recording whose record of its writer has no process start, and whose process id a live process has that began after the recording was created, has a writer this computer cannot confirm', async (context) => {
-  // Arrange: the recording was created ten minutes ago by a window that could not read its own start and crashed; a process that began just now has its id.
+  // Arrange: the recording was created ten minutes ago by a window that could not read its own start and crashed; a process that began just now has its id. The record names the recording by its folder and its creation time, as the window wrote it.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
   const laterProcess = await idleChild(context)
+  const createdAt = new Date(Date.now() - 10 * 60_000).toISOString()
   await rewriteHeader(recording.folder, {
     owner: { pid: laterProcess.pid!, hostname: hostname() },
-    createdAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    createdAt,
   })
   await rewriteWriterRecord(storage.directory, recording.studyId, {
     pid: laterProcess.pid!,
     hostname: hostname(),
     processStart: undefined,
+    recording: { folder: 'recordings.v2', createdAt },
   })
 
   // Act
@@ -247,6 +252,119 @@ test('a recording whose writer’s process id a process of another user has, who
     byRecord: { kind: 'unconfirmed-here', host: hostname() },
     byRecordWithItsStart: { kind: 'may-run' },
   })
+})
+
+/**
+ * Leaves a recording of an existing study id in another recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming this host and a process id of no process: its header alone calls its writer gone.
+ * @param storage - The test's storage.
+ * @param studyId - The study id of a recording the store started in the other format.
+ * @param folderName - The recording format's folder, `recordings.v2` or `recordings.v3`.
+ * @returns The recording's folder.
+ * @example const headerOnly = await headerOnlyRecordingBeside(storage, recording.studyId, 'recordings.v2')
+ */
+async function headerOnlyRecordingBeside(
+  storage: Awaited<ReturnType<typeof recordingStorage>>,
+  studyId: string,
+  folderName: 'recordings.v2' | 'recordings.v3',
+): Promise<string> {
+  const folder = join(storage.directory, folderName, studyId)
+  await mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, 'header.json'),
+    JSON.stringify({
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+      createdAt: '2026-10-01T08:00:00.000Z',
+    }),
+  )
+  return folder
+}
+
+// Value: protects=the recording of one study id in one recording format's folder that its own header judges, while a recording of the id in another format has the writer record; fails_when=the record, which is kept by the study id, judges every recording of the id, so the header-only recording takes the other recording's writer (here one of another machine) and is listed and refused as that writer's (AF10); why_new=Cycle 0046 review AF10: a record names the recording it was written for; seam=the record of the recordings.v3 recording, which the test makes name machine-b, and a recordings.v2 header of this host with a process id of no process, without a record
+test('a recording without its own writer record is judged by its header, although a recording of the same id in another format has a record', async (context) => {
+  // Arrange: recordings.v3/<id> has the record, which names machine-b; recordings.v2/<id> has its header alone, which names this host and a process id of no process.
+  const storage = await recordingStorage(context)
+  const recorded = await startRecording(storage, 3)
+  await rewriteWriterRecord(storage.directory, recorded.studyId, {
+    pid: ID_OF_NO_PROCESS,
+    machineId: 'machine-b',
+  })
+  const headerOnly = await headerOnlyRecordingBeside(
+    storage,
+    recorded.studyId,
+    'recordings.v2',
+  )
+
+  // Act
+  const writers = {
+    recorded: await writerOf(recorded.folder),
+    headerOnly: await writerOf(headerOnly),
+  }
+
+  // Assert
+  assert.deepEqual(writers, {
+    recorded: { kind: 'on-another-host', host: hostname() },
+    headerOnly: { kind: 'gone' },
+  })
+})
+
+// Value: protects=a recording whose writer record names no recording, as a window of an earlier build of this delivery wrote it, which may be another format's record; fails_when=such a record is used for any recording of the id, so the header-only rules (the rules of 0.2.29.0, which leave the learner the choice where they cannot tell) are skipped for a recording the record may not be about (AF10); why_new=Cycle 0046 review AF10: the compatibility choice for a record without a recording is to ignore it; seam=the record, from which the test drops the recording it names and which it makes name machine-b, and the header, which names this host and a process id of no process
+test('a writer record that names no recording, as an earlier build of this delivery wrote it, is not used: the recording is judged by its header', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+  })
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
+    pid: ID_OF_NO_PROCESS,
+    machineId: 'machine-b',
+    recording: undefined,
+  })
+
+  // Act
+  const writer = await writerOf(recording.folder)
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'gone' })
+})
+
+// Value: protects=the writer record of another recording of the same study id when one recording is sealed; fails_when=the seal removes the record kept by the study id whatever recording it names, so the other recording loses the record that judges it (AF10); why_new=Cycle 0046 review AF10; seam=the record, which the test makes name the recordings.v3 recording of the id, and the seal of the recordings.v2 recording by this window's writer
+test('the seal of a recording removes only its own writer record and leaves the record of another recording of the same id', async (context) => {
+  // Arrange: the store started recordings.v2/<id>; its record now names recordings.v3/<id>, as that recording's start would have written it.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const recordPath = recordingOwnerRecordPath(
+    storage.directory,
+    recording.studyId,
+  )
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
+    recording: {
+      folder: 'recordings.v3',
+      createdAt: '2026-10-01T08:00:00.000Z',
+    },
+  })
+
+  // Act
+  await recording.writer.finish(1)
+
+  // Assert
+  assert.deepEqual(
+    {
+      isRecordPresent: await isPresent(recordPath),
+      namedRecording: JSON.parse(await readFile(recordPath, 'utf8')).recording,
+    },
+    {
+      isRecordPresent: true,
+      namedRecording: {
+        folder: 'recordings.v3',
+        createdAt: '2026-10-01T08:00:00.000Z',
+      },
+    },
+  )
 })
 
 // Value: protects=the recording of a crashed window on a computer whose host name changed since (macOS names itself after the network); fails_when=the writer is judged by the host name in the header, which is no longer this machine's, so the recording counts as written on another machine for good; why_new=Cycle 0046 /ship review R10 (b): the record of the writer's full identity is new; seam=the header and the record of the writer, which name the old host name, this editor's machine id and a process id of no process

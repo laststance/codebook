@@ -1,5 +1,3 @@
-import { basename, dirname } from 'node:path'
-
 import {
   recordingWriterState,
   type OwnProcessRule,
@@ -7,7 +5,6 @@ import {
   type RecordingWriterState,
 } from './isRecordingWriterLive'
 import { lookAtRecording } from './lookAtRecording'
-import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
 /** What {@link recordingWriterOf} found of one recording directory: `finished` for a sealed recording and for one without a readable header, which no writer has; otherwise its writer's state, with the time the recording was created. */
 export type RecordingWriterOfDirectory =
@@ -34,7 +31,7 @@ export async function recordingWriterOf(
   const { isSealed, header } = await lookAtRecording(directory)
   if (isSealed || !header) return { kind: 'finished' }
   const state = await recordingWriterState(
-    recordingOwnerRecordPath(dirname(dirname(directory)), basename(directory)),
+    directory,
     header,
     ownProcess,
     starts,

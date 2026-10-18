@@ -1,18 +1,17 @@
 import { hostname } from 'node:os'
-import { dirname } from 'node:path'
 
 import { STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS } from '../constants'
 import type { RecordingHeader } from '../recordingSchemas'
 
 import { currentStorageOwner } from './currentStorageOwner'
-import { hasOwnWriterRecordFolder } from './hasOwnWriterRecordFolder'
 import { isProcessGone } from './isProcessGone'
 import { isProcessOfAnotherUser } from './isProcessOfAnotherUser'
 import { isRecordedOwnerGone } from './isRecordedOwnerGone'
 import { isSameStorageMachine } from './isSameStorageMachine'
 import { processStartedAtMs } from './processStartedAtMs'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
-import { readRecordedOwner, type RecordedOwner } from './readRecordedOwner'
+import type { RecordedOwner } from './readRecordedOwner'
+import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 
 /** What a recording's header says of its writer: the editor process (its id and its host name) and the time the recording was created. */
 export type RecordingWriterOfHeader = {
@@ -41,7 +40,7 @@ export type RecordingWriterState =
   | { kind: 'gone' }
   | { kind: 'left-to-caller' }
 
-/** The recordings whose writer this window found gone by the record of its full identity, by the record's path and the recording's creation time: such a writer never comes back, so it is not judged again for as long as this window runs. A judgement by the header alone is not kept: the record can appear after the header (it is written right after it), and then it decides. */
+/** The recordings whose writer this window found gone by the record of its full identity, by the recording's directory and creation time: such a writer never comes back, so it is not judged again for as long as this window runs. A judgement by the header alone is not kept: the record can appear after the header (it is written right after it), and then it decides. */
 const goneWriters = new Set<string>()
 
 /**
@@ -62,7 +61,7 @@ function readStartOncePerList(starts: ProcessStartsOfList): ProcessStartReader {
 }
 
 /**
- * Judges a recording's writer by the record of its full identity that this build keeps outside the recording ({@link recordingOwnerRecordPath}), as a storage lock's owner is judged ({@link isRecordedOwnerGone}); called by {@link recordingWriterState} when that record exists.
+ * Judges a recording's writer by the record of its full identity that this build keeps outside the recording ({@link recordingOwnerRecordPath}), as a storage lock's owner is judged ({@link isRecordedOwnerGone}); called by {@link recordingWriterState} when that record exists and names this recording ({@link readRecordingWriterRecord}).
  * The editor's machine id and the machine's pseudonyms tell this machine after its host name changed (macOS follows the network) and another machine with the same host name; the process start tells a process id that went to another process.
  * @param owner - The record of the writer.
  * @param header - What the header says of the writer; its host name names a writer whose record gives none.
@@ -239,32 +238,30 @@ async function writerStateByHeader(
 
 /**
  * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link recordingWriterOf}, through which the library's list ({@link LearningLibrary.entryWithoutArchive}) and the removal of a study ({@link LearningLibrary.writerVerdictsOf}, before its storage lock) tell a writer of this machine from one it cannot confirm, and {@link isRecordingWriterLive}, through which only the status {@link RecordingStore.ownerState} gives a recording another session wrote.
- * The record of the writer's full identity that this build keeps outside the recording decides when it exists ({@link writerStateByRecord}); a recording without one (made by 0.2.29.0) is judged by its header's host name and process id, a process id that a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}).
+ * The record of the writer's full identity that this build keeps outside the recording decides when it exists and names this recording ({@link readRecordingWriterRecord}: the record is kept by the study id, which recordings of several formats can share); a recording without such a record (made by 0.2.29.0, or another format's recording of the same id) is judged by its header's host name and process id, a process id that a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}).
  * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
- * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
+ * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`; its writer record ({@link recordingOwnerRecordPath}) may not exist, or may name another recording.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
  * @returns What was found ({@link RecordingWriterState}).
  * @example
- * await recordingWriterState('/storage/learning/recording-owners/<id>.json', header) // => { kind: 'on-another-host', host: 'laptop.home-network' } for a recording of 0.2.29.0 made under an earlier host name
+ * await recordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'on-another-host', host: 'laptop.home-network' } for a recording of 0.2.29.0 made under an earlier host name
  */
 export async function recordingWriterState(
-  ownerRecordPath: string,
+  directory: string,
   header: RecordingWriterOfHeader,
   ownProcess: OwnProcessRule = 'counts',
   starts: ProcessStartsOfList = new Map(),
 ): Promise<RecordingWriterState> {
-  const recording = `${ownerRecordPath}\n${header.createdAt}`
+  const recording = `${directory}\n${header.createdAt}`
   if (goneWriters.has(recording)) return { kind: 'gone' }
   const readStart = readStartOncePerList(starts)
-  // A record is read only from a real folder of records; one behind a link or a junction is none.
-  const recordedOwner = (await hasOwnWriterRecordFolder(
-    dirname(dirname(ownerRecordPath)),
-  ))
-    ? await readRecordedOwner(ownerRecordPath)
-    : undefined
-  // The record of this build names the writer fully; a recording of 0.2.29.0 has its header alone.
+  const recordedOwner = await readRecordingWriterRecord(
+    directory,
+    header.createdAt,
+  )
+  // The record of this build names the writer fully; a recording of 0.2.29.0, and another format's recording of the same id, has its header alone.
   const state = recordedOwner
     ? await writerStateByRecord(recordedOwner, header, ownProcess, readStart)
     : await writerStateByHeader(header, ownProcess, readStart)
@@ -275,23 +272,23 @@ export async function recordingWriterState(
 
 /**
  * Says whether the editor process that writes an unsealed recording may still run, on this machine or on another one ({@link recordingWriterState}); called only by the status {@link RecordingStore.ownerState} gives a recording another session wrote (`unfinalized` while its writer may run, `interrupted` once it is gone).
- * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
+ * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
  * @returns `true` while the writer may still run, on this machine or on another one; `false` once it is gone from this machine, for a writer this computer cannot confirm (`unconfirmed-here`), and with `ignored` for this process.
  * @example
- * await isRecordingWriterLive('/storage/learning/recording-owners/<id>.json', header) // => false for a crashed editor whose process id another process has now
- * await isRecordingWriterLive(path, header, 'counts', starts) // every recording of one list with one `starts`
+ * await isRecordingWriterLive('/storage/learning/recordings.v2/<id>', header) // => false for a crashed editor whose process id another process has now
+ * await isRecordingWriterLive(directory, header, 'counts', starts) // every recording of one list with one `starts`
  */
 export async function isRecordingWriterLive(
-  ownerRecordPath: string,
+  directory: string,
   header: RecordingWriterOfHeader,
   ownProcess: OwnProcessRule = 'counts',
   starts: ProcessStartsOfList = new Map(),
 ): Promise<boolean> {
   const { kind } = await recordingWriterState(
-    ownerRecordPath,
+    directory,
     header,
     ownProcess,
     starts,

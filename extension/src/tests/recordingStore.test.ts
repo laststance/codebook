@@ -326,6 +326,7 @@ test('a recording whose writer’s process id went to a process begun after the 
   const first = await recordingHarness(context),
     second = await recordingHarness(context)
   const laterProcess = await idleChild(context)
+  const createdAt = new Date(Date.now() - 10 * 60_000).toISOString()
   for (const { store, binding } of [first, second]) {
     const writer = await store.start(binding, 0)
     writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' })
@@ -336,14 +337,15 @@ test('a recording whose writer’s process id went to a process begun after the 
       JSON.stringify({
         ...header,
         owner: { ...header.owner, pid: laterProcess.pid! },
-        createdAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+        createdAt,
       }),
     )
   }
   await rm(recordingOwnerRecordPath(first.directory, first.binding.studyId))
-  // The record keeps the start of the window that wrote it, this test process's, which the later process does not have.
+  // The record keeps the start of the window that wrote it, this test process's, which the later process does not have; it names the recording by its folder and its creation time.
   await rewriteWriterRecord(second.directory, second.binding.studyId, {
     pid: laterProcess.pid!,
+    recording: { folder: 'recordings.v2', createdAt },
   })
 
   // Act

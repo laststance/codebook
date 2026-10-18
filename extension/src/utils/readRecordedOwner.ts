@@ -2,7 +2,8 @@ import { z } from 'zod'
 
 import { readWikiRegularFile } from './readWikiRegularFile'
 
-const recordedOwnerSchema = z.object({
+/** The owner record of a lock, a claim, a descriptor, a marker or a recording's writer, as {@link readRecordedOwner} and {@link readRecordingWriterRecord} parse it. */
+export const recordedOwnerSchema = z.object({
   pid: z.number().int().positive(),
   hostname: z.string().optional(),
   machineId: z.string().min(1).optional(),

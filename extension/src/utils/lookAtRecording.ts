@@ -1,5 +1,5 @@
 import { lstat } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 import { z } from 'zod'
 
@@ -10,9 +10,8 @@ import {
 } from '../constants'
 import { recordingHeaderSchema } from '../recordingSchemas'
 
-import { hasOwnWriterRecordFolder } from './hasOwnWriterRecordFolder'
+import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 import { readWikiRegularFile } from './readWikiRegularFile'
-import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
 /** The owner a recording's header names and when the recording was created, read without the rest of the header, whose other fields depend on the recording's format. */
 const headerOwnerSchema = z.object({
@@ -24,7 +23,7 @@ const headerOwnerSchema = z.object({
  * What one cheap look at a recording directory finds, with no question to the system about any process ({@link lookAtRecording}).
  * - `isSealed`: the seal file is there; the run ended
  * - `header`: the writer the header names and the recording's creation time; absent while the header cannot be read (a start that has made the folder and not yet written its header, or a damaged header)
- * - `hasWriterRecord`: the record of the writer's full identity is there, beside the recordings ({@link recordingOwnerRecordPath})
+ * - `hasWriterRecord`: the record of the writer's full identity is there, beside the recordings ({@link recordingOwnerRecordPath}), and names this recording ({@link readRecordingWriterRecord}); `false` without a readable header, which gives the recording's creation time
  */
 export type RecordingLook = {
   isSealed: boolean
@@ -66,15 +65,9 @@ export async function lookAtRecording(
     () => false,
   )
   const header = await readHeaderOwner(directory)
-  const learningDirectory = dirname(dirname(directory))
-  // A record behind a link or a junction at the folder's place is none.
+  // Only a record that names this recording is its record; one of another format's recording of the id is none.
   const hasWriterRecord =
-    (await hasOwnWriterRecordFolder(learningDirectory)) &&
-    (await lstat(
-      recordingOwnerRecordPath(learningDirectory, basename(directory)),
-    ).then(
-      (entry) => entry.isFile(),
-      () => false,
-    ))
+    header !== undefined &&
+    (await readRecordingWriterRecord(directory, header.createdAt)) !== undefined
   return { isSealed, ...(header && { header }), hasWriterRecord }
 }
