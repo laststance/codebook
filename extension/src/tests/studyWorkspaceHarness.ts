@@ -2259,6 +2259,21 @@ export async function workspaceHarness(
       keyboardOnBody = false
   }
   /**
+   * Disposes the panel of every webview tab a close took out of the editor, as both editors do before the extension's close continuation runs; called by the fake `tabGroups.close` after {@link closeTabs}, for its tab overload and its group overload alike.
+   * @param closedTabs - The tabs the close was asked for; a panel whose tab a group kept (a tab that refused to close) stays.
+   * @example disposePanelsOfClosedTabs([...group.tabs]) // the group's Application pane fires its onDidDispose and leaves the harness's panels
+   */
+  function disposePanelsOfClosedTabs(closedTabs: readonly Tab[]): void {
+    for (const current of [...panels])
+      if (
+        closedTabs.some((tab) => tab.input === current.nativeTab.input) &&
+        !groups.some((group) =>
+          group.tabs.some((tab) => tab.input === current.nativeTab.input),
+        )
+      )
+        current.dispose()
+  }
+  /**
    * Closes tabs as the editor does, group by group, for the reader's `tabGroups.close` requests and for the Close Editor command.
    * A group that loses the tab it shows brings a hidden editor area back, and a native group a dead pane leaves empty is removed by {@link removeEmptiedGroup}.
    * @param tabs - The tabs to close; a tab the editor will not release keeps every requested tab of its own group.
@@ -4539,9 +4554,12 @@ export async function workspaceHarness(
                 return false
               }
               const column = tabs.viewColumn,
-                count = groups.length
-              if (tabs.tabs.length && !closeTabs([...tabs.tabs], preserveFocus))
+                count = groups.length,
+                closingTabs = [...tabs.tabs]
+              if (closingTabs.length && !closeTabs(closingTabs, preserveFocus))
                 return false
+              // The group's webview tabs dispose their panels as a tab close does (CR5-5).
+              disposePanelsOfClosedTabs(closingTabs)
               const remaining = groups.find(
                 (group) => group.viewColumn === column,
               )
@@ -4571,16 +4589,7 @@ export async function workspaceHarness(
             const closed = closeTabs(tabs, preserveFocus)
             if (closesFocusedTab && closed) keyboardOnBody = true
             // A native webview-tab close disposes its panel before the extension's close continuation runs.
-            for (const current of [...panels])
-              if (
-                tabs.some((tab) => tab.input === current.nativeTab.input) &&
-                !groups.some((group) =>
-                  group.tabs.some(
-                    (tab) => tab.input === current.nativeTab.input,
-                  ),
-                )
-              )
-                current.dispose()
+            disposePanelsOfClosedTabs(tabs)
             // Hold the response after real native effects so a later dispatch must use the learner's newer group/tab model.
             const held = heldTabCloseResponse
             heldTabCloseResponse = undefined

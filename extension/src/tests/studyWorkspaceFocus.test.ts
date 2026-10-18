@@ -2070,6 +2070,53 @@ for (const regained of [
     }
   })
 
+// Value: protects=reader tests of a close of a whole group that holds a webview pane: the fake editor disposes that pane's panel as both editors do when its tab closes, so onDidDispose, counts().panels and panelColumn answer as the hosts would; fails_when=the fake tabGroups.close disposes the panels only for its tab overload, so a panel whose tab left with its group stays among the harness's panels and never tells its onDidDispose, and an ownership or cleanup defect of a group close goes unseen; why_new=Cycle 0046 second /ship CodeRabbit review CR5-5; seam=the fake editor's createWebviewPanel, its tabGroups.close with a group, the panel's onDidDispose, counts() and panelColumn
+test('the fake editor disposes the panel of a webview tab when a whole group that holds it is closed, as both editors do: its onDidDispose fires and the harness holds one panel less', async () => {
+  // Arrange: the learner's file is in the first group; a webview panel stands alone in a second group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    const pane = harness.editor.window.createWebviewPanel(
+      'markdown.preview',
+      'Preview',
+      { viewColumn: 2, preserveFocus: true },
+    )
+    let disposals = 0
+    pane.onDidDispose(() => {
+      disposals++
+    })
+    const panelsBefore = harness.counts().panels
+    const paneGroup = harness.groups.find((group) => group.viewColumn === 2)
+    assert.ok(paneGroup)
+
+    // Act
+    const closed = await harness.editor.window.tabGroups.close(paneGroup, true)
+
+    // Assert
+    assert.deepEqual(
+      {
+        closed,
+        disposals,
+        panelsBefore,
+        panelsAfter: harness.counts().panels,
+        paneColumn: harness.panelColumn('markdown.preview'),
+        columns: harness.groups.map((group) => group.viewColumn),
+      },
+      {
+        closed: true,
+        disposals: 1,
+        panelsBefore: 1,
+        panelsAfter: 0,
+        paneColumn: undefined,
+        columns: [1],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a finished reader test leaving nothing behind in its fake editor: a tab close the fake editor still owed at the harness's close never runs; fails_when=the fake editor's timer outlives the harness, so up to 20 ms after a test ended it removes tabs and groups and calls the listeners of that test; why_new=Cycle 0045 local review tests-1 #3 (the timers of closeDisposedPanelTabsLater and revealPanelsLater were never cleared); seam=the fake editor's pending timers and its tab and group events
 test("the fake editor of a closed harness runs none of the tab closes it still owed: its tabs stay and no listener is called after the harness's close", async () => {
   // Arrange: the editor closes a disposed pane's tab 20 ms after the disposal; the work window does not have the focus, so the reader's close settles no keyboard and waits for no tab.
