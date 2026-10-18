@@ -1002,7 +1002,7 @@ test('a template or a table that closes inside svg or MathML markup with a table
   ])
 })
 
-// Value: protects=the learner against an editor link after an end tag inside an open select that names an element opened before the select, which Chrome ignores because an open select ends the scope of what lies below it; fails_when=the reader gives such an end the body rules, so it closes the element with the select and the svg or MathML inside it, and a plaintext or xmp there hides the link from the filter while Chrome, still in the svg or MathML, shows it live; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (11 of 16 fuzz misses in 40,000 random pages; one row per element name of those cases); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+// Value: protects=the learner against an editor link after an end tag inside an open select that names an element opened before the select, which Chrome ignores because an open select ends the scope of what lies below it; fails_when=the reader gives such an end the body rules, so it closes the element with the select and the svg or MathML inside it, and a plaintext or xmp there hides the link from the filter while Chrome, still in the svg or MathML, shows it live; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (11 of 16 fuzz misses in 40,000 random pages; one row per element name of those cases), and the list item row from the Step 7 pass 3 coverage audit G4, where the list item scope's end at a select was untested; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
 test('an end tag inside an open select that names an element opened before it is ignored, so a link after a plaintext or in an xmp of the svg or MathML in the select loses its link', () => {
   // Arrange: each element opened before the select, an svg or MathML element in the select, the element's end, and a plaintext or xmp a browser reads as foreign markup.
   const pages = [
@@ -1019,6 +1019,7 @@ test('an end tag inside an open select that names an element opened before it is
     '<article><ul><select><svg></ul><xmp><a href="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></ul></article>',
     '<article><object><select><math></object><plaintext></plaintext></math></select></object><a href="vscode://file/etc/hosts">Open the source</a></article>',
     '<article><font><select><svg></font><plaintext></plaintext></svg></select></font><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><li><select><svg></li><plaintext></plaintext></svg></select></li><a href="vscode://file/etc/hosts">Open the source</a></article>',
   ]
 
   // Act
@@ -1039,6 +1040,25 @@ test('an end tag inside an open select that names an element opened before it is
     '<article><ul><select><svg></ul><xmp><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></xmp></svg></select></ul></article>',
     '<article><object><select><math></object><plaintext></plaintext></math></select></object><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
     '<article><font><select><svg></font><plaintext></plaintext></svg></select></font><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><li><select><svg></li><plaintext></plaintext></svg></select></li><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+  ])
+})
+
+// Value: protects=the learner against an editor link after an end inside an svg or MathML integration point in an open select, which ends the scope there as Chrome 151 does; fails_when=the select's scope walk passes the integration points, so </div> pops the svg or math Chrome keeps open and a plaintext hides a live link; why_new=Cycle 0046 second /ship Step 7 pass 3 coverage audit G5 (no row put an integration point between the end and its element in a select); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('an end inside an svg or MathML integration point in an open select that names an element opened outside the point is ignored, so the link after a plaintext loses its link', () => {
+  // Arrange: a div opened in the select, an svg foreignObject or a MathML mi in it, and the div's end inside the integration point.
+  const pages = [
+    '<article><select><div><svg><foreignObject></div></foreignObject><plaintext></plaintext></svg></div></select><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><select><div><math><mi></div></mi><plaintext></plaintext></math></div></select><a href="vscode://file/etc/hosts">Open the source</a></article>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<article><select><div><svg><foreignObject></div></foreignObject><plaintext></plaintext></svg></div></select><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><select><div><math><mi></div></mi><plaintext></plaintext></math></div></select><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
   ])
 })
 
