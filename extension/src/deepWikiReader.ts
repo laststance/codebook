@@ -119,7 +119,7 @@ const qaClient = `(function () {
     questionStatusStyle.textContent = ${JSON.stringify(WIKI_QUESTION_STATUS_STYLE)};
     document.head.append(questionStatusStyle);
   }
-  // Only the latest question writes the status line when its reply comes.
+  // Only the latest question writes the status line and the answer when its reply comes.
   var questionsAsked = 0;
   form.addEventListener('submit', async function (event) {
     event.preventDefault(); event.stopImmediatePropagation();
@@ -146,7 +146,9 @@ const qaClient = `(function () {
       var result = await response.json();
       if (!response.ok) throw new Error(result.error || 'The editor model could not answer.');
       if (result.handoff) { tell(result.handoff); return; }
-      if (asked === questionsAsked) questionStatus.textContent = '';
+      // An earlier question's answer that comes after a newer question was asked writes nothing: the region shows, and announces, the newer question's answer alone.
+      if (asked !== questionsAsked) return;
+      questionStatus.textContent = '';
       output.textContent = result.answer;
       if (result.sourceChanged) { var stale = document.createElement('p'); stale.textContent = 'Some indexed source changed. Update LLM Wiki before relying on this answer.'; output.appendChild(stale); }
       var list = document.createElement('ul');

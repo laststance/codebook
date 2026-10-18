@@ -3,7 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { openFakeWikiPage, type FakeWikiPage } from './utils/fakeWikiPage'
+import {
+  openFakeWikiPage,
+  type FakeWikiPage,
+  type FakeWikiQuestionAnswer,
+} from './utils/fakeWikiPage'
 import { readServedWikiScript } from './utils/readServedWikiScript'
 
 /**
@@ -301,8 +305,11 @@ for (const form of SERVED_FORMS)
     )
   })
 
-/** The late replies to an earlier question that a newer question's answer must outlast: a refusal, and a hand-off to the editor chat. */
-const LATE_REPLIES = [
+/** The late replies to an earlier question that a newer question's answer must outlast: a refusal, a hand-off to the editor chat, and an answer of its own with a citation and the source-changed line. */
+const LATE_REPLIES: readonly {
+  kind: string
+  questionAnswer: FakeWikiQuestionAnswer
+}[] = [
   {
     kind: 'refusal',
     questionAnswer: { error: 'The editor model could not answer.' },
@@ -314,9 +321,23 @@ const LATE_REPLIES = [
         'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.',
     },
   },
-] as const
+  {
+    kind: 'answer',
+    questionAnswer: {
+      answer: 'The order is created in src/order.ts.',
+      citations: [
+        {
+          path: 'src/order.ts',
+          line: 3,
+          uri: 'vscode://laststance.codebook/source?root=%2Frepo&path=src%2Forder.ts&line=3',
+        },
+      ],
+      sourceChanged: true,
+    },
+  },
+]
 
-// Value: protects=a learner who asks again before the first question's reply came: the newer answer stays shown, and its status line stays as the newer question left it, when the earlier question's refusal or hand-off arrives late; fails_when=the reply of an older question still writes the status line and hides the answer's disclosure (the latest-question guard of codebook-qa.js is dropped), so the newer answer vanishes and the line names the older reply; why_new=D2 added the disclosure's hiding; every question test asks once; seam=openFakeWikiPage with the bundled shell's script and the served codebook-qa.js, holdNext('api/ask') for the first question, the fake reader's answer changed between the questions; no_claim=the answer region itself, which the latest reply writes whichever question it answers
+// Value: protects=a learner who asks again before the first question's reply came: the newer answer, its citations and its status line stay as the newer question left them when the earlier question's refusal, hand-off or answer arrives late; fails_when=the reply of an older question still writes the status line and hides the answer's disclosure, or still writes its answer, its source-changed line and its citations into the answer region (the latest-question guard of codebook-qa.js is dropped or skips the answer), so the newer answer vanishes or the older one stands, and is announced, under the newer question; why_new=D2 added the disclosure's hiding; P2D1 the answer's write; every question test asks once; seam=openFakeWikiPage with the bundled shell's script and the served codebook-qa.js, holdNext('api/ask') for the first question, the fake reader's answer changed between the questions; no_claim=what a given screen reader announces
 for (const late of LATE_REPLIES)
   test(`a newer question’s answer stays shown with its status line as it left it when an earlier question’s ${late.kind} comes back after it`, async () => {
     // Arrange: the first question's reply is held back; the reader answers the second question at once.
