@@ -62,14 +62,31 @@ for (const [name, page] of Object.entries(workerData.pages)) {
   return times
 }
 
-// Value: protects=the editor's extension host, which filters every page the Wiki reader serves synchronously; fails_when=the filter reads the page again from each `<`, so a page today's publisher accepts (a title of 20,000 `<b `) or one written into the Wiki folder stalls the host for seconds on every load, and the page can have itself loaded again; why_new=Cycle 0046 /ship third review W1 (critical; performance, security, Codex, CodeRabbit and the adversarial step); seam=a worker thread, so the deadline can stop a filter that does not end
+// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags rescan the page or unmatched end tags rescan the open foreign elements; why_new=W1 plus row 1044's absent and already closed foreign names; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker)
 test('the reader filters a page of more than 1 MB built to make a reading from every < slow in under 400 ms', async () => {
-  // Arrange: the reviewers' page scaled past 1 MB, a page of quotes that open values, a page of refused links, and svg styles that hold markup.
+  // Arrange: large values and links, SVG markup, and absent or already closed names after deep foreign nesting.
   const pages = {
     nestedTagStarts: `<p title="${'<b '.repeat(350_000)}">x</p>`,
     openingQuotes: `<a b="'${'<a b=\'"'.repeat(150_000)}`,
     refusedLinks: '<a href="vscode://file/x">x</a>'.repeat(35_000),
     svgStyles: '<svg><style><a href="javascript:x">'.repeat(30_000),
+    unmatchedForeignEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    closedForeignName: (
+      '<svg><x></x>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    closedRepeatedForeignName: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</g>'.repeat(20_000) +
+      '<x>'.repeat(20_000) +
+      '</g>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
   }
 
   // Act
@@ -82,7 +99,7 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   // Assert: every page is over 1 MB, and each was filtered within the bound.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
-    [true, true, true, true],
+    [true, true, true, true, true, true, true],
   )
   assert.deepEqual(
     Object.entries(times).filter(

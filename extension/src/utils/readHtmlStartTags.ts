@@ -21,12 +21,13 @@ type ForeignElement = {
   integration: 'html' | 'text' | undefined
 }
 
-/** The state of one reading of a page: where it stands, the start tags read so far, and the svg and MathML elements open. */
+/** The state of one reading of a page: where it stands, the start tags read so far, the open svg and MathML elements, and how many open elements have each name. */
 type Reading = {
   html: string
   at: number
   tags: HtmlStartTag[]
   foreign: ForeignElement[]
+  openForeignTagCounts: Map<string, number>
 }
 
 /** White space between the parts of a tag: the five characters a browser separates them at. */
@@ -317,75 +318,103 @@ function integrationOf(
 
 /**
  * Opens an svg or MathML element for the reading, unless its tag closes itself; called by {@link placeStartTag}.
- * @param foreign - The open svg and MathML elements.
+ * @param reading - The open foreign elements and their name counts.
  * @param tag - The start tag.
  * @param namespace - The new element's namespace.
- * @returns Nothing; `foreign` holds the element.
+ * @returns Nothing; the element and its name count are added.
  * @example
- * openForeignElement(foreign, svgTag, 'svg')
+ * openForeignElement(reading, svgTag, 'svg')
  */
 function openForeignElement(
-  foreign: ForeignElement[],
+  reading: Reading,
   tag: ReadTag,
   namespace: 'svg' | 'math',
 ): void {
+  // A self-closing tag leaves no open element or name.
   if (tag.isSelfClosing) return
-  foreign.push({
+  reading.foreign.push({
     name: tag.name,
     namespace,
     integration: integrationOf(tag.name, namespace, tag),
   })
+  reading.openForeignTagCounts.set(
+    tag.name,
+    (reading.openForeignTagCounts.get(tag.name) ?? 0) + 1,
+  )
+}
+
+/**
+ * Removes the last foreign element and updates its name count, so a later unmatched end tag cannot search a name that already closed; called by {@link closeToIntegrationPoint} and {@link placeEndTag}.
+ * @param reading - The open elements and the counts of their names.
+ * @returns Nothing; the last element and one count of its name are removed.
+ * @example
+ * popForeignElement(reading) // removes the innermost SVG or MathML element
+ */
+function popForeignElement(reading: Reading): void {
+  const closed = reading.foreign.pop()
+  if (closed === undefined) return
+  const count = reading.openForeignTagCounts.get(closed.name) ?? 0
+  // A name remains searchable only while another element of that name is open.
+  if (count > 1) reading.openForeignTagCounts.set(closed.name, count - 1)
+  else reading.openForeignTagCounts.delete(closed.name)
 }
 
 /**
  * Closes the open svg and MathML elements down to the nearest point where HTML is read again, as a browser does at a breakout tag; called by {@link placeStartTag} and {@link placeEndTag}.
- * @param foreign - The open svg and MathML elements.
- * @returns Nothing; `foreign` is shortened.
+ * @param reading - The open foreign elements and their name counts.
+ * @returns Nothing; the closed elements and their name counts are removed.
  * @example
- * closeToIntegrationPoint(foreign)
+ * closeToIntegrationPoint(reading)
  */
-function closeToIntegrationPoint(foreign: ForeignElement[]): void {
+function closeToIntegrationPoint(reading: Reading): void {
+  const { foreign } = reading
+  // Every discarded element also loses its count, including names at a breakout.
   while (foreign.length > 0 && foreign.at(-1)?.integration === undefined)
-    foreign.pop()
+    popForeignElement(reading)
 }
 
 /**
  * Places a start tag in the browser's tree as far as the reading follows it, and says whether the tag is read by HTML rules; called by {@link readStartTagAt}.
- * @param foreign - The open svg and MathML elements.
+ * @param reading - The open foreign elements and their name counts.
  * @param tag - The start tag.
  * @returns `true` for an HTML element, whose content may be no markup ({@link TEXT_CONTENT}); `false` for an svg or MathML element.
  * @example
- * placeStartTag([], styleTag) // => true
+ * placeStartTag(reading, styleTag) // => true outside foreign content
  */
-function placeStartTag(foreign: ForeignElement[], tag: ReadTag): boolean {
+function placeStartTag(reading: Reading, tag: ReadTag): boolean {
+  const { foreign } = reading
   if (isForeignContext(foreign, tag)) {
     if (!isBreakout(tag)) {
-      openForeignElement(foreign, tag, foreign.at(-1)?.namespace ?? 'svg')
+      openForeignElement(reading, tag, foreign.at(-1)?.namespace ?? 'svg')
       return false
     }
-    closeToIntegrationPoint(foreign)
+    closeToIntegrationPoint(reading)
   }
   if (tag.name === 'svg' || tag.name === 'math')
-    openForeignElement(foreign, tag, tag.name)
+    openForeignElement(reading, tag, tag.name)
   return true
 }
 
 /**
  * Places an end tag in the browser's tree as far as the reading follows it: `</br>` and `</p>` leave svg and MathML content, and another end tag closes the nearest open svg or MathML element of its name with those above it; called by {@link readEndTagAt}.
- * @param foreign - The open svg and MathML elements.
+ * @param reading - The open foreign elements and their name counts.
  * @param name - The end tag's name in lower case.
- * @returns Nothing; `foreign` is shortened as the tag closes elements.
+ * @returns Nothing; the elements this tag closes and their name counts are removed.
  * @example
- * placeEndTag(foreign, 'svg')
+ * placeEndTag(reading, 'svg')
  */
-function placeEndTag(foreign: ForeignElement[], name: string): void {
+function placeEndTag(reading: Reading, name: string): void {
+  const { foreign } = reading
   if (foreign.length === 0) return
   if (name === 'br' || name === 'p') {
-    closeToIntegrationPoint(foreign)
+    closeToIntegrationPoint(reading)
     return
   }
+  // An unmatched close takes no stack scan, even when this name was open earlier.
+  if (!reading.openForeignTagCounts.has(name)) return
+  // A successful search removes every element it visits, so total work stays linear.
   const index = foreign.findLastIndex((element) => element.name === name)
-  if (index !== -1) foreign.length = index
+  if (index !== -1) while (foreign.length > index) popForeignElement(reading)
 }
 
 /** A state a browser reads a script element's text in: plain, after `<!--`, or after `<!--` and `<script`. */
@@ -466,7 +495,7 @@ function readStartTagAt(reading: Reading, at: number): number {
   const tag = readTagAt(reading.html, at + 1)
   if (!tag) return reading.html.length
   reading.tags.push({ name: tag.name, attributes: tag.attributes })
-  return placeStartTag(reading.foreign, tag)
+  return placeStartTag(reading, tag)
     ? endOfTextContent(reading.html, tag)
     : tag.end
 }
@@ -487,7 +516,7 @@ function readEndTagAt(reading: Reading, at: number): number {
   if (!ASCII_LETTER.test(first)) return endAfter(html, at + 2, '>')
   const tag = readTagAt(html, at + 2)
   if (!tag) return html.length
-  placeEndTag(reading.foreign, tag.name)
+  placeEndTag(reading, tag.name)
   return tag.end
 }
 
@@ -523,7 +552,13 @@ function readMarkupAt(reading: Reading, at: number): number {
  * readHtmlStartTags('<!-- <a href="x"> --><style><b></style><a HREF=y>').map((tag) => tag.name) // => ['style', 'a']
  */
 export function readHtmlStartTags(html: string): HtmlStartTag[] {
-  const reading: Reading = { html, at: 0, tags: [], foreign: [] }
+  const reading: Reading = {
+    html,
+    at: 0,
+    tags: [],
+    foreign: [],
+    openForeignTagCounts: new Map(),
+  }
   // Each `<` of the markup in turn; the text between is passed over.
   while (reading.at < html.length) {
     const lessThan = html.indexOf('<', reading.at)
