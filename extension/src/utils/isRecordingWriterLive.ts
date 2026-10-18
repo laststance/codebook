@@ -29,7 +29,7 @@ export type ProcessStartsOfList = Map<number, Promise<string | undefined>>
  * What a judgement found of a recording's writer.
  * - `may-run`: a writer of this machine that may still run (a live process that is the writer, as far as this machine can tell)
  * - `on-another-host`: a writer that may still run only because the recording names another host (its header alone, or a record of another machine), which this machine cannot probe; `host` is the name the recording gives it
- * - `unconfirmed-here`: a recording with its header alone, of this host, whose process id a live process has that began, by the clock, after the recording; that is another process that got the id, or the writer itself after a step of the clock: no comparison of wall-clock times is certain, so this is neither `gone` nor remembered
+ * - `unconfirmed-here`: a recording of this host with its header alone, or with a record of its writer without the writer's start, whose process id a live process has that began, by the clock, after the recording; that is another process that got the id, or the writer itself after a step of the clock: no comparison of wall-clock times is certain, so this is neither `gone` nor remembered
  * - `gone`: the writer is gone, for good
  * - `left-to-caller`: this process's own recording, which the caller judges itself (`ignored`)
  */
@@ -67,7 +67,13 @@ function readStartOncePerList(starts: ProcessStartsOfList): ProcessStartReader {
  * @param header - What the header says of the writer; its host name names a writer whose record gives none.
  * @param ownProcess - Whether this process's own recording counts.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
- * @returns `on-another-host` for a record of another machine, which is not probed; `left-to-caller` with `ignored` for this process's own recording; `gone` once a writer of this machine is gone; `may-run` while it may still run.
+ * A record without its writer's start (one of a window whose start could not be read) proves no more than the header does once its process id is in use: that live process is judged as the header's is, by the recording's creation time ({@link liveWriterStateHere}).
+ * @returns
+ * - `on-another-host` for a record of another machine, which is not probed
+ * - `left-to-caller` with `ignored` for this process's own recording
+ * - `gone` once a writer of this machine is gone ({@link isRecordedOwnerGone})
+ * - for a record without a start whose process id is in use, what {@link liveWriterStateHere} answers: `unconfirmed-here` or `may-run`
+ * - `may-run` otherwise, while it may still run
  * @example await writerStateByRecord({ pid: 4242, hostname: 'laptop.lan', machineId: 'f3a1…', processStart: 'ps:Mon Oct  5 09:12:33 2026' }, header, 'counts', readStart) // => { kind: 'gone' } once process 4242 is another process
  */
 async function writerStateByRecord(
@@ -86,30 +92,61 @@ async function writerStateByRecord(
   // This process's own recording is left to the caller's own run state when it asks so.
   if (ownProcess === 'ignored' && owner.pid === process.pid)
     return { kind: 'left-to-caller' }
-  return (await isRecordedOwnerGone(owner, identity, readStart))
-    ? { kind: 'gone' }
-    : { kind: 'may-run' }
+  if (await isRecordedOwnerGone(owner, identity, readStart))
+    return { kind: 'gone' }
+  // Without the writer's start the record proves no more than the header: its live process is judged as the header's is.
+  if (owner.processStart === undefined)
+    return liveWriterStateHere(
+      owner.pid,
+      header.createdAt,
+      owner.hostname ?? header.owner.hostname,
+      readStart,
+    )
+  return { kind: 'may-run' }
 }
 
 /**
- * Says whether the process that has a recording writer's id now began after the recording was created, beyond the tolerance of a corrected clock: then it is likely another process that got the id, but a step of the clock can make the writer itself look so, since a Linux start is computed from clock ticks and the boot time; called by {@link writerStateByHeader} for a live process id of this host, which answers `unconfirmed-here` then.
- * @param header - What the header says of the writer.
+ * Says whether the process that has a recording writer's id now began after the recording was created, beyond the tolerance of a corrected clock: then it is likely another process that got the id, but a step of the clock can make the writer itself look so, since a Linux start is computed from clock ticks and the boot time; called by {@link liveWriterStateHere}, which answers `unconfirmed-here` then.
+ * @param pid - The writer's process id.
+ * @param createdAt - When the recording was created.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns `true` when the process began later than the recording's creation plus {@link STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS}; `false` when it began before, and when its start cannot be read: it may be the writer.
- * @example await hasIdGoneToALaterProcess({ owner: { pid: 4242, hostname: 'workstation' }, createdAt: '2026-10-05T09:00:00.000Z' }, readStart) // => true for a process that began at 10:00
+ * @example await hasIdGoneToALaterProcess(4242, '2026-10-05T09:00:00.000Z', readStart) // => true for a process that began at 10:00
  */
 async function hasIdGoneToALaterProcess(
-  header: RecordingWriterOfHeader,
+  pid: number,
+  createdAt: string,
   readStart: ProcessStartReader,
 ): Promise<boolean> {
-  const start = await readStart(header.owner.pid).catch(() => undefined)
+  const start = await readStart(pid).catch(() => undefined)
   const startedAtMs =
     start === undefined ? undefined : processStartedAtMs(start)
   return (
     startedAtMs !== undefined &&
-    startedAtMs >
-      Date.parse(header.createdAt) + STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
+    startedAtMs > Date.parse(createdAt) + STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
   )
+}
+
+/**
+ * Judges the live process of this host that has a recording writer's id, when nothing but the recording's creation time tells whether it is the writer; called by {@link writerStateByHeader} for a header without a record of its writer, and by {@link writerStateByRecord} for a record without its writer's start, each once that id is known to be in use.
+ * @param pid - The writer's process id, which a live process has.
+ * @param createdAt - When the recording was created.
+ * @param host - The host name the recording gives its writer, which an uncertain answer names.
+ * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
+ * @returns
+ * - `unconfirmed-here` for a process that began, by the clock, after the recording was created ({@link hasIdGoneToALaterProcess}): not certain, so the learner decides
+ * - `may-run` for a process that began before the recording was created, or whose start cannot be read
+ * @example await liveWriterStateHere(4242, '2026-10-05T09:00:00.000Z', 'workstation', readStart) // => { kind: 'unconfirmed-here', host: 'workstation' } for a process that began at 10:00
+ */
+async function liveWriterStateHere(
+  pid: number,
+  createdAt: string,
+  host: string,
+  readStart: ProcessStartReader,
+): Promise<RecordingWriterState> {
+  return (await hasIdGoneToALaterProcess(pid, createdAt, readStart))
+    ? { kind: 'unconfirmed-here', host }
+    : { kind: 'may-run' }
 }
 
 /**
@@ -143,8 +180,7 @@ async function isThisProcessWriter(
  * - for this process's own recording ({@link isThisProcessWriter}), whatever host name the header gives: `left-to-caller` with `ignored`, `may-run` with `counts`
  * - `on-another-host` for a writer of another host name, which cannot be probed
  * - `gone` for a process of this host that is gone
- * - `unconfirmed-here` for a live process of this host that began, by the clock, after the recording was created ({@link hasIdGoneToALaterProcess}): not certain, so the learner decides
- * - `may-run` for a live process of this host that began before the recording was created
+ * - for a live process of this host, what {@link liveWriterStateHere} answers: `unconfirmed-here` or `may-run`
  * @example await writerStateByHeader({ owner: { pid: 2 ** 22 + 1, hostname: hostname() }, createdAt }, 'counts', readStart) // => { kind: 'gone' }
  */
 async function writerStateByHeader(
@@ -162,14 +198,17 @@ async function writerStateByHeader(
   if (owner.hostname !== hostname())
     return { kind: 'on-another-host', host: owner.hostname }
   if (isProcessGone(owner.pid)) return { kind: 'gone' }
-  return (await hasIdGoneToALaterProcess(header, readStart))
-    ? { kind: 'unconfirmed-here', host: owner.hostname }
-    : { kind: 'may-run' }
+  return liveWriterStateHere(
+    owner.pid,
+    header.createdAt,
+    owner.hostname,
+    readStart,
+  )
 }
 
 /**
  * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link isRecordingWriterLive} (what the library lists, the status {@link RecordingStore} gives a recording another session wrote) and the removal of a study ({@link LearningLibrary.removeStudy}), which tells a writer of this machine from one it cannot probe.
- * The record of the writer's full identity that this build keeps outside the recording decides when it exists ({@link writerStateByRecord}); a recording without one (made by 0.2.29.0) is judged by its header's host name and process id, a process id that went to a process begun after the recording counting as gone ({@link writerStateByHeader}).
+ * The record of the writer's full identity that this build keeps outside the recording decides when it exists ({@link writerStateByRecord}); a recording without one (made by 0.2.29.0) is judged by its header's host name and process id, a process id that a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}).
  * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
  * @param ownerRecordPath - The record of the recording's writer ({@link recordingOwnerRecordPath}); it may not exist.
  * @param header - What the recording's header says of its writer.

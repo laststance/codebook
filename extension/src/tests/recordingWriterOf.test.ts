@@ -167,6 +167,29 @@ test('a recording made by 0.2.29.0 on this host whose writer’s process id a li
   assert.deepEqual(writer, { kind: 'unconfirmed-here', host: hostname() })
 })
 
+// Value: protects=the place of a crashed window's recording whose record of its writer has no process start (the window could not read its own start), once its process id went to a later process of this machine; fails_when=such a record is judged by its process id alone, so the later process keeps the recording "being written" for good and its study can never be removed, where a header alone gives the learner the choice (CX13); why_new=Cycle 0046 adversarial review AD9: a record without a start proves no more than the header; seam=the record of the writer without its start, and the header, which both name a live child process of the test that began after the recording's creation time
+test('a recording whose record of its writer has no process start, and whose process id a live process has that began after the recording was created, has a writer this computer cannot confirm', async (context) => {
+  // Arrange: the recording was created ten minutes ago by a window that could not read its own start and crashed; a process that began just now has its id.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const laterProcess = await idleChild(context)
+  await rewriteHeader(recording.folder, {
+    owner: { pid: laterProcess.pid!, hostname: hostname() },
+    createdAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+  })
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
+    pid: laterProcess.pid!,
+    hostname: hostname(),
+    processStart: undefined,
+  })
+
+  // Act
+  const writer = await writerOf(recording.folder)
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'unconfirmed-here', host: hostname() })
+})
+
 // Value: protects=the recording of a crashed window on a computer whose host name changed since (macOS names itself after the network); fails_when=the writer is judged by the host name in the header, which is no longer this machine's, so the recording counts as written on another machine for good; why_new=Cycle 0046 /ship review R10 (b): the record of the writer's full identity is new; seam=the header and the record of the writer, which name the old host name, this editor's machine id and a process id of no process
 test('a recording whose writer’s host name has changed since is judged by the record of its writer: of this machine, with a process that is gone, its writer is gone', async (context) => {
   // Arrange
