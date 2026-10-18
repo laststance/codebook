@@ -24,6 +24,7 @@ import {
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { currentUserName } from '../utils/currentUserName'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
+import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
 import type { Cdp } from './cdp'
@@ -79,6 +80,29 @@ function profileProcessPollIntervalMs(platform: NodeJS.Platform): number {
   return platform === 'win32'
     ? PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS
     : POLL_INTERVAL_MS
+}
+
+/**
+ * Makes a managed run's profile folder in its root and gives the folder's real path, by which Chrome and the debugger name it; called by {@link HostBrowser.launch} before it writes the folder's owner marker.
+ * A folder whose real path cannot be read (on some Windows volumes, a RAM disk, a `subst` or a network drive, the system's own resolution fails) would have no marker and no path the run knows, so neither the close nor a later sweep would remove it: it is removed again at once, without following a link ({@link removeWithoutFollowing}), and the launch fails with a sentence that says so.
+ * @param root - The managed profile root ({@link managedProfileRoot}).
+ * @returns The real path of the new folder.
+ * @throws When the folder cannot be made, or when its real path cannot be read: the folder is removed then, and the error names it and the cause.
+ * @example
+ * await madeProfileFolder('/tmp') // => '/private/tmp/codebook-browser-a1b2c3' on macOS
+ */
+async function madeProfileFolder(root: string): Promise<string> {
+  const made = await mkdtemp(join(root, MANAGED_PROFILE_PREFIX))
+  try {
+    return await realpath(made)
+  } catch (error) {
+    // A folder without its real path gets no marker: no close and no sweep would ever find it, so it goes now.
+    await removeWithoutFollowing(made).catch(() => undefined)
+    throw new Error(
+      `The managed browser's profile folder ${made} could not be resolved, so it was removed again and the browser was not started: ${String(error)}`,
+      { cause: error },
+    )
+  }
 }
 
 /** Owns host-specific browser acquisition/reveal/cleanup for {@link ConfiguredBrowserRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
@@ -175,9 +199,7 @@ export class HostBrowser {
       const root = this.managedRoot
       // The root of Windows (below the user's local application data folder) is made at the first run; /tmp is always there.
       await mkdir(root, { recursive: true })
-      this.managedProfile = await realpath(
-        await mkdtemp(join(root, MANAGED_PROFILE_PREFIX)),
-      )
+      this.managedProfile = await madeProfileFolder(root)
       const user = currentUserName()
       // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes; it names the user, whose sweep alone judges it.
       await writeFile(

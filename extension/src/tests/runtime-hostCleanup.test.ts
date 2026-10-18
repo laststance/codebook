@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fsPromises, {
   readFile,
+  readdir,
   mkdir,
   mkdtemp,
   realpath,
@@ -11,7 +12,7 @@ import fsPromises, {
 import { createRequire } from 'node:module'
 import * as os from 'node:os'
 import { hostname, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import {
   setImmediate as nextEventLoopTurn,
@@ -80,8 +81,9 @@ async function loadHostBrowser(
  * @param options.createViewport - Holds or rejects the real factory boundary while the test observes launch and cleanup ordering.
  * @param options.platform - The system the adapter reads from `process.platform`; this machine's by default.
  * @param options.processesOfProfile - The processes a look for the profile finds, by the look's number (1 for the first); none by default.
+ * @param options.realpathOfProfileFails - Makes `realpath` of the loaded browser refuse every profile folder (`EISDIR`), as the system does on some Windows volumes; the refused paths are noted in `refusedRealpaths`.
  * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot): its loaded context reads `LOCALAPPDATA` as the test's root then, and answers a home folder and a temp folder (`os.homedir`, `os.tmpdir`) that no system's root may be taken from. By default the browser is given the test's root.
- * @returns The browser, its root, every journal entry as plain data, and every profile whose processes were asked for. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
+ * @returns The browser, its root, every journal entry as plain data, every profile whose processes were asked for, and the paths `realpath` refused. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
  * const managed = await managedBrowser(context)
  * await managed.browser.launch(configuration, signal); await managed.browser.close() // managed.events names browser.managed-profile-removed
@@ -98,6 +100,7 @@ async function managedBrowser(
     platform?: NodeJS.Platform
     processesOfProfile?: (look: number) => { pid: number; command: string }[]
     rootChosenByTheBrowser?: boolean
+    realpathOfProfileFails?: boolean
   } = {},
 ) {
   const root = await realpath(
@@ -105,7 +108,8 @@ async function managedBrowser(
   )
   context.after(() => rm(root, { recursive: true, force: true }))
   const events: { type: string; detail: unknown }[] = [],
-    processProbes: string[] = []
+    processProbes: string[] = [],
+    refusedRealpaths: string[] = []
   const HostBrowser = await loadHostBrowser(
     {
       debug: { startDebugging: options.startDebugging ?? (async () => true) },
@@ -115,6 +119,22 @@ async function managedBrowser(
       'node:fs/promises': {
         ...fsPromises,
         rm: options.removeFolder ?? rm,
+        realpath: async (path: string): Promise<string> => {
+          // A volume whose real paths the system cannot read refuses the new profile folder.
+          if (
+            options.realpathOfProfileFails &&
+            basename(path).startsWith('codebook-browser-')
+          ) {
+            refusedRealpaths.push(path)
+            throw Object.assign(
+              new Error(
+                `EISDIR: illegal operation on a directory, realpath '${path}'`,
+              ),
+              { code: 'EISDIR' },
+            )
+          }
+          return realpath(path)
+        },
       },
       // The real viewport needs the editor; a managed launch gets one whose close does nothing.
       './browserViewport.js': {
@@ -189,7 +209,7 @@ async function managedBrowser(
     options.createViewport,
     options.rootChosenByTheBrowser ? undefined : root,
   )
-  return { browser, root, events, processProbes }
+  return { browser, root, events, processProbes, refusedRealpaths }
 }
 
 /** Reads from a managed browser's journal the profile folder its launch created. @example profileOf(managed.events) // => '/tmp/codebook-profile-root-x/codebook-browser-a1b2c3' */
@@ -1008,6 +1028,35 @@ test(
     )
   },
 )
+
+// Value: protects=the profile root of a machine whose volume the system cannot resolve a path on (a Windows RAM disk, a `subst` or a network drive): a managed launch whose new profile folder has no readable real path removes that folder again at once and fails with a sentence that names it, so no unmarked folder is left that neither the close nor a later sweep would ever remove (AD24, /ship adversarial review Step 11); fails_when=the launch fails with the raw error of `realpath` and leaves the folder it just made, without its marker; why_new=every launch test resolved its folder; seam=the managedBrowser harness's `realpath` of the loaded browser, which refuses the new profile folder and notes it, and the sweep's stand-in
+test('a managed launch whose new profile folder cannot be resolved removes that folder again and fails with a sentence that names it', async (context) => {
+  // Arrange: a managed browser on a volume whose real paths the system cannot read.
+  const managed = await managedBrowser(context, {
+    realpathOfProfileFails: true,
+    removeAbandonedProfiles: async () => [],
+  })
+  // Act
+  const failure = await managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    .then(
+      () => undefined,
+      (error: Error) => error.message,
+    )
+  await managed.browser.close()
+  // Assert
+  const refused = managed.refusedRealpaths[0]
+  assert.deepEqual(
+    { failure, leftInTheRoot: await readdir(managed.root) },
+    {
+      failure: `The managed browser's profile folder ${refused} could not be resolved, so it was removed again and the browser was not started: Error: EISDIR: illegal operation on a directory, realpath '${refused}'`,
+      leftInTheRoot: [],
+    },
+  )
+})
 
 // Cycle 0045 (NF-14 as ER-11): only a folder that carries a marker whose editor is gone is Codebook's to remove.
 test('a marked profile folder whose editor was killed is removed by the next run, and a folder without a marker is left', async (context) => {
