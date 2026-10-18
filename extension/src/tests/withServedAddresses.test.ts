@@ -297,6 +297,24 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
   )
 })
 
+// Value: protects=the learner against an editor link far into a long page with CRLF line ends, which the reader finds at the offsets the parser reports after its input buffer dropped the first 64 KiB it read; fails_when=the start offsets drift from the page after the buffer's waterline or at a CR LF, so a refused link is read at the wrong place and served live, or text beside it is renamed; why_new=Cycle 0046 second /ship testing review TEST5 (every output test page was under 1 KB); seam=none
+test('a refused link past the first 64 KiB of a page with CRLF line ends loses its link at its own place', () => {
+  // Arrange: 5,000 paragraphs with a CR LF in their text and a refused link after each, about 215 KB.
+  const page = '<p>x\r\ny</p><a href="vscode://file/x">x</a>\r\n'.repeat(5_000)
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(page.length > 65_536, true)
+  assert.equal(
+    served,
+    '<p>x\r\ny</p><a data-codebook-unlinked="vscode://file/x">x</a>\r\n'.repeat(
+      5_000,
+    ),
+  )
+})
+
 // Value: protects=the URL parser's exact edge character set and internal whitespace; fails_when=a generic trim removes Unicode space or keeps a C0 control at an edge; why_new=row 1052 replaces the trim algorithm; seam=none
 test('browser addresses trim every C0 control and ASCII space only at their ends and keep other spaces', () => {
   // Arrange
