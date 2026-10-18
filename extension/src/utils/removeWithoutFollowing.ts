@@ -1,7 +1,10 @@
-import { lstat, readdir, rmdir, unlink } from 'node:fs/promises'
+import { lstat, readdir, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { REMOVAL_RELISTS_BEFORE_LAST_ENTRY } from '../constants'
+
 import { isFolderOfItsOwn } from './isFolderOfItsOwn'
+import { openWithoutFollowing } from './openWithoutFollowing'
 import { passIfMissing } from './passIfMissing'
 import { systemErrorCode } from './systemErrorCode'
 
@@ -77,34 +80,115 @@ export type RemovalOrder = {
  * @param path - The directory that is not empty.
  * @param looked - The directory's device and file id at the walk's look, which the path must still name before the listing and before each entry's removal ({@link isStillTheDirectory}).
  * @param notEmptyError - What the system answered to its removal.
- * @param lastEntry - The name of the entry removed after all the others ({@link RemovalOrder}); none when left out.
- * @returns After every entry is removed; also when the directory is gone meanwhile.
+ * @param lastEntry - The name of the entry left for {@link removeLastEntryAndDirectory} ({@link RemovalOrder}); none when left out, and every entry is removed.
+ * @returns `true` once every listed entry but the last one is removed; `false` when the directory is gone meanwhile.
  * @throws `notEmptyError` when the entry is no directory of its parent's own ({@link isFolderOfItsOwn}): nothing below it is listed. The error of {@link isStillTheDirectory} when another entry took the directory's place. The file system's error of the first entry that cannot be removed.
  * @example
- * await removeEntriesOf('/repo/.codebook/wiki.update-run.json.takeover-4f2c', error) // its owner file is gone
+ * await removeEntriesOf('/repo/.codebook/wiki.update-run.json.takeover-4f2c', looked, error) // => true, its owner file is gone
  */
 async function removeEntriesOf(
   path: string,
   looked: LookedDirectory,
   notEmptyError: unknown,
   lastEntry?: string,
-): Promise<void> {
+): Promise<boolean> {
   const isOwnFolder = await isFolderOfItsOwn(path).catch(passIfMissing)
   // An entry that leads elsewhere is never listed: the system's answer to its removal is the walk's error.
   if (isOwnFolder === false) throw notEmptyError
   // Gone since the system was asked: nothing is left to remove.
   if (isOwnFolder === undefined || !(await isStillTheDirectory(path, looked)))
-    return
-  const names = await namesIn(path)
-  // The named entry goes last, so a removal that stops at an earlier entry leaves it in place.
-  const ordered = [
-    ...names.filter((name) => name !== lastEntry),
-    ...names.filter((name) => name === lastEntry),
-  ]
-  for (const name of ordered) {
+    return false
+  const names = (await namesIn(path)).filter((name) => name !== lastEntry)
+  return removeNamedEntries(path, looked, names)
+}
+
+/**
+ * Removes the named entries of a directory, one by one; called by {@link removeEntriesOf} for the first listing and by {@link removeLastEntryAndDirectory} for each listing after it.
+ * @param path - The directory, shown to be its parent's own.
+ * @param looked - Its device and file id at the walk's look ({@link isStillTheDirectory}).
+ * @param names - The entries a listing gave, without the one that goes last.
+ * @returns `true` once the entries are removed; `false` when the directory is gone meanwhile.
+ * @throws The error of {@link isStillTheDirectory} when another entry took the directory's place, and the file system's error of the first entry that cannot be removed.
+ * @example
+ * await removeNamedEntries('/tmp/codebook-browser-a1b2c3', looked, ['Default']) // => true, only the marker is left
+ */
+async function removeNamedEntries(
+  path: string,
+  looked: LookedDirectory,
+  names: string[],
+): Promise<boolean> {
+  for (const name of names) {
     // The listing and every removal below the path are made only while the path still names the directory looked at.
-    if (!(await isStillTheDirectory(path, looked))) return
+    if (!(await isStillTheDirectory(path, looked))) return false
     await removeWithoutFollowing(join(path, name))
+  }
+  return true
+}
+
+/** A regular file's bytes and permission bits, kept so that the entry can be written back. */
+type KeptEntry = { bytes: Uint8Array; mode: number }
+
+/**
+ * Reads the entry that goes last before the walk removes it, so that it can be written back when the directory cannot be removed after it; called by {@link removeLastEntryAndDirectory}.
+ * @param path - The entry's path.
+ * @returns Its bytes and permission bits for a regular file; `undefined` for a link, any other entry, a missing one, and one that cannot be read.
+ * @example
+ * await keptEntryAt('/tmp/codebook-browser-a1b2c3/codebook-owner.json') // => { bytes: Uint8Array(…), mode: 0o644 }
+ */
+async function keptEntryAt(path: string): Promise<KeptEntry | undefined> {
+  const file = await openWithoutFollowing(path).catch(() => undefined)
+  if (!file) return undefined
+  try {
+    const entry = await file.stat()
+    // A pipe, a device or a folder at the path is no marker to keep.
+    if (!entry.isFile()) return undefined
+    return { bytes: await file.readFile(), mode: entry.mode & 0o777 }
+  } catch {
+    return undefined
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * Removes the entry that goes last and then the directory, once nothing else is left in it; called by {@link removeWithoutFollowing} for a directory with a {@link RemovalOrder.lastEntry} after its listed entries are removed.
+ * Why: another program may make an entry in the directory after the walk's listing (Chrome writing a file as it ends, an antivirus scan). Before the last entry goes, the directory is listed again, up to {@link REMOVAL_RELISTS_BEFORE_LAST_ENTRY} times, and the new entries are removed first; the last entry is removed only when it is all that is left. An entry made after that, before the directory's own removal, makes the system answer "not empty": the last entry is written back then, so a later removal still knows the directory.
+ * @param path - The directory, shown to be its parent's own.
+ * @param looked - Its device and file id at the walk's look ({@link isStillTheDirectory}).
+ * @param lastEntry - The entry that goes last (the owner marker of a profile folder).
+ * @returns After the directory is gone; also when it went meanwhile.
+ * @throws When the directory still gains entries after its last listing: its last entry stays. The system's error of the directory's removal, after the last entry was written back. Every error of {@link removeNamedEntries}.
+ * @example
+ * await removeLastEntryAndDirectory('/tmp/codebook-browser-a1b2c3', looked, 'codebook-owner.json') // the folder and its marker are gone
+ */
+async function removeLastEntryAndDirectory(
+  path: string,
+  looked: LookedDirectory,
+  lastEntry: string,
+): Promise<void> {
+  // Entries made after a listing are removed before the last entry; each listing may find new ones.
+  for (let relist = 0; ; relist += 1) {
+    const others = (await namesIn(path)).filter((name) => name !== lastEntry)
+    if (others.length === 0) break
+    if (relist === REMOVAL_RELISTS_BEFORE_LAST_ENTRY)
+      throw new Error(
+        `The folder ${path} kept gaining entries while Codebook emptied it (${others.join(', ')}); its ${lastEntry} stays, so a later removal tries again.`,
+      )
+    if (!(await removeNamedEntries(path, looked, others))) return
+  }
+  const lastEntryPath = join(path, lastEntry)
+  const kept = await keptEntryAt(lastEntryPath)
+  await removeWithoutFollowing(lastEntryPath)
+  try {
+    await rmdir(path)
+  } catch (error) {
+    // An entry made after the last listing keeps the directory: the last entry goes back, made new and never through a link.
+    if (kept && NOT_EMPTY_CODES.includes(systemErrorCode(error)))
+      await writeFile(lastEntryPath, kept.bytes, {
+        flag: 'wx',
+        mode: kept.mode,
+      }).catch(() => undefined)
+    passIfMissing(error)
   }
 }
 
@@ -140,11 +224,15 @@ export async function removeWithoutFollowing(
   // The system is asked first; only a directory it calls not empty is listed.
   const notEmptyError = await removeIfEmpty(path)
   if (notEmptyError === undefined) return
-  await removeEntriesOf(
+  const looked = { dev: entry.dev, ino: entry.ino }
+  const emptied = await removeEntriesOf(
     path,
-    { dev: entry.dev, ino: entry.ino },
+    looked,
     notEmptyError,
     order.lastEntry,
   )
+  // The entry that goes last is removed only when nothing else is left, and comes back when the directory still cannot go.
+  if (emptied && order.lastEntry !== undefined)
+    return removeLastEntryAndDirectory(path, looked, order.lastEntry)
   await rmdir(path).catch(passIfMissing)
 }

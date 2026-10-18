@@ -4,11 +4,13 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readFile,
   readdir,
   realpath,
   rename,
   rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -316,6 +318,120 @@ test('a folder that another window removes while the walk is at it counts as rem
     {
       outcomes: { goneAtTheListing: 'removed', goneAtTheRemoval: 'removed' },
       left: ['kept'],
+    },
+  )
+})
+
+// Value: protects=a profile folder that another program writes into after the walk listed it (Chrome writing a file as it ends, an antivirus scan): the walk lists the folder again before the entry that goes last, removes the new entry first, and removes the folder whole (R3, /ship third review, Codex B2); fails_when=the walk removes every listed entry, the marker among them, and the folder's own removal then fails with "not empty", so the new file stays in a folder without a marker, which every later sweep passes over for good; why_new=every walk test listed a folder that nothing wrote into meanwhile; seam=a file system stand-in whose first listing of the folder lets another program write a file into it right after the listing
+test('a folder that gains a file after the walk listed it is removed whole: the new file goes before the entry that goes last', async (context) => {
+  // Arrange: a profile folder with a browser file and its marker; another program writes a log file into it right after the walk's first listing.
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  await mkdir(join(folder, 'Default'), { recursive: true })
+  await writeFile(join(folder, 'Default', 'Preferences'), '{}')
+  await writeFile(join(folder, 'codebook-owner.json'), '{"pid":4242}')
+  let listingsOfTheFolder = 0
+  const removeWhileWrittenInto = await loadWalkOn({
+    ...realFileSystem,
+    readdir: async (path: string) => {
+      const names = await readdir(path)
+      if (path === folder && (listingsOfTheFolder += 1) === 1)
+        await writeFile(join(folder, 'chrome_debug.log'), 'late')
+      return names
+    },
+  })
+
+  // Act
+  const outcome = await removeWhileWrittenInto(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, left: await readdir(parent) },
+    { outcome: 'removed', left: ['kept'] },
+  )
+})
+
+// Value: protects=the same folder when the other program writes into it after the walk removed the marker, right before the folder's own removal: the folder cannot go, and the marker is written back with its bytes, so a later sweep still knows the folder and tries again (R3, /ship third review, Codex B2); fails_when=the marker stays removed, so the folder with the new file is passed over by every later sweep; why_new=no walk test let a folder gain an entry after its marker went; seam=a file system stand-in whose removal of the marker lets another program write a file into the folder right after it
+test('a folder that gains a file after its marker was removed keeps the marker, written back with its bytes, and the removal fails with the system’s answer', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(join(folder, 'Default'), { recursive: true })
+  await writeFile(marker, '{"pid":4242}')
+  const removeWhileWrittenInto = await loadWalkOn({
+    ...realFileSystem,
+    unlink: async (path: string) => {
+      await unlink(path)
+      if (path === marker)
+        await writeFile(join(folder, 'chrome_debug.log'), 'late')
+    },
+  })
+
+  // Act
+  const code = await removeWhileWrittenInto(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).then(
+    () => 'removed',
+    (error: NodeJS.ErrnoException) => error.code,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code,
+      left: (await readdir(folder)).toSorted(),
+      marker: await readFile(marker, 'utf8'),
+    },
+    {
+      code: 'ENOTEMPTY',
+      left: ['chrome_debug.log', 'codebook-owner.json'],
+      marker: '{"pid":4242}',
+    },
+  )
+})
+
+// Value: protects=the end of a removal while another program keeps writing into the folder: the walk lists it again only a bounded number of times, then stops with an error that names the new entries and leaves the marker in place for a later removal (R3, /ship third review, Codex B2); fails_when=the walk lists and removes without end, or removes the marker while entries are still being made; why_new=the walk lists a folder again since R3; seam=a file system stand-in whose every listing of the folder lets another program write a new file into it right after the listing
+test('a folder that gains a file after every listing stops the walk with an error that names the new file, and keeps its marker', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  await mkdir(folder)
+  await writeFile(join(folder, 'codebook-owner.json'), '{"pid":4242}')
+  await writeFile(join(folder, 'chrome_debug.log'), 'first')
+  let listingsOfTheFolder = 0
+  const removeWhileWrittenInto = await loadWalkOn({
+    ...realFileSystem,
+    readdir: async (path: string) => {
+      const names = await readdir(path)
+      if (path === folder)
+        await writeFile(
+          join(folder, `late-${(listingsOfTheFolder += 1)}.log`),
+          'late',
+        )
+      return names
+    },
+  })
+
+  // Act
+  const outcome = await removeWhileWrittenInto(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert: each listing lets one file in after it; the walk removes what three more listings find, and the last listing before the marker still finds late-4.
+  assert.deepEqual(
+    { outcome, left: (await readdir(folder)).toSorted() },
+    {
+      outcome: `The folder ${folder} kept gaining entries while Codebook emptied it (late-4.log); its codebook-owner.json stays, so a later removal tries again.`,
+      left: ['codebook-owner.json', 'late-4.log', 'late-5.log'],
     },
   )
 })
