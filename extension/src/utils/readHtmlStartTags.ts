@@ -473,7 +473,10 @@ function endOfScriptText(html: string, from: number): number {
  * endOfTextContent('<style>a{}</style>', styleTag) // => 10
  */
 function endOfTextContent(html: string, tag: ReadTag): number {
-  const content = TEXT_CONTENT[tag.name]
+  // A page's tag name must not select an inherited Object property.
+  const content = Object.hasOwn(TEXT_CONTENT, tag.name)
+    ? TEXT_CONTENT[tag.name]
+    : undefined
   if (content === undefined) return tag.end
   if (content === 'plaintext') return html.length
   if (content === 'script') return endOfScriptText(html, tag.end)

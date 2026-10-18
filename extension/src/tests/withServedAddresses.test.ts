@@ -110,6 +110,43 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   )
 })
 
+// Value: protects=unknown character references in a source link when the reader binds it to the serving editor; fails_when=inherited Object properties replace unknown references with function text; why_new=the named-reference cases cover known names and numbers, not inherited property names; seam=none; no_claim=browser navigation (pure reader output)
+test('a source link keeps unknown character references when it is bound to the serving editor', () => {
+  // Arrange
+  const written = '&constructor &toString &hasOwnProperty &constructor; &amp;'
+  const page =
+    '<a href="vscode&#58;//laststance.codebook/source?root=%2Fr&path=src/math&constructor">source</a>'
+
+  // Act
+  const decoded = browserAttributeText(written)
+  const served = withServedAddresses(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    decoded,
+    '&constructor &toString &hasOwnProperty &constructor; &',
+  )
+  assert.equal(
+    served,
+    '<a href="cursor://laststance.codebook/source?root=%2Fr&amp;path=src/math&amp;constructor">source</a>',
+  )
+})
+
+// Value: protects=reading an ordinary unknown HTML element while filtering the addresses inside it; fails_when=a tag named constructor reads an inherited property as a text-content rule and throws; why_new=the parser cases use standard elements and do not cover a table prototype name; seam=none; no_claim=browser navigation (pure reader output)
+test('an unknown constructor element stays readable and its refused link loses its effect', () => {
+  // Arrange
+  const page = '<constructor><a href="vscode://file/x">source</a></constructor>'
+
+  // Act
+  const served = withServedAddresses(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    served,
+    '<constructor><a data-codebook-unlinked="vscode://file/x">source</a></constructor>',
+  )
+})
+
 // Value: protects=the editor's extension host, which rewrites every page the Wiki reader serves synchronously, Codebook's addresses and the rail's entry included; fails_when=the rebinding of Codebook's addresses reads the page by a pattern that backtracks over quotes and slashes, or the entry's description id is looked for once per number in the whole page, so a page of 1 MB stalls the host for minutes; why_new=Cycle 0046 /ship third review W1 and W5 (the rebinding joins the filter's single pass); seam=a worker thread, so the deadline can stop a rewrite that does not end
 test('the reader serves a page of more than 1 MB built to make a pattern of its tags or its ids slow, Codebook’s addresses and the rail’s entry included, in under 400 ms', async () => {
   // Arrange: values that run into slashes, quotes that open values, and a page whose headings carry the numbered ids of the entry's description, with an entry of 0.2.29.0 that needs one.

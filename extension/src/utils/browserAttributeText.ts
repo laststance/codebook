@@ -115,7 +115,10 @@ function namedCharacters(
   run: string,
   next: string | undefined,
 ): string | undefined {
-  const named = ASCII_NAMED_REFERENCES[run]
+  // An unknown reference must not select an inherited Object property.
+  const named = Object.hasOwn(ASCII_NAMED_REFERENCES, run)
+    ? ASCII_NAMED_REFERENCES[run]
+    : undefined
   if (named !== undefined) return named
   const legacy = LEGACY_ASCII_NAMES.find((name) => run.startsWith(name))
   if (legacy === undefined) return undefined
