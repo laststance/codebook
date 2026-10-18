@@ -25,6 +25,7 @@ import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import type * as lookModule from '../utils/isFolderOfItsOwn'
+import { openWithoutFollowing } from '../utils/openWithoutFollowing'
 import type * as placeModule from '../utils/placeStorageLock'
 import { placeStorageLock } from '../utils/placeStorageLock'
 import {
@@ -36,6 +37,7 @@ import {
   type ProcessStartReader,
 } from '../utils/readProcessStart'
 import { readRecordedOwner } from '../utils/readRecordedOwner'
+import type * as readerModule from '../utils/readWikiRegularFile'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 import type * as removalModule from '../utils/removeWithoutFollowing'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
@@ -1562,6 +1564,96 @@ test('the end of a run whose outlasted marker another window took over says that
         markerAfterTheEnd: 'window-b',
       },
     )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=other editor windows after a run's end met its marker at a moment the file could not be read (on Windows a scanner or an indexer holds it open: EBUSY or EPERM); fails_when=a failed read of the marker counts as a marker that is no longer this window's, so the end answers that nothing of the run is left, is never asked again, and the marker stays on disk as a running update with no Update anyway until the run's bound has passed; why_new=Cycle 0046 second ship, red team P2RT2 (the RT3 fix took every failed read for another window's marker); seam=the open of the marker file for the end's read, which fails once with EBUSY
+test('the end of a run whose marker could not be read at that moment says that its marker stayed, and the same end asked again removes the marker and says so', async () => {
+  // Arrange: a window whose next open of the marker file for a read fails once, as for a file another program holds open.
+  const wiki = await createWikiFolder()
+  let isNextMarkerOpenRefused = false
+  const readerWithOneRefusedOpen = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (isNextMarkerOpenRefused && openInputs[0] === wiki.markerPath) {
+            isNextMarkerOpenRefused = false
+            throw Object.assign(
+              new Error('EBUSY: resource busy or locked, open'),
+              { code: 'EBUSY' },
+            )
+          }
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { claimWikiUpdateMarker: claimInThatWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWithOneRefusedOpen,
+  })
+  try {
+    const claim = await claimInThatWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    isNextMarkerOpenRefused = true
+
+    // Act
+    const firstEnd = await claim.release()
+    const markerAfterTheFirstEnd = JSON.parse(
+      await readFile(wiki.markerPath, 'utf8'),
+    ).windowId
+    const secondEnd = await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      { firstEnd, markerAfterTheFirstEnd, secondEnd },
+      { firstEnd: false, markerAfterTheFirstEnd: 'window-a', secondEnd: true },
+    )
+    assert.deepEqual(await readdir(wiki.directory), ['wiki'])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the end that must stop asking once its marker is gone (removed by hand, or by a window that judged it nobody's); fails_when=a missing marker file is taken for one that could not be read, so the window asks again and again for a change it can never make; why_new=Cycle 0046 second ship, red team P2RT2: since a failed read asks again, a missing file must be told from it; seam=none
+test('the end of a run whose marker file is gone says that nothing of this run is left, and leaves no marker', async () => {
+  // Arrange: a run whose marker somebody removed while it ran.
+  const wiki = await createWikiFolder()
+  try {
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    await unlink(wiki.markerPath)
+
+    // Act
+    const ended = await claim.release()
+
+    // Assert
+    assert.equal(ended, true)
+    assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
   }
