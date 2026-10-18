@@ -35,9 +35,13 @@ const TAG_NAME = /[^\t\n\f\r />]*/y
 const ATTRIBUTE_NAME_REST = /[^\t\n\f\r />=]*/y
 /** An unquoted attribute value: up to white space or `>`. */
 const UNQUOTED_VALUE = /[^\t\n\f\r >]*/y
+/** The code units of A and Z, and how far each capital stands from its small letter. */
+const CAPITAL_A_CODE = 'A'.charCodeAt(0)
+const CAPITAL_Z_CODE = 'Z'.charCodeAt(0)
+const SMALL_LETTER_OFFSET = 'a'.charCodeAt(0) - CAPITAL_A_CODE
 
 /**
- * Lowers the ASCII capitals of a name, as a browser lowers a tag's and an attribute's name; called by {@link readTagAt} and {@link readAttributeAt}. Other letters keep their case, so no other letter turns into an ASCII one.
+ * Lowers the ASCII capitals of a name, as a browser lowers a tag's and an attribute's name; called by {@link readTagAt}, {@link readAttributeAt} and the name counts of {@link HtmlPageReader}. Other letters keep their case, so no other letter turns into an ASCII one.
  * @param name - The name as written.
  * @returns The name with A to Z lowered.
  * @example
@@ -45,6 +49,29 @@ const UNQUOTED_VALUE = /[^\t\n\f\r >]*/y
  */
 function asciiLowerCase(name: string): string {
   return name.replace(/[A-Z]+/g, (capitals) => capitals.toLowerCase())
+}
+
+/**
+ * Tells whether a name as written equals a name already in ASCII lower case once A to Z are lowered, as a browser compares an end tag with a foreign element, without building the lowered name; called by {@link HtmlPageReader.endTagInForeignContent} for each element it passes.
+ * @param written - An element's name as the tree holds it, such as `clipPath`.
+ * @param lowered - An end tag's name, A to Z lowered.
+ * @returns Whether the names match; a letter outside ASCII must match as written.
+ * @example
+ * isAsciiLowerCaseOf('clipPath', 'clippath') // => true
+ * isAsciiLowerCaseOf('g\u00c0', 'g\u00e0') // => false
+ */
+function isAsciiLowerCaseOf(written: string, lowered: string): boolean {
+  if (written.length !== lowered.length) return false
+  // Each code unit in turn: a capital A to Z is compared as its small letter, any other as it stands.
+  for (let index = 0; index < written.length; index += 1) {
+    const code = written.charCodeAt(index)
+    const loweredCode =
+      code >= CAPITAL_A_CODE && code <= CAPITAL_Z_CODE
+        ? code + SMALL_LETTER_OFFSET
+        : code
+    if (loweredCode !== lowered.charCodeAt(index)) return false
+  }
+  return true
 }
 
 /**
@@ -479,7 +506,44 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       this.currentToken = token
       return
     }
+    // In foreign content every end but </p> and </br> takes the foreign rule, which here compares names as a browser does.
+    if (
+      this.currentNotInHTML &&
+      !HTML_PARSER_ABSENT_END_BODY_NAMES.has(token.tagName)
+    ) {
+      this.skipNextNewLine = false
+      this.currentToken = token
+      this.endTagInForeignContent(token)
+      return
+    }
     super.onEndTag(token)
+  }
+
+  /**
+   * Applies the foreign end-tag rule as a browser does: from the current node down, an element whose name with A to Z lowered is the end's name closes with every element above it, and the first HTML element hands the end to the current insertion mode; called by {@link HtmlPageReader.onEndTag} for each end in foreign content but `</p>` and `</br>`.
+   * The pinned parser's rule lowers every letter of the element's name instead, so `</gÀ>` misses an open svg `gÀ`, which a browser closes, and `</gk>` closes a `gK` written with a Kelvin sign, which a browser leaves open.
+   * @param token - The end token, its name in ASCII lower case.
+   * @returns Nothing; the stack or the current mode's rules act as a browser's do.
+   * @example reader.endTagInForeignContent(endOfGWithGrave) // closes '<svg><gÀ>' down to the svg
+   */
+  private endTagInForeignContent(token: Parse5.Token.TagToken): void {
+    const { items, stackTop } = this.openElements
+    // The root element ends the walk, as the pinned rule's does.
+    for (let index = stackTop; index > 0; index -= 1) {
+      const element = items[index]
+      if (!element || !this.treeAdapter.isElementNode(element)) continue
+      if (this.treeAdapter.getNamespaceURI(element) === htmlTree.NS.HTML) {
+        this._endTagOutsideForeignContent(token)
+        return
+      }
+      const tagName = this.treeAdapter.getTagName(element)
+      if (isAsciiLowerCaseOf(tagName, token.tagName)) {
+        // The token takes the element's own name, as the pinned rule gives it for the end location.
+        token.tagName = tagName
+        this.openElements.shortenToLength(index)
+        return
+      }
+    }
   }
 
   /**

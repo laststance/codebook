@@ -535,6 +535,28 @@ test('an end tag still closes an svg element after an inner one of the same name
   )
 })
 
+// Value: protects=the learner against an editor link after an end tag that names an svg element with a letter outside ASCII, which a browser matches by lowering A to Z only; fails_when=the foreign end rule lowers every letter of the element's name as the pinned parser does, so `</gÀ>` misses an open `gÀ` and the style after it is read as text while a browser serves its live `vscode://file` link, or `</gk>` closes a `gK` written with a Kelvin sign that a browser leaves open; why_new=found by the Chrome comparison of Cycle 0046 second /ship PERF1's differential; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('an end tag closes an svg element whose name holds a letter outside ASCII only when the names match with A to Z lowered, so the link after it is judged where a browser reads it', () => {
+  // Arrange: the first two ends close gÀ and gK (Kelvin sign) with the title in them, so the style is svg markup; the last two ends match no element, so the title and the svg stay open.
+  const pages = [
+    '<svg><g\u00c0><title></g\u00c0><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><g\u212a><title></g\u212a><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><g\u212a><title></gk><style><a href="vscode://file/example">marker</a></style>',
+    '<table><tr><td><svg><g\u212a><title><svg><g></gk></svg><style></style></title><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<svg><g\u00c0><title></g\u00c0><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><g\u212a><title></g\u212a><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><g\u212a><title></gk><style><a href="vscode://file/example">marker</a></style>',
+    '<table><tr><td><svg><g\u212a><title><svg><g></gk></svg><style></style></title><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+  ])
+})
+
 // Value: protects=served Wiki links after HTML tree recovery; fails_when=full tree construction retains the marker across implicit and non-top closes is lost; why_new=row1058 browser comparisons; seam=none; no_claim=native or visual acceptance
 test('HTML form, button, heading, table and formatting rules keep later foreign links visible', () => {
   // Arrange: each expected result is fixed by the inert-browser comparison.
