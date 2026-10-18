@@ -356,30 +356,53 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    * @example reader.isEndAtForeignSpecialElement(miEnd) // => true for '<math><mi><span></mi>'
    */
   private isEndAtForeignSpecialElement(token: Parse5.Token.TagToken): boolean {
-    if (
-      !HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES.has(this.insertionMode) ||
-      !(
-        FOREIGN_SCOPE_END_TAG_IDS[htmlTree.NS.SVG].has(token.tagID) ||
-        FOREIGN_SCOPE_END_TAG_IDS[htmlTree.NS.MATHML].has(token.tagID)
-      )
-    )
-      return false
-    const { items, tagIDs, stackTop } = this.openElements
-    for (let index = stackTop; index > 0; index -= 1) {
-      const element = items[index]
-      const tagID = tagIDs[index]
-      if (
-        element === undefined ||
-        tagID === undefined ||
-        !this.treeAdapter.isElementNode(element)
-      )
-        continue
+    if (!this.mayEndAtForeignSpecialElement(token)) return false
+    for (let index = this.openElements.stackTop; index > 0; index -= 1) {
+      const open = this.openElementAt(index)
+      if (open === undefined) continue
       // The pinned rule matches by tag id before it asks whether the element is special.
-      if (tagID === token.tagID)
-        return this.treeAdapter.getNamespaceURI(element) !== htmlTree.NS.HTML
-      if (this._isSpecialElement(element, tagID)) return false
+      if (open.tagID === token.tagID)
+        return (
+          this.treeAdapter.getNamespaceURI(open.element) !== htmlTree.NS.HTML
+        )
+      if (this._isSpecialElement(open.element, open.tagID)) return false
     }
     return false
+  }
+
+  /**
+   * Tells whether an end can reach the body rules' end of an unknown name with the tag id of an svg or MathML integration point; called by {@link HtmlPageReader.isEndAtForeignSpecialElement} before its walk.
+   * @param token - The end token handled by HTML rules.
+   * @returns Whether the mode hands the end to the body rules and its tag id is an integration point's.
+   * @example reader.mayEndAtForeignSpecialElement(miEnd) // => true in IN_BODY
+   */
+  private mayEndAtForeignSpecialElement(token: Parse5.Token.TagToken): boolean {
+    return (
+      HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES.has(this.insertionMode) &&
+      (FOREIGN_SCOPE_END_TAG_IDS[htmlTree.NS.SVG].has(token.tagID) ||
+        FOREIGN_SCOPE_END_TAG_IDS[htmlTree.NS.MATHML].has(token.tagID))
+    )
+  }
+
+  /**
+   * Reads one entry of the stack of open elements as an element and its tag id; called by the reader's own walks of the stack.
+   * @param index - A position on the stack, from 0 to its top.
+   * @returns The element and its tag id, or `undefined` for an entry that is no element.
+   * @example reader.openElementAt(reader.openElements.stackTop) // => { element: currentNode, tagID: TAG_ID.P }
+   */
+  private openElementAt(index: number):
+    | {
+        element: Parse5.DefaultTreeAdapterMap['element']
+        tagID: Parse5.html.TAG_ID
+      }
+    | undefined {
+    const element = this.openElements.items[index]
+    const tagID = this.openElements.tagIDs[index]
+    return element !== undefined &&
+      tagID !== undefined &&
+      this.treeAdapter.isElementNode(element)
+      ? { element, tagID }
+      : undefined
   }
 
   /**
@@ -686,28 +709,51 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     isTarget: (tagID: Parse5.html.TAG_ID) => boolean,
     htmlScopeEnds: ReadonlySet<Parse5.html.TAG_ID>,
   ): boolean {
-    const { items, tagIDs, stackTop } = this.openElements
-    for (let index = stackTop; index >= 0; index -= 1) {
-      const element = items[index]
-      const tagID = tagIDs[index]
-      if (
-        element === undefined ||
-        tagID === undefined ||
-        !this.treeAdapter.isElementNode(element)
+    for (let index = this.openElements.stackTop; index >= 0; index -= 1) {
+      const open = this.openElementAt(index)
+      if (open === undefined) continue
+      const answer = this.scopeAnswerAt(
+        open.element,
+        open.tagID,
+        isTarget,
+        htmlScopeEnds,
       )
-        continue
-      const namespace = this.treeAdapter.getNamespaceURI(element)
-      if (namespace === htmlTree.NS.HTML) {
-        if (isTarget(tagID)) return true
-        if (htmlScopeEnds.has(tagID) || tagID === htmlTree.TAG_ID.SELECT)
-          return false
-      } else if (
-        (namespace === htmlTree.NS.SVG || namespace === htmlTree.NS.MATHML) &&
-        FOREIGN_SCOPE_END_TAG_IDS[namespace].has(tagID)
-      )
-        return false
+      if (answer !== undefined) return answer
     }
     return true
+  }
+
+  /**
+   * Answers one step of {@link HtmlPageReader.isInScopeEndingAtSelect} for one element of the stack: an HTML element looked for is in scope, and an HTML scope end, an HTML select or an svg or MathML integration point ends the scope.
+   * @param element - The element at this step.
+   * @param tagID - Its tag id.
+   * @param isTarget - Whether an HTML element of this tag id is the one looked for.
+   * @param htmlScopeEnds - The HTML elements that end this scope.
+   * @returns
+   * - `true` when the element is the HTML element looked for
+   * - `false` when it ends the scope
+   * - `undefined` when the walk goes on below it
+   * @example reader.scopeAnswerAt(select, TAG_ID.SELECT, isB, SCOPE_END_TAG_IDS) // => false
+   */
+  private scopeAnswerAt(
+    element: Parse5.DefaultTreeAdapterMap['element'],
+    tagID: Parse5.html.TAG_ID,
+    isTarget: (tagID: Parse5.html.TAG_ID) => boolean,
+    htmlScopeEnds: ReadonlySet<Parse5.html.TAG_ID>,
+  ): boolean | undefined {
+    const namespace = this.treeAdapter.getNamespaceURI(element)
+    if (namespace === htmlTree.NS.HTML) {
+      if (isTarget(tagID)) return true
+      return htmlScopeEnds.has(tagID) || tagID === htmlTree.TAG_ID.SELECT
+        ? false
+        : undefined
+    }
+    // An svg or MathML integration point ends every scope but the table scope.
+    return (namespace === htmlTree.NS.SVG ||
+      namespace === htmlTree.NS.MATHML) &&
+      FOREIGN_SCOPE_END_TAG_IDS[namespace].has(tagID)
+      ? false
+      : undefined
   }
 
   /**
