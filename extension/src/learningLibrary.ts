@@ -195,7 +195,7 @@ type WriterOfRecording = { directory: string; writer: WriterOfAnotherWindow }
 /**
  * Names the writers of other windows that this computer cannot confirm, for {@link LearningLibrary.refuseUnlessRemovable} once the plain refusal of a writer of this machine is ruled out: every such recording, so the learner agrees to each one that moves.
  * @param writers - The writers of the study's recordings that another window may still write, with their directories.
- * @returns Each such recording's directory, host, start and place; the writers on another computer come first, since the dialog's title and its warning follow the first. None when no writer is unconfirmed.
+ * @returns Each such recording's directory, host, start and place; writers on another computer come first in the list. None when no writer is unconfirmed.
  * @example unconfirmedWritersOf([{ directory, writer: { kind: 'on-another-host', host: 'laptop.home-network', createdAt } }]) // => [{ directory, host: 'laptop.home-network', startedAt: createdAt, place: 'another-computer' }]
  */
 function unconfirmedWritersOf(
@@ -229,7 +229,7 @@ function unconfirmedWritersOf(
  * @param found - The unconfirmed writers found under the lock.
  * @param agreed - The writers the learner's dialog named.
  * @returns `true` when both name the same recordings, each with the same host, start and place, in any order; `false` when a recording appeared, went, or changed since the dialog.
- * @example isSameWriterSet(found, removal.unconfirmedWriters) // => false once a recording of another host appeared while the dialog was open
+ * @example isSameWriterSet(found, agreed) // => false when a writer changed after the learner agreed
  */
 function isSameWriterSet(
   found: readonly UnconfirmedWriter[],
