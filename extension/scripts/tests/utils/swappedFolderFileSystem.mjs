@@ -39,7 +39,7 @@ export function swapBeforeMaking(isAwaited, swap) {
 }
 
 /**
- * Asks the next `writeFile` of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`. Called by the publisher's tests before they recover a Wiki with the same copy.
+ * Asks the next write of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`: a `writeFile` of it, or an `open` of it to write, through whose handle the publisher writes the files it records as its own. Called by the publisher's tests before they prepare, publish or recover a Wiki with the same copy.
  * @param {(path: string) => boolean} isAwaited - Whether a file `writeFile` is asked for is the one before which the swap runs.
  * @param {() => Promise<void>} swap - The swap.
  * @returns {void}
@@ -63,7 +63,7 @@ export function swapBeforeReading(isAwaited, swap) {
 }
 
 /**
- * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile} and {@link readFile}.
+ * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open} and {@link readFile}.
  * @param {'mkdir' | 'writeFile' | 'readFile'} kind - The call about to run.
  * @param {string | URL} path - The call's path.
  * @returns {Promise<void>} Once the swap ran, or at once when none waits for this path.
@@ -102,6 +102,22 @@ export async function mkdir(path, ...options) {
 export async function writeFile(path, ...rest) {
   await swapIfAwaited('writeFile', path)
   return fileSystem.writeFile(path, ...rest)
+}
+
+/**
+ * Opens a file as `open` does, after the swap of {@link swapBeforeWriting} when the file is opened to be written and is the file the swap waits for, as {@link writeFile} does.
+ * @param {string} path - The file to open.
+ * @param {string | number} [flags] - How the file is opened, as `open` takes it.
+ * @param {...unknown} rest - The caller's mode, handed on unchanged.
+ * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers.
+ * @example
+ * await open('/repo/.codebook/next/manual.txt', 'wx') // => a handle, after the swap that waited for this file
+ */
+export async function open(path, flags, ...rest) {
+  // Only an open to write is a write the swap waits for; a numeric flag the publisher does not use is left alone.
+  if (typeof flags === 'string' && /[wa+]/.test(flags))
+    await swapIfAwaited('writeFile', path)
+  return fileSystem.open(path, flags, ...rest)
 }
 
 /**
