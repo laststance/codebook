@@ -345,13 +345,13 @@ test('an owner of this pid namespace whose process id names no process is gone',
 
 // Value: protects=a lock, claim or marker a killed window left before the machine restarted is taken over although its pid namespace has another number now (WSL gives a distribution its namespace when it starts); fails_when=the namespace is compared before the kernel boot, so every record from before a restart counts as one of another namespace and stays for good (Cycle 0046 row 65); why_new=the form names the namespace since row 65; seam=the injected identity and the start reader, which must not be asked
 test('an owner of another pid namespace recorded under another kernel boot id is gone, although a process has its process id here', async () => {
-  // Arrange: a record written before the restart, in the namespace the distribution had then; this test process has its process id now.
+  // Arrange: a record this editor wrote before the restart, in the namespace the distribution had then; this test process has its process id now.
   const startsAsked: number[] = []
   // Act
   const isGone = await isRecordedOwnerGone(
     {
       pid: process.pid,
-      machineKey: '1fb1404a9738d5ed',
+      machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-before-the-restart' },
       processStart: 'linux@4026532214:100',
@@ -447,6 +447,7 @@ test('an owner without a process start that names its machine by digests alone i
     owner: {
       pid: number
       hostname?: string
+      machineKey?: string
       hostKey?: string
       boot?: { id: string } | { startedAtMs: number }
     },
@@ -464,8 +465,10 @@ test('an owner without a process start that names its machine by digests alone i
       pid: ID_OF_NO_PROCESS,
       boot: { id: 'boot-of-the-shared-kernel' },
     }),
+    // This editor's record from before the restart: the other editor's under another boot id may be another computer with this host name.
     recordedUnderAnotherKernelBoot: await judged({
       pid: process.pid,
+      machineKey: 'f9c8c7ddcf3d5f56',
       boot: { id: 'boot-before-the-restart' },
     }),
     recordedWithABootTime: await judged({
@@ -504,6 +507,54 @@ test('an owner without a process start that names its machine by digests alone i
     ofAnotherMachineUnderAnotherKernelBoot: false,
     withItsHostNameInClear: true,
     withItsHostNameInClearWhileItsProcessRuns: false,
+  })
+  assert.deepEqual(startsAsked, [])
+})
+
+// Value: protects=the Wiki update marker and its claim of a live window on another computer with this host name (two Macs with the default "<User>s-MacBook-Pro", or two Linux computers, on one shared project folder); fails_when=the equal host-name digest makes the record this machine's, so the other computer's boot id reads as an earlier boot of this one, or its process id is probed here, and its live owner is called gone; why_new=Cycle 0046 second ship, red team RT1; seam=the injected identity of a Linux window and the start reader, which must not be asked; no_claim=two computers with one host name where either side names no boot id (Windows) still look like one machine
+test('an owner of another computer with this host name, another editor’s machine id and another kernel boot id is never gone here, with or without its process start', async () => {
+  // Arrange: records of a window on the other computer, which has this window's host-name digest, its own machine-id digest and its own kernel boot id; no process here has the first and third records' process ids, and this test process has the second's.
+  const startsAsked: number[] = []
+  const readStart = async (pid: number): Promise<string> => {
+    startsAsked.push(pid)
+    return 'linux@4026531836:200'
+  }
+  const ofTheOtherComputer = {
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-other-computer' },
+  }
+  // Act
+  const judgements = {
+    withAStartWithoutAProcessHere: await isRecordedOwnerGone(
+      {
+        pid: ID_OF_NO_PROCESS,
+        ...ofTheOtherComputer,
+        processStart: 'linux@4026531836:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+      readStart,
+    ),
+    withAStartWithAnotherProcessHere: await isRecordedOwnerGone(
+      {
+        pid: process.pid,
+        ...ofTheOtherComputer,
+        processStart: 'linux@4026531836:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+      readStart,
+    ),
+    withoutAStart: await isRecordedOwnerGone(
+      { pid: ID_OF_NO_PROCESS, ...ofTheOtherComputer },
+      WINDOW_IN_NAMESPACE_4026531836,
+      readStart,
+    ),
+  }
+  // Assert
+  assert.deepEqual(judgements, {
+    withAStartWithoutAProcessHere: false,
+    withAStartWithAnotherProcessHere: false,
+    withoutAStart: false,
   })
   assert.deepEqual(startsAsked, [])
 })

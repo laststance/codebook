@@ -1105,6 +1105,57 @@ test('a claim on the marker that a window of another machine left more than 60 s
   }
 })
 
+// Value: protects=the running update of another computer on a shared project folder (iCloud Documents, NFS, a synced folder) when both computers have one host name, as two Macs with the default "<User>s-MacBook-Pro" do; fails_when=an equal host-name digest makes the other computer's marker this machine's although its machine-id digest and its boot id differ, so its boot id is read as an earlier boot of this machine (or its process id is probed here), its live marker is removed and a second update of the same Wiki starts beside the first; why_new=Cycle 0046 second ship, red team RT1; seam=none; no_claim=two computers with one host name where either side names no boot id (Windows) still look like one machine
+test('a marker of another computer with the same host name, another editor machine id and another boot is not removed, and a start beside it is refused', async () => {
+  // Arrange: the marker of a running update on another computer also named "workstation": this window's host-name digest, its own machine-id digest and kernel boot id, and a Linux start in the initial pid namespace 4026531836, which every Linux computer has. No process of this machine has its process id.
+  const wiki = await createWikiFolder()
+  const markerOfTheOtherComputer = {
+    pid: ID_OF_NO_PROCESS,
+    windowId: 'window-of-the-other-computer',
+    host: 'vscode',
+    startedAtMs: 1_790_000_000_000,
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-other-computer' },
+    processStart: 'linux@4026531836:777',
+  }
+  await writeFile(wiki.markerPath, JSON.stringify(markerOfTheOtherComputer))
+  try {
+    // Act
+    const start = await outcomeOf(
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: 1_790_000_060_000,
+        },
+        { ...AS_THIS_WINDOW, now: () => 1_790_000_060_000 },
+      ),
+    )
+
+    // Assert
+    assert.equal(start, 'held by window-of-the-other-computer')
+    assert.deepEqual(JSON.parse(await readFile(wiki.markerPath, 'utf8')), {
+      pid: ID_OF_NO_PROCESS,
+      windowId: 'window-of-the-other-computer',
+      host: 'vscode',
+      startedAtMs: 1_790_000_000_000,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: 'd195d36bd79da7df',
+      boot: { id: 'boot-of-the-other-computer' },
+      processStart: 'linux@4026531836:777',
+    })
+    assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
+      'wiki',
+      'wiki.update-run.json',
+    ])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the update of a window on another computer that took a Wiki over while this window's extension host was suspended at the end of its own run; fails_when=the resumed window removes "its" marker under a claim it no longer holds (the other window cleared it by its age), and what it removes is the other window's fresh marker, so a third window can start beside a running update (decision D9); why_new=Cycle 0046 row 2 (ER-4): a holder checks its claim before every change; seam=the suspended window's read of its own marker under its claim, after which the other window's whole start runs
 test('a window that was suspended under its claim at the end of its run, while a window of another machine cleared that claim by its age and started an update, leaves that window’s marker in place', async () => {
   // Arrange: a run that outlasted its bound, whose window is suspended for two minutes right after it read its own marker under its claim.

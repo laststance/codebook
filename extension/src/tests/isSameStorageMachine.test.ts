@@ -73,7 +73,7 @@ test('a record without host name and machine id matches by its host name’s dig
   assert.equal(withoutDigests, false)
 })
 
-// Value: protects=VS Code and Cursor on one computer, whose machine ids differ, judge each other's records by pid and start instead of leaving them for good; fails_when=different machine id digests outweigh an equal host-name digest. This also pins the stated limit: two computers with one host name look like one machine to such a record; why_new=the digests are new (ER-3, ER-13); seam=none
+// Value: protects=VS Code and Cursor on one computer, whose machine ids differ, judge each other's records by pid and start instead of leaving them for good; fails_when=different machine id digests outweigh an equal host-name digest. This also pins the stated limit: two computers with one host name look like one machine to such a record where neither names a boot id; why_new=the digests are new (ER-3, ER-13); seam=none
 test('a record of the other editor on one computer, with another machine id digest and the same host-name digest, is from this machine', () => {
   // Act
   const isOtherEditorsRecordFromThisMachine = isSameStorageMachine(
@@ -87,6 +87,56 @@ test('a record of the other editor on one computer, with another machine id dige
   )
   // Assert
   assert.equal(isOtherEditorsRecordFromThisMachine, true)
+})
+
+// Value: protects=the Wiki update marker and its claim of another computer with the same host name on one shared project folder (two Macs with the default "<User>s-MacBook-Pro" on iCloud Documents, NFS, a synced folder), while VS Code and Cursor on one computer still judge each other's records; fails_when=an equal host-name digest decides alone, so the other computer's record is this machine's, its boot id reads as an earlier boot and its live marker is removed, or an equal host-name digest no longer counts under the same boot, so a killed Cursor's marker refuses VS Code until it expires; why_new=Cycle 0046 second ship, red team RT1; seam=none; no_claim=two computers with one host name where either side names no boot id (Windows) still look like one machine
+test('a record with this host name’s digest and another machine id’s digest is from this computer under the same boot or without a boot id, and from another computer under another boot id', () => {
+  // Arrange: a VS Code window under the kernel boot "boot-1"; the digests are the first 16 hex characters of the SHA-256 of "machine-a", "machine-b" and "workstation".
+  const thisWindow = {
+    hostname: 'workstation',
+    machineId: 'machine-a',
+    machineKey: 'f9c8c7ddcf3d5f56',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-1' },
+  }
+  // Act
+  const judged = {
+    otherEditorUnderThisBoot: isSameStorageMachine(
+      {
+        machineKey: '1fb1404a9738d5ed',
+        hostKey: 'd195d36bd79da7df',
+        boot: { id: 'boot-1' },
+      },
+      thisWindow,
+    ),
+    otherEditorWithoutABootId: isSameStorageMachine(
+      { machineKey: '1fb1404a9738d5ed', hostKey: 'd195d36bd79da7df' },
+      { ...thisWindow, boot: { startedAtMs: 1_790_000_000_000 } },
+    ),
+    thisEditorBeforeARestart: isSameStorageMachine(
+      {
+        machineKey: 'f9c8c7ddcf3d5f56',
+        hostKey: 'd195d36bd79da7df',
+        boot: { id: 'boot-before-the-restart' },
+      },
+      thisWindow,
+    ),
+    anotherComputerWithOneHostName: isSameStorageMachine(
+      {
+        machineKey: '1fb1404a9738d5ed',
+        hostKey: 'd195d36bd79da7df',
+        boot: { id: 'boot-of-the-other-computer' },
+      },
+      thisWindow,
+    ),
+  }
+  // Assert
+  assert.deepEqual(judged, {
+    otherEditorUnderThisBoot: true,
+    otherEditorWithoutABootId: true,
+    thisEditorBeforeARestart: true,
+    anotherComputerWithOneHostName: false,
+  })
 })
 
 // Value: protects=the rule of every record that names its machine in clear (locks, takeover claims, descriptors and profile markers in private storage): two computers with one host name and different machine ids stay two machines; fails_when=a digest match is accepted for a record that carries a host name or a machine id, so the equal host-name digest makes them one machine; why_new=the digests are new (ER-3); seam=none

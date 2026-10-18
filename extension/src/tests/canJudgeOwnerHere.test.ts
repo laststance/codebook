@@ -211,11 +211,11 @@ test('an owner of another pid namespace under the same kernel boot cannot be jud
 
 // Value: protects=the predicate answers as the judgement does: a record from before a restart is judged (and is gone) whatever space of process ids it names, so the claim of a window killed before the restart is not kept for its 60 s lease as if it could not be judged; fails_when=the form decides before the kernel boot (Cycle 0046 row 65); why_new=the form names the namespace since row 65; seam=none
 test('an owner of another pid namespace recorded under another kernel boot id can be judged here, and so can one of this pid namespace', () => {
-  // Act
+  // Act: the record from before the restart names this editor's machine-id digest; one of the other editor under another boot id may be another computer with this host name.
   const ofAnotherNamespaceBeforeTheRestart = canJudgeOwnerHere(
       {
         pid: 4242,
-        machineKey: '1fb1404a9738d5ed',
+        machineKey: 'f9c8c7ddcf3d5f56',
         hostKey: 'd195d36bd79da7df',
         boot: { id: 'boot-before-the-restart' },
         processStart: 'linux@4026532214:100',
@@ -311,8 +311,13 @@ test('an owner that names its machine by digests alone and a Linux start without
       ...windowWithoutItsNamespace,
       boot: undefined,
     }),
+    // This editor's record from before the restart: the other editor's under another boot id may be another computer with this host name.
     underAnotherKernelBoot: canJudgeOwnerHere(
-      { ...byDigestsAlone, boot: { id: 'boot-before-the-restart' } },
+      {
+        ...byDigestsAlone,
+        machineKey: 'f9c8c7ddcf3d5f56',
+        boot: { id: 'boot-before-the-restart' },
+      },
       windowWithoutItsNamespace,
     ),
     withItsHostNameInClear: canJudgeOwnerHere(
