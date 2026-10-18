@@ -49,3 +49,28 @@ test('a recorded boot time exactly the tolerance before this boot’s is the sam
   assert.equal(atTheTolerance, false)
   assert.equal(pastTheTolerance, true)
 })
+
+// Value: protects=a record of this boot on macOS, whose boot session id stands beside a boot time the clock moves; fails_when=a boot time moved by a correction of the clock makes a record of the same boot session one of an earlier boot, so a live owner's lock is taken over (S4); why_new=Cycle 0046 third review S4: macOS names its boot by its session, with the boot time beside it; seam=none
+test('two equal boot ids are one boot whatever boot times stand beside them, and two that differ are two', () => {
+  // Act
+  const judged = {
+    sameSessionTimesTenMinutesApart: isFromEarlierBoot(
+      { id: 'session-1', startedAtMs: 1_790_000_000_000 },
+      { id: 'session-1', startedAtMs: 1_790_000_600_000 },
+    ),
+    otherSessionSameTime: isFromEarlierBoot(
+      { id: 'session-1', startedAtMs: 1_790_000_000_000 },
+      { id: 'session-2', startedAtMs: 1_790_000_000_000 },
+    ),
+    timeAloneOfAnEarlierBoot: isFromEarlierBoot(
+      { startedAtMs: 1_790_000_000_000 },
+      { id: 'session-2', startedAtMs: 1_790_000_600_000 },
+    ),
+  }
+  // Assert
+  assert.deepEqual(judged, {
+    sameSessionTimesTenMinutesApart: false,
+    otherSessionSameTime: true,
+    timeAloneOfAnEarlierBoot: true,
+  })
+})

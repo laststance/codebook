@@ -121,6 +121,35 @@ test('a record with the process start and the digests is read with them, and a r
   })
 })
 
+// Value: protects=a Mac window's lock, which names its boot session and the computed boot time beside it: this build reads both, and a window of 0.2.29.0 reads the session's id alone, which it never weighs against its own boot time, so a clock set forward no longer makes it take over the lock; fails_when=this build's schema drops the boot time beside the id, so a Mac window that could not read its session compares with no time at all, or the release reads the record's time and weighs it (S4); why_new=Cycle 0046 third review S4: macOS records its boot session; seam=none (the record's text, read with this build's schema and with the release's)
+test('a Mac lock’s boot, its session id with the boot time beside it, is read whole by this build and as its session id alone by 0.2.29.0', async (context) => {
+  // Arrange
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'of-a-mac.lock')
+  const lockText =
+    '{"pid":4242,"hostname":"laptop.lan","machineId":"machine-a","boot":{"id":"8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14","startedAtMs":1790000000000},"processStart":"ps:Mon Oct  5 09:12:33 2026"}'
+  await writeFile(lockPath, lockText)
+  // Act
+  const readByThisBuild = await readRecordedOwner(lockPath),
+    readByTheRelease = ownerSchemaOfRelease0229.safeParse(JSON.parse(lockText))
+  // Assert
+  assert.deepEqual(
+    {
+      thisBuild: readByThisBuild?.boot,
+      release: readByTheRelease.success
+        ? readByTheRelease.data.boot
+        : 'not read',
+    },
+    {
+      thisBuild: {
+        id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14',
+        startedAtMs: 1_790_000_000_000,
+      },
+      release: { id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14' },
+    },
+  )
+})
+
 // Value: protects=the start and the end of a Wiki update in a project whose repository carries a link to a pipe where an owner record beside the marker would lie (row 110: the read would hold the claim on the marker for good); fails_when=the record is read with a plain file read, which follows the link and waits for a writer of the pipe that never comes; why_new=Cycle 0046 row 110: owner records beside the marker were read without a bound and through links; seam=none (a real named pipe, whose waiting reader the test releases when it ends)
 test(
   'an owner record whose path holds a link to a named pipe is not waited on: the read answers at once and names no owner',

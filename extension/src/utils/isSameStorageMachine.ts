@@ -1,5 +1,3 @@
-import { STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS } from '../constants'
-
 import { namesMachineInClear } from './namesMachineInClear'
 import type {
   BootIdentity,
@@ -14,27 +12,26 @@ type MachineNames = Pick<
 >
 
 /**
- * Says whether a record and this process ran under one boot of one machine: two equal kernel boot ids (Linux), or two boot times within {@link STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS} of each other (macOS, Windows, where each is the clock minus the uptime); called by {@link isSameStorageMachine} for an equal editor's machine id under another host name.
- * Why: VS Code keeps its machine id in the editor's user data folder, so two computers that share a home folder (a network home, a copied profile) share it, while a host name that follows the network (macOS) changes within one boot.
+ * Says whether a record and this process ran under one boot of one machine, by an exact boot id alone: the kernel's boot id on Linux, the boot session on macOS ({@link readBootIdentity}); called by {@link isSameStorageMachine} for an equal editor's machine id under another host name.
+ * Why: VS Code keeps its machine id in the editor's user data folder, so two computers that share a home folder (a network home, a copied profile, lab computers with a redirected profile) share it, while a host name that follows the network (macOS) changes within one boot. A computed boot time (the clock minus the uptime) proves nothing: two such computers can start within the same minute. Windows names its boots by no id, so there an equal machine id counts only with the same host name.
  * @param recorded - The boot the record names; `undefined` for one that names none (an earlier build, or a computed time beside an unknown start).
- * @param current - The boot of this process; `undefined` where the caller leaves a boot time out ({@link withoutBootTime}).
- * @returns `true` for two equal kernel boot ids and for two boot times within the tolerance; `false` when either is unknown, for an id beside a time, and for two that differ.
+ * @param current - The boot of this process.
+ * @returns `true` for two equal boot ids; `false` when either names no id, and for two that differ, whatever boot times they name.
  * @example
  * isSameBoot({ id: 'boot-1' }, { id: 'boot-1' })                       // => true
- * isSameBoot({ startedAtMs: 1_000 }, { startedAtMs: 31_000 })          // => true (30 s apart)
+ * isSameBoot({ startedAtMs: 1_000 }, { startedAtMs: 31_000 })          // => false: a boot time proves no machine
  * isSameBoot({ id: 'boot-1' }, { id: 'boot-2' })                       // => false
  */
 function isSameBoot(
   recorded: BootIdentity | undefined,
   current: BootIdentity | undefined,
 ): boolean {
-  if (!recorded || !current) return false
-  if ('id' in recorded && 'id' in current) return recorded.id === current.id
   return (
-    'startedAtMs' in recorded &&
-    'startedAtMs' in current &&
-    Math.abs(current.startedAtMs - recorded.startedAtMs) <=
-      STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
+    recorded !== undefined &&
+    current !== undefined &&
+    'id' in recorded &&
+    'id' in current &&
+    recorded.id === current.id
   )
 }
 

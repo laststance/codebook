@@ -165,8 +165,8 @@ test('a record of another computer that shares this editor’s machine id, under
   })
 })
 
-// Value: protects=the locks and recordings of a Mac whose host name follows the network, which stay judged by their process within one boot (Cycle 0046 row 2); fails_when=the boot that confirms an equal machine id is compared exactly, so a boot time that a correction of the clock moved by seconds makes this machine another host, or the same host name with an equal machine id needs a boot; why_new=Cycle 0046 adversarial review AD3: the boot is new to the comparison of machines; seam=none
-test('a record of this machine after its host name changed within one boot is still this machine’s, by its kernel boot id or by a boot time a clock correction moved by seconds', () => {
+// Value: protects=the locks, markers and recordings of a Mac whose host name follows the network, which stay judged by their process within one boot (Cycle 0046 row 2); fails_when=the boot that confirms an equal machine id is not its id, so a Mac's boot session with a boot time a correction of the clock moved by seconds makes this machine another host, or the same host name with an equal machine id needs a boot; why_new=Cycle 0046 adversarial review AD3, and third review S4: only an exact boot id proves one machine, and macOS names its boot by its session; seam=none
+test('a record of this machine after its host name changed within one boot is still this machine’s, by its kernel boot id or by its macOS boot session, whatever boot time a clock correction moved', () => {
   // Act
   const judged = {
     byKernelBootId: isSameStorageMachine(
@@ -181,16 +181,22 @@ test('a record of this machine after its host name changed within one boot is st
         boot: { id: 'boot-1' },
       },
     ),
-    byBootTimeThirtySecondsApart: isSameStorageMachine(
+    byMacBootSession: isSameStorageMachine(
       {
         hostname: 'laptop.home-network',
         machineId: 'machine-a',
-        boot: { startedAtMs: 1_790_000_000_000 },
+        boot: {
+          id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14',
+          startedAtMs: 1_790_000_000_000,
+        },
       },
       {
         hostname: 'laptop.lan',
         machineId: 'machine-a',
-        boot: { startedAtMs: 1_790_000_030_000 },
+        boot: {
+          id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14',
+          startedAtMs: 1_790_000_030_000,
+        },
       },
     ),
     sameHostNameWithoutABoot: isSameStorageMachine(
@@ -201,7 +207,55 @@ test('a record of this machine after its host name changed within one boot is st
   // Assert
   assert.deepEqual(judged, {
     byKernelBootId: true,
-    byBootTimeThirtySecondsApart: true,
+    byMacBootSession: true,
     sameHostNameWithoutABoot: true,
+  })
+})
+
+// Value: protects=the locks, markers and recordings of another computer that shares this editor's machine id (lab computers with a redirected profile, a network home), on macOS and on Windows, where the boot is a computed time; fails_when=two boot times within a minute of each other make the two one machine, so each probes the other's process id here, finds none, and takes over a live lock or moves a live recording without the learner's choice (S4); why_new=Cycle 0046 third review S4 (Claude adversarial #4 and #5, Codex R3B1-2): a computed boot time proves nothing; seam=none
+test('two computers that share an editor’s machine id under other host names are two computers when their boots started 30 s apart, by their macOS boot sessions and on Windows, where only the host name decides', () => {
+  // Arrange: two lab computers, lab-17 and lab-18, with the machine id "machine-a"; their boots started 30 s apart.
+  const lab18 = { hostname: 'lab-18', machineId: 'machine-a' }
+  // Act
+  const judged = {
+    twoMacs: isSameStorageMachine(
+      {
+        hostname: 'lab-17',
+        machineId: 'machine-a',
+        boot: {
+          id: '1F0B6C2E-7A3D-4C58-B1E9-62D4A08F3C71',
+          startedAtMs: 1_790_000_000_000,
+        },
+      },
+      {
+        ...lab18,
+        boot: {
+          id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14',
+          startedAtMs: 1_790_000_030_000,
+        },
+      },
+    ),
+    twoWindowsComputers: isSameStorageMachine(
+      {
+        hostname: 'lab-17',
+        machineId: 'machine-a',
+        boot: { startedAtMs: 1_790_000_000_000 },
+      },
+      { ...lab18, boot: { startedAtMs: 1_790_000_030_000 } },
+    ),
+    oneWindowsComputerByItsHostName: isSameStorageMachine(
+      {
+        hostname: 'lab-18',
+        machineId: 'machine-a',
+        boot: { startedAtMs: 1_790_000_000_000 },
+      },
+      { ...lab18, boot: { startedAtMs: 1_790_000_030_000 } },
+    ),
+  }
+  // Assert
+  assert.deepEqual(judged, {
+    twoMacs: false,
+    twoWindowsComputers: false,
+    oneWindowsComputerByItsHostName: true,
   })
 })

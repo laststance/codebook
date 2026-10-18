@@ -232,3 +232,29 @@ test('an editor that answers the placeholder machine id is identified by its hos
   assert.equal(owner.machineId, undefined)
   assert.equal(owner.hostname, hostname())
 })
+
+// Value: protects=the record of a Mac window whose start query fails: it keeps its boot session's id, which no clock moves, so another window still tells it of an earlier boot after a restart, and still tells it this machine's after a host-name change; fails_when=the whole boot is left out while the start is unknown, so the session's id goes with the boot time beside it (S4); why_new=Cycle 0046 third review S4: macOS names its boot by its session, with the boot time beside it; seam=the kernel boot id file, the system and the runner of the boot session query, and the injected start reader
+test('on macOS while the start of this process cannot be read its record keeps the boot session’s id and no computed boot time', async (context) => {
+  // Arrange: no kernel boot id, as on macOS; sysctl names the session; the start query fails.
+  answerKernelBootId(context, undefined)
+  const startInputs: ProcessStartInputs = {
+    ownStart: {},
+    platform: 'darwin',
+    run: async () => {
+      throw new Error('ps: process ended')
+    },
+  }
+  // Act
+  const recorded = await currentStorageOwner(startInputs, {
+    platform: 'darwin',
+    run: async () => ({ stdout: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14\n' }),
+  })
+  // Assert
+  assert.deepEqual(
+    { processStart: recorded.processStart, boot: recorded.boot },
+    {
+      processStart: undefined,
+      boot: { id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14' },
+    },
+  )
+})

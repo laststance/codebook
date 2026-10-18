@@ -100,7 +100,7 @@ function atThisMoment({
 /**
  * Names this process's machine and process as a file in a learner's project folder may: by the two pseudonyms of the machine, the kernel's boot id and the process start, never by the host name or the editor's machine id, which a commit of the folder would publish; called by {@link claimWikiUpdateMarker} for the marker's record and by {@link tryMarkerClaim} for the claim's.
  * @param identity - The identity of this process.
- * @returns `machineKey`, `hostKey`, `boot` only when it is a kernel boot id ({@link withoutBootTime}), and `processStart`.
+ * @returns `machineKey`, `hostKey`, `boot` only when it is a boot id ({@link withoutBootTime}), and `processStart`.
  * @example
  * machineAndProcessOf({ hostname: 'workstation', machineId: 'machine-a', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux:16362446' })
  * // => { machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux:16362446' }

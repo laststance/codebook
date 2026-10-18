@@ -39,7 +39,7 @@ function namesNoMachine(owner: RecordedOwner): boolean {
  * @param identity - The machine and the boot of this process; {@link currentStorageOwner} when left out.
  * @returns
  * - `true` when the descriptor names no machine and its process id names no process ({@link isProcessGone})
- * - `true` when the descriptor names this machine and an earlier kernel boot id, a process id that no longer exists, or a process id that another process has now ({@link isRecordedOwnerGone}, judged without a boot time, see {@link withoutBootTime})
+ * - `true` when the descriptor names this machine and an earlier boot id, a process id that no longer exists, or a process id that another process has now ({@link isRecordedOwnerGone}, judged without a boot time, see {@link withoutBootTime})
  * - `false` for a descriptor of another machine, one without a process id, one that cannot be read, and one whose process may still run: each may belong to a running window
  * @example
  * await isDescriptorOwnerGone('/storage/agent/instance.connection.json') // => true after its window was killed

@@ -116,7 +116,7 @@ function isRunMarkerExpired(marker: WikiUpdateMarker, nowMs: number): boolean {
  * Why: a process start that counts from the boot (Linux) can repeat after a restart, with the same process id, so there only a marker of this boot is verified by its start.
  * @param marker - The marker beside the Wiki.
  * @param identity - The identity of this process.
- * @returns `true` where this process knows no kernel boot id (a start there is a time of day), and for a marker that records this boot's id; `false` for a marker of another boot or without one.
+ * @returns `true` where this process knows no boot id (a start there is a time of day), and for a marker that records this boot's id; `false` for a marker of another boot or without one.
  * @example
  * isRecordedUnderThisBoot({ pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 0, boot: { id: 'boot-1' } }, { hostname: 'workstation', boot: { id: 'boot-2' } }) // => false
  */
@@ -168,7 +168,7 @@ async function isVerifiedLiveOwner(
 
 /**
  * Says whether the process a marker names no longer exists; called by {@link mayMarkerOwnerRun} for a marker that is neither verified nor ahead of the clock.
- * A marker of this build names its machine by pseudonyms and is judged like every owner record ({@link isRecordedOwnerGone}): one of another machine, of another system or pid namespace of this computer, of a Linux window whose pid namespace could not be read, or of a window whose own process start could not be read (its marker records none) is never gone by its process id here and counts until it expires; the last is gone only when it was recorded under another kernel boot id. A marker of 0.2.29.0 names no machine, and its process id is probed here, as that build does.
+ * A marker of this build names its machine by pseudonyms and is judged like every owner record ({@link isRecordedOwnerGone}): one of another machine, of another system or pid namespace of this computer, of a Linux window whose pid namespace could not be read, or of a window whose own process start could not be read (its marker records none) is never gone by its process id here and counts until it expires; the last is gone only when it was recorded under another boot id. A marker of 0.2.29.0 names no machine, and its process id is probed here, as that build does.
  * Limit: two computers with one host name look like one, so a process id of the other is probed here.
  * @param marker - The marker beside the Wiki.
  * @param judgement - The identity of this process and the reader of process starts.
@@ -334,7 +334,7 @@ async function lookAtUnreadableEntry(
 /**
  * Looks at the marker another editor window's Wiki update left beside the Wiki and names what it found, so a second window does not start a second update of the same Wiki and removes only a marker that is nobody's.
  *
- * Why: each window holds its own run state, and until the first window's agent stages a candidate nothing else on disk shows its run. A marker records its owner's machine by two pseudonyms, its process id, its kernel boot id and its process start, so a marker a killed editor left is told from a running window's even when another process has its id, and a marker of another machine is not judged by a process id of this one.
+ * Why: each window holds its own run state, and until the first window's agent stages a candidate nothing else on disk shows its run. A marker records its owner's machine by two pseudonyms, its process id, its boot id and its process start, so a marker a killed editor left is told from a running window's even when another process has its id, and a marker of another machine is not judged by a process id of this one.
  * Trigger: the extension reads it when an update starts, before the candidate rule, and {@link claimWikiUpdateMarker} when its exclusive creation finds a marker in the way and again under its claim.
  * Limits: with a window of 0.2.29.0 on the same project folder the marker is judged as that build writes it, by its process id alone. Machines whose clocks differ by more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} are not protected from each other by a marker.
  *
