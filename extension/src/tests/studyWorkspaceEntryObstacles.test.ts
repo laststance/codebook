@@ -3232,6 +3232,66 @@ test('in Cursor, a selection after the learner closed one of their groups still 
   }
 })
 
+// Value: protects=this host's own Study pane when its panel reports a column other than its tab's group, beside a dead Study pane of the earlier host named exactly as this host's own: after a removed group made every tab object new, the dead pane's one note meets two unnoted Study tabs of its key outside the column the panel reports, so none of them takes the note, and this host's own pane is never taken for a dead one; fails_when=every successor of a vanished key is noted, so this host's own Study pane is noted dead too, and the selection closes it with the earlier host's leftover tabs (Cycle 0046 FX-D1-2's rule that more successors than notes are none); why_new=second Step 7 audit, path 23 (a mutation of that rule passed every Entry, EntryObstacles and Lifecycle test); seam=as the FX-D1-2 test, the dead pane's input renamed to the view type this host's own Study pane carries, and reportPanelColumn (a test-only harness option for a panel whose viewColumn differs from its tab's group) while the selection's admission reads the dead panes; no_claim=whether Cursor reports such a column
+test('in Cursor, a selection after a removed group made every tab object new keeps this host’s own Study pane, whose panel reported another column, when a dead Study pane of the same name stands beside it', async () => {
+  // Arrange: as the test above, with the dead Study pane named as this host's own Study pane; the learner closes the group of scratch.ts, and Cursor builds every tab object anew.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}, {}, {}] })
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  try {
+    harness.leaveEmptyGroup(2)
+    harness.leaveEmptyGroup(3)
+    harness.focusMutableDraft('other.ts', 3)
+    const deadStudy = harness.leaveDeadCodebookPane(
+      'codebook.studyContext',
+      4,
+      { refuseClose: true },
+    )
+    deadStudy.input = new harness.editor.TabInputWebview(
+      'codebook.studyContext',
+    )
+    harness.focusMutableDraft('scratch.ts', 5)
+    harness.focusMutableDraft('notes.ts', 1)
+    await harness.reader.open()
+    const studyColumnAtOpen = harness.panelColumn('codebook.studyContext')
+    const scratchGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'scratch.ts'),
+    )!
+    await harness.editor.window.tabGroups.close(scratchGroup, true)
+    const state = harness.reader.presentationState()
+
+    // Act: the selection's admission reads the dead panes first, while this host's Study panel reports the captured source's column instead of its tab's; the panel reports its own column again right after.
+    harness.reportPanelColumn('codebook.studyContext', 2)
+    const selecting = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    harness.reportPanelColumn('codebook.studyContext')
+    await selecting.catch(() => undefined)
+
+    // Assert: this host's own Study pane still stands in its column, beside the dead one.
+    assert.deepEqual(
+      {
+        studyColumnAtOpen,
+        studyPaneColumn: harness.panelColumn('codebook.studyContext'),
+        studyTabColumns: harness.groups
+          .filter((group) =>
+            group.tabs.some((tab) => tab.label === 'codebook · Study'),
+          )
+          .map((group) => group.viewColumn),
+      },
+      { studyColumnAtOpen: 3, studyPaneColumn: 3, studyTabColumns: [3, 4] },
+    )
+  } finally {
+    harness.reportPanelColumn('codebook.studyContext')
+    harness.acceptDeadPaneClose()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of why VS Code's chat editor tab has the keyboard again after an agent's cold Study select retired the earlier window's leftover group: the proof focused that group, its removal gave the keyboard to the group before it, and the chat tab's group gets it back through its focus command; the sentence told once names the leftover's close and no pause; fails_when=the leftover proof's give-back tells row 632's pause sentence, "(at a pause, to the paused file the debugger opened)", for a pause that did not happen; why_new=Cycle 0046 row 648; seam=applicationGroupMarkers, leaveEmptyGroup, leaveDeadCodebookPane, focusChatEditorTab (VS Code's TabInputChat), closeDisposedPanelTabsLater, the reader's changePresentation for an agent (codebook_presentation), the command log and the information messages
 test('an agent’s cold Study select in VS Code that retires the earlier window’s leftover group while the chat editor tab has the keyboard gives that chat its keyboard back and says once that closing the leftover moved it, naming no pause', async () => {
   // Arrange: the earlier window recorded its Application group at column 1, where the old host's Application pane is left dead; the learner's notes stand in column 2, and VS Code's chat editor tab in column 3 has the keyboard.

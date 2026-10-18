@@ -1018,6 +1018,8 @@ export async function workspaceHarness(
   let replacesGroupObjectsOnTabChanges = false
   /** The fake editor answers a removed group with new Tab objects, as Cursor does; see `rebuildTabObjectsAtGroupRemoval`. */
   let rebuildsTabObjectsAtGroupRemoval = false
+  /** The view column a panel of a kind reports while it differs from the column of its tab's group; see `reportPanelColumn`. */
+  const reportedPanelColumns = new Map<string, number | undefined>()
   /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
@@ -2618,7 +2620,7 @@ export async function workspaceHarness(
     const disposed: (() => void)[] = [],
       viewChanged: (() => void)[] = []
     // Native webviews create only one missing group, even when a later column was requested.
-    const viewColumn = options?.viewColumn
+    let actualViewColumn = options?.viewColumn
       ? nativeReaderColumn(options.viewColumn)
       : options?.viewColumn
     const value = {
@@ -2775,7 +2777,15 @@ export async function workspaceHarness(
         return nativeTab
       },
       emit,
-      viewColumn,
+      /** The panel's column as the editor's WebviewPanel reports it: its tab's group's column, unless `reportPanelColumn` makes it report another. */
+      get viewColumn(): number | undefined {
+        return reportedPanelColumns.has(kind)
+          ? reportedPanelColumns.get(kind)
+          : actualViewColumn
+      },
+      set viewColumn(column: number | undefined) {
+        actualViewColumn = column
+      },
       get title() {
         return title
       },
@@ -5561,6 +5571,19 @@ export async function workspaceHarness(
      */
     rebuildTabObjectsAtGroupRemoval(): void {
       rebuildsTabObjectsAtGroupRemoval = true
+    },
+    /**
+     * Makes the panels of one kind report a view column other than the column of the group their tab stands in, until it is called again without a column; a test-only model of a panel whose `viewColumn` and tab's group disagree, which no editor was seen to report. The harness's own reveal and move logic reads the same property, so a test keeps the window short.
+     * @param kind - The panel's view type, `codebook.studyContext` for the Study pane.
+     * @param column - The column to report; left out, the panels report their tab's group's column again.
+     * @example harness.reportPanelColumn('codebook.studyContext', 5)
+     */
+    reportPanelColumn(
+      kind: string,
+      ...column: [number | undefined] | []
+    ): void {
+      if (column.length) reportedPanelColumns.set(kind, column[0])
+      else reportedPanelColumns.delete(kind)
     },
     /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. Whatever gives an editor group, a text editor or the chat the keyboard ends that: a group focus command, Cursor's Focus Agent, a pane revealed or a document shown with the focus, the chat's `focus` and `focusTab`, and the learner's `focusMutableDraft`. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
     keyboardOnBody: () => keyboardOnBody,
