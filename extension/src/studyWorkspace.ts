@@ -696,8 +696,10 @@ export class StudyWorkspace {
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
   private answeredRunRefusalId?: string
   private readonly errors = new Map<ReaderErrorKind, string>()
-  /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. */
+  /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. Asked through {@link isInheritedPaneTab}, which first follows a noted tab Cursor built anew. */
   private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
+  /** The same notes, each tab with the key it is found again by ({@link learnerTabKey}) once Cursor built its object anew; {@link followRebuiltInheritedPanes} keeps them current (Cycle 0046 FX-D1-2). */
+  private readonly inheritedPaneKeys = new Map<vscode.Tab, string>()
   private readonly documents = new Map<string, string>()
   /** Public provider notifications retain the selected native input while {@link renderSelection} changes live or historical captured bytes. */
   private readonly sourceChanges = new vscode.EventEmitter<vscode.Uri>()
@@ -1360,13 +1362,90 @@ export class StudyWorkspace {
    * ```
    */
   private rememberInheritedPanes(): void {
+    this.followRebuiltInheritedPanes()
     const ownsWorkspacePane = Boolean(this.app || this.contextPanel),
       ownsWikiPane = this.ownsRepositoryWikiPane()
     for (const tab of vscode.window.tabGroups.all.flatMap(
       (group) => group.tabs,
     ))
       if (this.isPaneTabWithoutOwner(tab, ownsWorkspacePane, ownsWikiPane))
-        this.inheritedPaneTabs.add(tab)
+        this.noteInheritedPaneTab(tab)
+  }
+
+  /**
+   * Notes one tab as a pane an earlier extension host left, by its object and by the key it is found again by; called by {@link rememberInheritedPanes} and {@link followRebuiltInheritedPanes}.
+   * @param tab - The dead pane's current tab.
+   * @example this.noteInheritedPaneTab(tab)
+   */
+  private noteInheritedPaneTab(tab: vscode.Tab): void {
+    this.inheritedPaneTabs.add(tab)
+    this.inheritedPaneKeys.set(tab, this.learnerTabKey(tab))
+  }
+
+  /**
+   * Says whether a tab is a pane an earlier extension host left; asked by {@link deadPaneTabs}, {@link isOwnPaneOrSourceTab} and {@link hasUnownedPaneTab}, after the notes were carried over a rebuilt tab model ({@link followRebuiltInheritedPanes}).
+   * @param tab - A current tab of the window.
+   * @returns `true` for a noted dead pane, also one Cursor built anew; `false` otherwise.
+   * @example this.isInheritedPaneTab(tab) // => true for the dead Study tab after Cursor answered a removed group with new tab objects
+   */
+  private isInheritedPaneTab(tab: vscode.Tab): boolean {
+    this.followRebuiltInheritedPanes()
+    return this.inheritedPaneTabs.has(tab)
+  }
+
+  /**
+   * Carries the notes of dead panes over to the new tab objects Cursor builds when it answers a removed group (or another whole-model update) with a new tab model (3.23.12 `workbench.desktop.main.js` 17269:26248; its extension host's `$acceptEditorTabModel`), so a dead Application or Study pane stays known while this host owns a pane of its kind, which the owner-less rule of {@link rememberInheritedPanes} cannot see again (Cycle 0046 FX-D1-2). Called by {@link rememberInheritedPanes} and {@link isInheritedPaneTab}.
+   * A noted tab that left the tab model is found again among the Application and Study tabs not noted yet by its key ({@link learnerTabKey}): a tab of the column where this host's own pane of that kind stands is never taken, since this host holds one pane of each kind and no tab tells a rebuilt pane from its own there. Where more such tabs of a key stand than notes of it left the model, none is taken: which one is dead cannot be told. A note whose tab is gone without a successor is forgotten, as the editor closed that pane.
+   * @example this.followRebuiltInheritedPanes() // the dead Study tab of column 4 is noted again under its new object
+   */
+  private followRebuiltInheritedPanes(): void {
+    if (!this.inheritedPaneKeys.size) return
+    const groups = vscode.window.tabGroups.all,
+      current = new Set(groups.flatMap((group) => group.tabs))
+    const vanishedKeys = [...this.inheritedPaneKeys].flatMap(([tab, key]) =>
+      current.has(tab) ? [] : [key],
+    )
+    // Nothing was rebuilt or closed since the notes were taken.
+    if (!vanishedKeys.length) return
+    for (const tab of [...this.inheritedPaneKeys.keys()])
+      if (!current.has(tab)) this.inheritedPaneKeys.delete(tab)
+    const candidates = groups.flatMap((group) =>
+      group.tabs.filter(
+        (tab) =>
+          this.isCodebookPaneInput(
+            tab.input,
+            'codebook.scopedBrowser',
+            'codebook.studyContext',
+          ) &&
+          !this.inheritedPaneTabs.has(tab) &&
+          !this.mayBeOwnPaneTabOf(group, tab),
+      ),
+    )
+    for (const key of new Set(vanishedKeys)) {
+      const successors = candidates.filter(
+        (tab) => this.learnerTabKey(tab) === key,
+      )
+      // Each vanished note answers for one successor; more successors than notes leave the dead one unknown.
+      if (
+        successors.length <=
+        vanishedKeys.filter((vanished) => vanished === key).length
+      )
+        for (const tab of successors) this.noteInheritedPaneTab(tab)
+    }
+  }
+
+  /**
+   * Says whether a pane tab may be this host's own pane: an Application or Study tab in the column where this host's pane of that kind stands; asked by {@link followRebuiltInheritedPanes} before it takes a tab for a rebuilt dead pane.
+   * @param group - The tab's current group.
+   * @param tab - An Application or Study pane tab.
+   * @returns `true` in the column of this host's pane of the tab's kind; `false` when this host holds no pane of that kind, or holds it in another column.
+   * @example this.mayBeOwnPaneTabOf(contextGroup, studyTab) // => true in the Study pane's own column
+   */
+  private mayBeOwnPaneTabOf(group: vscode.TabGroup, tab: vscode.Tab): boolean {
+    const panel = this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
+      ? this.app
+      : this.contextPanel
+    return panel !== undefined && panel.viewColumn === group.viewColumn
   }
 
   /**
@@ -1420,7 +1499,7 @@ export class StudyWorkspace {
     this.rememberInheritedPanes()
     return vscode.window.tabGroups.all
       .flatMap((group) => group.tabs)
-      .filter((tab) => this.inheritedPaneTabs.has(tab))
+      .filter((tab) => this.isInheritedPaneTab(tab))
   }
 
   /**
@@ -9836,7 +9915,7 @@ export class StudyWorkspace {
         'codebook.scopedBrowser',
         'codebook.studyContext',
       ) &&
-        !this.inheritedPaneTabs.has(tab))
+        !this.isInheritedPaneTab(tab))
     )
   }
 
@@ -19735,7 +19814,7 @@ export class StudyWorkspace {
       group.tabs.some(
         (tab) =>
           this.isCodebookPaneInput(tab.input, ...kinds) &&
-          !this.inheritedPaneTabs.has(tab),
+          !this.isInheritedPaneTab(tab),
       ),
     )
   }
