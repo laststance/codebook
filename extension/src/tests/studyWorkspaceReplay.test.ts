@@ -979,6 +979,25 @@ test('the workspace harness’s historical debugger follows the model-selection 
         firstHold.release()
         await Promise.all([firstPresenting, nextPresenting])
       },
+      presentAgainWhileNewerAnswerHeld: async (older, newer) => {
+        const olderHold = harness.holdNextCommand(
+          'workbench.action.debug.focusProcess',
+        )
+        const olderPresenting = presentFrame(older)
+        await olderHold.started
+        const newerHold = harness.holdNextCommand(
+          'workbench.action.debug.focusProcess',
+        )
+        const newerPresenting = presentFrame(newer)
+        await newerHold.started
+        // The older answer comes for a stop no longer shown; the fake's presentation of it ends with it.
+        olderHold.release()
+        await olderPresenting
+        // The fake's next frame takes the answer in flight from its presentation on.
+        const againPresenting = presentFrame(newer)
+        newerHold.release()
+        await Promise.all([newerPresenting, againPresenting])
+      },
       invalidate: () => debuggerView.invalidate(),
       selections: () => modelSelections() - selectionsBefore,
     }

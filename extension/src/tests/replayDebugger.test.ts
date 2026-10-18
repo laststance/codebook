@@ -553,6 +553,22 @@ test('the real historical debugger follows the model-selection scenario the work
       firstHold.answer()
       await Promise.all([firstPresenting, nextPresenting])
     },
+    presentAgainWhileNewerAnswerHeld: async (older, newer) => {
+      const olderHold = holdNextSelection()
+      const olderPresenting = presentFrame(older)
+      await olderHold.held
+      const newerHold = holdNextSelection()
+      const newerPresenting = presentFrame(newer)
+      await newerHold.held
+      // The older answer comes for a stop no longer shown; its presentation, superseded, ends with it.
+      olderHold.answer()
+      await olderPresenting
+      const againChooses = focusRead(fixture.editor)
+      const againPresenting = presentFrame(newer)
+      await againChooses
+      newerHold.answer()
+      await Promise.all([newerPresenting, againPresenting])
+    },
     invalidate: () => fixture.owner.invalidate(),
     selections: () => selections,
   }
