@@ -134,8 +134,8 @@ export function rebindDeepWikiEditorLinks(
       (_entry, opening: string, linkEnd: string, closing: string) =>
         `${opening}${linkEnd}${closing}`,
     )
-  // The id of the added description is chosen once for the page, the first time an entry needs it.
-  let targetId: string | undefined
+  // The id of the added description is chosen once for the page, in one reading of its ids.
+  const targetId = freeOpenTargetIdIn(servedPage)
   // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
   return servedPage.replace(
     OPEN_ENTRY_WITHOUT_TARGET,
@@ -148,7 +148,6 @@ export function rebindDeepWikiEditorLinks(
     ) => {
       const target = openTargetOf(linkAttributes)
       if (target === undefined) return entry
-      targetId ??= freeOpenTargetIdIn(servedPage)
       return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
     },
   )

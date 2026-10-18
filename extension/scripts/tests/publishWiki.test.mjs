@@ -1710,34 +1710,6 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
   ])
 })
 
-// Value: protects=a page that the publisher let through and the reader serves: both tell its comments and start tags apart from its text, the publisher to read ids and the reader to give links the serving editor's scheme; fails_when=one of the two copies of that pattern is changed alone, so the reader passes over a link the publisher read as a link, or rewrites text the publisher read as text, unseen; why_new=Cycle 0046 row 241 (the reader cannot import from the bundled skill's scripts, so each carries the pattern); seam=none
-test('the reader and the publisher tell a comment and a start tag of a page apart from its text by the same pattern', async () => {
-  // Arrange: the publisher's tag reader and the reader's scheme rewrite, as text.
-  const textOf = (path) =>
-    readFile(new URL(`../../${path}`, import.meta.url), 'utf8')
-  const publisher = await textOf('skills/codebook/render-wiki-diagrams.mjs')
-  const reader = await textOf('src/utils/rebindDeepWikiEditorLinks.ts')
-
-  // Act: the publisher writes the pattern as two (a comment, a start tag) and joins them; the reader writes it as one.
-  const patternOf = (source, name) =>
-    new RegExp(`const ${name} =\\s*/(.+)/[a-z]*;?\\n`).exec(source)?.[1]
-  const howThePublisherJoins = /const COMMENT_OR_START_TAG = (.+);\n/.exec(
-    publisher,
-  )?.[1]
-  const patterns = {
-    publisher: `${patternOf(publisher, 'COMMENT')}|${patternOf(publisher, 'START_TAG')}`,
-    reader: patternOf(reader, 'COMMENT_OR_START_TAG'),
-  }
-
-  // Assert
-  assert.equal(
-    howThePublisherJoins,
-    "new RegExp(`${COMMENT.source}|${START_TAG.source}`, 'g')",
-  )
-  assert.equal(typeof patterns.reader, 'string')
-  assert.equal(patterns.reader, patterns.publisher)
-})
-
 test('a page opened from disk shows the freshness label, the update button and an offline note as one group', async () => {
   // Arrange
   const root = await realpath(

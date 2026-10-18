@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import { Worker } from 'node:worker_threads'
 
+import { browserAttributeText } from '../utils/browserAttributeText'
+import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
 /** The longest the reader may take to filter one page of the timing test, in milliseconds. Its slowest page took 75 ms on the development host (16 CPUs, Node 22); the bound leaves about five times that for a two-core CI runner under load, while a reading from every `<` took 20 to 28 s for a page of 48 to 74 KB. */
@@ -122,6 +125,68 @@ test('the reader serves a page of more than 1 MB built to make a pattern of its 
         milliseconds === 'unfinished' || milliseconds >= FILTER_BOUND_MS,
     ),
     [],
+  )
+})
+
+// Value: protects=a page that the publisher let through and the reader serves: both tell its comments, start tags and attribute values apart from its text, the publisher to judge and rename ids and the reader to judge and rebind addresses; fails_when=the reader's single reading and the publisher's reading part on a page the publisher accepts, so the reader passes over an attribute the publisher read, or reads one in what the publisher took for text, unseen; why_new=Cycle 0046 row 241 held the two copies of one pattern in step; third review W1 and W5 gave the reader a tokenizer of its own, so the test now holds what both read; seam=none (the shipped publisher's reading and the compiled reader)
+test('the reader reads the same attributes and values as the shipped publisher in pages the publisher accepts, with comments, quoted brackets, bare values and escaped code', async () => {
+  // Arrange: the publisher's reading of a page's attributes, and pages of the forms the publisher reads exactly.
+  const { withAttributeValues, unreadMarkupOf } = (await import(
+    pathToFileURL(
+      join(
+        __dirname,
+        '..',
+        '..',
+        'skills',
+        'codebook',
+        'render-wiki-diagrams.mjs',
+      ),
+    ).href
+  )) as {
+    withAttributeValues: (
+      html: string,
+      rewrite: (name: string, text: string) => string,
+    ) => string
+    unreadMarkupOf: (html: string) => string | undefined
+  }
+  const pages = [
+    '<h2 id="flow" class="a b">Flow</h2><p title="a > b" data-x=bare>t</p>',
+    '<!-- <a href="javascript:x"> --><p id="after-comment">a</p><!-- x --!><p id="after-bang">b</p><!--><p id="after-short">c</p>',
+    '<p title="<b>">quoted bracket</p><p title=\'it said "x"\' lang=en>q</p>',
+    '<pre><code>&lt;a href="vscode://file/x"&gt;</code></pre><p class="code-note">e</p>',
+    '<a href="pages/a&amp;b.html#start" title="A &amp; B">l</a><img src="flow.png" alt="" width=10>',
+  ]
+
+  // Act: the name and the value of every attribute with a value, as each reads them.
+  const readings = pages.map((page) => {
+    const publisher: string[] = []
+    withAttributeValues(page, (name, text) => {
+      publisher.push(`${name}=${text}`)
+      return text
+    })
+    const reader = readHtmlStartTags(page).flatMap(({ attributes }) =>
+      attributes
+        .filter((attribute) => attribute.written !== undefined)
+        .map(
+          (attribute) =>
+            `${attribute.name}=${browserAttributeText(attribute.written ?? '')}`,
+        ),
+    )
+    return { accepted: unreadMarkupOf(page) === undefined, publisher, reader }
+  })
+
+  // Assert: the publisher reads each page exactly, and the two readings agree.
+  assert.deepEqual(
+    readings.map(({ accepted }) => accepted),
+    [true, true, true, true, true],
+  )
+  assert.deepEqual(
+    readings.map(({ reader }) => reader),
+    readings.map(({ publisher }) => publisher),
+  )
+  assert.deepEqual(
+    readings.map(({ reader }) => reader.length),
+    [4, 3, 3, 1, 5],
   )
 })
 
