@@ -759,6 +759,26 @@ test('a writer record that names an earlier recording in the same folder is not 
   assert.deepEqual(writer, { kind: 'gone' })
 })
 
+// Value: protects=every list and removal while a recording's header.json is a valid header padded past a header's bound (a damaged or hostile storage folder); fails_when=the header's bound is not applied, so a header of any size up to the Wiki's 64 MiB is parsed, names a writer, and is read at every list (TT40); why_new=Cycle 0046 third testing review TT40: AD11's bound had no test with a header that would parse; seam=the recording's header.json, the store's own header with a padding field that takes it past 65 536 bytes
+test('a valid recording header padded past a header’s bound is no header: the recording counts as finished', async (context) => {
+  // Arrange: the recording's own header, padded to more than 64 KiB.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const header: Record<string, unknown> = JSON.parse(
+    await readFile(join(recording.folder, 'header.json'), 'utf8'),
+  )
+  await writeFile(
+    join(recording.folder, 'header.json'),
+    JSON.stringify({ ...header, padding: 'x'.repeat(70_000) }),
+  )
+
+  // Act
+  const writer = await writerOf(recording.folder)
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'finished' })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
