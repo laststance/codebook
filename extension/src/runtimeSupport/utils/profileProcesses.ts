@@ -10,20 +10,30 @@ export type ProfileProcessInputs = {
   platform?: NodeJS.Platform
 }
 
+/** The profile switch as `ps` prints it on macOS and Linux, with each prefix Chrome reads a switch by there (`--`, `-`), after the space that separates it from the argument before it. */
+const POSIX_PROFILE_SWITCHES = [' --user-data-dir=', ' -user-data-dir=']
+
 /**
- * Says whether a command line `ps` printed names a profile argument as a whole argument; called by {@link profileProcesses} on macOS and Linux, where `ps` prints the arguments joined by spaces, without quotes.
+ * Says whether a command line `ps` printed gives Chrome a profile folder; called by {@link profileProcesses} on macOS and Linux, where `ps` prints the arguments joined by spaces, without quotes.
+ * Chrome takes the last of several profile switches (`base::CommandLine` replaces a switch's value by a later one), so the last switch in the text decides, and its value must be the folder followed by a space or the line's end. The text cannot tell a switch terminator (`--`) from text inside an argument, so none is looked for: a switch after it counts, which leaves the folder in place rather than taking it for unused.
  * @param command - The command line as `ps` printed it.
- * @param argument - The whole `--user-data-dir=<folder>` argument.
- * @returns `true` when the argument is followed by a space or ends the line; `false` for a profile that only shares a prefix with it.
+ * @param folder - The resolved profile folder.
+ * @returns `true` when the last profile switch names this folder; `false` for a folder that only shares a prefix with it, and when a later switch names another folder.
  * @example
- * namesArgumentByText('chrome --user-data-dir=/tmp/codebook-browser-a --headless=new', '--user-data-dir=/tmp/codebook-browser-a') // => true
- * namesArgumentByText('chrome --user-data-dir=/tmp/codebook-browser-ab', '--user-data-dir=/tmp/codebook-browser-a')                  // => false
+ * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-ab --user-data-dir=/tmp/codebook-browser-a --headless', '/tmp/codebook-browser-a') // => true
+ * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-a --user-data-dir=/tmp/other', '/tmp/codebook-browser-a')                        // => false
  */
-function namesArgumentByText(command: string, argument: string): boolean {
-  const offset = command.indexOf(argument)
-  const following = command[offset + argument.length]
+function namesProfileByText(command: string, folder: string): boolean {
+  const lastSwitch = POSIX_PROFILE_SWITCHES.map((profileSwitch) => ({
+    at: command.lastIndexOf(profileSwitch),
+    length: profileSwitch.length,
+  })).reduce((latest, candidate) =>
+    candidate.at > latest.at ? candidate : latest,
+  )
+  if (lastSwitch.at === -1) return false
+  const value = command.slice(lastSwitch.at + lastSwitch.length)
   // Prefix-sharing profiles do not establish ownership.
-  return offset >= 0 && (!following || following === ' ')
+  return value === folder || value.startsWith(`${folder} `)
 }
 
 /** The flag by which Chrome is given its profile folder. */
@@ -73,7 +83,7 @@ function profileSwitchValueOnWindows(argument: string): string | undefined {
  * The command line is split into its arguments as `CommandLineToArgvW` splits it ({@link windowsCommandLineArguments}), the arguments after the program name and before a switch terminator (`--`) are read as Chrome reads its switches ({@link profileSwitchValueOnWindows}), and the switch's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
  * @param command - The command line as Windows keeps it.
  * @param folder - The resolved profile folder.
- * @returns `true` when an argument is the profile switch with this folder; `false` for a folder that only shares a prefix with it.
+ * @returns `true` when the last profile switch, the one Chrome takes, names this folder; `false` for a folder that only shares a prefix with it, and when a later switch names another folder.
  * @example
  * namesProfileOnWindows('chrome.exe "--User-Data-Dir=C:/USERS/a b/temp/codebook-browser-x"', 'C:\\Users\\a b\\Temp\\codebook-browser-x') // => true
  */
@@ -81,18 +91,21 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
   const wanted = comparableWindowsPath(folder)
   const switches = windowsCommandLineArguments(command).slice(1)
   const terminator = switches.indexOf(SWITCH_TERMINATOR)
-  // Chrome reads no switch after the terminator: such an argument is a loose one.
-  return (terminator === -1 ? switches : switches.slice(0, terminator)).some(
-    (argument) => {
-      const value = profileSwitchValueOnWindows(argument)
-      return value !== undefined && comparableWindowsPath(value) === wanted
-    },
+  // Chrome reads no switch after the terminator: such an argument is a loose one; of several profile switches the last one is Chrome's.
+  const profileFolder = (
+    terminator === -1 ? switches : switches.slice(0, terminator)
+  )
+    .map(profileSwitchValueOnWindows)
+    .findLast((value) => value !== undefined)
+  return (
+    profileFolder !== undefined &&
+    comparableWindowsPath(profileFolder) === wanted
   )
 }
 
 /**
  * Observes only the exact fresh Chrome profile during owned launch/cleanup; never signals other processes. Called by {@link HostBrowser} for its own profile, and by {@link removeAbandonedProfiles} for each candidate folder with the one listing of its sweep.
- * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the argument is found, exactly, in the text `ps` printed.
+ * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the last profile switch in the text `ps` printed decides, and its value must be the folder, exactly ({@link namesProfileByText}). On both, of several profile switches the last one counts, as Chrome takes it.
  * @param profile - The profile folder; it is resolved first, so a folder that is gone rejects.
  * @param processes - The processes to match, as {@link listProcesses} listed them; listed now when left out.
  * @param inputs - The system whose command lines are read ({@link ProfileProcessInputs}); this one when left out.
@@ -116,6 +129,5 @@ export async function profileProcesses(
     return listed.filter(({ command }) =>
       namesProfileOnWindows(command, folder),
     )
-  const argument = `${PROFILE_FLAG}${folder}`
-  return listed.filter(({ command }) => namesArgumentByText(command, argument))
+  return listed.filter(({ command }) => namesProfileByText(command, folder))
 }

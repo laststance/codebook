@@ -1,11 +1,10 @@
-import { constants as fileSystemConstants } from 'node:fs'
-import { access, stat } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 
 import {
   environmentVariable,
   type ProcessEnvironment,
 } from './environmentVariable'
+import { isProgramFile } from './isProgramFile'
 
 /** What {@link gitExecutablePath} looks with; each is the real one unless a test names its own. */
 export type GitLookupInputs = {
@@ -28,25 +27,6 @@ const WINDOWS_ABSOLUTE_FOLDER = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/
 
 /** The Git found with the product's own inputs; kept once found, so a later call starts no search. */
 let gitFound: string | undefined
-
-/**
- * Says whether a path is a regular file this user may run; the program check of {@link gitExecutablePath} unless a test names its own.
- * @param path - An absolute path.
- * @returns `true` for a regular file that is executable for this user (on Windows a regular file); `false` for anything else, also a path that cannot be read.
- * @example
- * await isProgramFile('/usr/bin/git') // => true
- */
-async function isProgramFile(path: string): Promise<boolean> {
-  try {
-    if (!(await stat(path)).isFile()) return false
-    // Windows decides by the extension; POSIX by the file's execute permission.
-    if (process.platform !== 'win32')
-      await access(path, fileSystemConstants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
 
 /**
  * Lists the folders of `PATH` that a search may look in: only absolute ones; called by {@link gitExecutablePath}.

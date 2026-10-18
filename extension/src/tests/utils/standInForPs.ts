@@ -4,19 +4,19 @@ import { join } from 'node:path'
 import type { TestContext } from 'node:test'
 
 /**
- * Makes `ps` a program of the test's own until the test ends, for a test that needs a process listing that never answers or one of a size it chooses: a directory that holds one executable named `ps` becomes the whole command search path of this test process, and the stand-in runs the given Node.js source with this Node binary.
- * The stand-in replaces its shell, so a signal sent to the listing ends the Node.js process itself. Only a command that is looked up by its bare name is replaced; one named by its whole path (`/bin/ps`) is not.
+ * Makes a `ps` of the test's own until the test ends, for a test that needs a process listing that never answers or one of a size it chooses: a directory that holds one executable named `ps`, which runs the given Node.js source with this Node binary. The listing starts `ps` only by an absolute path, so the test names the stand-in's path as the listing's `psPrograms`; the directory is also the whole command search path of this test process meanwhile.
+ * The stand-in replaces its shell, so a signal sent to the listing ends the Node.js process itself.
  * It needs a shell at `/bin/sh`: a test that uses it cannot run on Windows.
  * @param context - The test, at whose end the search path is put back and the directory removed.
  * @param source - The Node.js source the stand-in runs instead of listing the processes.
+ * @returns The stand-in's absolute path.
  * @example
- * await standInForPs(context, 'setTimeout(() => {}, 20_000)') // `ps` now prints nothing for 20 s
- * await standInForPs(context, 'process.stdout.write("    1 /sbin/init\\n")')
+ * const ps = await standInForPs(context, 'setTimeout(() => {}, 20_000)') // listProcesses({ psPrograms: [ps] }) now prints nothing for 20 s
  */
 export async function standInForPs(
   context: TestContext,
   source: string,
-): Promise<void> {
+): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-ps-stand-in-'))
   const searchPathBefore = process.env.PATH
   context.after(async () => {
@@ -32,4 +32,5 @@ export async function standInForPs(
   )
   await chmod(command, 0o755)
   process.env.PATH = directory
+  return command
 }

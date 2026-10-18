@@ -2,6 +2,7 @@ import {
   PROCESS_LISTING_MAX_BYTES,
   PROCESS_LISTING_TIMEOUT_MS,
 } from '../../constants'
+import { isProgramFile } from '../../utils/isProgramFile'
 import {
   runBoundedQuery,
   type BoundedQueryOptions,
@@ -26,7 +27,14 @@ export type ProcessListingInputs = {
   timeoutMs?: number
   /** The environment the Windows system root is read from (`SystemRoot`, then `windir`), under which PowerShell is started by its full path ({@link windowsPowerShellPath}); `process.env` unless a test names its own. */
   environment?: SystemRootEnvironment
+  /** Where `ps` may lie on macOS and Linux, tried in this order; {@link PS_PROGRAMS} unless a test names a stand-in of its own. */
+  psPrograms?: readonly string[]
+  /** Says whether a path is a program file this user may run; {@link isProgramFile} unless a test names its own. */
+  isProgramFile?: (path: string) => Promise<boolean>
 }
+
+/** Where `ps` lies on macOS and Linux: `/bin/ps`, and `/usr/bin/ps` on a system whose `/bin` has none. It is started by one of these absolute paths, never looked up in the search path or the current folder. */
+const PS_PROGRAMS = ['/bin/ps', '/usr/bin/ps']
 
 /** The listing of one system: the command that prints every process on a line of its own, and the reader of such a line. */
 type ProcessListingForm = {
@@ -36,9 +44,8 @@ type ProcessListingForm = {
   processOfLine: (line: string) => ListedProcess | undefined
 }
 
-/** `ps` on macOS and Linux: every process of every user (`-ax`), the command line at its whole width (`-ww`), as `<pid> <command line>`. */
-const UNIX_LISTING: ProcessListingForm = {
-  file: 'ps',
+/** `ps` on macOS and Linux: every process of every user (`-ax`), the command line at its whole width (`-ww`), as `<pid> <command line>`. Its program is named by {@link listingFormOf}, by an absolute path. */
+const UNIX_LISTING: Omit<ProcessListingForm, 'file'> = {
   listingArguments: ['-axww', '-o', 'pid=,command='],
   processOfLine: (line) => {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
@@ -77,19 +84,27 @@ const WINDOWS_LISTING: Omit<ProcessListingForm, 'file'> = {
 /**
  * Chooses the listing of a system; called by {@link listProcesses}.
  * @param platform - The system whose listing is used.
- * @param environment - Where the Windows system root is read from.
- * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` of another folder is started in its place; `ps` on every other system.
- * @throws On Windows when neither `SystemRoot` nor `windir` names an absolute folder: the listing is refused and no program is started, since a program searched for in other folders could be another one of that name.
+ * @param inputs - Where the Windows system root is read from, and where `ps` may lie on other systems with the check of its file ({@link ProcessListingInputs}).
+ * @returns PowerShell on Windows, started by its full path under the system root ({@link windowsPowerShellPath}, the same lookup as the start query of {@link readProcessStart}), so that no `powershell.exe` of another folder is started in its place; on every other system `ps` by the first of its absolute paths that holds it ({@link PS_PROGRAMS}), never one searched for in the search path or the current folder.
+ * @throws When the program's folder is unknown: on Windows when neither `SystemRoot` nor `windir` names a drive-letter folder, elsewhere when no path of `ps` holds it. The listing is refused then and no program is started, since a program searched for in other folders could be another one of that name.
  * @example
- * listingFormOf('darwin', {}).file                         // => 'ps'
- * listingFormOf('win32', { SystemRoot: 'C:\\Windows' }).file // => 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+ * (await listingFormOf('darwin', {})).file                         // => '/bin/ps'
+ * (await listingFormOf('win32', { environment: { SystemRoot: 'C:\\Windows' } })).file // => 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
  */
-function listingFormOf(
+async function listingFormOf(
   platform: NodeJS.Platform,
-  environment: SystemRootEnvironment | undefined,
-): ProcessListingForm {
-  if (platform !== 'win32') return UNIX_LISTING
-  const file = windowsPowerShellPath(environment)
+  inputs: ProcessListingInputs,
+): Promise<ProcessListingForm> {
+  if (platform !== 'win32') {
+    const isProgram = inputs.isProgramFile ?? isProgramFile
+    for (const candidate of inputs.psPrograms ?? PS_PROGRAMS)
+      if (await isProgram(candidate))
+        return { ...UNIX_LISTING, file: candidate }
+    throw new Error(
+      `The process listing was not started: no ps lies at ${(inputs.psPrograms ?? PS_PROGRAMS).join(' or ')}, and Codebook starts it only from there.`,
+    )
+  }
+  const file = windowsPowerShellPath(inputs.environment)
   // Without a system root PowerShell's folder is unknown; no other folder is searched for it.
   if (file === undefined)
     throw new Error(
@@ -144,7 +159,7 @@ function listingFailure(
  * @returns Every process the listing printed with a command line, in its order.
  * @throws What the runner rejects with, worded by {@link listingFailure} for a listing that was ended at a bound.
  * @example
- * await printedListing(UNIX_LISTING, runBoundedQuery, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
+ * await printedListing({ ...UNIX_LISTING, file: '/bin/ps' }, runBoundedQuery, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
  */
 async function printedListing(
   listing: ProcessListingForm,
@@ -162,9 +177,9 @@ async function printedListing(
 }
 
 /**
- * Lists every process of this machine with its whole command line, by one `ps -axww` on macOS and Linux and one PowerShell query on Windows, PowerShell started by its full path under the system root ({@link windowsPowerShellPath}); called by {@link profileProcesses} for one profile and once per sweep by {@link removeAbandonedProfiles}, which matches every candidate folder against the same listing.
+ * Lists every process of this machine with its whole command line, by one `ps -axww` on macOS and Linux and one PowerShell query on Windows, each started by an absolute path (`ps` from `/bin` or `/usr/bin`, PowerShell under the system root, {@link windowsPowerShellPath}); called by {@link profileProcesses} for one profile and once per sweep by {@link removeAbandonedProfiles}, which matches every candidate folder against the same listing.
  * The listing is bounded: it is ended with a signal it cannot ignore after {@link PROCESS_LISTING_TIMEOUT_MS}, and when it prints more than {@link PROCESS_LISTING_MAX_BYTES}. Its input is closed ({@link runBoundedQuery}).
- * @param inputs - The platform, the runner, the time bound and the environment that names the Windows system root of {@link ProcessListingInputs}; the real ones when left out.
+ * @param inputs - The platform, the runner, the time bound, the environment that names the Windows system root, and the paths and file check of `ps`, of {@link ProcessListingInputs}; the real ones when left out.
  * @returns Every process the listing printed with a command line, in its order; a line that names no process id or no command line is left out.
  * @throws What running the listing throws, for example on a machine without the command; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}); on Windows without a system root, the refusal of {@link listingFormOf}, before any program is started. A caller that removes by the listing removes nothing then.
  * @example
@@ -175,7 +190,7 @@ export async function listProcesses(
   inputs: ProcessListingInputs = {},
 ): Promise<ListedProcess[]> {
   return printedListing(
-    listingFormOf(inputs.platform ?? process.platform, inputs.environment),
+    await listingFormOf(inputs.platform ?? process.platform, inputs),
     inputs.run ?? runBoundedQuery,
     {
       timeout: inputs.timeoutMs ?? PROCESS_LISTING_TIMEOUT_MS,

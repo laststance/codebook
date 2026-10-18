@@ -498,12 +498,12 @@ test(
       pid: ID_OF_NO_PROCESS,
       hostname: 'workstation',
     })
-    await standInForPs(context, 'setTimeout(() => {}, 20_000)')
+    const ps = await standInForPs(context, 'setTimeout(() => {}, 20_000)')
     // Act
     const removed = await removeAbandonedProfiles(
       root,
       { hostname: 'workstation' },
-      () => listProcesses({ timeoutMs: 300 }),
+      () => listProcesses({ timeoutMs: 300, psPrograms: [ps] }),
     )
     // Assert
     assert.deepEqual(removed, [])

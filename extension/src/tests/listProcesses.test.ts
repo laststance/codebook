@@ -53,14 +53,16 @@ test('macOS and Linux list the processes with one bounded ps and read each line 
   const listedOnMac = await listProcesses({
     platform: 'darwin',
     run: onMac.run,
+    isProgramFile: async (path) => path === '/bin/ps',
   })
   const listedOnLinux = await listProcesses({
     platform: 'linux',
     run: onLinux.run,
+    isProgramFile: async (path) => path === '/bin/ps',
   })
   // Assert
   const call = {
-    file: 'ps',
+    file: '/bin/ps',
     listingArguments: ['-axww', '-o', 'pid=,command='],
     options: {
       timeout: 10_000,
@@ -81,6 +83,53 @@ test('macOS and Linux list the processes with one bounded ps and read each line 
   assert.deepEqual(onLinux.calls, [call])
   assert.deepEqual(listedOnMac, processes)
   assert.deepEqual(listedOnLinux, processes)
+})
+
+// Value: protects=the one program the listing starts on macOS and Linux: `ps` by an absolute path, /bin/ps and else /usr/bin/ps, never a `ps` found in the search path or the current folder, and with neither the listing is refused before any program is started, so a sweep removes nothing (AD30, /ship adversarial review Step 11, with SX2's rule that no lookup uses the current folder); fails_when=the listing starts the bare `ps`, which the search path names (a folder the user or a tool put first can hold another program of that name), or takes no second place where /bin has no ps; why_new=`ps` was started by its bare name; seam=the injected platform, runner and program check
+test('macOS and Linux start ps from /bin, else from /usr/bin, and refuse the listing without starting a program where neither holds it', async () => {
+  // Arrange
+  const outcomeWith = async (
+    programs: string[],
+  ): Promise<{ started: string[]; asked: string[]; refusal?: string }> => {
+    const listing = answeringListing({ stdout: '    1 /sbin/init\n' })
+    const asked: string[] = []
+    const refusal = await listProcesses({
+      platform: 'linux',
+      run: listing.run,
+      isProgramFile: async (path) => {
+        asked.push(path)
+        return programs.includes(path)
+      },
+    }).then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+    return {
+      started: listing.calls.map((call) => call.file),
+      asked,
+      ...(refusal !== undefined && { refusal }),
+    }
+  }
+  // Act
+  const outcomes = {
+    inBothFolders: await outcomeWith(['/bin/ps', '/usr/bin/ps']),
+    inUsrBinOnly: await outcomeWith(['/usr/bin/ps']),
+    nowhere: await outcomeWith(['ps', './ps']),
+  }
+  // Assert
+  assert.deepEqual(outcomes, {
+    inBothFolders: { started: ['/bin/ps'], asked: ['/bin/ps'] },
+    inUsrBinOnly: {
+      started: ['/usr/bin/ps'],
+      asked: ['/bin/ps', '/usr/bin/ps'],
+    },
+    nowhere: {
+      started: [],
+      asked: ['/bin/ps', '/usr/bin/ps'],
+      refusal:
+        'Error: The process listing was not started: no ps lies at /bin/ps or /usr/bin/ps, and Codebook starts it only from there.',
+    },
+  })
 })
 
 // Value: protects=a profile sweep and a profile probe on Windows, which has no `ps`, and the program it starts there; fails_when=the listing runs `ps` there (ENOENT), the PowerShell command loses -NoProfile, -NonInteractive, its error action or its bounds, opens a console window, a command line is read wrongly (a path outside ASCII, a process without a readable command line) (Cycle 0046 row 96), or PowerShell is started by its bare name, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (F4, Cycle 0046 /ship review; row 107 for the start query); why_new=the listing had no form for Windows, and its program was named by its bare name alone; seam=the injected platform, environment and runner. The real query runs in the Windows job.
@@ -216,9 +265,12 @@ test(
   { skip: process.platform === 'win32' && 'the stand-in for ps needs /bin/sh' },
   async (context) => {
     // Arrange: a `ps` that prints nothing for 20 s, far beyond the bound, and then ends by itself, so that a listing without a bound fails this test instead of holding the suite.
-    await standInForPs(context, 'setTimeout(() => {}, 20_000)')
+    const ps = await standInForPs(context, 'setTimeout(() => {}, 20_000)')
     // Act
-    const failure: unknown = await listProcesses({ timeoutMs: 300 }).then(
+    const failure: unknown = await listProcesses({
+      timeoutMs: 300,
+      psPrograms: [ps],
+    }).then(
       () => undefined,
       (error: unknown) => error,
     )
@@ -226,7 +278,7 @@ test(
     assert.ok(failure instanceof Error)
     assert.equal(
       failure.message,
-      'The process listing (ps) did not answer within 300 ms and was ended.',
+      `The process listing (${ps}) did not answer within 300 ms and was ended.`,
     )
     assert.ok(failure.cause instanceof Error)
     assert.equal(
@@ -242,12 +294,12 @@ test(
   { skip: process.platform === 'win32' && 'the stand-in for ps needs /bin/sh' },
   async (context) => {
     // Arrange: 4,096 lines of a process id and a command line of 1,040 characters.
-    await standInForPs(
+    const ps = await standInForPs(
       context,
       'for (let pid = 1; pid <= 4096; pid += 1) process.stdout.write(`${String(pid).padStart(7)} /usr/bin/program-${pid} ${"x".repeat(1024)}\\n`)',
     )
     // Act
-    const listed = await listProcesses()
+    const listed = await listProcesses({ psPrograms: [ps] })
     // Assert
     assert.equal(listed.length, 4_096)
     assert.deepEqual(listed[0], {
@@ -275,6 +327,7 @@ test('a process listing that prints more than its output limit says so, and a li
     listProcesses({
       platform: 'linux',
       run: answeringListing(answer).run,
+      isProgramFile: async (path) => path === '/bin/ps',
     }).then(
       () => 'listed',
       (error: unknown) => String(error),
@@ -287,7 +340,7 @@ test('a process listing that prints more than its output limit says so, and a li
   // Assert
   assert.deepEqual(messages, {
     printedTooMuch:
-      'Error: The process listing (ps) printed more than 67108864 bytes and was ended.',
+      'Error: The process listing (/bin/ps) printed more than 67108864 bytes and was ended.',
     missingCommand: 'Error: spawn ps ENOENT',
   })
 })
