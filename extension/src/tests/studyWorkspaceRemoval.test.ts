@@ -8456,6 +8456,43 @@ test('a recording of another host that appears while the dialog is open keeps th
   }
 })
 
+// Value: protects=the Saved studies line when the editor cannot show the dialog about a recording that may still run on another computer (the host rejects the modal dialog); fails_when=the removal stays 'confirming' for good after that rejection, since only a 'moving' removal is cleared when the move ends, so no later delete can start and the line waits for an answer that never comes (TT7, PD4's finally); why_new=Cycle 0046 third testing review TT7: no test rejected the second dialog; seam=the editor's dialogs, stubbed at the vscode boundary: the first is confirmed, the second rejects
+test('a dialog about a recording on another computer that the editor cannot show ends the removal with no line, and the study stays listed', async () => {
+  // Arrange: the learner confirms the removal; the editor then fails to show the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button === `Move to ${TRASH} Anyway`)
+        throw new Error('The window could not show the dialog.')
+      return button
+    })
+
+    // Act
+    await requestRemoval(harness, study.id).catch(() => undefined)
+
+    // Assert
+    assert.deepEqual(
+      {
+        studyRemoval: harness.reader.inspect().view!.studyRemoval,
+        moved: harness.trashMoves,
+        listed: harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === study.id),
+      },
+      { studyRemoval: undefined, moved: [], listed: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's Cancel in the dialog about a recording that may still run on another computer; fails_when=Cancel moves the study or its recording anyway, or leaves the removal shown as failed or still moving; why_new=Cycle 0046 OCR review OC1; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('Cancel in the dialog about a recording that names another host moves nothing and leaves the study as it was', async () => {
   // Arrange: the learner confirms the removal, then cancels the dialog about the recording.
