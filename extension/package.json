@@ -327,6 +327,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "entities": "8.1.0",
     "parse5": "8.0.1",
     "ws": "8.21.3",
     "zod": "4.6.5"
