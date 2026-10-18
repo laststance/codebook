@@ -14,25 +14,6 @@ test('only a chat that works on the request in a window that stays leaves the ru
   assert.deepEqual(replied, {})
 })
 
-// Value: protects=the truth of the end of a start whose chat completed its reply in the moment after the 30 second bound, before Codebook ran any command; fails_when=that end is worded as a start without a sign whose request Codebook "took back", with the step to check that Copilot Chat is enabled, although Codebook ran nothing and the chat answered; why_new=Cycle 0046 second ship, state-machine review P2SM3; seam=none
-test('a start whose request ended by itself with a complete reply in the moment after the bound ends the run with a look at the disk, as a complete response does, in a session of its own and in a shared one', () => {
-  // Act
-  const inOwnSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'replied' },
-    30_000,
-    false,
-  )
-  const inSharedSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'shared', withdrawal: 'replied' },
-    30_000,
-    false,
-  )
-
-  // Assert
-  assert.deepEqual(inOwnSession, {})
-  assert.deepEqual(inSharedSession, {})
-})
-
 test('a start in a window that closes, and a start that was aborted, end the run as cancelled', () => {
   // Act
   const closing = endOfWikiChatStart({ outcome: 'working' }, 30_000, true)

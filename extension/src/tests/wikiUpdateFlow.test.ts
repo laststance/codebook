@@ -2062,6 +2062,40 @@ test('a chat that completes its reply in the moment the 30 second bound passes e
   }
 })
 
+// Value: protects=the learner whose chat answers the update request with an error in the moment the 30 second bound passes, before Codebook takes its request back; fails_when=that error reply is read as a complete reply, so the end says that the chat finished its reply without publishing and drops the chat's error message, which a reply with an error within the bound shows; why_new=Cycle 0046 second ship, coverage audit of fixing cycle 2 (G8, the P2SM3 fix took every reply after the bound for a complete one); seam=the sleep of the wait for the chat's answer, on a manual clock, and the chat's reply, which the test completes with an error right after the clock passed the bound
+test('a chat that answers with an error in the moment the 30 second bound passes ends the update with the sentence of a reply with an error and its message, as within the bound, and no chat command runs', async () => {
+  // Arrange: the chat takes the request and shows no sign of the update.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: the bound passes, and in the same moment the chat's response ends with an error.
+    clock.advance(30_000)
+    request.end({ errorDetails: { message: 'Quota exceeded.' } })
+    await press
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : status.state,
+      'The editor chat answered the update request with an error and stopped (Quota exceeded.). Read its message in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
 // Value: protects=the learner who retries after a chat that did not answer and whose request could not be stopped; fails_when=the chat's Cancel throws and the page and the notice still say "so the update was not started", although the request is still loading in the chat; why_new=Cycle 0046 row 82; seam=the editor's commands, of which the chat's Cancel throws
 test('a chat whose Cancel fails ends the update with the sentence that the request may still be in the chat and is stopped there before a retry, on the page and in the notice', async () => {
   // Arrange: the request stays in the chat, and the chat's Cancel throws.
