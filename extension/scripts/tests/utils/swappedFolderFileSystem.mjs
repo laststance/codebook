@@ -3,7 +3,11 @@ import * as fileSystem from 'node:fs/promises'
 export * from 'node:fs/promises'
 
 /** The swaps a test asked for, by the call before which each runs, and which path each waits for; a swap is gone once it ran. */
-const pendingSwaps = { mkdir: undefined, writeFile: undefined }
+const pendingSwaps = {
+  mkdir: undefined,
+  writeFile: undefined,
+  readFile: undefined,
+}
 
 /**
  * Asks the next `mkdir` of a folder that `isAwaited` names to run `swap` first, once: as another process that swaps a folder on the Wiki output's path for a link between the publisher's look at the path and the folder it then makes. Called by the publisher's tests before they prepare or publish a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
@@ -30,8 +34,20 @@ export function swapBeforeWriting(isAwaited, swap) {
 }
 
 /**
- * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir} and {@link writeFile}.
- * @param {'mkdir' | 'writeFile'} kind - The call about to run.
+ * Asks the next `readFile` of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`. Called by the publisher's tests that swap a folder between two of its looks with no write between them.
+ * @param {(path: string) => boolean} isAwaited - Whether a file `readFile` is asked for is the one before which the swap runs.
+ * @param {() => Promise<void>} swap - The swap.
+ * @returns {void}
+ * @example
+ * swapBeforeReading((path) => path.endsWith('codebook-wiki.json'), () => symlink(outside, join(root, '.codebook')))
+ */
+export function swapBeforeReading(isAwaited, swap) {
+  pendingSwaps.readFile = { isAwaited, swap }
+}
+
+/**
+ * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile} and {@link readFile}.
+ * @param {'mkdir' | 'writeFile' | 'readFile'} kind - The call about to run.
  * @param {string | URL} path - The call's path.
  * @returns {Promise<void>} Once the swap ran, or at once when none waits for this path.
  * @example
@@ -69,4 +85,17 @@ export async function mkdir(path, ...options) {
 export async function writeFile(path, ...rest) {
   await swapIfAwaited('writeFile', path)
   return fileSystem.writeFile(path, ...rest)
+}
+
+/**
+ * Reads a file as `readFile` does, after the swap of {@link swapBeforeReading} when this is the file it waits for.
+ * @param {string} path - The file to read.
+ * @param {...unknown} options - The caller's options, handed on unchanged.
+ * @returns {Promise<string | Buffer>} What `readFile` answers.
+ * @example
+ * await readFile('/repo/.codebook/wiki.previous-1/codebook-wiki.json')
+ */
+export async function readFile(path, ...options) {
+  await swapIfAwaited('readFile', path)
+  return fileSystem.readFile(path, ...options)
 }
