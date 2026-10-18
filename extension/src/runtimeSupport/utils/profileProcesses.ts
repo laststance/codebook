@@ -128,9 +128,33 @@ function profileSwitchValueOnWindows(argument: string): string | undefined {
     : undefined
 }
 
+/** The switch after which Chrome on Windows takes the rest of its command line as one loose argument (`kSingleArgument` of `base::CommandLine`), when it reads the line from its text, as its own process does (`ParseFromString` of `GetCommandLineW`). Chrome on macOS and Linux gives it no such meaning. */
+const SINGLE_ARGUMENT_SWITCH = 'single-argument'
+
+/**
+ * Says whether an argument is the switch after which Chrome on Windows reads no more switches ({@link SINGLE_ARGUMENT_SWITCH}), as `IsSwitchWithKey` tells it: after one of Chrome's prefixes, the name as written, before an `=` if any; called by {@link namesProfileOnWindows} for each trimmed argument before the terminator.
+ * @param argument - One trimmed argument.
+ * @returns `true` for `--single-argument`, `-single-argument`, `/single-argument` and the same with `=` and a value; `false` for another case of the name (`--Single-Argument`, which Chrome reads as an ordinary switch) and for every other argument.
+ * @example
+ * isSingleArgumentSwitchOnWindows('--single-argument')  // => true
+ * isSingleArgumentSwitchOnWindows('--Single-Argument')  // => false
+ */
+function isSingleArgumentSwitchOnWindows(argument: string): boolean {
+  const prefix = WINDOWS_SWITCH_PREFIXES.find((candidate) =>
+    argument.startsWith(candidate),
+  )
+  if (prefix === undefined || prefix.length === argument.length) return false
+  const equals = argument.indexOf('=')
+  // IsSwitchWithKey compares the name as written, before Chrome lowercases switch names.
+  return (
+    argument.slice(prefix.length, equals === -1 ? undefined : equals) ===
+    SINGLE_ARGUMENT_SWITCH
+  )
+}
+
 /**
  * Says whether a Windows command line names a profile folder as Chrome's `--user-data-dir`; called by {@link profileProcesses} on Windows.
- * The command line is split into its arguments as `CommandLineToArgvW` splits it ({@link windowsCommandLineArguments}), each argument is trimmed as Chrome trims it ({@link trimmedAsChrome}), the arguments after the program name and before a switch terminator (`--`) are read as Chrome reads its switches ({@link profileSwitchValueOnWindows}), and the switch's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
+ * The command line is split into its arguments as `CommandLineToArgvW` splits it ({@link windowsCommandLineArguments}), each argument is trimmed as Chrome trims it ({@link trimmedAsChrome}), the arguments after the program name and before a switch terminator (`--`) or the switch `--single-argument` ({@link isSingleArgumentSwitchOnWindows}) are read as Chrome reads its switches ({@link profileSwitchValueOnWindows}), and the switch's value is compared with the folder as Windows compares paths ({@link comparableWindowsPath}): the same folder written with `/`, with `.` or `..`, or in another case is the same folder.
  * @param command - The command line as Windows keeps it.
  * @param folder - The resolved profile folder.
  * @returns `true` when the last profile switch, the one Chrome takes, names this folder; `false` for a folder that only shares a prefix with it, and when a later switch names another folder.
@@ -143,11 +167,13 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
   const switches = windowsCommandLineArguments(command)
     .slice(1)
     .map(trimmedAsChrome)
-  const terminator = switches.indexOf(SWITCH_TERMINATOR)
-  // Chrome reads no switch after the terminator: such an argument is a loose one; of several profile switches the last one is Chrome's.
-  const profileFolder = (
-    terminator === -1 ? switches : switches.slice(0, terminator)
+  const end = switches.findIndex(
+    (argument) =>
+      argument === SWITCH_TERMINATOR ||
+      isSingleArgumentSwitchOnWindows(argument),
   )
+  // Chrome reads no switch after the terminator or `--single-argument`: such an argument is a loose one; of several profile switches the last one is Chrome's.
+  const profileFolder = (end === -1 ? switches : switches.slice(0, end))
     .map(profileSwitchValueOnWindows)
     .findLast((value) => value !== undefined)
   return (
@@ -158,7 +184,7 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
 
 /**
  * Observes only the exact fresh Chrome profile during owned launch/cleanup; never signals other processes. Called by {@link HostBrowser} for its own profile, and by {@link removeAbandonedProfiles} for each candidate folder with the one listing of its sweep.
- * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the last profile switch before a switch terminator in the text `ps` printed decides, read in every way the text allows, and its value must be the folder, exactly ({@link namesProfileByText}). On both, Chrome reads no switch after a terminator, and of several profile switches before it the last one counts, as Chrome takes it.
+ * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the last profile switch before a switch terminator in the text `ps` printed decides, read in every way the text allows, and its value must be the folder, exactly ({@link namesProfileByText}). On both, Chrome reads no switch after a terminator (on Windows also none after `--single-argument`), and of several profile switches before it the last one counts, as Chrome takes it.
  * @param profile - The profile folder; it is resolved first, so a folder that is gone rejects.
  * @param processes - The processes to match, as {@link listProcesses} listed them; listed now when left out.
  * @param inputs - The system whose command lines are read ({@link ProfileProcessInputs}); this one when left out.

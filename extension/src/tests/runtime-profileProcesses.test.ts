@@ -341,3 +341,42 @@ test('on Windows a profile switch or a terminator with white space at its ends i
     [61, 62],
   )
 })
+
+// Value: protects=a live profile on Windows whose Chrome holds `--single-argument` after its profile switch: Chrome there takes the rest of its command line as one loose argument (IsSwitchWithKey(..., kSingleArgument) in base/command_line.cc), so a `--user-data-dir` after it names nothing, and the sweep must not take the profile before it for unused; the name is compared as written, with any of Chrome's prefixes, and on macOS and Linux the switch means nothing (BB1, the fixes of the third review); fails_when=the Windows reader reads switches past `--single-argument`, so a later switch hides the live profile, or it stops at `--Single-Argument`, which Chrome reads as an ordinary switch, or the macOS and Linux reader stops there too; why_new=the reader stopped at the terminator alone; seam=the system the command lines are read for and a listing of the test's own, matched against a real profile folder
+test('on Windows no switch after --single-argument counts, as Chrome reads it, while --Single-Argument and the switch on Linux end nothing', async (context) => {
+  // Arrange: in 71 and 72 the profile's switch stands before the switch, written with two prefixes, and another folder's after it; in 73 the name is written in another case, so the switch after it counts; 74 is the line of 71 on Linux, where the last switch counts.
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-single-argument-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'codebook-browser-x')
+  await mkdir(profile)
+  const other = join(parent, 'other')
+  const listing = [
+    {
+      pid: 71,
+      command: `chrome.exe --user-data-dir=${profile} --single-argument --user-data-dir=${other}`,
+    },
+    {
+      pid: 72,
+      command: `chrome.exe --user-data-dir=${profile} /single-argument=x --user-data-dir=${other}`,
+    },
+    {
+      pid: 73,
+      command: `chrome.exe --user-data-dir=${other} --Single-Argument --user-data-dir=${profile}`,
+    },
+  ]
+  // Act
+  const observed = {
+    windows: await profileProcesses(profile, listing, { platform: 'win32' }),
+    linux: await profileProcesses(profile, listing, { platform: 'linux' }),
+  }
+  // Assert: on Linux 71 and 72 name the other folder last; 73 names the profile last.
+  assert.deepEqual(
+    {
+      windows: observed.windows.map((listed) => listed.pid),
+      linux: observed.linux.map((listed) => listed.pid),
+    },
+    { windows: [71, 72, 73], linux: [73] },
+  )
+})
