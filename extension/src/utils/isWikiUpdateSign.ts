@@ -59,6 +59,9 @@ const WINDOWS_QUOTING = /'([^']*)'|"([^"]*)"/g
 const COMMAND_OPERATOR = /^[;&|]+$/
 /** A program that is Node.js, however it is named: `node`, `node.exe`, or either with its folder. */
 const NODE_PROGRAM = /(?:^|[\\/])node(?:\.exe)?$/i
+/** An option of Node.js that runs no script: it checks the script's syntax, evaluates or prints code of its own, or shows the help or the version (`-c`, `--check`, `-e`, `--eval`, `-p`, `--print`, `-h`, `--help`, `-v`, `--version`), also with its value after `=` or in a cluster of short options (`-pe`). */
+const NODE_OPTION_THAT_RUNS_NO_SCRIPT =
+  /^(?:-[A-Za-z]*[cehpv][A-Za-z]*|--(?:check|eval|print|help|version)(?:=.*)?)$/
 
 /**
  * Reads one word of a command line as its shell passes it on: without its quotes, and on POSIX with an escaped character as that character; called by {@link commandsOf}.
@@ -119,6 +122,25 @@ function scriptOf(words: string[]): string | undefined {
 }
 
 /**
+ * Says whether a command is Node.js with an option before its script that runs no script ({@link NODE_OPTION_THAT_RUNS_NO_SCRIPT}); called by {@link isUpdateCommandLine}, for which such a command is no step of an update whatever it names.
+ * @param words - The command's words.
+ * @returns `true` for `node --check <script>` or `node -e <code> <script>`; `false` for another program, and for Node.js whose options before the script all run it.
+ * @example
+ * runsNoScript(['node', '--check', '/ext/publish-wiki.mjs'])        // => true
+ * runsNoScript(['node', '--no-warnings', '/ext/publish-wiki.mjs'])  // => false
+ */
+function runsNoScript(words: string[]): boolean {
+  const [program = '', ...rest] = words
+  const scriptAt = rest.findIndex((word) => !word.startsWith('-'))
+  // The options before the script; all words when there is none.
+  const options = scriptAt === -1 ? rest : rest.slice(0, scriptAt)
+  return (
+    NODE_PROGRAM.test(program) &&
+    options.some((option) => NODE_OPTION_THAT_RUNS_NO_SCRIPT.test(option))
+  )
+}
+
+/**
  * Says whether a word of a command names a path, compared as the platform compares paths: folded, with the platform's separator and without a trailing separator; called by {@link isUpdateCommandLine}.
  * @param word - The word of the command.
  * @param path - The absolute path it is compared with.
@@ -140,7 +162,7 @@ function namesPath(word: string, path: string, rules: PathRules): boolean {
  * @param places - The Wiki's output folder and the bundled skill's folder.
  * @param rules - How paths are compared on this platform.
  * @param platform - The platform whose shells the command line is read for.
- * @returns `true` when one of its commands runs the bundled publisher (its path as the program, or as the script Node.js runs), or has the Wiki's output folder itself as an argument (the publisher's `--output` value, or a command that lists that folder); `false` when it names either only inside another argument, in quoted text, without its folder or in a longer path.
+ * @returns `true` when one of its commands runs the bundled publisher (its path as the program, or as the script Node.js runs), or has the Wiki's output folder itself as an argument (the publisher's `--output` value, or a command that lists that folder); `false` when it names either only inside another argument, in quoted text, without its folder or in a longer path, or in a command of Node.js that runs no script ({@link runsNoScript}).
  * @example
  * isUpdateCommandLine('node /ext/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki', places, pathRulesOf('linux'), 'linux') // => true
  * isUpdateCommandLine('ls /repo/.codebook/wiki-backup', places, pathRulesOf('linux'), 'linux')                                                                    // => false
@@ -155,8 +177,9 @@ function isUpdateCommandLine(
     places.skillDirectory + rules.separator + PUBLISHER_SCRIPT_NAME
   return commandsOf(commandLine, platform).some(
     (words) =>
-      namesPath(scriptOf(words) ?? '', publisher, rules) ||
-      words.some((word) => namesPath(word, places.outputDirectory, rules)),
+      !runsNoScript(words) &&
+      (namesPath(scriptOf(words) ?? '', publisher, rules) ||
+        words.some((word) => namesPath(word, places.outputDirectory, rules))),
   )
 }
 

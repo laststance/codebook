@@ -83,6 +83,44 @@ test('a command that runs the bundled publisher as the script of Node.js is a st
   assert.deepEqual(signs, [true, true, true])
 })
 
+// Value: protects=the learner who checks, evaluates or asks Node.js about the bundled publisher in the half minute the chat has not answered yet; fails_when=an option of Node.js that runs no script (`-c`/`--check`, `-e`/`--eval`, `-p`/`--print`, `-h`/`--help`, `-v`/`--version`, also with `=` or in a cluster of short options) is skipped like any other, so the publisher's path after it counts as the chat's work, Codebook keeps the unanswered request, watches for up to 15 minutes and reserves the Wiki although no update runs; why_new=Cycle 0046 /ship Codex review CX19; seam=none
+test('Node.js that checks, evaluates or prints code, or shows its help or its version, runs no publisher, so its command is no step of an update, while the publisher run by Node.js still is', () => {
+  // Act
+  const publisher = '/extensions/codebook/skills/codebook/publish-wiki.mjs'
+  const signs = [
+    `node --check ${publisher}`,
+    `node -c ${publisher}`,
+    `node -e "1" ${publisher} --output /repo/.codebook/wiki`,
+    `node --eval=1 ${publisher}`,
+    `node -p ${publisher}`,
+    `node --print=1 ${publisher}`,
+    `node -pe 1 ${publisher}`,
+    `node --help ${publisher}`,
+    `node -h ${publisher}`,
+    `node --version ${publisher}`,
+    `node -v ${publisher}`,
+    `node --no-warnings ${publisher} --prepare --project /repo --output /repo/.codebook/wiki`,
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, PLACES),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    true,
+  ])
+})
+
 // Value: protects=the first sign of an update whose command names the Wiki's folder itself as an argument, whatever program runs it; fails_when=reading the command by its argument boundaries no longer takes an argument with a trailing slash for the Wiki's folder, so a working chat is stopped at the bound; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); repeat maintainability review MT10: the rule of the Wiki's folder as an argument has a test of its own; seam=none
 test('a command whose argument is exactly the Wiki’s folder is a step of an update whatever program it runs, also with a trailing slash', () => {
   // Act
