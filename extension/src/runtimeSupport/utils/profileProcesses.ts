@@ -10,30 +10,64 @@ export type ProfileProcessInputs = {
   platform?: NodeJS.Platform
 }
 
-/** The profile switch as `ps` prints it on macOS and Linux, with each prefix Chrome reads a switch by there (`--`, `-`), after the space that separates it from the argument before it. */
-const POSIX_PROFILE_SWITCHES = [' --user-data-dir=', ' -user-data-dir=']
+/** A profile switch as `ps` prints it on macOS and Linux: after the white space that ends the argument before it, with each prefix Chrome reads a switch by there (`--`, `-`). */
+const POSIX_PROFILE_SWITCH = /(?<=\s)--?user-data-dir=/g
+
+/** Where a switch terminator (`--`) may stand in the text `ps` prints: two dashes between white space, or before the line's end. */
+const POSIX_SWITCH_TERMINATOR = /(?<=\s)--(?=\s|$)/g
+
+/**
+ * Reads the value of the last profile switch in a part of a command line `ps` printed; called by {@link namesProfileByText} for each reading of the line.
+ * @param text - The part of the line Chrome would read switches in.
+ * @returns The text after the last switch, up to the part's end; `undefined` when the part holds no profile switch.
+ * @example
+ * lastProfileValueIn('chrome --user-data-dir=/tmp/a --user-data-dir=/tmp/b --headless') // => '/tmp/b --headless'
+ */
+function lastProfileValueIn(text: string): string | undefined {
+  const last = [...text.matchAll(POSIX_PROFILE_SWITCH)].at(-1)
+  return last === undefined
+    ? undefined
+    : text.slice(last.index + last[0].length)
+}
+
+/**
+ * Says whether a switch's value, read up to the end of its part of the line, is the folder: the folder alone, or the folder and the white space that ends its argument; called by {@link namesProfileByText}.
+ * @param value - The text after the switch ({@link lastProfileValueIn}).
+ * @param folder - The resolved profile folder.
+ * @returns `false` for a folder that only shares a prefix with it.
+ * @example
+ * isFolderValue('/tmp/codebook-browser-a --headless', '/tmp/codebook-browser-a') // => true
+ * isFolderValue('/tmp/codebook-browser-ab', '/tmp/codebook-browser-a')           // => false
+ */
+function isFolderValue(value: string, folder: string): boolean {
+  return (
+    value.startsWith(folder) && /^(?:\s|$)/.test(value.slice(folder.length))
+  )
+}
 
 /**
  * Says whether a command line `ps` printed gives Chrome a profile folder; called by {@link profileProcesses} on macOS and Linux, where `ps` prints the arguments joined by spaces, without quotes.
- * Chrome takes the last of several profile switches (`base::CommandLine` replaces a switch's value by a later one), so the last switch in the text decides, and its value must be the folder followed by a space or the line's end. The text cannot tell a switch terminator (`--`) from text inside an argument, so none is looked for: a switch after it counts, which leaves the folder in place rather than taking it for unused.
+ * Chrome reads switches only before a switch terminator (`--`), and of several profile switches before it takes the last (`base::CommandLine` replaces a switch's value by a later one). The text cannot tell a `--` argument from two dashes inside an argument, so each place a terminator may stand gives one reading, up to that place, and the whole line gives another: the folder counts as named when the last profile switch of any reading names it. A reading too many keeps a folder in place; a reading too few would let the sweep take a live profile for unused.
  * @param command - The command line as `ps` printed it.
  * @param folder - The resolved profile folder.
- * @returns `true` when the last profile switch names this folder; `false` for a folder that only shares a prefix with it, and when a later switch names another folder.
+ * @returns `true` when the last profile switch of a reading names this folder; `false` for a folder that only shares a prefix with it, and when every reading's last switch names another folder.
  * @example
+ * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-a -- --user-data-dir=/tmp/other', '/tmp/codebook-browser-a')      // => true
  * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-ab --user-data-dir=/tmp/codebook-browser-a --headless', '/tmp/codebook-browser-a') // => true
- * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-a --user-data-dir=/tmp/other', '/tmp/codebook-browser-a')                        // => false
+ * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-a --user-data-dir=/tmp/other', '/tmp/codebook-browser-a')        // => false
  */
 function namesProfileByText(command: string, folder: string): boolean {
-  const lastSwitch = POSIX_PROFILE_SWITCHES.map((profileSwitch) => ({
-    at: command.lastIndexOf(profileSwitch),
-    length: profileSwitch.length,
-  })).reduce((latest, candidate) =>
-    candidate.at > latest.at ? candidate : latest,
-  )
-  if (lastSwitch.at === -1) return false
-  const value = command.slice(lastSwitch.at + lastSwitch.length)
-  // Prefix-sharing profiles do not establish ownership.
-  return value === folder || value.startsWith(`${folder} `)
+  const readingEnds = [
+    ...[...command.matchAll(POSIX_SWITCH_TERMINATOR)].map(
+      (terminator) => terminator.index,
+    ),
+    command.length,
+  ]
+  // Each reading ends where a terminator may stand; the last one is the whole line.
+  return readingEnds.some((end) => {
+    const value = lastProfileValueIn(command.slice(0, end))
+    return value !== undefined && isFolderValue(value, folder)
+  })
 }
 
 /** The flag by which Chrome is given its profile folder. */
@@ -105,7 +139,7 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
 
 /**
  * Observes only the exact fresh Chrome profile during owned launch/cleanup; never signals other processes. Called by {@link HostBrowser} for its own profile, and by {@link removeAbandonedProfiles} for each candidate folder with the one listing of its sweep.
- * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the last profile switch in the text `ps` printed decides, and its value must be the folder, exactly ({@link namesProfileByText}). On both, of several profile switches the last one counts, as Chrome takes it.
+ * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On macOS and Linux the last profile switch before a switch terminator in the text `ps` printed decides, read in every way the text allows, and its value must be the folder, exactly ({@link namesProfileByText}). On both, Chrome reads no switch after a terminator, and of several profile switches before it the last one counts, as Chrome takes it.
  * @param profile - The profile folder; it is resolved first, so a folder that is gone rejects.
  * @param processes - The processes to match, as {@link listProcesses} listed them; listed now when left out.
  * @param inputs - The system whose command lines are read ({@link ProfileProcessInputs}); this one when left out.

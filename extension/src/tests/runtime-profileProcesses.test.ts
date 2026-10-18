@@ -269,3 +269,41 @@ test('of several profile switches the last one decides, on Linux and on Windows'
     { linux: [41, 43], windows: [41, 43] },
   )
 })
+
+// Value: protects=a live profile whose Chrome holds a loose argument `--user-data-dir=…` after the switch terminator (`--`): Chrome reads no switch after it, so the switch before it is Chrome's, and the sweep must not take the folder for unused and remove it (R1, /ship third review, Codex B2); fails_when=the macOS and Linux reader takes the last profile switch of the whole line, so a switch after the terminator hides the live profile, or it ends the switches at two dashes inside an argument, so a later real switch is missed; why_new=the reader of the text `ps` prints looked for no terminator; seam=the system the command lines are read for and a listing of the test's own, matched against a real profile folder; no_claim=a switch after a terminator on macOS and Linux, which still counts there, because the text cannot tell a terminator from two dashes inside an argument (pid 52 keeps its folder)
+test('the profile switch before a switch terminator decides on Linux and on Windows, and on Linux two dashes inside an argument hide no later switch', async (context) => {
+  // Arrange: Chrome uses the test's profile in 51; in 52 it uses another folder and names the test's only as a loose argument; in 53 two dashes stand inside an argument's text before the real switch on Linux.
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-terminator-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'codebook-browser-x')
+  await mkdir(profile)
+  const listing = [
+    {
+      pid: 51,
+      command: `chrome --user-data-dir=${profile} -- --user-data-dir=${parent}/other`,
+    },
+    {
+      pid: 52,
+      command: `chrome --user-data-dir=${parent}/other -- --user-data-dir=${profile}`,
+    },
+    {
+      pid: 53,
+      command: `chrome --window-name=a -- b --user-data-dir=${profile}`,
+    },
+  ]
+  // Act
+  const observed = {
+    linux: await profileProcesses(profile, listing, { platform: 'linux' }),
+    windows: await profileProcesses(profile, listing, { platform: 'win32' }),
+  }
+  // Assert: Windows splits the line exactly, so 53 holds a real terminator there.
+  assert.deepEqual(
+    {
+      linux: observed.linux.map((listed) => listed.pid),
+      windows: observed.windows.map((listed) => listed.pid),
+    },
+    { linux: [51, 52, 53], windows: [51] },
+  )
+})
