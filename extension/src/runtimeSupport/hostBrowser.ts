@@ -15,6 +15,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import * as vscode from 'vscode'
 
 import {
+  ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS,
   MANAGED_PROFILE_OWNER_FILE,
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_REMOVAL_RETRIES,
@@ -118,8 +119,10 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
-  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close}; it never rejects, and none is started once the browser is closing. */
+  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close} for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; it never rejects, and none is started once the browser is closing. */
   private abandonedProfileSweep?: Promise<void>
+  /** Set once {@link close} stopped waiting for a sweep that was still running: the run's journal is complete then, and the sweep's later result is not journaled. */
+  private sweepOutlivedClose = false
 
   /**
    * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own. Left out, a managed run uses this user's directory ({@link managedProfileRoot}: the shared `/tmp` on macOS and Linux, the user's own temp folder on Windows).
@@ -441,7 +444,8 @@ export class HostBrowser {
       owner,
     )
       .then((abandoned) => {
-        if (abandoned.length)
+        // A sweep that outlived the run's close journals nothing into the run that already ended.
+        if (abandoned.length && !this.sweepOutlivedClose)
           this.record('browser.abandoned-profiles-removed', {
             profiles: abandoned,
           })
@@ -687,10 +691,10 @@ export class HostBrowser {
           })
         },
       },
-      // The sweep a managed launch started outlives no close; it never rejects, so it adds no failure.
+      // The sweep a managed launch started is waited for within its bound; it never rejects, so it adds no failure.
       {
         description: 'abandoned profile sweep',
-        release: (): Promise<void> | undefined => this.abandonedProfileSweep,
+        release: (): Promise<void> => this.awaitSweepWithinBound(),
       },
     ])
     if (failures.length)
@@ -700,6 +704,32 @@ export class HostBrowser {
     this.record('browser.cleanup-verified', {
       host: this.host.id,
       remainingOwnedTabs: 0,
+    })
+  }
+
+  /**
+   * Waits for the sweep of abandoned profile folders a managed launch started, for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; called by {@link close} after the browser's exit was verified.
+   * Why bounded: on Windows each judgement of a folder can cost a PowerShell query of up to 3 s, so a root with many leftovers would hold the close for minutes. A sweep that is still running at the bound goes on in the background; the folders it has not judged stay for the next sweep, and its later result is not journaled into this run (`browser.abandoned-profile-sweep-left-running` says that it outlived the close).
+   * @returns Once the sweep ended or the bound passed; at once without a sweep.
+   * @example
+   * await this.awaitSweepWithinBound() // after 2 s at most
+   */
+  private async awaitSweepWithinBound(): Promise<void> {
+    const sweep = this.abandonedProfileSweep
+    if (!sweep) return
+    const bound = new AbortController()
+    const ended = await Promise.race([
+      sweep.then(() => true),
+      delay(ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS, false, {
+        signal: bound.signal,
+      }),
+    ])
+    // The bound's timer goes with the wait, so no timer outlives a sweep that ended first.
+    bound.abort()
+    if (ended) return
+    this.sweepOutlivedClose = true
+    this.record('browser.abandoned-profile-sweep-left-running', {
+      waitedMs: ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS,
     })
   }
 

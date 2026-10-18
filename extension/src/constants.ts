@@ -1184,6 +1184,8 @@ export const MANAGED_PROFILE_PREFIX = 'codebook-browser-'
 export const MANAGED_PROFILE_OWNER_FILE = 'codebook-owner.json'
 /** How many profile folders with an owner marker the start of a managed run judges for ones a killed editor left; more than that wait for a later run. A folder without a readable marker is passed over and is not counted. */
 export const MANAGED_PROFILE_SWEEP_LIMIT = 64
+/** How long a managed run's close waits for the sweep of abandoned profile folders its launch started; the sweep goes on after it, and the folders it has not judged by then stay for the next sweep. On Windows each judgement can cost a start query of up to {@link PROCESS_START_QUERY_TIMEOUT_MS}, so a root with many leftovers would otherwise hold a close for minutes; the bound lies well inside the 20 s the close gives its other waits. */
+export const ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS = 2_000
 /** How often the removal of a run's own profile folder is tried again while something in it is still busy. */
 export const MANAGED_PROFILE_REMOVAL_RETRIES = 3
 /** The pause before the first retry of that removal; each further retry waits this much longer. */
