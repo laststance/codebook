@@ -162,7 +162,42 @@ test('the Wiki reader DOM check runs the steps of a page a second time on the sa
   )
 })
 
-// Value: protects=a developer's or a CI runner's temporary folder, which a Reader DOM run that fails before its browser opens must not fill with published Wikis; fails_when=a setup step after the first publish (the second publish, a server's listen, the rewrite of a page) fails and the check exits without removing the temporary projects it already published; why_new=OCR6-3: the setup ran before the try whose finally releases each resource, so a failed listen left both temporary projects behind; seam=a module in --import that makes the second listen of the process fail; no_claim=the release after a failure in the browser, which needs playwright-cli
+/** A stand-in for the compiled reader the check imports (`../dist/deepWikiReader.js`): the setup this test makes fail stops before the check starts a reader, so the stand-in only has to load, and it says so if it is ever started. */
+const READER_STAND_IN = `export function startDeepWikiReader() {
+  throw new Error('The compiled reader is not started in this test: its setup fails before the check starts a reader.')
+}
+`
+
+/**
+ * Writes the module for `--import` that has the check load {@link READER_STAND_IN} in place of the compiled reader; called by the setup-failure test, which runs in the package lane, where the checkout's package producer cleans and rebuilds `extension/dist` beside it (test-execution guide, "Ordering and ownership").
+ * @param directory - The test's own temporary folder, which receives the stand-in, the resolve hook and the module that registers it.
+ * @returns The path of the module that registers the resolve hook.
+ * @example await writeReaderStandIn(directory) // => '/tmp/codebook-wiki-dom-setup-x/use-reader-stand-in.mjs'
+ */
+async function writeReaderStandIn(directory) {
+  const standIn = join(directory, 'reader-stand-in.mjs')
+  const hooks = join(directory, 'reader-stand-in-hooks.mjs')
+  const registrar = join(directory, 'use-reader-stand-in.mjs')
+  await writeFile(standIn, READER_STAND_IN)
+  await writeFile(
+    hooks,
+    `export async function resolve(specifier, context, nextResolve) {
+  if (specifier === '../dist/deepWikiReader.js' && context.parentURL === ${JSON.stringify(scriptUrl.href)})
+    return { url: ${JSON.stringify(pathToFileURL(standIn).href)}, shortCircuit: true }
+  return nextResolve(specifier, context)
+}
+`,
+  )
+  await writeFile(
+    registrar,
+    `import { register } from 'node:module'
+register(${JSON.stringify(pathToFileURL(hooks).href)})
+`,
+  )
+  return registrar
+}
+
+// Value: protects=a developer's or a CI runner's temporary folder, which a Reader DOM run that fails before its browser opens must not fill with published Wikis; fails_when=a setup step after the first publish (the second publish, a server's listen, the rewrite of a page) fails and the check exits without removing the temporary projects it already published; why_new=OCR6-3: the setup ran before the try whose finally releases each resource, so a failed listen left both temporary projects behind; seam=a module in --import that makes the second listen of the process fail, and a resolve hook that loads a stand-in for the compiled reader, so the test reads nothing of the checkout's dist, which the package producer cleans and rebuilds beside it in the package lane (second /ship gate run, FX-F-1); no_claim=the release after a failure in the browser, which needs playwright-cli
 test('the Wiki reader DOM check removes the temporary projects it already published when a server of its setup cannot listen', async (context) => {
   // Arrange: an empty temporary folder of the run's own, and an output folder beside it.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-dom-setup-'))
@@ -172,6 +207,7 @@ test('the Wiki reader DOM check removes the temporary projects it already publis
     preload = join(directory, 'second-listen-fails.mjs')
   await mkdir(temporary)
   await writeFile(preload, SECOND_LISTEN_FAILS)
+  const readerStandIn = await writeReaderStandIn(directory)
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
       ([name]) => name !== 'NODE_TEST_CONTEXT',
@@ -183,6 +219,7 @@ test('the Wiki reader DOM check removes the temporary projects it already publis
     const child = spawn(
       process.execPath,
       [
+        `--import=${pathToFileURL(readerStandIn).href}`,
         `--import=${pathToFileURL(preload).href}`,
         fileURLToPath(scriptUrl),
         'verify',
