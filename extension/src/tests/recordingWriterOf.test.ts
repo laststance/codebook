@@ -25,6 +25,7 @@ import type * as storeModule from '../recordingStore'
 import { RecordingStore } from '../recordingStore'
 import { useEditorMachineId } from '../utils/currentStorageOwner'
 import type * as judgeModule from '../utils/isRecordingWriterLive'
+import type { ProcessStartsOfList } from '../utils/isRecordingWriterLive'
 import { readProcessStart } from '../utils/readProcessStart'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import type * as writerModule from '../utils/recordingWriterOf'
@@ -127,14 +128,16 @@ async function rewriteHeader(
  * Says what {@link recordingWriterOf} finds of one recording's writer, without the recording's creation time, which the tests of the removal's dialog pin (it names that time).
  * @param folder - The recording's folder.
  * @param ownProcess - Whether this test process's own recording counts (`counts`, the default) or is left to the caller (`ignored`).
- * @returns The answer's kind, with the host for `on-another-host`.
+ * @param starts - The process starts the judgement takes as read in its list, for a test that names a start that cannot be read; read from the system when left out.
+ * @returns The answer's kind, with the host for `on-another-host` and `unconfirmed-here`.
  * @example await writerOf(folder) // => { kind: 'gone' }
  */
 async function writerOf(
   folder: string,
   ownProcess?: 'counts' | 'ignored',
+  starts?: ProcessStartsOfList,
 ): Promise<Record<string, unknown>> {
-  const answer = await recordingWriterOf(folder, ownProcess)
+  const answer = await recordingWriterOf(folder, ownProcess, starts)
   return Object.fromEntries(
     Object.entries(answer).filter(([field]) => field !== 'createdAt'),
   )
@@ -188,6 +191,62 @@ test('a recording whose record of its writer has no process start, and whose pro
 
   // Assert
   assert.deepEqual(writer, { kind: 'unconfirmed-here', host: hostname() })
+})
+
+// Value: protects=the place of a crashed window's recording whose writer's process id went to a process of another user, whose start Windows does not give this user; fails_when=the probe's refusal (EPERM) counts as the writer running and the unreadable start confirms nothing, so the recording counts as written for as long as that process lives, the removal refuses for good and tells the learner to stop a run in a window that does not exist; or a record whose start confirms the writer, run with other rights, loses that answer; why_new=Cycle 0046 adversarial review AD21: an editor that writes this user's storage runs as this user; seam=the process probe, which answers EPERM for the process id of no process, and the list's starts, in which that process's start cannot be read or is the start the record keeps
+test('a recording whose writer’s process id a process of another user has, whose start this user cannot read, has a writer this computer cannot confirm, by its header and by its record; a start that confirms the record’s writer keeps it running', async (context) => {
+  // Arrange: two recordings of this host, one with its header alone and one with a record of its writer, name a process id that the probe answers as another user's.
+  const storage = await recordingStorage(context)
+  const byHeader = await startRecording(storage)
+  await rm(recordingOwnerRecordPath(storage.directory, byHeader.studyId))
+  await rewriteHeader(byHeader.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+  })
+  const byRecord = await startRecording(storage)
+  const recordedStart = await readProcessStart(process.pid)
+  await rewriteHeader(byRecord.folder, {
+    owner: { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+  })
+  await rewriteWriterRecord(storage.directory, byRecord.studyId, {
+    pid: ID_OF_NO_PROCESS,
+    processStart: recordedStart,
+  })
+  const kill = process.kill.bind(process)
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid === ID_OF_NO_PROCESS)
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      return kill(pid, signal)
+    },
+  )
+
+  // Act
+  const writers = {
+    byHeader: await writerOf(
+      byHeader.folder,
+      'counts',
+      new Map([[ID_OF_NO_PROCESS, Promise.resolve(undefined)]]),
+    ),
+    byRecord: await writerOf(
+      byRecord.folder,
+      'counts',
+      new Map([[ID_OF_NO_PROCESS, Promise.resolve(undefined)]]),
+    ),
+    byRecordWithItsStart: await writerOf(
+      byRecord.folder,
+      'counts',
+      new Map([[ID_OF_NO_PROCESS, Promise.resolve(recordedStart)]]),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(writers, {
+    byHeader: { kind: 'unconfirmed-here', host: hostname() },
+    byRecord: { kind: 'unconfirmed-here', host: hostname() },
+    byRecordWithItsStart: { kind: 'may-run' },
+  })
 })
 
 // Value: protects=the recording of a crashed window on a computer whose host name changed since (macOS names itself after the network); fails_when=the writer is judged by the host name in the header, which is no longer this machine's, so the recording counts as written on another machine for good; why_new=Cycle 0046 /ship review R10 (b): the record of the writer's full identity is new; seam=the header and the record of the writer, which name the old host name, this editor's machine id and a process id of no process

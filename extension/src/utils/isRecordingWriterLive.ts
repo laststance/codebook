@@ -7,6 +7,7 @@ import type { RecordingHeader } from '../recordingSchemas'
 import { currentStorageOwner } from './currentStorageOwner'
 import { hasOwnWriterRecordFolder } from './hasOwnWriterRecordFolder'
 import { isProcessGone } from './isProcessGone'
+import { isProcessOfAnotherUser } from './isProcessOfAnotherUser'
 import { isRecordedOwnerGone } from './isRecordedOwnerGone'
 import { isSameStorageMachine } from './isSameStorageMachine'
 import { processStartedAtMs } from './processStartedAtMs'
@@ -29,7 +30,7 @@ export type ProcessStartsOfList = Map<number, Promise<string | undefined>>
  * What a judgement found of a recording's writer.
  * - `may-run`: a writer of this machine that may still run (a live process that is the writer, as far as this machine can tell)
  * - `on-another-host`: a writer that may still run only because the recording names another host (its header alone, or a record of another machine), which this machine cannot probe; `host` is the name the recording gives it
- * - `unconfirmed-here`: a recording of this host with its header alone, or with a record of its writer without the writer's start, whose process id a live process has that began, by the clock, after the recording; that is another process that got the id, or the writer itself after a step of the clock: no comparison of wall-clock times is certain, so this is neither `gone` nor remembered
+ * - `unconfirmed-here`: a recording of this host whose writer's process id a live process has that this computer cannot confirm as the writer: one of another user whose start cannot be read here, or, for a recording with its header alone or with a record of its writer without the writer's start, one of another user or one that began, by the clock, after the recording. That is another process that got the id, or the writer itself, run with other rights or seen after a step of the clock (no comparison of wall-clock times is certain), so this is neither `gone` nor remembered
  * - `gone`: the writer is gone, for good
  * - `left-to-caller`: this process's own recording, which the caller judges itself (`ignored`)
  */
@@ -67,12 +68,13 @@ function readStartOncePerList(starts: ProcessStartsOfList): ProcessStartReader {
  * @param header - What the header says of the writer; its host name names a writer whose record gives none.
  * @param ownProcess - Whether this process's own recording counts.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
- * A record without its writer's start (one of a window whose start could not be read) proves no more than the header does once its process id is in use: that live process is judged as the header's is, by the recording's creation time ({@link liveWriterStateHere}).
+ * A record without its writer's start (one of a window whose start could not be read) proves no more than the header does once its process id is in use: that live process is judged as the header's is, by the recording's creation time ({@link liveWriterStateHere}). A record with a start proves nothing either when the process with its id belongs to another user and its start cannot be read here ({@link isUnreadableProcessOfAnotherUser}).
  * @returns
  * - `on-another-host` for a record of another machine, which is not probed
  * - `left-to-caller` with `ignored` for this process's own recording
  * - `gone` once a writer of this machine is gone ({@link isRecordedOwnerGone})
  * - for a record without a start whose process id is in use, what {@link liveWriterStateHere} answers: `unconfirmed-here` or `may-run`
+ * - `unconfirmed-here` for a record with a start whose process id a process of another user has, whose start cannot be read here
  * - `may-run` otherwise, while it may still run
  * @example await writerStateByRecord({ pid: 4242, hostname: 'laptop.lan', machineId: 'f3a1…', processStart: 'ps:Mon Oct  5 09:12:33 2026' }, header, 'counts', readStart) // => { kind: 'gone' } once process 4242 is another process
  */
@@ -94,15 +96,41 @@ async function writerStateByRecord(
     return { kind: 'left-to-caller' }
   if (await isRecordedOwnerGone(owner, identity, readStart))
     return { kind: 'gone' }
+  const host = owner.hostname ?? header.owner.hostname
   // Without the writer's start the record proves no more than the header: its live process is judged as the header's is.
   if (owner.processStart === undefined)
-    return liveWriterStateHere(
+    return liveWriterStateHere(owner.pid, header.createdAt, host, readStart)
+  // A process of another user whose start cannot be read is not confirmed as the writer by the record's start.
+  if (
+    await isUnreadableProcessOfAnotherUser(
       owner.pid,
-      header.createdAt,
-      owner.hostname ?? header.owner.hostname,
+      owner.processStart,
       readStart,
     )
+  )
+    return { kind: 'unconfirmed-here', host }
   return { kind: 'may-run' }
+}
+
+/**
+ * Says whether the live process that has a recorded writer's id belongs to another user ({@link isProcessOfAnotherUser}) and its start cannot be read here, so that the start the record keeps neither confirms it as the writer nor tells another process; called by {@link writerStateByRecord} for a record with a start that {@link isRecordedOwnerGone} did not call gone.
+ * Windows refuses this user the start of another user's process (and of one run as administrator), which leaves such a record's writer judged running for as long as that process lives; the start reads of Linux and macOS read every user's process.
+ * @param pid - The writer's process id, which a live process has.
+ * @param recordedStart - The start the record keeps, which the reader is given as `expectedStart`.
+ * @param readStart - The list's reader of process starts ({@link readStartOncePerList}); the start is read once per list.
+ * @returns `true` for a process of another user whose start cannot be read; `false` for a process of this user, and for one whose start reads (the record's start then decided already).
+ * @example await isUnreadableProcessOfAnotherUser(4, 'win:2026-10-05T09:12:33.1234567Z', readStart) // => true for the Windows System process, seen by a user who is no administrator
+ */
+async function isUnreadableProcessOfAnotherUser(
+  pid: number,
+  recordedStart: string,
+  readStart: ProcessStartReader,
+): Promise<boolean> {
+  if (!isProcessOfAnotherUser(pid)) return false
+  const liveStart = await readStart(pid, {
+    expectedStart: recordedStart,
+  }).catch(() => undefined)
+  return liveStart === undefined
 }
 
 /**
@@ -134,8 +162,10 @@ async function hasIdGoneToALaterProcess(
  * @param host - The host name the recording gives its writer, which an uncertain answer names.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns
- * - `unconfirmed-here` for a process that began, by the clock, after the recording was created ({@link hasIdGoneToALaterProcess}): not certain, so the learner decides
- * - `may-run` for a process that began before the recording was created, or whose start cannot be read
+ * - `unconfirmed-here` for a process of another user ({@link isProcessOfAnotherUser}), which an editor that writes this user's storage is not, unless it was run with other rights
+ * - `unconfirmed-here` for a process that began, by the clock, after the recording was created ({@link hasIdGoneToALaterProcess})
+ * - `may-run` for a process of this user that began before the recording was created, or whose start cannot be read
+ * Neither `unconfirmed-here` is certain, so the learner decides.
  * @example await liveWriterStateHere(4242, '2026-10-05T09:00:00.000Z', 'workstation', readStart) // => { kind: 'unconfirmed-here', host: 'workstation' } for a process that began at 10:00
  */
 async function liveWriterStateHere(
@@ -144,7 +174,8 @@ async function liveWriterStateHere(
   host: string,
   readStart: ProcessStartReader,
 ): Promise<RecordingWriterState> {
-  return (await hasIdGoneToALaterProcess(pid, createdAt, readStart))
+  return isProcessOfAnotherUser(pid) ||
+    (await hasIdGoneToALaterProcess(pid, createdAt, readStart))
     ? { kind: 'unconfirmed-here', host }
     : { kind: 'may-run' }
 }
