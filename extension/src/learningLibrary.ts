@@ -66,6 +66,7 @@ import { removeWriterRecord } from './utils/removeWriterRecord'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
+import { unconfirmedWriterSentences } from './utils/unconfirmedWriterSentences'
 import { withoutStudyReferences } from './utils/withoutStudyReferences'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -122,16 +123,16 @@ export type UnconfirmedWriter = {
 }
 
 /**
- * Words why a removal moved nothing of a study one of whose recordings a run on another host may still write, for {@link StudyWriterUnconfirmedError}; the outcome line puts it after "Nothing was deleted."
- * @param recording - The host the recording names and its start (an ISO time).
- * @returns The sentence, with the start in this editor's local time.
- * @example unconfirmedWriterCause({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z' }) // => "This study's recording was started on laptop.home-network at 10/5/2026, 9:00:00 AM, and Codebook cannot tell from this computer whether that run still records."
+ * Words why a removal moved nothing of a study one of whose recordings has a writer this computer cannot confirm, for {@link StudyWriterUnconfirmedError}: the cause this API answers to its callers, after which an outcome line would read "Nothing was deleted." The editor never shows it: it asks the learner in a dialog whose detail begins with the same sentences ({@link unconfirmedWriterSentences}).
+ * @param writer - The host the recording names, its start (an ISO time) and the place of its writer.
+ * @returns The sentences, with the start in this editor's local time.
+ * @example unconfirmedWriterCause({ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }) // => 'Its recording was started on laptop.home-network at 10/5/2026, 9:00:00 AM. Codebook cannot tell from this computer whether it is still recording.'
  */
-function unconfirmedWriterCause({
-  host,
-  startedAt,
-}: UnconfirmedWriter): string {
-  return `This study's recording was started on ${host} at ${new Date(startedAt).toLocaleString()}, and Codebook cannot tell from this computer whether that run still records.`
+function unconfirmedWriterCause(writer: UnconfirmedWriter): string {
+  return unconfirmedWriterSentences({
+    ...writer,
+    startedAt: new Date(writer.startedAt).toLocaleString(),
+  })
 }
 
 /**

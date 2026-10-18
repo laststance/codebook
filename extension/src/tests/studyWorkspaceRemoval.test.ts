@@ -8044,18 +8044,18 @@ async function crashedRecordingOf(
   return folder
 }
 
-/** The dialog that offers "Remove Anyway" for a recording of old-laptop.local started on 2026-10-01 at 08:00 UTC, as the reader opens it. */
+/** The dialog that offers "Move to Trash Anyway" for a recording of old-laptop.local started on 2026-10-01 at 08:00 UTC, as the reader opens it. */
 const DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST = {
   title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
   options: {
     modal: true,
-    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}, and Codebook cannot tell from this computer whether that run still records. If it still runs there, it loses its recording. If old-laptop.local is this computer under an earlier name, or that editor has closed, nothing is lost. Cancel keeps the study and its recording as they are.`,
+    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether it is still recording. If an editor window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
   },
-  items: ['Remove Anyway'],
+  items: [`Move to ${TRASH} Anyway`],
 }
 
 // Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window is still recording this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
-test('a saved study whose crashed recording names another host is moved with its recording after the learner chooses Remove Anyway in a dialog that names that host and the recording’s start', async () => {
+test('a saved study whose crashed recording names another host is moved with its recording after the learner chooses Move to Trash Anyway in a dialog that names that host and the recording’s start', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -8112,7 +8112,7 @@ test('Cancel in the dialog about a recording that names another host moves nothi
       'header-only',
     )
     harness.answerWarningDialogs(async ([button]) =>
-      button === 'Remove Anyway' ? undefined : button,
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
     )
     const library = await harness.reader.learningStorage()
 
@@ -8142,7 +8142,7 @@ test('Cancel in the dialog about a recording that names another host moves nothi
 })
 
 // Value: protects=a saved study whose recording (header alone) names a process of this computer that is alive but began, by the clock, after the recording: another process that got the id, or the writer itself after a step of the clock; fails_when=the wall-clock comparison is taken as certain, so the writer counts as gone and the removal moves the recording without the learner's choice; why_new=Cycle 0046 Codex review CX13; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
-test('a saved study whose recording names a live process of this computer begun after the recording reaches the dialog, and Remove Anyway moves it', async (context: TestContext) => {
+test('a saved study whose recording names a live process of this computer begun after the recording reaches the dialog, and Move to Trash Anyway moves it', async (context: TestContext) => {
   // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it.
   const harness = await workspaceHarness()
   try {
@@ -8167,7 +8167,7 @@ test('a saved study whose recording names a live process of this computer begun 
         studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
       },
       {
-        dialogs: [[`Move to ${TRASH}`], ['Remove Anyway']],
+        dialogs: [[`Move to ${TRASH}`], [`Move to ${TRASH} Anyway`]],
         moved: [
           study.id,
           `${study.id}.study.meta.v3.json`,
@@ -8181,8 +8181,44 @@ test('a saved study whose recording names a live process of this computer begun 
   }
 })
 
-// Value: protects=a study whose recording another editor window of this machine is still writing, which the learner gets no way to remove; fails_when=a writer this machine can prove alive (its record names this machine, and the live process has the recorded start) is offered "Remove Anyway", so the learner removes a recording while it is written; why_new=Cycle 0046 OCR review OC1: only a writer this machine cannot probe gets the learner's choice; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
-test('a saved study whose recording a live window of this machine is still writing is refused, and no Remove Anyway is offered', async (context: TestContext) => {
+// Value: protects=the learner's reading of the dialog about a recording whose writer is a live process of this computer that began, by the clock, after the recording; fails_when=the dialog says the recording may still be running "on another computer" and that this computer cannot tell, although the writer would be an editor window of this very computer (CX13's case, PD3); why_new=Cycle 0046 design review PD3: the dialog had one title and detail for both places; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs, stubbed at the vscode boundary
+test('the dialog about a recording that a live process of this computer begun after it may still write says that another editor window may still be recording it, and what is lost', async (context: TestContext) => {
+  // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it. The learner cancels the dialog.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const laterProcess = await idleChild(context)
+    await crashedRecordingOf(
+      harness,
+      study,
+      { pid: laterProcess.pid!, hostname: hostname() },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) =>
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
+    )
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(structuredClone(harness.warningDialogs.slice(1)), [
+      {
+        title: `This study's recording may still be running in another editor window. Move the study to the ${TRASH} anyway?`,
+        options: {
+          modal: true,
+          detail: `Its recording was started on ${hostname()} at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell whether an editor window of this computer is still recording it. If one still does, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+        },
+        items: [`Move to ${TRASH} Anyway`],
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study whose recording another editor window of this machine is still writing, which the learner gets no way to remove; fails_when=a writer this machine can prove alive (its record names this machine, and the live process has the recorded start) is offered "Move to Trash Anyway", so the learner removes a recording while it is written; why_new=Cycle 0046 OCR review OC1: only a writer this machine cannot probe gets the learner's choice; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording a live window of this machine is still writing is refused, and no Move to Trash Anyway is offered', async (context: TestContext) => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -8250,7 +8286,7 @@ async function unsavedRunOf(
 }
 
 // Value: protects=a learner whose library holds only the recording an editor left when it crashed on this Mac under an earlier host name, or on another computer, for a run that never saved its study; fails_when=such a recording is hidden from Saved studies for good, so its files stay and no Delete reaches the dialog that names its host; why_new=Cycle 0046 review AF2: a study without an archive was listed only when no writer of any host may still write its recording; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
-test('a run’s crashed recording that names another host is listed in Saved studies, and Delete moves it after the learner chooses Remove Anyway', async () => {
+test('a run’s crashed recording that names another host is listed in Saved studies, and Delete moves it after the learner chooses Move to Trash Anyway', async () => {
   // Arrange: only a recording is left of the run, made under another host name.
   const harness = await workspaceHarness()
   try {
@@ -8310,7 +8346,7 @@ test('Cancel in the dialog about a listed run’s recording that names another h
     )
     await harness.reader.action('retry')
     harness.answerWarningDialogs(async ([button]) =>
-      button === 'Remove Anyway' ? undefined : button,
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
     )
 
     // Act

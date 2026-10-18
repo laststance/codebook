@@ -1602,7 +1602,7 @@ test('a recording whose header names an editor of another machine is listed but 
       listed: [{ id: ofAnotherMachine, format: 'archive-missing' }],
       removal: {
         outcome: 'nothing-moved',
-        cause: `This study's recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}, and Codebook cannot tell from this computer whether that run still records.`,
+        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether it is still recording.`,
         unconfirmedWriter: {
           host: 'another-machine',
           startedAt: header.createdAt,

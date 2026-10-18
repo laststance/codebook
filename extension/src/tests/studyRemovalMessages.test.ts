@@ -143,3 +143,48 @@ test('a removal whose move could not be checked says that Codebook could not tel
       'Codebook could not tell whether the saved study was moved to the Recycle Bin; delete it again to finish. EACCES: permission denied',
   })
 })
+
+// Value: protects=the dialog about a recording whose writer this computer cannot confirm says plainly where it may still be recorded, asks with the verb of its question, and says what each answer does; fails_when=the button reads "Remove Anyway" under a question about a move (PD2), the detail puts two ideas in one sentence or promises that nothing is lost when the writer is this computer under an earlier name (CX15, PD3), or a writer of this computer is called one of another computer (PD3); why_new=Cycle 0046 design review PD2 and PD3, and Codex review CX15; seam=none
+test('the dialog about a recording whose writer this computer cannot confirm names where it may still run, asks with Move to Trash Anyway, and says what is lost and what Cancel keeps', () => {
+  // Arrange
+  const messages = studyRemovalMessages('Trash'),
+    onWindows = studyRemovalMessages('Recycle Bin')
+  // Act
+  const dialogs = {
+    anotherComputer: {
+      title: messages.unconfirmedWriterTitle('another-computer'),
+      detail: messages.unconfirmedWriterDetail({
+        host: 'old-laptop.local',
+        startedAt: '10/1/2026, 10:00:00 AM',
+        place: 'another-computer',
+      }),
+    },
+    thisComputer: {
+      title: messages.unconfirmedWriterTitle('this-computer'),
+      detail: messages.unconfirmedWriterDetail({
+        host: 'workstation',
+        startedAt: '10/1/2026, 10:00:00 AM',
+        place: 'this-computer',
+      }),
+    },
+    button: messages.unconfirmedWriterButton,
+    buttonOnWindows: onWindows.unconfirmedWriterButton,
+  }
+  // Assert
+  assert.deepEqual(dialogs, {
+    anotherComputer: {
+      title:
+        "This study's recording may still be running on another computer. Move the study to the Trash anyway?",
+      detail:
+        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether it is still recording. If an editor window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+    },
+    thisComputer: {
+      title:
+        "This study's recording may still be running in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Its recording was started on workstation at 10/1/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer is still recording it. If one still does, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+    },
+    button: 'Move to Trash Anyway',
+    buttonOnWindows: 'Move to Recycle Bin Anyway',
+  })
+})
