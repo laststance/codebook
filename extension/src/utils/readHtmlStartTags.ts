@@ -288,8 +288,9 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     // The body rule for input closes an open select first; a hidden input that a table rule takes leaves it open.
     if (
       token.tagID === htmlTree.TAG_ID.INPUT &&
-      this.hasOpenSelect() &&
-      !this.isHiddenInputOfTableRule(token)
+      // The cheap check of the input comes first: a hidden input in a table keeps the select open, and the scope check walks the stack.
+      !this.isHiddenInputOfTableRule(token) &&
+      this.hasOpenSelect()
     )
       this.closeSelect()
     super._startTagOutsideForeignContent(token)

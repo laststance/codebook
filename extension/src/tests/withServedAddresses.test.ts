@@ -156,9 +156,9 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   )
 })
 
-// Value: protects=the extension host, which filters every served Wiki page synchronously, from seconds of filtering per crafted page; fails_when=an end tag whose name no open element has walks the open elements again in plain HTML, in a table, caption, table body, row or cell, or for a formatting, heading, form, template, select, table or table-section name, so each end costs as much as the nesting is deep, or each input scans the stack for an open select; why_new=Cycle 0046 second /ship performance review PERF1 measured 1.5 to 6 s for these pages against 150 to 220 ms for the ordinary page; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+// Value: protects=the extension host, which filters every served Wiki page synchronously, from seconds of filtering per crafted page; fails_when=an end tag whose name no open element has walks the open elements again in plain HTML, in a table, caption, table body, row or cell, or for a formatting, heading, form, template, select, table or table-section name, so each end costs as much as the nesting is deep, or each input scans the stack for an open select, also a hidden input in a table that leaves the select open; why_new=Cycle 0046 second /ship performance review PERF1 measured 1.5 to 6 s for these pages against 150 to 220 ms for the ordinary page; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker)
 test('the reader filters a page of more than 1 MB of deep plain, table-held or foreign nesting with unmatched ends of any name within four times the time of an ordinary page', async () => {
-  // Arrange: 20,000 open elements, then 20,000 ends of a name none of them has, in each insertion mode the reader skips such ends in; a row's implied tbody is open, so its absent section is tfoot. Last, inputs after a closed select and deep nesting, each of which the reader checks for an open select.
+  // Arrange: 20,000 open elements, then 20,000 ends of a name none of them has, in each insertion mode the reader skips such ends in; a row's implied tbody is open, so its absent section is tfoot. Last, inputs after a closed select and deep nesting, and hidden inputs that a table's rule takes inside an open select, each of which the reader checks for an open select.
   const pages = {
     unmatchedHtmlEnds: ('<x>'.repeat(20_000) + '</y>'.repeat(20_000)).padEnd(
       1_000_001,
@@ -257,6 +257,11 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
       '<x>'.repeat(20_000) +
       '<input>'.repeat(130_000)
     ).padEnd(1_000_001, ' '),
+    hiddenInputsInAnOpenSelectOfATable: (
+      '<table><select>' +
+      '<x>'.repeat(20_000) +
+      '<input type=hidden>'.repeat(49_000)
+    ).padEnd(1_000_001, ' '),
   }
 
   // Act
@@ -270,6 +275,7 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [
+      true,
       true,
       true,
       true,
