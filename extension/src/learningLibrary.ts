@@ -103,6 +103,22 @@ export type StudyRemoval =
 /** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another host, or a live process of this computer whose start does not fit the recording's) is no such reservation: the learner decides about it when they delete the study. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
+/**
+ * Judges whether a run of this machine, this window's own included, may still write one recording directory ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the one predicate of the list ({@link LearningLibrary.entryWithoutArchive}) and of the removal's judgement before its lock ({@link LearningLibrary.writerVerdictsOf}).
+ * @param recording - The recording directory.
+ * @param starts - The process starts of the caller's list or removal ({@link ProcessStartsOfList}).
+ * @returns `true` while such a run may still write it; `false` for a sealed recording, a writer that is gone, and one this computer cannot confirm.
+ * @example await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while another window of this machine records that run
+ */
+async function isReservedByRunHere(
+  recording: string,
+  starts: ProcessStartsOfList,
+): Promise<boolean> {
+  return (
+    (await recordingWriterOf(recording, 'counts', starts)).kind === 'may-run'
+  )
+}
+
 /** What a removal found of the writer of one of the study's recordings before it took the storage lock ({@link LearningLibrary.writerVerdictsOf}): the look it judged from, whether a run of this machine, this window's own included, may still write it ({@link RecordingJudge}), and the writer of another window that may ({@link recordingWriterOf}). */
 type RemovalWriterVerdict = {
   /** What one cheap look found right before the judgement ({@link lookAtRecording}), which the removal compares under its lock. */
@@ -409,11 +425,8 @@ export class LearningLibrary {
   ): Promise<StudyCatalogEntry | undefined> {
     const paths = await this.studyPaths(id, undefined)
     // A recording that a run on another host may still write is listed: the learner reaches the dialog about it with Delete.
-    const isLeft = await this.isLeftWithoutArchive(
-      paths,
-      async (recording) =>
-        (await recordingWriterOf(recording, 'counts', starts)).kind ===
-        'may-run',
+    const isLeft = await this.isLeftWithoutArchive(paths, (recording) =>
+      isReservedByRunHere(recording, starts),
     )
     if (!isLeft) return undefined
     const modified = await Promise.all(
@@ -499,9 +512,7 @@ export class LearningLibrary {
     for (const recording of await this.recordingPaths(identity))
       verdicts.set(recording, {
         look: await lookAtRecording(recording),
-        isReservedHere:
-          (await recordingWriterOf(recording, 'counts', starts)).kind ===
-          'may-run',
+        isReservedHere: await isReservedByRunHere(recording, starts),
         ofAnotherWindow: await recordingWriterOf(recording, 'ignored', starts),
       })
     return verdicts
