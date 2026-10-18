@@ -2699,6 +2699,53 @@ test('a palette Return to Wiki made while the learner types in a file in front o
   )
 })
 
+for (const move of [
+  'a file of the Wiki’s own group',
+  'another group whose front tab is no file',
+] as const)
+  // Value: protects=the learner's layout after a palette Return to Wiki made while the learner types in notes.ts in the first group, when the learner's next move goes to a file of the Wiki's own group, or to another group whose front tab is no file (Cursor's chat part): either move ends the Return's wait, so the learner's later selection of the Wiki restores no article layout and shows no cited source; fails_when=the deferred Return's watch, in the Wiki's own group, takes an active text editor of that group for no move (the first), or takes a newly named group for no move when no text editor is active there (the second), so the Return waits on and the later selection restores the layout, R6's symptom; why_new=Cycle 0046 TT2 (the third testing review: neither move of AD28's movedAway had a test); seam=readerHarness with focusUnrelatedDraft and switchTabGroup(true), requireSourceFocus, open with preserveNativeInput, focusDraftInWikiGroup or focusCursorChatPart (the move), clickWikiTab or focusWiki (the later selection of the Wiki), arrangements and shown; no_claim=whether the later selection is the learner's or the editor's: the rule ends the wait at the first move elsewhere either way
+  test(`a palette Return to Wiki is dropped once the learner moves to ${move}, so a later selection of the Wiki restores no article layout`, async (context) => {
+    // Arrange: the learner types in notes.ts in the first group, which the editor names; the palette's Return to Wiki defers the article's layout.
+    const harness = await readerHarness(context)
+    await harness.reader.open(harness.selection)
+    harness.focusUnrelatedDraft('notes.ts')
+    harness.switchTabGroup(true)
+    harness.requireSourceFocus()
+    await harness.reader.open(
+      {
+        ...harness.selection,
+        nodeId: 'order',
+        location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+      },
+      undefined,
+      true,
+      true,
+    )
+    const arrangementsBefore = harness.arrangements(),
+      shownBefore = harness.shown.length
+
+    // Act: the learner moves; later the Wiki is selected (its tab comes to the front of its group where a file stands before it).
+    if (move === 'a file of the Wiki’s own group') {
+      harness.focusDraftInWikiGroup('draft.ts')
+      harness.clickWikiTab()
+    } else {
+      harness.focusCursorChatPart()
+      harness.focusWiki()
+    }
+    await harness.deliverTabEvents()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // Assert: no layout was restored and no cited source was shown.
+    assert.deepEqual(
+      {
+        arrangements: harness.arrangements() - arrangementsBefore,
+        shown: harness.shown.length - shownBefore,
+        error: harness.reader.inspect().view.error,
+      },
+      { arrangements: 0, shown: 0, error: '' },
+    )
+  })
+
 test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
   // Arrange
   const harness = await readerHarness(context)
