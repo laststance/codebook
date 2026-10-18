@@ -137,6 +137,7 @@ import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { watchWikiUpdateSigns } from './utils/watchWikiUpdateSigns'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
+import { WikiPathRefusedError } from './utils/wikiPathRefusedError'
 import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
 import {
   WikiUpdateRun,
@@ -1972,9 +1973,12 @@ export function activate(
         } catch (error) {
           await deepWikiReader?.close()
           deepWikiReader = undefined
+          // A refusal of the Wiki's path carries its own step; any other failure gets the step of a missing Wiki.
           void showNotice(
             'error',
-            `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
+            error instanceof WikiPathRefusedError
+              ? `Codebook could not open DeepWiki: ${error.message}`
+              : `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
           )
           throw error
         }

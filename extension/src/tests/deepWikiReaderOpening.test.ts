@@ -403,7 +403,7 @@ test('Open LLM Wiki on a Wiki whose `.codebook` folder in the project is a link 
     { errors: window.errors, readersStarted: window.readers.length },
     {
       errors: [
-        `Codebook could not open DeepWiki: Error: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
+        `Codebook could not open DeepWiki: The Wiki folder ${join(window.projectRoot, '.codebook', 'wiki')} lies behind a link or a file in the project (${join(window.projectRoot, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
       ],
       readersStarted: 0,
     },
@@ -431,7 +431,7 @@ test('Open LLM Wiki on a Wiki whose folder `.codebook/wiki` in the project is it
     { errors: window.errors, readersStarted: window.readers.length },
     {
       errors: [
-        `Codebook could not open DeepWiki: Error: The Wiki folder ${wikiFolder} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project. Generate it through /codebook in this project, then retry.`,
+        `Codebook could not open DeepWiki: The Wiki folder ${wikiFolder} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
       ],
       readersStarted: 0,
     },
