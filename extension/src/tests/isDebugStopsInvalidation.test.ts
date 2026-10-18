@@ -42,3 +42,18 @@ test("an adapter's invalidated event for threads, stacks or everything makes the
     false,
   ])
 })
+
+// Value: protects=the reader's view of when the editor handles a session's stops again, as VS Code 1.140 and Cursor 3.23 decide it (`areas||["all"]` in their onDidInvalidated); fails_when=an empty list of areas or an area the editors do not know counts as everything, as the protocol's text reads it, so the reader expects a stop handling the editor never runs and takes the next frame the learner selects for that stop's; why_new=second /ship CodeRabbit CR6-1 proposed counting an empty list as everything; seam=none; no_claim=other adapters' events
+test("an adapter's invalidated event with an empty list of areas, or with areas the editors do not know, does not make the editor handle the session's stops again", () => {
+  // Arrange: an empty list and unknown areas, which the protocol reads as everything and both editors read as no stop handling.
+  const messages: unknown[] = [
+    { type: 'event', event: 'invalidated', body: { areas: [] } },
+    { type: 'event', event: 'invalidated', body: { areas: ['memory'] } },
+  ]
+
+  // Act
+  const answers = messages.map((message) => isDebugStopsInvalidation(message))
+
+  // Assert
+  assert.deepEqual(answers, [false, false])
+})
