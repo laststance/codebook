@@ -8425,6 +8425,72 @@ test('a saved study whose recording a live window of this machine is still writi
   }
 })
 
+// Value: protects=a study one of whose recordings a live window of this machine still writes, while another of its recordings names another host; fails_when=the writer on another host is found first and the learner is offered "Move to Trash Anyway", which moves the recording a live window still writes (TC2: swapping the two checks of the removal survived every test); why_new=Cycle 0046 testing review TC2: no study had both kinds of writer; seam=the recordings.v2 header, which names a live child process of the test that began before the recording, the recordings.v3 header of old-laptop.local, neither with a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study with a recording a live window of this machine still writes and one that names another host is refused plainly, and no Move to Trash Anyway is offered', async (context: TestContext) => {
+  // Arrange: recordings.v2 is written by a live window of this machine that began before it; recordings.v3 names old-laptop.local. Neither has a record of its writer (the record would be one for both, by the study's id).
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const otherWindow = await idleChild(context)
+    const ofThisMachine = await crashedRecordingOf(
+      harness,
+      study,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'header-only',
+    )
+    const header: Record<string, unknown> = JSON.parse(
+      await readFile(join(ofThisMachine, 'header.json'), 'utf8'),
+    )
+    await writeFile(
+      join(ofThisMachine, 'header.json'),
+      JSON.stringify({ ...header, createdAt: new Date().toISOString() }),
+    )
+    const ofAnotherHost = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      study.id,
+    )
+    await mkdir(ofAnotherHost, { recursive: true })
+    await writeFile(
+      join(ofAnotherHost, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'old-laptop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-01T08:00:00.000Z',
+      }),
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves,
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`]],
+        moved: [],
+        studyRemoval: {
+          status: 'failed',
+          studyId: study.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 /**
  * Names a run of the reader's workspace that never saved its study, so a test can leave only its recording.
  * @param harness - The reader whose library the run belongs to.
