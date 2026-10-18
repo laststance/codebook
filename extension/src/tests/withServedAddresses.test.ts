@@ -11,6 +11,8 @@ import { withServedAddresses } from '../utils/withServedAddresses'
 
 /** How many times as long as {@link ORDINARY_PAGE} the reader may take for one crafted page of the timing tests. On the development host (16 CPUs, Node 24) no crafted page took more than 1.2 times as long as the ordinary page, with or without coverage, while a reading that rescans a deep stack took many times as long. A fixed bound in milliseconds measured only the speed of the host: the full HTML parser of row 1058 takes 128 ms for the ordinary page alone, and 446 ms under coverage. */
 const CRAFTED_PAGE_BOUND_RATIO = 4
+/** How many times as long as its first half the whole {@link ORDINARY_PAGE} may take in the growth test: time that grows with the page gives about two, time that grows with its square about four. On the development host (16 CPUs, Node 24) the ratio was 1.97 to 2.29 plain and 2.01 to 2.03 under c8. */
+const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 /** How long the timing test waits for its worker before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
 /** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
@@ -294,6 +296,48 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
     ),
     [],
     `the ordinary page took ${ordinary} ms`,
+  )
+})
+
+// Value: protects=the extension host against a reader whose time per page grows faster than the page, which the ratio tests pass when it slows every page alike; fails_when=filtering the ordinary page of more than 1 MB takes more than three times as long as filtering its first half (linear time gives about two), so the time to serve a page grows with its square; why_new=Cycle 0046 second /ship testing review TEST6 (the only absolute limit was the 30 s deadline); seam=a worker thread, the shortest of three runs of each size after a warm-up (the whole page's first run is the harness's shorter of two); no_claim=a bound in milliseconds (the host's speed is not measured)
+test('the reader filters an ordinary page of more than 1 MB within three times the time of its first half', async () => {
+  // Arrange: the first half of the ordinary page, 4,500 of its 9,000 sections, three times, and the whole page twice more.
+  const half = ORDINARY_PAGE.slice(0, ORDINARY_PAGE.length / 2)
+  const pages = {
+    firstHalf: half,
+    secondHalf: half,
+    thirdHalf: half,
+    secondWhole: ORDINARY_PAGE,
+    thirdWhole: ORDINARY_PAGE,
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+  )
+
+  // Assert: the half page holds exactly half of the sections, every run finished, and the whole page took at most three times as long.
+  assert.equal(half.length * 2, ORDINARY_PAGE.length)
+  const halfTimes = [times.firstHalf, times.secondHalf, times.thirdHalf].filter(
+    (milliseconds) => typeof milliseconds === 'number',
+  )
+  const wholeTimes = [
+    times.ordinary,
+    times.secondWhole,
+    times.thirdWhole,
+  ].filter((milliseconds) => typeof milliseconds === 'number')
+  assert.deepEqual(
+    [halfTimes.length, wholeTimes.length],
+    [3, 3],
+    'the pages were not filtered before the deadline',
+  )
+  const halfTime = Math.min(...halfTimes)
+  const wholeTime = Math.min(...wholeTimes)
+  assert.ok(
+    wholeTime <= ORDINARY_PAGE_GROWTH_BOUND_RATIO * halfTime,
+    `the whole page took ${wholeTime} ms and its half ${halfTime} ms`,
   )
 })
 
