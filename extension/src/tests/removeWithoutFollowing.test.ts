@@ -278,6 +278,46 @@ test('a folder that a running program replaces by a link between the walk’s lo
   )
 })
 
+// Value: protects=the files of another real folder that a running program renames into the path of a folder the walk is emptying, between the walk's look and its listing: the walk tells the folder by its device and file id, not by its type alone, so it stops with an error that names the path and removes none of the other folder's files (CX6; TT42, the third testing review); fails_when=the walk confirms only that a directory stands at the path, so it removes the other folder's entries by their names; why_new=the CX6 test swapped in a link, which the type check alone already refuses; seam=a file system stand-in whose listing of one folder first renames it away and renames another real folder into its place
+test('a folder that a running program replaces by another real folder between the walk’s look and its listing stops the walk with an error that says so, and the other folder keeps every file', async (context) => {
+  // Arrange: the folder to remove and another folder with a file of the same name; right before the walk lists the first, a program puts the second at its path.
+  const folder = await folderWithKeptFiles(context)
+  const swapped = join(folder, 'swapped')
+  const other = join(folder, 'other')
+  await mkdir(swapped)
+  await writeFile(join(swapped, 'notes.txt'), 'own')
+  await mkdir(other)
+  await writeFile(join(other, 'notes.txt'), 'other')
+  const removeWhileSwapped = await loadWalkOn({
+    ...realFileSystem,
+    readdir: async (path: string) => {
+      if (path === swapped) {
+        await rename(swapped, join(folder, 'moved-away'))
+        await rename(other, swapped)
+      }
+      return readdir(path)
+    },
+  })
+
+  // Act
+  const outcome = await removeWhileSwapped(swapped).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcome,
+      otherAtThePath: await readFile(join(swapped, 'notes.txt'), 'utf8'),
+    },
+    {
+      outcome: `The folder ${swapped} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
+      otherAtThePath: 'other',
+    },
+  )
+})
+
 // Value: protects=the start of an update and the takeover of a lock when another window removes the same folder in the same moment (two windows that clear one killed window's prepared claim); fails_when=a directory that is gone when the walk comes to list it, or to remove it, fails the walk with ENOENT instead of counting as removed (row 229); why_new=Cycle 0046 row 229: the listing was the one step of the walk that did not pass over a missing entry; seam=a file system on which another window removes the folder right before the walk's listing, and one on which it does so right before the walk's first removal
 test('a folder that another window removes while the walk is at it counts as removed: the walk ends without an error when the folder is gone at its listing, and when it is gone at its removal', async (context) => {
   // Arrange: two folders with a file each; the other window removes the first right before the walk lists it and the second right before the walk asks the system to remove it.
