@@ -208,20 +208,32 @@ test('a line break ends a command as a ; does, and on POSIX an unquoted word tha
   assert.deepEqual(signs, [true, true, false, true, true, true])
 })
 
-// Value: protects=the learner who runs a command of their own that names the publisher in a way no shell reads as its path; fails_when=a home folder in single quotes or in a longer variable's name, a `~` in double quotes, or a `cd` whose next command does not run in its folder (after `||` or `|`) is read as the path, so the learner's command counts as the chat's work; why_new=Cycle 0046 /ship adversarial review AD19 (the forms a shell keeps as text); seam=none
+// Value: protects=the learner who runs a command of their own that names the publisher in a way no shell reads as its path; fails_when=a home folder in single quotes or in a longer variable's name, a `~` in double quotes, or a `cd` whose next command does not run in its folder (after `||` or `|`) is read as the path, so the learner's command counts as the chat's work; why_new=Cycle 0046 /ship adversarial review AD19 (the forms a shell keeps as text); third testing review TT22: the case of a longer name names a skill folder its misreading would match; seam=none
 test('a home folder in single quotes or in a longer name, a ~ in double quotes, a cd that the next command does not follow, and Node.js that checks the publisher are no steps of an update', () => {
-  // Arrange
+  // Arrange: the skill lies in the home folder of another learner, `/home/learner2`, so `$HOME2` read as `$HOME` and a 2 would name it.
   const home = '/home/learner'
   const skill = '.vscode/extensions/laststance.codebook-1.0.43/skills/codebook'
   const places = {
     outputDirectory: '/repo/.codebook/wiki',
     skillDirectory: `${home}/${skill}`,
   }
+  const otherPlaces = {
+    outputDirectory: '/repo/.codebook/wiki',
+    skillDirectory: `${home}2/skills/codebook`,
+  }
 
   // Act
+  const longerName = isWikiUpdateSign(
+    {
+      kind: 'command',
+      commandLine: 'node $HOME2/skills/codebook/publish-wiki.mjs --prepare',
+    },
+    otherPlaces,
+    'linux',
+    home,
+  )
   const signs = [
     `node '$HOME/${skill}/publish-wiki.mjs' --prepare`,
-    `node $HOMEDIR/${skill}/publish-wiki.mjs --prepare`,
     `node "~/${skill}/publish-wiki.mjs" --prepare`,
     `cd ~/${skill} || node publish-wiki.mjs --prepare`,
     `cd ~/${skill} | node publish-wiki.mjs --prepare`,
@@ -231,7 +243,90 @@ test('a home folder in single quotes or in a longer name, a ~ in double quotes, 
   )
 
   // Assert
-  assert.deepEqual(signs, [false, false, false, false, false, false])
+  assert.deepEqual(
+    { longerName, signs },
+    {
+      longerName: false,
+      signs: [false, false, false, false, false],
+    },
+  )
+})
+
+// Value: protects=the first sign of an update whose chat lists or makes the Wiki's folder with a common program whose short options hold one of the letters of Node's options that run no script; fails_when=the check of runsNoScript is no longer limited to Node.js, so `ls -lh <wiki>` or `mkdir -p <wiki>` gives no sign; why_new=Cycle 0046 /ship third testing review TT19 (CX19's Node check had no test); seam=none
+test('ls -lh and mkdir -p of the Wiki’s folder are steps of an update, as their short options are no options of Node.js', () => {
+  // Act
+  const signs = [
+    'ls -lh /repo/.codebook/wiki',
+    'mkdir -p /repo/.codebook/wiki',
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, PLACES, 'linux'),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [true, true])
+})
+
+// Value: protects=the first sign of an update on Windows, a target system, whose chat changes into the skill's folder or the project before it runs the publisher; fails_when=the folders of a cd and the words after it are resolved by POSIX rules on win32, so `cd C:\…\skills\codebook && node publish-wiki.mjs` or a relative `--output .codebook\wiki` after `cd C:\repo` gives no sign; why_new=Cycle 0046 /ship third testing review TT20 (AD19's cd had no test on Windows); seam=none
+test('on Windows a cd into the skill’s folder before node publish-wiki.mjs, and a relative --output after a cd into the project, are steps of an update', () => {
+  // Arrange
+  const places = {
+    outputDirectory: 'C:\\repo\\.codebook\\wiki',
+    skillDirectory: 'C:\\ext\\skills\\codebook',
+  }
+
+  // Act
+  const signs = [
+    'cd C:\\ext\\skills\\codebook && node publish-wiki.mjs --prepare',
+    'cd C:\\repo && node C:\\tools\\check.mjs --output .codebook\\wiki',
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, places, 'win32'),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [true, true])
+})
+
+// Value: protects=the sign of an update that follows a chain of cd commands, and the learner whose cd the sign cannot follow; fails_when=a relative cd from a known folder leaves the folder unknown, so a chain into the skill's folder gives no sign, or a cd with two folders, or one followed by `&` (which runs the next command in the old folder), is followed as if it changed the folder; why_new=Cycle 0046 /ship third testing review TT21; seam=none
+test('a relative cd from a known folder is followed, while a cd with two folders or one before & is not', () => {
+  // Arrange
+  const skill = PLACES.skillDirectory
+
+  // Act
+  const signs = [
+    'cd /extensions/codebook && cd skills/codebook && node publish-wiki.mjs --prepare',
+    `cd ${skill} /tmp && node publish-wiki.mjs --prepare`,
+    `cd ${skill} & node publish-wiki.mjs --prepare`,
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, PLACES, 'linux'),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [true, false, false])
+})
+
+// Value: protects=the first sign of an update whose chat changes into the home folder with a bare `~`; fails_when=`~` is read as the home folder only before a slash, so `cd ~ && node <relative skill path>/publish-wiki.mjs` gives no sign; why_new=Cycle 0046 /ship third testing review TT22; seam=none
+test('a cd into the home folder written as a bare ~ is followed to the skill’s folder below it', () => {
+  // Arrange
+  const home = '/home/learner'
+  const skill = '.vscode/extensions/laststance.codebook-1.0.43/skills/codebook'
+  const places = {
+    outputDirectory: '/repo/.codebook/wiki',
+    skillDirectory: `${home}/${skill}`,
+  }
+
+  // Act
+  const sign = isWikiUpdateSign(
+    {
+      kind: 'command',
+      commandLine: `cd ~ && node ${skill}/publish-wiki.mjs --prepare`,
+    },
+    places,
+    'linux',
+    home,
+  )
+
+  // Assert
+  assert.equal(sign, true)
 })
 
 // Value: protects=the first sign of an update whose command names the Wiki's folder itself as an argument, whatever program runs it; fails_when=reading the command by its argument boundaries no longer takes an argument with a trailing slash for the Wiki's folder, so a working chat is stopped at the bound; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); repeat maintainability review MT10: the rule of the Wiki's folder as an argument has a test of its own; seam=none
