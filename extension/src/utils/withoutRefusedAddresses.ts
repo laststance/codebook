@@ -1,5 +1,6 @@
 import { UNICODE_LAST_CODE_POINT } from '../constants'
 
+import { browserAttributeText } from './browserAttributeText'
 import { type HtmlAttribute, readHtmlStartTags } from './readHtmlStartTags'
 
 /** The attributes a browser follows as an address: the ones the publisher holds to its schemes (`ADDRESS_ATTRIBUTES` of `render-wiki-diagrams.mjs`). */
@@ -33,6 +34,8 @@ const NAMED_CHARACTERS: Readonly<Record<string, string>> = {
 const REFUSED_IN_ANY_ADDRESS = /&#|^[/\\]{2}/
 /** A named reference with its semicolon before the first slash, question mark or number sign of an address without a scheme, which a browser may read as a colon or a tab (`&colon;`, `&Tab;`). */
 const UNREAD_NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;/
+/** The values of an svg animation's `attributeName` that change the address of the element it animates, so the animation would give a link an address the filter never saw. */
+const ANIMATED_ADDRESSES = new Set(['href', 'xlink:href'])
 /** The rename of an attribute that loses its effect: a data attribute, which no browser follows or acts on. */
 const UNLINKED_NAME = 'data-codebook-unlinked'
 
@@ -117,24 +120,43 @@ function isAcceptedAddress(address: string): boolean {
 }
 
 /**
- * Whether one attribute, as a browser reads it ({@link readHtmlStartTags}), has to lose its effect: an address attribute ({@link ADDRESS_ATTRIBUTES}) that holds an address the publisher refuses today ({@link isAcceptedAddress}), or an `http-equiv` of `refresh`, by which a page moves the browser to another address by itself. Called by {@link withoutRefusedAddresses}.
- * @param attribute - The attribute: its name in lower case and its value as written.
- * @returns Whether the attribute is renamed.
+ * Whether an address attribute holds an address that the publisher refuses today, read either as the publisher reads it ({@link attributeText}) or as a browser does ({@link browserAttributeText}); called by {@link isRefusedAttribute}.
+ * @param name - The attribute's name in lower case, one of {@link ADDRESS_ATTRIBUTES}.
+ * @param written - The value as the page writes it.
+ * @returns Whether one of its addresses is refused by either reading.
  * @example
- * isRefusedAttribute({ name: 'href', written: 'javascript:run()', … }) // => true
+ * isRefusedAddress('src', '/&sol;host/x') // => true: a browser reads `//host/x`
  */
-function isRefusedAttribute(attribute: HtmlAttribute): boolean {
-  const { name } = attribute
-  const text = attributeText(attribute.written ?? '')
-  if (name === 'http-equiv') return text.trim().toLowerCase() === 'refresh'
-  return (
-    ADDRESS_ATTRIBUTES.has(name) &&
-    !addressesOf(name, text).every(isAcceptedAddress)
+function isRefusedAddress(name: string, written: string): boolean {
+  return [attributeText(written), browserAttributeText(written)].some(
+    (text) => !addressesOf(name, text).every(isAcceptedAddress),
   )
 }
 
 /**
- * Keeps in a served page only the addresses the publisher accepts today, and takes the effect from every other one while its text stays: an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …) and a refresh (`<meta http-equiv="refresh">`). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing.
+ * Whether one attribute, as a browser reads it ({@link readHtmlStartTags}), has to lose its effect, its value read as a browser reads it ({@link browserAttributeText}):
+ * - an address attribute ({@link ADDRESS_ATTRIBUTES}) that holds an address the publisher refuses today ({@link isRefusedAddress});
+ * - an `http-equiv` of `refresh`, by which a page moves the browser to another address by itself;
+ * - a `srcdoc`, whose value is a whole page of its own that the filter does not read;
+ * - an svg animation's `attributeName` of `href` or `xlink:href` ({@link ANIMATED_ADDRESSES}), which gives a link the address of its `to`, `from`, `by` or `values`.
+ * Called by {@link withoutRefusedAddresses}.
+ * @param attribute - The attribute: its name in lower case and its value as written.
+ * @returns Whether the attribute is renamed.
+ * @example
+ * isRefusedAttribute({ name: 'http-equiv', written: '&#114efresh', … }) // => true
+ */
+function isRefusedAttribute(attribute: HtmlAttribute): boolean {
+  const { name } = attribute
+  const written = attribute.written ?? ''
+  const keyword = browserAttributeText(written).trim().toLowerCase()
+  if (name === 'srcdoc') return true
+  if (name === 'http-equiv') return keyword === 'refresh'
+  if (name === 'attributename') return ANIMATED_ADDRESSES.has(keyword)
+  return ADDRESS_ATTRIBUTES.has(name) && isRefusedAddress(name, written)
+}
+
+/**
+ * Keeps in a served page only the addresses the publisher accepts today, and takes the effect from every other one while its text stays: an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …), a refresh (`<meta http-equiv="refresh">`), a frame's own page (`srcdoc`) and an svg animation of an address, each read as a browser reads its value ({@link isRefusedAttribute}). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing.
  *
  * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. Codebook's own addresses stay, for {@link rebindDeepWikiEditorLinks} to bind to the serving editor.
  * How: the page is read once, as a browser reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. Only a name is replaced, by letters and hyphens, so no quote or `>` moves and the page is read as before. The time grows with the page's size alone.

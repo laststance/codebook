@@ -82,6 +82,11 @@ const PAGE_WITH_FOREIGN_EDITOR_LINKS = 'pages/chapter-3.html'
 /** The links of {@link PAGE_WITH_FOREIGN_EDITOR_LINKS}, after the chapter's content: a link to a file through VS Code, a link to another extension through Cursor, an image whose address is a file through VS Code, a link to a file through VS Code Insiders, and a refresh that moves the page to the first chapter after a second. */
 const FOREIGN_EDITOR_LINKS =
   '<p>Explained from source.</p><p><a id="foreign-file-link" href="vscode://file/etc/hosts">The hosts file</a> <a id="foreign-extension-link" href="cursor://other.extension/run?task=1">Run the task</a> <img id="foreign-image" src="vscode://file/etc/a.png" alt="An image"> <a id="foreign-scheme-link" href="vscode-insiders://file/etc/hosts">The hosts file in Insiders</a></p><meta http-equiv="refresh" content="1;url=chapter-1.html">'
+/** The chapter that gets, written straight into its file after the publish, what a browser acts on only once it reads a value as a browser does: a refresh written with a reference without its semicolon, a frame with a page of its own whose link opens a file in the editor, an svg link whose address an animation sets to such a file, and an image whose address a browser reads as a network path. */
+const PAGE_WITH_ENCODED_REFUSALS = 'pages/chapter-6.html'
+/** The markup of {@link PAGE_WITH_ENCODED_REFUSALS}, after the chapter's content. */
+const ENCODED_REFUSALS =
+  '<p>Explained from source.</p><meta http-equiv="&#114efresh" content="1;url=chapter-1.html"><p><iframe id="srcdoc-frame" title="A frame" srcdoc="&lt;a id=&quot;inner-link&quot; href=&quot;vscode://file/etc/hosts&quot;&gt;Inner&lt;/a&gt;"></iframe></p><svg width="120" height="24" role="img" aria-label="An animated link"><a id="animated-link" href="#none"><set attributeName="href" to="vscode://file/etc/hosts"/><text x="0" y="16">Animated</text></a></svg><p><img id="network-image" src="/&sol;attacker.invalid/x.png" alt="A network image"></p>'
 /** How long the check waits on {@link PAGE_WITH_FOREIGN_EDITOR_LINKS} before it reads the page: past the second after which its refresh would move the page. */
 const REFRESH_WAIT_MS = 2_500
 /** A script file written into the Wiki folder after the publish and named by its manifest, as no publisher writes it; when it runs, it notes itself in `window.contentScriptRuns`. */
@@ -555,6 +560,18 @@ async function publishSampleWiki() {
       (await readFile(withForeignEditorLinks, 'utf8')).replace(
         '<p>Explained from source.</p>',
         FOREIGN_EDITOR_LINKS,
+      ),
+    )
+    // One chapter gets what a browser acts on only once it reads a value's references, written straight into its file.
+    const withEncodedRefusals = join(
+      outputDirectory,
+      PAGE_WITH_ENCODED_REFUSALS,
+    )
+    await writeFile(
+      withEncodedRefusals,
+      (await readFile(withEncodedRefusals, 'utf8')).replace(
+        '<p>Explained from source.</p>',
+        ENCODED_REFUSALS,
       ),
     )
     await appendFile(
@@ -2263,6 +2280,42 @@ async function check(page, options, collected) {
       },
     )
   }
+  const usePageWithEncodedRefusals = async () => {
+    // Arrange: a chapter whose file got a refresh written with a reference, a frame with a page of its own, an svg animation of a link's address and an image of a network path.
+    await page.setViewportSize({ width: 1200, height: 720 })
+    await page.goto(`${options.url}${options.pageWithEncodedRefusals}`)
+    // Act: once the frame has loaded and before the second of the refresh, the links of the frame's page, the address the animation gives the svg link and the image's address as the page holds it; past that second, the page's address.
+    await page.waitForFunction(
+      () =>
+        document.querySelector('#srcdoc-frame').contentDocument?.readyState ===
+        'complete',
+    )
+    const held = await page.evaluate(() => ({
+      frameLinks: [
+        ...document.querySelector('#srcdoc-frame').contentDocument.links,
+      ].map((link) => link.href),
+      animatedAddress: document.querySelector('#animated-link').href.animVal,
+      imageAddress: document
+        .querySelector('#network-image')
+        .getAttribute('src'),
+    }))
+    await page.waitForTimeout(options.refreshWaitMs)
+    const used = {
+      ...held,
+      address: await page.evaluate(() => location.pathname.split('/').at(-1)),
+    }
+    // Assert
+    record(
+      'a page whose file got a refresh written with a reference without its semicolon, a frame with a page of its own and an svg animation of a link’s address is served without the refresh, the frame’s page or the animated address',
+      used,
+      {
+        doesPageStay: used.address === 'chapter-6.html',
+        hasFrameNoLink: used.frameLinks.length === 0,
+        isLinkNotAnimatedToAFile: used.animatedAddress === '#none',
+        hasImageNoAddress: used.imageAddress === null,
+      },
+    )
+  }
   const useWikiPublishedFromCrlfShell = async () => {
     // Arrange: a Wiki the shipped publisher rendered from a reader shell with CRLF line endings, served by a reader of its own and opened from disk.
     await page.setViewportSize({ width: 1200, height: 720 })
@@ -2361,6 +2414,7 @@ async function check(page, options, collected) {
     usePageWithPlantedScript,
     usePagesPointingAtAPlantedScriptFile,
     usePageWithForeignEditorLinks,
+    usePageWithEncodedRefusals,
     useWikiPublishedFromCrlfShell,
   ])
     await step()
@@ -2472,6 +2526,7 @@ try {
       pageWithPlantedScript: PAGE_WITH_PLANTED_SCRIPT,
       pagesPointingAtThePlantedFile: PAGES_POINTING_AT_THE_PLANTED_FILE,
       pageWithForeignEditorLinks: PAGE_WITH_FOREIGN_EDITOR_LINKS,
+      pageWithEncodedRefusals: PAGE_WITH_ENCODED_REFUSALS,
       refreshWaitMs: REFRESH_WAIT_MS,
       // The same chapter as a file of the Wiki folder, as a learner opens it without Codebook.
       offlinePageWithContentScript: pathToFileURL(

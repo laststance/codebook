@@ -152,3 +152,93 @@ test('a link right after a quoted value, after an end tag whose value holds >, a
       '<!--!> <a href="javascript:e">e</a> -->',
   )
 })
+
+// Value: protects=the learner whose served page carries a refresh written with references, which moves the page to an editor address without a click (security probed `&#114efresh` to vscode://file/etc/hosts in real Chromium); fails_when=the filter reads a numeric reference only with its semicolon, or compares the keyword in one case, so the refresh survives, or it takes the effect from the shell's own meta elements; why_new=Cycle 0046 /ship third review W2; seam=none, the served page is compared as text
+test('a refresh written with references with or without their semicolon, or in capitals, loses its effect, and the shell’s charset, viewport and Content-Security-Policy stay', () => {
+  // Arrange
+  const page =
+    '<meta charset="utf-8"><meta name="viewport" content="width=device-width">' +
+    '<meta http-equiv="Content-Security-Policy" content="script-src \'self\'">' +
+    '<meta http-equiv="&#114efresh" content="0;url=vscode://file/etc/hosts">' +
+    '<meta http-equiv="&#x52;efresh" content="0;url=a.html">' +
+    '<meta http-equiv="re&#102;resh" content="0;url=b.html">' +
+    '<meta http-equiv=REFRESH content="0;url=c.html">'
+
+  // Act
+  const served = withoutRefusedAddresses(page)
+
+  // Assert
+  assert.equal(
+    served,
+    '<meta charset="utf-8"><meta name="viewport" content="width=device-width">' +
+      '<meta http-equiv="Content-Security-Policy" content="script-src \'self\'">' +
+      '<meta data-codebook-unlinked="&#114efresh" content="0;url=vscode://file/etc/hosts">' +
+      '<meta data-codebook-unlinked="&#x52;efresh" content="0;url=a.html">' +
+      '<meta data-codebook-unlinked="re&#102;resh" content="0;url=b.html">' +
+      '<meta data-codebook-unlinked=REFRESH content="0;url=c.html">',
+  )
+})
+
+// Value: protects=the learner whose served page carries a frame with a page of its own, whose links the filter never reads (probed: a clickable editor link from escaped markup in `srcdoc`); fails_when=the filter judges `srcdoc` as text, so the frame's page and its links stand; why_new=Cycle 0046 /ship third review W2; seam=none, the served page is compared as text
+test('a frame’s srcdoc loses its effect, whatever it holds and in any case of its name', () => {
+  // Arrange
+  const page =
+    '<iframe srcdoc="&lt;a href=&quot;vscode://file/etc/hosts&quot;&gt;x&lt;/a&gt;"></iframe>' +
+    "<iframe SRCDOC='<p>plain</p>'></iframe>"
+
+  // Act
+  const served = withoutRefusedAddresses(page)
+
+  // Assert
+  assert.equal(
+    served,
+    '<iframe data-codebook-unlinked="&lt;a href=&quot;vscode://file/etc/hosts&quot;&gt;x&lt;/a&gt;"></iframe>' +
+      "<iframe data-codebook-unlinked='<p>plain</p>'></iframe>",
+  )
+})
+
+// Value: protects=the learner whose served page animates an svg link's address to an editor address after the filter judged it (probed: `<set attributeName="href" to="vscode://…">` gives a clickable link); fails_when=the filter judges only the link's own href, so the animation sets the address; why_new=Cycle 0046 /ship third review W2; seam=none, the served page is compared as text
+test('an svg animation of href or xlink:href loses its attributeName, written plainly or with references, and an animation of anything else stays', () => {
+  // Arrange
+  const page =
+    '<svg><a href="#x"><set attributeName="href" to="vscode://file/etc/hosts"/><text>a</text></a>' +
+    '<a><animate attributeName="xlink:href" values="vscode://file/a;vscode://file/b"/></a>' +
+    '<a><animate attributeName="&#104;ref" by="x"/></a>' +
+    '<rect><animate attributeName="opacity" to="0"/></rect></svg>'
+
+  // Act
+  const served = withoutRefusedAddresses(page)
+
+  // Assert
+  assert.equal(
+    served,
+    '<svg><a href="#x"><set data-codebook-unlinked="href" to="vscode://file/etc/hosts"/><text>a</text></a>' +
+      '<a><animate data-codebook-unlinked="xlink:href" values="vscode://file/a;vscode://file/b"/></a>' +
+      '<a><animate data-codebook-unlinked="&#104;ref" by="x"/></a>' +
+      '<rect><animate attributeName="opacity" to="0"/></rect></svg>',
+  )
+})
+
+// Value: protects=the learner whose served page holds an address that a browser reads as a network path or another scheme only once it reads the references in it; fails_when=the filter reads only the five names the publisher writes, so `/&sol;host/x`, `/&bsol;host/x` and `/&NewLine;/host/x` (a browser reads `//host/x`, which a page opened from disk on Windows fetches from another computer) keep their effect; why_new=Cycle 0046 /ship third review W2 and OCR review W18; seam=none, the served page is compared as text
+test('an address that a browser reads as a network path or another scheme once it reads its references loses its effect, and a path with an escaped ampersand stays', () => {
+  // Arrange
+  const page =
+    '<img src="/&sol;host/x.png" alt="a">' +
+    '<img src="/&bsol;host/x.png" alt="b">' +
+    '<a href="/&NewLine;/host/x">c</a>' +
+    '<a href="&#x6A;avascript:run()">d</a>' +
+    '<a href="pages/a&amp;b.html">e</a>'
+
+  // Act
+  const served = withoutRefusedAddresses(page)
+
+  // Assert
+  assert.equal(
+    served,
+    '<img data-codebook-unlinked="/&sol;host/x.png" alt="a">' +
+      '<img data-codebook-unlinked="/&bsol;host/x.png" alt="b">' +
+      '<a data-codebook-unlinked="/&NewLine;/host/x">c</a>' +
+      '<a data-codebook-unlinked="&#x6A;avascript:run()">d</a>' +
+      '<a href="pages/a&amp;b.html">e</a>',
+  )
+})
