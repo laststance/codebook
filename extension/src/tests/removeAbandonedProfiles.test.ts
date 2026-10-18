@@ -13,15 +13,17 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir, userInfo } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import {
   listProcesses,
   type ListedProcess,
 } from '../runtimeSupport/utils/listProcesses'
+import type * as profileProcessesModule from '../runtimeSupport/utils/profileProcesses'
 import type * as sweepModule from '../runtimeSupport/utils/removeAbandonedProfiles'
 import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandonedProfiles'
+import type * as lookModule from '../utils/isFolderOfItsOwn'
 import { readProcessStart } from '../utils/readProcessStart'
 import type * as removalModule from '../utils/removeWithoutFollowing'
 
@@ -412,6 +414,62 @@ test('a sweep given no user removes a killed editor’s folder whose marker name
   assert.deepEqual(
     { removed, left: await readdir(root) },
     { removed: [folder], left: [] },
+  )
+})
+
+// Value: protects=the profile root on a volume whose real paths the system cannot read (on Windows some RAM disks, `subst` and network drives answer every realpath with an error): the sweep judges and removes a folder of this user's own root by its listed path, the walk takes its folders as their parents' own when neither path nor parent resolves, and a folder a process names by that path stays, so the folder a launch could not resolve and marked (R4) is removed once its editor has ended (BB3, the fixes of the third review); fails_when=the sweep needs the folder's real path to match its processes or the walk needs it to empty the folder, so every folder of such a volume stays for good; why_new=every sweep test resolved its folders; seam=the file system of the profile match and of the walk's look, whose realpath refuses every path of the root (`EISDIR`, as libuv answers on such a volume), and the process lister the sweep is given
+test('on a volume that resolves no path the sweep removes a killed editor’s folder by its listed path, and keeps a folder a process names by that path', async (context) => {
+  // Arrange: two marked folders of gone editors, one with a browser file inside; a process uses the second by its listed path; realpath refuses every path of the root.
+  const root = await profileRoot(context)
+  const unused = join(root, 'codebook-browser-unused')
+  const inUse = join(root, 'codebook-browser-in-use')
+  await profileFolder(unused, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+  })
+  await profileFolder(inUse, { pid: ID_OF_NO_PROCESS, hostname: 'workstation' })
+  const unresolvingFileSystem = {
+    ...fileSystem,
+    realpath: async (path: string): Promise<string> => {
+      if (path === root || path.startsWith(`${root}${sep}`))
+        throw Object.assign(
+          new Error(
+            `EISDIR: illegal operation on a directory, realpath '${path}'`,
+          ),
+          { code: 'EISDIR' },
+        )
+      return fileSystem.realpath(path)
+    },
+  }
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
+    { 'node:fs/promises': unresolvingFileSystem },
+  )
+  const walk = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    { './isFolderOfItsOwn': look },
+  )
+  const match = await loadModule<typeof profileProcessesModule>(
+    resolve(__dirname, '../runtimeSupport/utils/profileProcesses.js'),
+    { 'node:fs/promises': unresolvingFileSystem },
+  )
+  const { removeAbandonedProfiles: sweepOnTheVolume } = await loadModule<
+    typeof sweepModule
+  >(resolve(__dirname, '../runtimeSupport/utils/removeAbandonedProfiles.js'), {
+    '../../utils/removeWithoutFollowing': walk,
+    './profileProcesses': match,
+  })
+  // Act
+  const removed = await sweepOnTheVolume(
+    root,
+    { hostname: 'workstation' },
+    async () => [{ pid: 4242, command: `chrome --user-data-dir=${inUse}` }],
+  )
+  // Assert
+  assert.deepEqual(
+    // The loaded sweep answers an array of its own context, which is compared by its items.
+    { removed: [...removed], left: await readdir(root) },
+    { removed: [unused], left: ['codebook-browser-in-use'] },
   )
 })
 

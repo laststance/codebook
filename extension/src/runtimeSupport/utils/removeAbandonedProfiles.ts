@@ -38,10 +38,19 @@ async function removeUnusedProfile(
   processes: Promise<ListedProcess[]>,
 ): Promise<boolean> {
   try {
-    if ((await profileProcesses(profile, await processes)).length) return false
+    // A folder of this user's own root on a volume that resolves no path is judged and removed by its listed path.
+    if (
+      (
+        await profileProcesses(profile, await processes, {
+          pathsMayNotResolve: true,
+        })
+      ).length
+    )
+      return false
     // The marker goes last: a folder whose removal stops at an entry that refuses keeps it, and a later sweep tries again.
     await removeWithoutFollowing(profile, {
       lastEntry: MANAGED_PROFILE_OWNER_FILE,
+      pathsMayNotResolve: true,
     })
     return true
   } catch {

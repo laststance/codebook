@@ -136,7 +136,7 @@ async function writeOwnerMarker(
 
 /**
  * Deals with a new profile folder whose real path cannot be read, and words the launch's failure by what happened to it; called by {@link madeProfileFolder}.
- * The folder is removed again at once, without following a link ({@link removeWithoutFollowing}). When the removal fails too (on Windows a file lock, `EPERM`), the folder gets its owner marker by the path it was made at, so a later sweep tries to remove it once this editor has ended; when the marker cannot be written either, the sentence says that no later run will remove it.
+ * The folder is removed again at once, without following a link ({@link removeWithoutFollowing}). When the removal fails too (on Windows a file lock, `EPERM`), the folder gets its owner marker by the path it was made at, so a later sweep removes it once this editor has ended, also on a volume that resolves no path ({@link removeAbandonedProfiles} judges it by its listed path); when the marker cannot be written either, the sentence says that no later run will remove it.
  * @param made - The folder as `mkdtemp` made it.
  * @param owner - This process's owner identity, for the marker.
  * @param cause - The error of `realpath`.
@@ -164,7 +164,7 @@ async function leaveUnresolvedProfileFolder(
     (error: unknown) => error,
   )
   if (marking === undefined)
-    return `${unresolved} and could not be removed (${String(removal)}); it stays, marked as this editor's, so a later run tries to remove it once this editor has ended, and ${notStarted}`
+    return `${unresolved} and could not be removed (${String(removal)}); it stays, marked as this editor's, so a later run removes it once this editor has ended, and ${notStarted}`
   return `${unresolved}, could not be removed (${String(removal)}) and could not be marked (${String(marking)}), so no later run removes it: remove it by hand. ${notStarted.charAt(0).toUpperCase()}${notStarted.slice(1)}`
 }
 

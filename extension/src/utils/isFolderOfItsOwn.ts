@@ -36,14 +36,20 @@ function falseUnlessMissing(error: unknown): false {
 /**
  * Says whether an entry is where its parent says it is: its real path is its own name under its parent's real path; called by {@link isFolderOfItsOwn} for an entry the look without following called a directory.
  * @param path - The entry's path as written.
- * @returns `true` when both real paths can be read and agree; `false` when the entry leads elsewhere, and when the system cannot name one of the two real paths.
+ * @param pathsMayNotResolve - Takes an entry whose real path and whose parent's real path both cannot be read (a volume that resolves no path, as some Windows RAM disks, `subst` and network drives) as its parent's own; {@link isFolderOfItsOwn}'s caller decides.
+ * @returns `true` when both real paths can be read and agree, and with `pathsMayNotResolve` when neither can be read; `false` when the entry leads elsewhere, and when the system cannot name one of the two real paths.
  * @throws The file system's `ENOENT` when the entry or its parent is gone.
  * @example
  * await isNamedByItsParent('/link-to-the-project/.codebook/wiki') // => true: '/the-project/.codebook/wiki' lies under '/the-project/.codebook'
  */
-async function isNamedByItsParent(path: string): Promise<boolean> {
+async function isNamedByItsParent(
+  path: string,
+  pathsMayNotResolve: boolean,
+): Promise<boolean> {
   const realParent = await realpath(dirname(path)).catch(falseUnlessMissing)
   const realPath = await realpath(path).catch(falseUnlessMissing)
+  // A volume that resolves no path at all, the parent's as little as the entry's, shows nothing either way: a caller that knows the folder may take it as it stands.
+  if (realParent === false && realPath === false) return pathsMayNotResolve
   // A real path the system cannot name shows no entry of its parent.
   if (realParent === false || realPath === false) return false
   return (
@@ -60,13 +66,17 @@ async function isNamedByItsParent(path: string): Promise<boolean> {
  * Limit: a last part written as a Windows short name (`WIKI~1`) has another real name and is answered as no folder. The look and what follows it are separate steps: a path that a running program replaces between them is not covered.
  *
  * @param path - The path that is to be listed, read below or emptied.
+ * @param pathsMayNotResolve - For a folder the caller knows to lie in a root of its own (the sweep of abandoned browser profiles): a directory on a volume that resolves no path, its parent's neither, is its parent's own. `false` unless a caller says so, so a folder of the learner's project must always show its real path.
  * @returns `true` for a directory whose real path is its name under its parent's real path; `false` for a link, a junction, a file, a special file, for a directory that leads elsewhere, and for one whose real path the system cannot name.
  * @throws The file system's error when nothing stands at the path (`ENOENT`) or the path or its parent cannot be looked at.
  * @example
  * await isFolderOfItsOwn('/repo/.codebook/wiki')           // => true
  * await isFolderOfItsOwn('/repo/.codebook/a-link-to-/usr') // => false
  */
-export async function isFolderOfItsOwn(path: string): Promise<boolean> {
+export async function isFolderOfItsOwn(
+  path: string,
+  pathsMayNotResolve = false,
+): Promise<boolean> {
   const entry = await lstat(path)
-  return entry.isDirectory() && isNamedByItsParent(path)
+  return entry.isDirectory() && isNamedByItsParent(path, pathsMayNotResolve)
 }

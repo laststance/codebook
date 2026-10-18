@@ -73,6 +73,8 @@ async function isStillTheDirectory(
 export type RemovalOrder = {
   /** The name of one entry of the directory at the path, removed after all its other entries and just before the directory itself: the owner marker by which a later sweep knows the folder ({@link removeAbandonedProfiles}), so a folder whose removal stops at an entry that refuses keeps it. Left out, the entries go in the order the system lists them. */
   lastEntry?: string
+  /** Takes each directory of the walk whose real path and whose parent's real path both cannot be read as its parent's own ({@link isFolderOfItsOwn}): a profile folder of the user's own root on a volume that resolves no path. The identity looks still stop the walk at a swapped directory. Left out, such a directory fails the walk as one that may lead elsewhere. */
+  pathsMayNotResolve?: boolean
 }
 
 /**
@@ -90,16 +92,19 @@ async function removeEntriesOf(
   path: string,
   looked: LookedDirectory,
   notEmptyError: unknown,
-  lastEntry?: string,
+  order: RemovalOrder = {},
 ): Promise<boolean> {
-  const isOwnFolder = await isFolderOfItsOwn(path).catch(passIfMissing)
+  const isOwnFolder = await isFolderOfItsOwn(
+    path,
+    order.pathsMayNotResolve === true,
+  ).catch(passIfMissing)
   // An entry that leads elsewhere is never listed: the system's answer to its removal is the walk's error.
   if (isOwnFolder === false) throw notEmptyError
   // Gone since the system was asked: nothing is left to remove.
   if (isOwnFolder === undefined || !(await isStillTheDirectory(path, looked)))
     return false
-  const names = (await namesIn(path)).filter((name) => name !== lastEntry)
-  return removeNamedEntries(path, looked, names)
+  const names = (await namesIn(path)).filter((name) => name !== order.lastEntry)
+  return removeNamedEntries(path, looked, names, order)
 }
 
 /**
@@ -116,11 +121,15 @@ async function removeNamedEntries(
   path: string,
   looked: LookedDirectory,
   names: string[],
+  order: RemovalOrder = {},
 ): Promise<boolean> {
   for (const name of names) {
     // The listing and every removal below the path are made only while the path still names the directory looked at.
     if (!(await isStillTheDirectory(path, looked))) return false
-    await removeWithoutFollowing(join(path, name))
+    // An entry inside is removed by the same rule for volumes, and with no entry of its own last.
+    await removeWithoutFollowing(join(path, name), {
+      pathsMayNotResolve: order.pathsMayNotResolve,
+    })
   }
   return true
 }
@@ -165,6 +174,7 @@ async function removeLastEntryAndDirectory(
   path: string,
   looked: LookedDirectory,
   lastEntry: string,
+  order: RemovalOrder = {},
 ): Promise<void> {
   // Entries made after a listing are removed before the last entry; each listing may find new ones.
   for (let relist = 0; ; relist += 1) {
@@ -174,7 +184,7 @@ async function removeLastEntryAndDirectory(
       throw new Error(
         `The folder ${path} kept gaining entries while Codebook emptied it (${others.join(', ')}); its ${lastEntry} stays, so a later removal tries again.`,
       )
-    if (!(await removeNamedEntries(path, looked, others))) return
+    if (!(await removeNamedEntries(path, looked, others, order))) return
   }
   const lastEntryPath = join(path, lastEntry)
   const kept = await keptEntryAt(lastEntryPath)
@@ -225,14 +235,9 @@ export async function removeWithoutFollowing(
   const notEmptyError = await removeIfEmpty(path)
   if (notEmptyError === undefined) return
   const looked = { dev: entry.dev, ino: entry.ino }
-  const emptied = await removeEntriesOf(
-    path,
-    looked,
-    notEmptyError,
-    order.lastEntry,
-  )
+  const emptied = await removeEntriesOf(path, looked, notEmptyError, order)
   // The entry that goes last is removed only when nothing else is left, and comes back when the directory still cannot go.
   if (emptied && order.lastEntry !== undefined)
-    return removeLastEntryAndDirectory(path, looked, order.lastEntry)
+    return removeLastEntryAndDirectory(path, looked, order.lastEntry, order)
   await rmdir(path).catch(passIfMissing)
 }

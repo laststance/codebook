@@ -1,5 +1,7 @@
 import { realpath } from 'node:fs/promises'
-import { posix, win32 } from 'node:path'
+import { basename, dirname, join, posix, win32 } from 'node:path'
+
+import { systemErrorCode } from '../../utils/systemErrorCode'
 
 import { linuxCommandLineArguments } from './linuxCommandLineArguments'
 import { listProcesses, type ListedProcess } from './listProcesses'
@@ -11,6 +13,8 @@ export type ProfileProcessInputs = {
   platform?: NodeJS.Platform
   /** Reads a Linux process's exact arguments; {@link linuxCommandLineArguments} unless a test names its own. */
   readArguments?: (pid: number) => Promise<string[] | undefined>
+  /** Matches a profile whose real path cannot be read by the paths it is known by ({@link foldersOfProfile}) instead of failing: for a folder of the user's own profile root on a volume that resolves no path; {@link removeAbandonedProfiles} says so. */
+  pathsMayNotResolve?: boolean
 }
 
 /** A profile switch as `ps` prints it on macOS and Linux: after the white space that ends the argument before it, with each prefix Chrome reads a switch by there (`--`, `-`). */
@@ -117,15 +121,15 @@ function profileFolderOfArguments(
  * Says whether a listed Linux process gives Chrome a profile folder, by its exact arguments where they can be trusted, else by the text `ps` printed; called by {@link profileProcesses} on Linux.
  * Only a process whose text names a profile switch is read (one file of `/proc` each). Its arguments decide when they are the listed process's: they join, with spaces, to the text `ps` printed (a process id taken by another process since the listing gives another text), and the program's own argument does not hold the switch (a process that wrote its title over its arguments, as Chrome's helper processes may, keeps them all in that one). Otherwise, and when the file cannot be read, the text decides ({@link namesProfileByText}), read in every way it allows.
  * @param listed - The process as the listing gave it.
- * @param folder - The resolved profile folder.
+ * @param folders - The paths the profile folder is known by ({@link foldersOfProfile}).
  * @param readArguments - Reads a process's exact arguments.
  * @returns `true` when the profile switch Chrome takes names the folder: its value is the folder, also written with a trailing `/` or a `.` step.
  * @example
- * await namesProfileOnLinux({ pid: 4242, command: 'chrome --user-data-dir=/tmp/a -- --user-data-dir=/tmp/b' }, '/tmp/b', linuxCommandLineArguments) // => false
+ * await namesProfileOnLinux({ pid: 4242, command: 'chrome --user-data-dir=/tmp/a -- --user-data-dir=/tmp/b' }, ['/tmp/b'], linuxCommandLineArguments) // => false
  */
 async function namesProfileOnLinux(
   listed: ListedProcess,
-  folder: string,
+  folders: string[],
   readArguments: (pid: number) => Promise<string[] | undefined>,
 ): Promise<boolean> {
   // A text without a profile switch names no profile; only the others are read.
@@ -136,13 +140,12 @@ async function namesProfileOnLinux(
     program !== undefined &&
     commandArguments?.join(' ') === listed.command &&
     !HOLDS_POSIX_PROFILE_SWITCH.test(program)
-  if (!isListedProcess) return namesProfileByText(listed.command, folder)
+  if (!isListedProcess)
+    return folders.some((folder) => namesProfileByText(listed.command, folder))
   const profileFolder = profileFolderOfArguments(switchArguments)
-  return (
-    profileFolder !== undefined &&
-    profileFolder !== '' &&
-    posix.normalize(profileFolder).replace(/(?<=.)\/+$/, '') === folder
-  )
+  if (profileFolder === undefined || profileFolder === '') return false
+  const named = posix.normalize(profileFolder).replace(/(?<=.)\/+$/, '')
+  return folders.includes(named)
 }
 
 /** The flag by which Chrome is given its profile folder. */
@@ -258,11 +261,37 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
 }
 
 /**
+ * Names the paths by which a profile folder's processes may name it; called by {@link profileProcesses}.
+ * @param profile - The profile folder as listed.
+ * @param pathsMayNotResolve - Whether a folder whose real path cannot be read is matched all the same ({@link ProfileProcessInputs.pathsMayNotResolve}).
+ * @returns The folder's real path, as Chrome and the debugger name it; for a folder that cannot be resolved, with `pathsMayNotResolve`, its listed path and, when its parent resolves, its name below the parent's real path (`/tmp` resolves to `/private/tmp` on macOS), so a process that names either is matched.
+ * @throws The error of `realpath` without `pathsMayNotResolve`, and for a folder that is gone.
+ * @example
+ * await foldersOfProfile('/tmp/codebook-browser-a', false) // => ['/private/tmp/codebook-browser-a'] on macOS
+ * await foldersOfProfile('R:\\codebook-browser-a', true)   // => ['R:\\codebook-browser-a'] on a RAM disk that resolves no path
+ */
+async function foldersOfProfile(
+  profile: string,
+  pathsMayNotResolve: boolean,
+): Promise<string[]> {
+  try {
+    return [await realpath(profile)]
+  } catch (error) {
+    // A folder that is gone has no processes to look for.
+    if (!pathsMayNotResolve || systemErrorCode(error) === 'ENOENT') throw error
+    const realParent = await realpath(dirname(profile)).catch(() => undefined)
+    return realParent === undefined
+      ? [profile]
+      : [...new Set([profile, join(realParent, basename(profile))])]
+  }
+}
+
+/**
  * Observes only the exact fresh Chrome profile during owned launch/cleanup; never signals other processes. Called by {@link HostBrowser} for its own profile, and by {@link removeAbandonedProfiles} for each candidate folder with the one listing of its sweep.
  * On Windows the command line is read argument by argument and the profile path is compared as Windows compares paths ({@link namesProfileOnWindows}): a path that holds a space is written in quotes there, and the same folder may be written with `/` or in another case. On Linux each candidate's exact arguments decide, read from `/proc` ({@link namesProfileOnLinux}); on macOS, and on Linux for a process whose arguments cannot be read or trusted, the last profile switch before a switch terminator in the text `ps` printed decides, read in every way the text allows, and its value must be the folder, exactly ({@link namesProfileByText}). On both, Chrome reads no switch after a terminator (on Windows also none after `--single-argument`), and of several profile switches before it the last one counts, as Chrome takes it.
- * @param profile - The profile folder; it is resolved first, so a folder that is gone rejects.
+ * @param profile - The profile folder; it is resolved first, so a folder that is gone rejects, and so does one that cannot be resolved unless `inputs.pathsMayNotResolve` says to match it by the paths it is known by.
  * @param processes - The processes to match, as {@link listProcesses} listed them; listed now when left out.
- * @param inputs - The system whose command lines are read, and the reader of Linux arguments ({@link ProfileProcessInputs}); the real ones when left out.
+ * @param inputs - The system whose command lines are read, the reader of Linux arguments and the rule for a folder that cannot be resolved ({@link ProfileProcessInputs}); the real ones when left out.
  * @returns The processes whose command line names the folder as `--user-data-dir`; a profile that only shares a prefix with it does not count.
  * @throws When the folder cannot be resolved, or the processes cannot be listed.
  * @example
@@ -277,20 +306,25 @@ export async function profileProcesses(
 ): Promise<ListedProcess[]> {
   const listed = processes ?? (await listProcesses())
   // Chrome/js-debug resolve /tmp symlinks before spawning on macOS.
-  const folder = await realpath(profile)
+  const folders = await foldersOfProfile(
+    profile,
+    inputs.pathsMayNotResolve === true,
+  )
   const platform = inputs.platform ?? process.platform
   // Windows keeps a command line as one text with quoted arguments, and compares paths without regard to case or separator.
   if (platform === 'win32')
     return listed.filter(({ command }) =>
-      namesProfileOnWindows(command, folder),
+      folders.some((folder) => namesProfileOnWindows(command, folder)),
     )
   if (platform !== 'linux')
-    return listed.filter(({ command }) => namesProfileByText(command, folder))
+    return listed.filter(({ command }) =>
+      folders.some((folder) => namesProfileByText(command, folder)),
+    )
   // Linux keeps each process's arguments apart in /proc.
   const readArguments = inputs.readArguments ?? linuxCommandLineArguments
   const named = await Promise.all(
     listed.map((candidate) =>
-      namesProfileOnLinux(candidate, folder, readArguments),
+      namesProfileOnLinux(candidate, folders, readArguments),
     ),
   )
   return listed.filter((_, index) => named[index])
