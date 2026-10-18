@@ -1,9 +1,10 @@
 import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
 
 import {
-  HTML_PARSER_ABSENT_END_STATE_NAMES,
+  HTML_PARSER_ABSENT_END_BODY_NAMES,
+  HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES,
+  HTML_PARSER_HEADING_NAMES,
   HTML_PARSER_HIDDEN_INPUT_TABLE_MODES,
-  HTML_PARSER_IN_BODY_MODE,
   HTML_PARSER_IN_ROW_MODE,
   HTML_PARSER_IN_SELECT_MODE,
   HTML_PARSER_IN_SELECT_IN_TABLE_MODE,
@@ -172,7 +173,10 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
  */
 class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   readonly startTags: HtmlStartTag[] = []
+  /** The open elements' names in ASCII lower case, each with how many elements of that name are open. */
   private readonly openNames = new Map<string, number>()
+  /** The element names of the list of active formatting elements, each with how many entries of that name it holds, markers aside. */
+  private readonly formattingEntryNames = new Map<string, number>()
 
   /**
    * Retains the original page for attribute offsets; called only by {@link readHtmlStartTags}.
@@ -181,6 +185,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    */
   constructor(private readonly page: string) {
     super({ sourceCodeLocationInfo: true, scriptingEnabled: true })
+    this.countFormattingEntries()
   }
 
   /**
@@ -395,24 +400,121 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Skips a foreign end only when its absent name proves no tree or mode effect under IN_BODY rules.
+   * Counts the entries of the list of active formatting elements by name as the pinned parser adds and removes them, so that an absent formatting end needs no scan of the list; called once by the constructor.
+   * The list's methods that add or remove entries are wrapped on this parser's own list; marking and bookmarking change no name.
+   * @returns Nothing; {@link HtmlPageReader.formattingEntryNames} follows the list from here on.
+   * @example reader.countFormattingEntries() // then '<b>' counts one b entry
+   */
+  private countFormattingEntries(): void {
+    const list = this.activeFormattingElements
+    const pushElement = list.pushElement.bind(list)
+    const insertElementAfterBookmark =
+      list.insertElementAfterBookmark.bind(list)
+    const removeEntry = list.removeEntry.bind(list)
+    const clearToLastMarker = list.clearToLastMarker.bind(list)
+    list.pushElement = (element, token): void => {
+      const lengthBefore = list.entries.length
+      pushElement(element, token)
+      const removedCount = lengthBefore + 1 - list.entries.length
+      // The Noah's Ark rule removes at most one older entry of the pushed name while no more than three alike are listed; more removals may have taken another name, so the names are counted anew.
+      if (removedCount === 0)
+        this.countFormattingName(this.treeAdapter.getTagName(element), 1)
+      else if (removedCount > 1) this.recountFormattingNames()
+    }
+    list.insertElementAfterBookmark = (element, token): void => {
+      insertElementAfterBookmark(element, token)
+      this.countFormattingName(this.treeAdapter.getTagName(element), 1)
+    }
+    list.removeEntry = (entry): void => {
+      const lengthBefore = list.entries.length
+      removeEntry(entry)
+      if ('element' in entry && list.entries.length < lengthBefore)
+        this.countFormattingName(this.treeAdapter.getTagName(entry.element), -1)
+    }
+    list.clearToLastMarker = (): void => {
+      // The entries before the newest marker leave, or all of them without a marker.
+      for (const entry of list.entries) {
+        if (!('element' in entry)) break
+        this.countFormattingName(this.treeAdapter.getTagName(entry.element), -1)
+      }
+      clearToLastMarker()
+    }
+  }
+
+  /**
+   * Changes the count of one name in {@link HtmlPageReader.formattingEntryNames}; called by the list wrappers of {@link HtmlPageReader.countFormattingEntries}.
+   * @param name - The element name of the entry, as the list compares it.
+   * @param change - `1` for an added entry, `-1` for a removed one.
+   * @returns Nothing; a name whose count falls to zero leaves the index.
+   * @example reader.countFormattingName('b', -1) // the last b entry left
+   */
+  private countFormattingName(name: string, change: 1 | -1): void {
+    const count = (this.formattingEntryNames.get(name) ?? 0) + change
+    if (count > 0) this.formattingEntryNames.set(name, count)
+    else this.formattingEntryNames.delete(name)
+  }
+
+  /**
+   * Counts every entry name of the list of active formatting elements again; called by {@link HtmlPageReader.countFormattingEntries} after a push removed more than one entry.
+   * @returns Nothing; the index holds the list's names as they are now.
+   * @example reader.recountFormattingNames() // after a fourth identical b broke the rule's limit
+   */
+  private recountFormattingNames(): void {
+    this.formattingEntryNames.clear()
+    for (const entry of this.activeFormattingElements.entries)
+      if ('element' in entry)
+        this.countFormattingName(this.treeAdapter.getTagName(entry.element), 1)
+  }
+
+  /**
+   * Skips an end tag that provably changes nothing, so that a page of many such ends after deep nesting takes no scan of the stack per end; the pinned parser's foreign rule and its body rule for an unknown name each walk the stack.
    * @param token - The source end token.
-   * @returns Nothing; effectful names and every other insertion mode keep the parser's rules.
-   * @example reader.onEndTag(spanEnd) // no stack scan for an absent span in IN_BODY
+   * @returns Nothing; every other end keeps the parser's rules.
+   * @example reader.onEndTag(spanEnd) // no stack scan for an absent span in a table cell
    */
   override onEndTag(token: Parse5.Token.TagToken): void {
-    if (
-      this.currentNotInHTML &&
-      this.insertionMode === HTML_PARSER_IN_BODY_MODE &&
-      !this.openNames.has(token.tagName) &&
-      !HTML_PARSER_ABSENT_END_STATE_NAMES.has(token.tagName)
-    ) {
+    if (this.isAbsentEndWithoutEffect(token.tagName)) {
       // Preserve onEndTag's bookkeeping even when tree construction is a no-op.
       this.skipNextNewLine = false
       this.currentToken = token
       return
     }
     super.onEndTag(token)
+  }
+
+  /**
+   * Tells whether an end tag names no open element and the current insertion mode's rules then leave the tree, the modes and the parser's pointers as they are; called by {@link HtmlPageReader.onEndTag}.
+   * In foreign content such an end, `</p>` and `</br>` aside, finds no element of its name and takes the same rules, so the answer holds there too. An absent name is in no scope, so each scope check of these rules fails; what remains are the ends that act without an open element of their name.
+   * @param name - The end tag's name in ASCII lower case.
+   * @returns
+   * - `true` when skipping the end changes nothing
+   * - `false` for an open name, a mode outside {@link HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES}, `</table>` where a caption, section or row closes at it, `</p>` and `</br>`, a name with an entry in the list of active formatting elements, a heading while one is open, and a form end that forgets the form pointer
+   * @example
+   * reader.isAbsentEndWithoutEffect('span') // => true in a table cell with no span open
+   * reader.isAbsentEndWithoutEffect('h2') // => false while an h1 is open
+   */
+  private isAbsentEndWithoutEffect(name: string): boolean {
+    const actingTableNames = HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES.get(
+      this.insertionMode,
+    )
+    if (
+      actingTableNames === undefined ||
+      actingTableNames.has(name) ||
+      this.openNames.has(name) ||
+      HTML_PARSER_ABSENT_END_BODY_NAMES.has(name)
+    )
+      return false
+    // A formatting end removes a listed entry of its name whose element closed earlier.
+    if (this.formattingEntryNames.has(name)) return false
+    // A heading end closes an open heading of another level.
+    if (HTML_PARSER_HEADING_NAMES.has(name))
+      return ![...HTML_PARSER_HEADING_NAMES].some((heading) =>
+        this.openNames.has(heading),
+      )
+    // Outside a template, a form end forgets the form pointer, which a form left in a table keeps set.
+    if (name === 'form')
+      return this.formElement === null || this.openElements.tmplCount > 0
+    return true
   }
 }
 

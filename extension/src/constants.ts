@@ -1244,8 +1244,10 @@ export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
 /** Insertion mode identifiers of pinned parse5 8.0.1; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
 export const HTML_PARSER_IN_BODY_MODE = 6
 export const HTML_PARSER_IN_TABLE_MODE = 8
+export const HTML_PARSER_IN_CAPTION_MODE = 10
 export const HTML_PARSER_IN_TABLE_BODY_MODE = 12
 export const HTML_PARSER_IN_ROW_MODE = 13
+export const HTML_PARSER_IN_CELL_MODE = 14
 export const HTML_PARSER_IN_SELECT_MODE = 15
 export const HTML_PARSER_IN_SELECT_IN_TABLE_MODE = 16
 /** Insertion modes in which a hidden input takes the table rule, which leaves an open select open, instead of the body rule, which closes it; used by {@link readHtmlStartTags}. */
@@ -1260,32 +1262,26 @@ export const HTML_PARSER_TABLE_SECTION_NAMES = new Set([
   'tfoot',
   'thead',
 ])
-/** Ends that {@link readHtmlStartTags} must still dispatch in IN_BODY without an exact open-name match: foreign exits, shared heading scope, formatting entries, form pointers and conservative document/select/template handling. Other insertion modes always keep their own rules. */
-export const HTML_PARSER_ABSENT_END_STATE_NAMES = new Set([
-  'a',
-  'b',
-  'big',
-  'br',
-  'code',
-  'em',
-  'font',
-  'form',
+/** The insertion modes in which {@link readHtmlStartTags} skips an end tag whose name no open element has, each with the table names that mode still acts on then: `</table>` closes an open caption, table section or row even where no table is open, as in a template's content. Each other name either takes the body rules there (through a table mode's "anything else") or is a table name the mode ignores or checks in table scope, which an absent name is not in; the remaining modes keep the parser's rules. */
+export const HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES = new Map<
+  number,
+  ReadonlySet<string>
+>([
+  [HTML_PARSER_IN_BODY_MODE, new Set()],
+  [HTML_PARSER_IN_TABLE_MODE, new Set()],
+  [HTML_PARSER_IN_CAPTION_MODE, new Set(['table'])],
+  [HTML_PARSER_IN_TABLE_BODY_MODE, new Set(['table'])],
+  [HTML_PARSER_IN_ROW_MODE, new Set(['table'])],
+  [HTML_PARSER_IN_CELL_MODE, new Set()],
+])
+/** Ends the body rules act on although no element of their name is open, so {@link readHtmlStartTags} never skips them: `</p>` inserts an empty p and `</br>` a br, and in foreign content each first leaves it. */
+export const HTML_PARSER_ABSENT_END_BODY_NAMES = new Set(['br', 'p'])
+/** Heading names: the body rules close an open heading of any level at the end of any of them, so {@link readHtmlStartTags} skips an absent one only while no heading is open. */
+export const HTML_PARSER_HEADING_NAMES = new Set([
   'h1',
   'h2',
   'h3',
   'h4',
   'h5',
   'h6',
-  'html',
-  'i',
-  'nobr',
-  'p',
-  's',
-  'select',
-  'small',
-  'strike',
-  'strong',
-  'template',
-  'tt',
-  'u',
 ])

@@ -152,6 +152,151 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   )
 })
 
+// Value: protects=the extension host, which filters every served Wiki page synchronously, from seconds of filtering per crafted page; fails_when=an end tag whose name no open element has walks the open elements again in plain HTML, in a table, caption, table body, row or cell, or for a formatting, heading, form, template, select, table or table-section name, so each end costs as much as the nesting is deep; why_new=Cycle 0046 second /ship performance review PERF1 measured 1.5 to 6 s for these pages against 150 to 220 ms for the ordinary page; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+test('the reader filters a page of more than 1 MB of deep plain, table-held or foreign nesting with unmatched ends of any name within four times the time of an ordinary page', async () => {
+  // Arrange: 20,000 open elements, then 20,000 ends of a name none of them has, in each insertion mode the reader skips such ends in.
+  const pages = {
+    unmatchedHtmlEnds: ('<x>'.repeat(20_000) + '</y>'.repeat(20_000)).padEnd(
+      1_000_001,
+      ' ',
+    ),
+    unmatchedEndsInKnownElements: (
+      '<span>'.repeat(20_000) + '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedHtmlEndsInCell: (
+      '<table><tr><td>' +
+      '<x>'.repeat(20_000) +
+      '</y>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignEndsInCell: (
+      '<table><tr><td><svg>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignEndsInCaption: (
+      '<table><caption><svg>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignEndsInFosteredTable: (
+      '<table><svg>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignEndsInTableBody: (
+      '<table><tbody><svg>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignEndsInRow: (
+      '<table><tr><svg>' +
+      '<g>'.repeat(20_000) +
+      '</x>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignSectionEndsInRow: (
+      '<table><tr><svg>' +
+      '<g>'.repeat(20_000) +
+      '</tbody>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignFormattingEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</b>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignCodeEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</code>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    formattingEndsAfterAClosedEntry: (
+      '<p><b></p><svg>' +
+      '<g>'.repeat(20_000) +
+      '</b>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    formattingEndsAfterACellClosedItsEntry: (
+      '<table><tr><td><b></td><svg>' +
+      '<g>'.repeat(20_000) +
+      '</b>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignHeadingEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</h1>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    formEndsAfterAFormLeftInATable: (
+      '<table><form></table><svg>' +
+      '<g>'.repeat(20_000) +
+      '</form>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    formEndsInATemplateAfterAFormLeftInATable: (
+      '<table><form></table><template><svg>' +
+      '<g>'.repeat(20_000) +
+      '</form>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignTemplateEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</template>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignSelectEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</select>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+    unmatchedForeignTableEnds: (
+      '<svg>' +
+      '<g>'.repeat(20_000) +
+      '</table>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+  )
+
+  // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the ordinary page's time.
+  assert.deepEqual(
+    Object.values(pages).map((page) => page.length > 1_000_000),
+    [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ],
+  )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
+  assert.deepEqual(
+    Object.entries(times).filter(
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+    ),
+    [],
+    `the ordinary page took ${ordinary} ms`,
+  )
+})
+
 // Value: protects=the URL parser's exact edge character set and internal whitespace; fails_when=a generic trim removes Unicode space or keeps a C0 control at an edge; why_new=row 1052 replaces the trim algorithm; seam=none
 test('browser addresses trim every C0 control and ASCII space only at their ends and keep other spaces', () => {
   // Arrange
