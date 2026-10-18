@@ -6,6 +6,7 @@ import {
   workerData,
 } from 'node:worker_threads'
 
+import { WIKI_PAGE_WORKER_HEAP_LIMIT_MB } from './constants'
 import { servedWikiPageHtml } from './utils/servedWikiPageHtml'
 import type { WikiPageRefusalReason } from './utils/wikiPageRefusalHtml'
 
@@ -23,7 +24,7 @@ const WIKI_PAGE_WORKER_ROLE = 'codebook-wiki-page'
 
 /**
  * Prepares one Wiki page for serving ({@link servedWikiPageHtml}) in a worker thread of its own, so that the editor's extension host runs on while the page is read, and stops the worker when the deadline passes.
- * Why: the HTML parser takes time that grows with the square of the page on some crafted pages (from 13 s to minutes for 1 MB), and nothing limits the size of a page in the Wiki folder; on the host's own thread such a page would stop every extension of the window. Each page gets a new worker, so a stopped worker takes nothing of a later page with it.
+ * Why: the HTML parser takes time that grows with the square of the page on some crafted pages (from 13 s to minutes for 1 MB), and nothing limits the size of a page in the Wiki folder; on the host's own thread such a page would stop every extension of the window. The worker's heap is limited ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}), because it runs in the host's process, which a page of tens of megabytes would otherwise grow by gigabytes. Each page gets a new worker, so a stopped worker takes nothing of a later page with it.
  * The worker is this module's compiled file, loaded from the folder of the running code (`dist`), where the package ships it as a bundle of its own.
  * Called by the Wiki reader for every HTML file it serves.
  * @param html - The page as the Wiki folder holds it.
@@ -33,7 +34,7 @@ const WIKI_PAGE_WORKER_ROLE = 'codebook-wiki-page'
  * @returns
  * - `{ state: 'served', html }` with the page as served
  * - `{ state: 'deadline' }` when the deadline passed first; the worker is stopped
- * - `{ state: 'failed' }` when the worker failed, answered no page, or the request went; never the page unprepared
+ * - `{ state: 'failed' }` when the worker failed (its heap limit included), answered no page, or the request went; never the page unprepared
  * @example
  * await servedWikiPageOffThread('<body></body>', { editorScheme: 'vscode', clientAddress: '/w/t/codebook-qa.js', publication: undefined }, { deadlineMs: 10_000, signal })
  * // => { state: 'served', html: '<body><script src="/w/t/codebook-qa.js"></script></body>' }
@@ -51,8 +52,12 @@ export function servedWikiPageOffThread(
     options,
   }
   return new Promise((resolve) => {
+    // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with an error, answered as a failure below.
     const worker = new Worker(join(__dirname, 'wikiPageWorker.js'), {
       workerData: data,
+      resourceLimits: {
+        maxOldGenerationSizeMb: WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
+      },
     })
     let isSettled = false
     /** Answers once, with the first of the page, the deadline, a failure and the request's end, and stops the worker. */
