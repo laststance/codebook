@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { renderWikiPages } from './render-wiki.mjs';
@@ -244,34 +243,73 @@ const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([s
   ([now, ...realPaths]) => realPaths.every(real => isInProject(root, real)) && now.dev === identity.dev && now.ino === identity.ino,
   () => false);
 
+/** A refusal of a step whose path no longer holds, marked so that the step removes what it wrote ({@link removeWritten}). Called by {@link holdOfPath}, {@link makeFolderHeld} and {@link restoreManifestHeld}. @example throw holdRefusalOf(linkedPathRefusalOf('/repo/.codebook')) */
+const holdRefusalOf = sentence => Object.assign(new Error(sentence), { isHoldRefusal: true });
+
 /** Takes the look at the output's parent once the paths are resolved, for a publish or a recovery, and answers the check that holds every later write to it: for an output inside the project, the parent and `entries` must still be where they were ({@link isWhereItWasResolved}), or the step is refused with the parent's sentence. The race left is the one {@link requireStageWhereItWasMade} names. Called by {@link publishWiki} and {@link recoverWikiPublication}. @returns The check, which resolves when the path still holds and throws otherwise. @example const requirePathHeld = await holdOfPath(paths, [paths.stage]); await requirePathHeld() // throws once .codebook was swapped for a link */
 async function holdOfPath(paths, entries) {
   const parent = dirname(paths.output), identity = await stat(parent, { bigint: true });
   return async () => {
     if (!paths.isOutputInProject || await isWhereItWasResolved(parent, identity, entries, paths.root)) return;
-    throw new Error(linkedPathRefusalOf(parent));
+    throw holdRefusalOf(linkedPathRefusalOf(parent));
   };
 }
 
 /** Whether two statuses, taken with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
 const isSameFile = (status, other) => status.dev === other.dev && status.ino === other.ino;
 
-/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} once, after its paths are resolved. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
+/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
 async function folderLookOf(stage) {
-  const realStage = await realpath(stage), firstSeen = new Map();
+  const realStage = await realpath(stage).catch(() => undefined), firstSeen = new Map();
   return folder => Promise.all([realpath(folder), stat(folder, { bigint: true })]).then(([real, status]) => {
     if (!firstSeen.has(folder)) firstSeen.set(folder, status);
     return real === join(realStage, relative(stage, folder)) && isSameFile(status, firstSeen.get(folder));
   }, () => false);
 }
 
-/** Makes a folder of the stage, then holds the output's path ({@link holdOfPath}) and the folder itself ({@link folderLookOf}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page, of each kept manual file, and for the stage before its manifest, its record and the moves. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld, isFolderWhereItWas) */
+/** Makes a folder of the stage, then holds the output's path ({@link holdOfPath}) and the folder itself ({@link folderLookOf}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page, of each kept manual file, and for the stage before its manifest, its record and the moves, and by {@link writeFilesHeld} for each file of a new candidate. @returns The folders this mkdir made, deepest first. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld, isFolderWhereItWas) // => ['/repo/.codebook/next/pages'] */
 async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
   const madeFolders = madeFoldersOf(await mkdir(folder, { recursive: true }), folder);
   try {
     await requirePathHeld();
-    if (!(await isFolderWhereItWas(folder))) throw new Error(stageRefusalOf(folder));
+    if (!(await isFolderWhereItWas(folder))) throw holdRefusalOf(stageRefusalOf(folder));
   } catch (error) { await removeMadeFolders(madeFolders); throw error; }
+  return madeFolders;
+}
+
+/** Removes the files a refused step wrote that are still its own, by their bytes, last written first, then the folders it made, each empty ({@link removeMadeFolders}); a file whose bytes are no longer the step's, or that is gone, stays as it is. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses. @example await removeWritten([['/repo/.codebook/next/codebook-publication.json', receiptText]], ['/repo/.codebook/next']) */
+async function removeWritten(written, folders) {
+  for (const [path, bytes] of [...written].reverse()) {
+    const current = await regularBytes(path, true).catch(() => undefined);
+    if (current?.equals(Buffer.from(bytes))) await unlink(path).catch(() => undefined);
+  }
+  await removeMadeFolders(folders);
+}
+
+/** Writes the files of a step, each new, with the hold of its folder before and after it ({@link makeFolderHeld}); a refused hold removes what the step wrote that is still its own and the folders it made, with `madeBefore` after them ({@link removeWritten}). Called by {@link prepareWikiStage} for a new candidate's files. @example await writeFilesHeld([['/repo/.codebook/next/codebook-publication.json', receiptText]], requirePathHeld, isFolderWhereItWas, ['/repo/.codebook/next']) */
+async function writeFilesHeld(files, requirePathHeld, isFolderWhereItWas, madeBefore) {
+  const written = [], made = [];
+  try {
+    for (const [path, bytes] of files) {
+      made.unshift(...(await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas)));
+      await writeFile(path, bytes, { flag: 'wx' });
+      written.push([path, bytes]);
+      // Held after the write too, so a swap during it is seen before the next file.
+      await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas);
+    }
+  } catch (error) {
+    if (error.isHoldRefusal) await removeWritten(written, [...made, ...madeBefore]);
+    throw error;
+  }
+}
+
+/** The files a new candidate starts with: its receipt and, after a published Wiki, that Wiki's manifest and assets, each as its bytes, the assets read as regular files of the Wiki folder ({@link regularBytes}). Called by {@link prepareWikiStage}. @example await candidateFilesOf('/repo/.codebook/next', receipt, undefined, '/repo/.codebook/wiki') // => [['/repo/.codebook/next/codebook-publication.json', '{…}']] */
+async function candidateFilesOf(stage, receipt, prior, output) {
+  const files = [[join(stage, RECEIPT), JSON.stringify(receipt)]];
+  if (!prior) return files;
+  files.push([join(stage, MANIFEST), prior.bytes]);
+  for (const path of prior.manifest.assets) files.push([join(stage, path), await regularBytes(join(output, path))]);
+  return files;
 }
 
 /** Refuses a stage that no longer lies where the preparation made it, before anything is written into it: for an output inside the project, another process may have swapped a folder on the path for a link since the path was looked at ({@link isWhereItWasResolved}). The stage and the folders the preparation made are then removed, each empty ({@link removeMadeFolders}). The race left: between this check and each later write or move, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage} once its stage stands. @example await requireStageWhereItWasMade(paths, '/repo/.codebook/wiki.stage-1', parentIdentity) // throws once .codebook leads out of the project */
@@ -293,14 +331,8 @@ export async function prepareWikiStage({ projectRoot, outputDirectory, stageDire
   await mkdir(stage); // An existing candidate is never overwritten or silently reused.
   await requireStageWhereItWasMade(paths, stage, parentIdentity);
   const receipt = { schemaVersion: 1, kind: 'candidate', repositoryRoot: root, output, baseline: baselineOf(prior) };
-  await writeFile(join(stage, RECEIPT), JSON.stringify(receipt), { flag: 'wx' });
-  if (prior) {
-    await writeFile(join(stage, MANIFEST), prior.bytes, { flag: 'wx' });
-    for (const path of prior.manifest.assets) {
-      await mkdir(dirname(join(stage, path)), { recursive: true });
-      await copyFile(join(output, path), join(stage, path), constants.COPYFILE_EXCL);
-    }
-  }
+  // Every file of the candidate is written only while the path and the candidate's folders hold; a refusal removes what was written.
+  await writeFilesHeld(await candidateFilesOf(stage, receipt, prior, output), await holdOfPath(paths, [stage]), await folderLookOf(stage), [stage, ...paths.madeFolders]);
   await requireNoJournal(journal);
   assertBaseline(receipt.baseline, await inspectOutput(output, root, { allowLegacy: adoptExisting }));
   return { stage, manifest: join(stage, MANIFEST), output, legacyAdopted: Boolean(prior && !prior.receipt) };
@@ -427,8 +459,8 @@ async function recoveryState(root, output, stageDirectory) {
   return { ...parsed, bytes, actual: await regularBytes(join(output, MANIFEST), true), files, legacyRecovery: true };
 }
 
-/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename. @example await restoreManifest(record, paths) */
-async function restoreManifest(record, paths) {
+/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). @example await restoreManifest(record, paths, writeHeld, requireHeld) */
+async function restoreManifest(record, paths, writeHeld, requireHeld) {
   const { root, output } = paths;
   let state = await recoveryState(root, output, record.sourceStage);
   if (!state || !state.receipt && !state.legacyRecovery || digest(state.bytes) !== record.manifestSha256) throw new Error('The retained Wiki generation changed; recovery was stopped.');
@@ -437,15 +469,29 @@ async function restoreManifest(record, paths) {
   if (state.actual) {
     const retained = await regularBytes(record.modifiedManifestBackup, true);
     if (retained && !retained.equals(state.actual)) throw new Error('The retained edited manifest conflicts with recovery; it was preserved.');
-    if (!retained) await writeFile(record.modifiedManifestBackup, state.actual, { flag: 'wx' });
+    if (!retained) await writeHeld(record.modifiedManifestBackup, state.actual);
   }
   const temporary = await regularBytes(record.temporaryManifest, true);
   if (temporary && digest(temporary) !== record.manifestSha256) throw new Error('The recovery staging file is incomplete; inspect it without overwriting it.');
-  if (!temporary) await writeFile(record.temporaryManifest, state.bytes, { flag: 'wx' });
+  if (!temporary) await writeHeld(record.temporaryManifest, state.bytes);
   state = await recoveryState(root, output, record.sourceStage);
   if (!state || !state.receipt && !state.legacyRecovery || digest(state.bytes) !== record.manifestSha256 || (state.actual ? digest(state.actual) : null) !== record.modifiedManifestSha256)
     throw new Error('The Wiki changed before metadata recovery; all files were preserved.');
+  await requireHeld();
   await rename(record.temporaryManifest, join(output, MANIFEST));
+}
+
+/** Restores an edited manifest ({@link restoreManifest}) only while the output's path and the Wiki folder hold: each write is held before and after it and the rename before it, by the path ({@link holdOfPath}) and the Wiki folder itself ({@link folderLookOf}), and a refused hold removes what this recovery wrote that is still its own ({@link removeWritten}). Called by {@link recoverWikiPublication}. @example await restoreManifestHeld(record, paths, requirePathHeld) */
+async function restoreManifestHeld(record, paths, requirePathHeld) {
+  const isOutputWhereItWas = await folderLookOf(paths.output), written = [];
+  const requireHeld = async () => {
+    await requirePathHeld();
+    if (!(await isOutputWhereItWas(paths.output))) throw holdRefusalOf(outputRefusalOf(paths.output));
+  };
+  // The hold is taken before and after each write, so a swap during the write is seen before anything else is read or moved.
+  const writeHeld = async (path, bytes) => { await requireHeld(); await writeFile(path, bytes, { flag: 'wx' }); written.push([path, bytes]); await requireHeld(); };
+  try { await restoreManifest(record, paths, writeHeld, requireHeld); }
+  catch (error) { if (error.isHoldRefusal) await removeWritten(written, []); throw error; }
 }
 
 /** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
@@ -485,7 +531,7 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
         typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id) ||
         record.modifiedManifestBackup !== output + '.modified-manifest-' + record.id + '.json' ||
         record.temporaryManifest !== join(output, '.codebook-restore-' + record.id + '.json')) throw new Error('The Wiki metadata recovery journal is invalid.');
-      await restoreManifest(record, paths);
+      await restoreManifestHeld(record, paths, requirePathHeld);
       result = { status: 'manifest-restored', output, modifiedManifestBackup: record.modifiedManifestSha256 === null ? undefined : record.modifiedManifestBackup };
     } else {
       if (typeof record.stage !== 'string' || dirname(record.stage) !== dirname(output) || record.stage === output ||

@@ -2585,6 +2585,105 @@ test('a publish whose candidate folder pages is swapped for a link to a folder o
   }
 })
 
+// Value: protects=a folder outside the project that the candidate's assets folder leads to once another process put a link there while the preparation copied the prior Wiki's assets; fails_when=the preparation checks its candidate once and then makes the assets folder and copies the assets without a hold, so the copies land behind the link, or it leaves the receipt and the manifest it wrote in a candidate it refused; why_new=Cycle 0046 /ship third review W7 (security probed the swap); seam=a copy of the shipped publisher whose `node:fs/promises` puts a link at the candidate's assets folder just before the preparation makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a preparation whose candidate assets folder becomes a link to a folder outside the project just before it copies the prior Wiki’s asset is refused with that folder named, writes nothing behind the link and removes the files it wrote', async () => {
+  // Arrange: a published Wiki with a PNG asset; just before the preparation makes the candidate's assets folder, a link to a folder outside the project stands there.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await candidateWithAnAsset('assets/flow.png', PNG_ASSET_BYTES)
+  const outside = join(wiki.root, '..', `${basename(wiki.root)}-outside`)
+  const next = join(wiki.root, '.codebook/next2')
+  try {
+    await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.stage,
+    })
+    await mkdir(outside)
+    swapBeforeMaking(
+      (path) => path === join(next, 'assets'),
+      () => symlink(outside, join(next, 'assets'), 'junction'),
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: next,
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert: nothing stands behind the link, and the candidate holds only the link.
+    assert.deepEqual(
+      {
+        refusal,
+        behindTheLink: await readdir(outside),
+        candidate: await readdir(next),
+      },
+      {
+        refusal: `The Wiki stage ${join(next, 'assets')} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        behindTheLink: [],
+        candidate: ['assets'],
+      },
+    )
+  } finally {
+    await rm(wiki.root, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a copy of the Wiki outside the project that the Wiki folder leads to once another process swapped it for a link while a recovery restored an edited manifest; fails_when=the recovery writes its staging file and renames it into the manifest without a hold of the Wiki folder, so the manifest behind the link is replaced, or it leaves the kept edited manifest it wrote after it refused; why_new=Cycle 0046 /ship third review W7 (security probed the swap); seam=a copy of the shipped publisher whose `node:fs/promises` swaps the Wiki folder for a link just before the recovery writes its staging file (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a recovery of an edited manifest whose Wiki folder is swapped for a link to a copy outside the project just before it writes its staging file is refused with the folder named, leaves the copy’s manifest as it was and removes the kept edited manifest it wrote', async () => {
+  // Arrange: a published Wiki whose manifest was edited by hand; just before the recovery writes its staging file, the Wiki folder is moved out of the project and a link to it stands in its place.
+  const { recoverWikiPublication: recoverWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'wiki-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'codebook-wiki.json'), '{edited by hand')
+    swapBeforeWriting(
+      (path) => basename(path).startsWith('.codebook-restore-'),
+      async () => {
+        await rename(wiki.output, movedOut)
+        await symlink(movedOut, wiki.output, 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await recoverWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: the copy's manifest is the edited one, no staging file stands in it, and no kept edited manifest beside the Wiki folder.
+    assert.deepEqual(
+      {
+        refusal,
+        manifest: await readFile(join(movedOut, 'codebook-wiki.json'), 'utf8'),
+        stagingFiles: (await readdir(movedOut)).filter((name) =>
+          name.startsWith('.codebook-restore-'),
+        ),
+        keptEditedManifests: (
+          await readdir(join(wiki.root, '.codebook'))
+        ).filter((name) => name.includes('.modified-manifest-')),
+      },
+      {
+        refusal: `The Wiki folder ${wiki.output} is a link, a file or a folder that leads out of the project. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        manifest: '{edited by hand',
+        stagingFiles: [],
+        keptEditedManifests: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the Wiki folder's parent the publish resolved, when another process replaces `.codebook` by another folder of the project before the publish writes; fails_when=the publish compares only real paths, so it writes into a folder that is not the one it looked at; why_new=Cycle 0046 /ship finding AF7 (the look after creation holds the parent's device and inode too); seam=a copy of the shipped publisher whose `node:fs/promises` replaces `.codebook` just before the candidate's folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a publish whose .codebook is replaced by another folder of the project just before it writes into the candidate is refused with the folder named, and the Wiki is not replaced', async () => {
   // Arrange: just before the publish makes the candidate's folder, `.codebook` is replaced by a new folder that holds the same Wiki and candidate.
