@@ -14,7 +14,7 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { basename, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { isDeepStrictEqual } from 'node:util'
 
@@ -2060,6 +2060,50 @@ test('a header written between the removal’s judgement and its lock keeps the 
       }),
     ),
   )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=a study whose recording another computer with this host name writes, when that computer's writer record appears between this window's judgement and its lock (the instant after its header was written); fails_when=the look under the lock does not compare whether a writer record is there, so the verdict 'gone' of the header alone (this host name, no process of its id here) is reused and the recording is moved with no refusal and no dialog (TT33, CX12); why_new=Cycle 0046 third testing review TT33: no test made a record appear between the judgement and the lock; seam=the storage lock of the loaded library, right before which the test writes the record that names the recording and machine-b
+test('a writer record written between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study whose recording has its header alone, of this host name and a process id of no process; its record appears right before the removal's lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const recordPath = recordingOwnerRecordPath(storage.directory, study.id)
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await mkdir(dirname(recordPath), { recursive: true })
+    await writeFile(
+      recordPath,
+      JSON.stringify({
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        machineId: 'machine-b',
+        recording: {
+          folder: 'recordings.v2',
+          createdAt: '2026-10-01T08:00:00.000Z',
+        },
+      }),
+    )
+  })
 
   // Act
   const removal = await library.removeStudy(study.id, storage.moveToTrash)
