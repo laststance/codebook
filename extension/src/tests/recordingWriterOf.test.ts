@@ -690,6 +690,45 @@ test('a live writer of this user whose recorded start cannot be read here may st
   assert.deepEqual(writer, { kind: 'may-run' })
 })
 
+// Value: protects=a live writer of this host whose computed start lies just after its recording's creation time, as a corrected clock or the rounding of a computed start puts it; fails_when=the 60 s tolerance of the later-process rule is dropped, so such a writer counts as one this computer cannot confirm and the learner is offered "Move to Trash Anyway" for a recording it still writes (TT45); why_new=Cycle 0046 third testing review TT45: no test sat at the tolerance; seam=the list's starts, which give a live child process of the test a start 30 s and 90 s after the recording's creation, and the header without a record of its writer
+test('a live writer whose start lies 30 s after the recording was created may still run, and one 90 s after is one this computer cannot confirm', async (context) => {
+  // Arrange: a recording of this host with its header alone, created at 09:00:00; a live process has its writer's id.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rm(recordingOwnerRecordPath(storage.directory, recording.studyId))
+  const liveProcess = await idleChild(context)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: liveProcess.pid!,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+    createdAt: '2026-10-18T09:00:00.000Z',
+  })
+  const startedAt = (start: string): ProcessStartsOfList =>
+    new Map([[liveProcess.pid!, Promise.resolve(`win:${start}`)]])
+
+  // Act
+  const writers = {
+    thirtySecondsAfter: await writerOf(
+      recording.folder,
+      'counts',
+      startedAt('2026-10-18T09:00:30.0000000Z'),
+    ),
+    ninetySecondsAfter: await writerOf(
+      recording.folder,
+      'counts',
+      startedAt('2026-10-18T09:01:30.0000000Z'),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(writers, {
+    thirtySecondsAfter: { kind: 'may-run' },
+    ninetySecondsAfter: { kind: 'unconfirmed-here', host: hostname() },
+  })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
