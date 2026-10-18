@@ -11,11 +11,12 @@ import type { DebugStackFrameOfAnswer } from './stackTraceResponseOf'
  * @param frames - The frames of the stopped thread by index, as far as the adapter answered them; a hole is a frame not answered yet.
  * @param reason - The reason of the adapter's `stopped` event, if any.
  * @returns
- * - The first qualifying frame among the first {@link EDITOR_STOP_FOCUS_FRAME_COUNT}
- * - `undefined` when none qualifies so far
+ * - The first qualifying frame among the first {@link EDITOR_STOP_FOCUS_FRAME_COUNT}, once every frame above it is answered
+ * - `undefined` when none qualifies so far, also when a hole comes before the first qualifying frame: the frame not answered yet may be the one the editor focuses
  * @example
  * editorsPausedFrame([{ id: 1, source: { path: '/app/timers.js' }, presentationHint: 'deemphasize' }], 'pause') // => undefined
  * editorsPausedFrame([{ id: 1, source: { path: '/app/vendor.js' }, presentationHint: 'deemphasize' }], 'breakpoint') // => the frame with id 1
+ * editorsPausedFrame([undefined, { id: 2, source: { path: '/app/actions.ts' } }], 'breakpoint') // => undefined, the top frame is not answered yet
  */
 export function editorsPausedFrame(
   frames: readonly (DebugStackFrameOfAnswer | undefined)[],
@@ -24,12 +25,15 @@ export function editorsPausedFrame(
   const keepsDeemphasized =
     reason !== undefined && DEEMPHASIZED_FRAME_STOP_REASONS.has(reason)
   // The first frame with a source that the stop's reason lets the editor focus is the one it focuses.
-  for (const frame of frames.slice(0, EDITOR_STOP_FOCUS_FRAME_COUNT))
+  for (const frame of frames.slice(0, EDITOR_STOP_FOCUS_FRAME_COUNT)) {
+    // A frame not answered yet may qualify, so no frame below it can be named before its answer.
+    if (frame === undefined) return undefined
     if (
-      frame?.source !== undefined &&
+      frame.source !== undefined &&
       (keepsDeemphasized || !isDeemphasizedFrame(frame))
     )
       return frame
+  }
   return undefined
 }
 

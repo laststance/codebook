@@ -96,3 +96,38 @@ test('the editor’s rule reads a frame’s own hint first, treats subtle as dee
   // Assert
   assert.deepEqual(paused, [2, undefined])
 })
+
+// Value: protects=the keyboard at a stop whose top frame the adapter has not answered yet while a later frame is: the editor's rule takes the first qualifying frame, so no frame below an unanswered one can be named before that one is known; fails_when=a hole is skipped and a later frame is named, so StopKeyboardHandOver hands the keyboard over at a frame the editor does not focus when the unanswered top frame is the learner's; why_new=OCR6-1; seam=none; no_claim=the order in which a real adapter answers the editor's two stackTrace requests
+test('a frame below one the adapter has not answered yet is not taken for the frame the editor focuses', () => {
+  // Arrange: the answer for frames 1 to 19 came first; the top frame's answer is still out.
+  const frames = [
+    undefined,
+    { id: 2, presentationHint: 'normal', source: { path: '/app/actions.ts' } },
+  ]
+
+  // Act
+  const paused = editorsPausedFrame(frames, 'breakpoint')
+
+  // Assert
+  assert.equal(paused, undefined)
+})
+
+// Value: protects=the frame the editor focuses once every frame above it is answered: a hole below the first qualifying frame does not hide it; fails_when=the hole rule stops at a hole that comes after the qualifying frame, so a stop whose deeper frames are not answered yet gets no hand-over; why_new=OCR6-1; seam=none; no_claim=none
+test('a qualifying frame above a frame the adapter has not answered yet is the frame the editor focuses', () => {
+  // Arrange: a deemphasized top frame, the learner's frame, then a frame not answered yet.
+  const frames = [
+    {
+      id: 1,
+      presentationHint: 'deemphasize',
+      source: { path: '<node_internals>/fs', sourceReference: 3 },
+    },
+    { id: 2, presentationHint: 'normal', source: { path: '/app/actions.ts' } },
+    undefined,
+  ]
+
+  // Act
+  const paused = editorsPausedFrame(frames, 'exception')
+
+  // Assert
+  assert.equal(paused?.id, 2)
+})
