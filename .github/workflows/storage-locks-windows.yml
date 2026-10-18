@@ -10,10 +10,12 @@ name: Windows file system and process tests
 # junction here) as a name, and it lists the Wiki's output folder only where a real directory stands at that path. The
 # list of processes comes from PowerShell here, where no ps exists. The sweep of abandoned browser profiles has no user
 # id to judge a folder by here: it judges each folder of the user's own root by its marker and by that list of
-# processes, and follows no junction. This job runs the tests of the storage lock and its owner's identity, of the Wiki
-# update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file
-# hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process
-# listing, of the removal walk, of the folder listing and of the sweep of abandoned browser profiles, on Windows, one
+# processes, and follows no junction. Git is looked for on PATH, where a file counts as a program by what the file
+# system answers for it, with no execute permission to ask: a regular file does, a folder or a junction to one does not.
+# This job runs the tests of the storage lock and its owner's identity, of the Wiki update marker and its claim, of the
+# reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens
+# and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk, of the folder
+# listing, of the sweep of abandoned browser profiles and of the program check of the search for Git, on Windows, one
 # test file at a time, whenever a file those tests load, or the Node release they run on, changes. Two files those tests
 # load are left out of the filter, extension/src/constants.ts and extension/src/runtimeSupport/constants.ts, although
 # the first holds the lock's times, its path and its file modes: they change with most pull requests. A change there, to
@@ -41,6 +43,7 @@ on:
       - extension/src/tests/isFolderOfItsOwn.test.ts
       - extension/src/tests/isFromEarlierBoot.test.ts
       - extension/src/tests/isProcessGone.test.ts
+      - extension/src/tests/isProgramFile.test.ts
       - extension/src/tests/isRecordedOwnerGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
       - extension/src/tests/listFolderTreeWithoutFollowing.test.ts
@@ -178,7 +181,7 @@ jobs:
       # files' times then add up instead of running beside each other, which is seconds for this job.
       - name: Run the file system and process tests
         working-directory: extension
-        run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js
+        run: node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/isProgramFile.test.js
 
       # The packaging scripts read a VSIX through their own copy of the opener that refuses a link
       # (extension/scripts/utils/openWithoutFollowing.mjs, which says why it is a copy); its tests run here on the system
