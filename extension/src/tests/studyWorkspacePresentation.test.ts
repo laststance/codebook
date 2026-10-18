@@ -7576,12 +7576,13 @@ test("the reentry's focus of the captured source below the Application, in place
   }
 })
 
-// Value: protects=the chat input's keyboard in VS Code when an agent starts a run right after its own Study selection, without Return Current: the reader's next refresh (every 250 ms, well before the run's Application viewport) enters the Live arrangement as the agent's run, so no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=that entry prepares the Application as the learner's and its focus return shows the captured source, the active text editor, with the keyboard, and nothing tells the learner; why_new=Cycle 0046 finding on codebook_start (the reader's own Live entry of a run); seam=useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), the reader's refresh as its timer runs it, textDocumentShows and the information messages
+// Value: protects=the chat input's keyboard in VS Code when an agent starts a run right after its own Study selection, without Return Current: the reader's next refresh (every 250 ms, well before the run's Application viewport) enters the Live arrangement as the agent's run, so no file gets the keyboard and the learner is told once that the new Application group has it; fails_when=that entry prepares the Application as the learner's and its focus return shows the captured source, the active text editor, with the keyboard, and nothing tells the learner; why_new=Cycle 0046 finding on codebook_start (the reader's own Live entry of a run); seam=readerSeams stopOwnTimer (the refresh the test asks for is the reader's only one, so it runs the Live entry itself: a refresh asked for while one of the timer's is under way is answered when that one's reading ends, before its entry, which made this test fail under the load of a coverage run, FL2), useNativeLayout, focusMutableDraft, focusView (the chat view's input), the service's selectPresentation and start (the codebook_presentation and codebook_start handlers), the reader's refresh as its timer runs it, textDocumentShows and the information messages
 test('an agent’s run started right after its own Study selection, while the chat view has the keyboard, enters Live with no file given the keyboard and says once that the Application’s group has it', async () => {
-  // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again.
+  // Arrange: the agent selected the Study workspace from the chat view, and the learner typed the next request there again; the reader's own timer is stopped, so the refresh below is its only one.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
   try {
+    readerSeams(harness).stopOwnTimer()
     harness.leaveEmptyGroup(1)
     harness.focusMutableDraft('actions.ts', 1)
     harness.focusView()
@@ -7604,7 +7605,7 @@ test('an agent’s run started right after its own Study selection, while the ch
     })
     await harness.service.record(receipt).preparation
 
-    // Act: the reader's timer refreshes before the run creates its Application viewport.
+    // Act: the reader refreshes, as its timer does, before the run creates its Application viewport.
     await readerSeams(harness).refresh()
 
     // Assert: no document was shown with the keyboard, and the sentence says that the new Application group has it.
