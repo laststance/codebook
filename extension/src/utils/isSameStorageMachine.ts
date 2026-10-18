@@ -69,7 +69,7 @@ function sharesMachineKey(
  * - Both carry a machine id: `true` when the ids are equal and so are the host names or the boots; `false` for two ids that differ, also under one host name
  * - Otherwise: `true` when the recorded host name is this machine's
  * @example
- * isSameStorageMachine({ hostname: 'laptop.local', machineId: 'f3a1', boot: { startedAtMs: 1_000 } }, { hostname: 'laptop.lan', machineId: 'f3a1', boot: { startedAtMs: 2_000 } }) // => true
+ * isSameStorageMachine({ hostname: 'laptop.local', machineId: 'f3a1', boot: { id: 'boot-1' } }, { hostname: 'laptop.lan', machineId: 'f3a1', boot: { id: 'boot-1' } }) // => true
  * isSameStorageMachine({ hostname: 'lab-17', machineId: 'f3a1', boot: { id: 'boot-1' } }, { hostname: 'lab-18', machineId: 'f3a1', boot: { id: 'boot-2' } })                // => false
  * isSameStorageMachine({ hostname: 'laptop.local' }, { hostname: 'laptop.local', machineId: 'f3a1' })                // => true
  * isSameStorageMachine({ hostKey: 'd195d36bd79da7df' }, { hostname: 'workstation', hostKey: 'd195d36bd79da7df' })    // => true
