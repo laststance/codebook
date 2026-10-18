@@ -20,6 +20,7 @@ import {
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
+  WIKI_QUESTION_STATUS_STYLE,
   WIKI_REFUSED_STEP_ADVICE,
   WIKI_SHELL_SCRIPT_HASHES,
   WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
@@ -100,6 +101,24 @@ const qaClient = `(function () {
   if (status) { status.textContent = '● Connected to Codebook reader'; status.classList.remove('unavailable'); }
   var submit = form.querySelector('button[type="submit"]');
   if (submit) submit.textContent = 'Ask Codebook';
+  // The question's progress is told by a status line that is in the page, drawn and empty, before its first text: the answer's own status region waits in a disclosure that stays hidden until the first question, and a region shown together with its first text is not announced. A page published before the shell carried the line gets one here, in front of the answer's disclosure.
+  var questionStatus = form.querySelector('[data-codebook-question-status]');
+  if (!questionStatus) {
+    questionStatus = document.createElement('p');
+    questionStatus.className = 'qa-status';
+    questionStatus.setAttribute('role', 'status');
+    questionStatus.setAttribute('aria-live', 'polite');
+    questionStatus.setAttribute('data-codebook-question-status', '');
+    var answerRegion = form.querySelector('.qa-answer, [data-codebook-answer]');
+    var answerDisclosure = answerRegion && answerRegion.closest('details');
+    var answerPlace = answerDisclosure && form.contains(answerDisclosure) ? answerDisclosure : answerRegion;
+    if (answerPlace) answerPlace.parentNode.insertBefore(questionStatus, answerPlace); else form.append(questionStatus);
+    var questionStatusStyle = document.createElement('style');
+    questionStatusStyle.textContent = ${JSON.stringify(WIKI_QUESTION_STATUS_STYLE)};
+    document.head.append(questionStatusStyle);
+  }
+  // Only the latest question empties the status line when its answer comes.
+  var questionsAsked = 0;
   form.addEventListener('submit', async function (event) {
     event.preventDefault(); event.stopImmediatePropagation();
     var input = form.querySelector('textarea, input[name="question"]');
@@ -110,7 +129,10 @@ const qaClient = `(function () {
     // The answer's disclosure is opened here too: the page's own script opens the element with the disclosure's id, which on such a page may be a heading of the article.
     var disclosure = output.closest('details');
     if (disclosure) { disclosure.hidden = false; disclosure.open = true; }
-    output.style.display = 'block'; output.textContent = 'Asking the editor model…';
+    // The answer's region is shown and emptied now, so the answer written after the request changes a region already in the page; the progress goes to the status line, which was there before it.
+    output.style.display = 'block'; output.textContent = '';
+    var asked = ++questionsAsked;
+    questionStatus.textContent = 'Asking the editor model…';
     try {
       var response = await fetch(prefix + '${WIKI_QUESTION_ROUTE}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
       var result = await response.json();
@@ -122,6 +144,7 @@ const qaClient = `(function () {
       result.citations.forEach(function (citation) { var item = document.createElement('li'); var link = document.createElement('a'); link.href = citation.uri; link.textContent = citation.path + ':' + citation.line; item.appendChild(link); list.appendChild(item); });
       output.appendChild(list);
     } catch (error) { output.textContent = String(error); }
+    finally { if (asked === questionsAsked) questionStatus.textContent = ''; }
   }, true);
 })();`
 

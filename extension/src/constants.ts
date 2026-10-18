@@ -742,9 +742,12 @@ export const WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON = 'WikiUpdateWindowClosing'
 export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
 /** File name of a generated Wiki's overview page: the page the browser entry opens, the one every Wiki owns and the one a request without a page falls back to. */
 export const WIKI_ENTRY_FILE = 'index.html'
-/** The SHA-256 hashes (base64), as a Content-Security-Policy names them, of the inline script the publisher's page shell carries: the Wiki reader lets exactly these inline scripts of a page run, so a script written straight into a page file runs nowhere on the reader's origin. Every shell from the first reader (0.2.12.0) to this build carries the same script; a shell whose script changes adds its hash here, and older ones stay, so the Wikis earlier builds published keep their theme button. */
+/** The SHA-256 hashes (base64), as a Content-Security-Policy names them, of the inline script the publisher's page shell carries: the Wiki reader lets exactly these inline scripts of a page run, so a script written straight into a page file runs nowhere on the reader's origin. A shell whose script changes adds its hash here, and older ones stay, so the Wikis earlier builds published keep their theme button and their offline note. */
 export const WIKI_SHELL_SCRIPT_HASHES: readonly string[] = [
+  // Every shell from the first reader (0.2.12.0) until Cycle 0046 D2.
   'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
+  // The shell since Cycle 0046 D2: its offline note goes to the question status line.
+  'IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=',
 ]
 /** The last code point of Unicode. A browser reads a numeric character reference past it as the replacement character; the Wiki reader reads it as this one. Neither is a letter or a colon of a scheme. */
 export const UNICODE_LAST_CODE_POINT = 0x10ffff
@@ -754,6 +757,9 @@ export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
 export const WIKI_FRESHNESS_ROUTE = 'api/freshness'
 /** Route of the Wiki reader that takes a repository question from its own page. */
 export const WIKI_QUESTION_ROUTE = 'api/ask'
+/** The rules of the question status line of a Wiki page (`.qa-status`, the empty `role=status` line the progress of a question is told in): the bundled `reader-shell.html` carries the same rules, and the reader's page script adds them to a page published before the shell had the line, when it adds the line there. Empty, the line takes no room. */
+export const WIKI_QUESTION_STATUS_STYLE =
+  '.qa-status{font-size:.85rem;margin:.4rem 0 0;overflow-wrap:anywhere}.qa-status:empty{margin:0}'
 /** The host names of an address on this machine; an address the editor forwards the Wiki reader to is accepted as the reader's own page only under one of them. */
 export const WIKI_LOOPBACK_HOSTS: readonly string[] = [
   '127.0.0.1',

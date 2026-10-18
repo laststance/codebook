@@ -5,7 +5,12 @@ import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
 import { createManualClock } from './createManualClock'
 
-type PageEvent = { defaultPrevented: boolean; preventDefault(): void }
+type PageEvent = {
+  defaultPrevented: boolean
+  preventDefault(): void
+  /** Keeps the listeners after this one from running, as a browser's `stopImmediatePropagation` does. */
+  stopImmediatePropagation(): void
+}
 type PageListener = (event: PageEvent) => void
 type PageNode = PageElement | string
 
@@ -34,6 +39,18 @@ const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
 const SITE_PUBLISHED_AT = '2026-10-03T11:30:00.000Z'
 /** The publication a fake page is served from and its reader answers unless the test says otherwise. */
 const PUBLICATION_AT_LOAD = 'publication-at-load'
+/** What the fake reader answers a question with unless the test says otherwise: an answer with one citation. */
+const QUESTION_ANSWER: FakeWikiQuestionAnswer = {
+  answer: 'The order is created in src/order.ts.',
+  citations: [
+    {
+      path: 'src/order.ts',
+      line: 3,
+      uri: 'vscode://laststance.codebook/source?root=%2Frepo&path=src%2Forder.ts&line=3',
+    },
+  ],
+  sourceChanged: false,
+}
 
 /**
  * One element of the hand-written page the served Wiki script runs against in tests; it has only what that script uses.
@@ -53,6 +70,12 @@ class PageElement {
   childNodes: PageNode[] = []
   parentNode: PageElement | null = null
   hidden = false
+  /** Whether a `details` element is open; a closed one draws its summary alone. */
+  open = false
+  /** The text of a `textarea` or an `input`. */
+  value = ''
+  /** The inline style a script set, by property name. */
+  readonly style: Record<string, string> = {}
   /** How often the content of this element was written, so a test can tell a repeated announcement from one. */
   contentWriteCount = 0
   /** How often an attribute of this element was set or removed, so a test can tell a repeated write from one; a browser's observers see every `setAttribute`, also with the value the attribute already has. */
@@ -99,6 +122,37 @@ class PageElement {
   }
   get isConnected(): boolean {
     return this.tagName === 'html' || Boolean(this.parentNode?.isConnected)
+  }
+  /** The classes of the element as a browser's `classList` reads and changes them. */
+  get classList(): {
+    contains(name: string): boolean
+    add(name: string): void
+    remove(name: string): void
+  } {
+    const names = (): string[] => this.className.split(/\s+/).filter(Boolean)
+    return {
+      contains: (name) => names().includes(name),
+      add: (name): void => {
+        if (!names().includes(name))
+          this.className = [...names(), name].join(' ')
+      },
+      remove: (name): void => {
+        this.className = names()
+          .filter((candidate) => candidate !== name)
+          .join(' ')
+      },
+    }
+  }
+  /** The label elements of the page that name a `textarea` or an `input` by its id; `null` for any other element, which no label names. */
+  get labels(): PageElement[] | null {
+    if (this.tagName !== 'textarea' && this.tagName !== 'input') return null
+    let root: PageElement = this
+    while (root.parentNode) root = root.parentNode
+    return this.id
+      ? root
+          .querySelectorAll('label')
+          .filter((label) => label.getAttribute('for') === this.id)
+      : []
   }
   /** The element children, in order. */
   get children(): PageElement[] {
@@ -210,6 +264,20 @@ class PageElement {
   querySelector(selectorList: string): PageElement | null {
     return this.querySelectorAll(selectorList)[0] ?? null
   }
+  contains(node: PageNode | null): boolean {
+    for (
+      let ancestor = node instanceof PageElement ? node : null;
+      ancestor;
+      ancestor = ancestor.parentNode
+    )
+      if (ancestor === this) return true
+    return false
+  }
+  closest(selectorList: string): PageElement | null {
+    for (let node: PageElement | null = this; node; node = node.parentNode)
+      if (node.matches(selectorList)) return node
+    return null
+  }
 
   /** Puts a node last among the children, taking an element out of its old place first. */
   #adopt(node: PageNode): void {
@@ -232,6 +300,22 @@ export type FakeWikiPageLayout =
   /** A page with neither the link nor the label. */
   | 'no-rail'
 
+/** What the fake reader answers a question of the page's form with: an answer with its citations, or the sentence of a question handed over to the editor's chat. */
+export type FakeWikiQuestionAnswer =
+  | {
+      answer: string
+      citations: { path: string; line: number; uri: string }[]
+      sourceChanged: boolean
+    }
+  | { handoff: string }
+
+/** Which question form the fake page carries in its reading column. */
+export type FakeWikiPageComposer =
+  /** The form of every Wiki published before Cycle 0046 D2 (`scripts/fixtures/reader-shell-0.2.29.0.txt`): the question row, then the hidden disclosure that holds the answer's status region. */
+  | 'published-before-the-question-status'
+  /** The form of the current `reader-shell.html`: the question row, the empty question status line, then the hidden disclosure that holds the answer's status region. */
+  | 'current-shell'
+
 /** The fake reader behind the page: what its routes answer next. A test changes the fields between steps. */
 export type FakeWikiReader = {
   updateStatus: WikiUpdateStatus
@@ -250,6 +334,8 @@ export type FakeWikiReader = {
   isFreshnessFailing: boolean
   /** When true every request fails the way a closed reader does. */
   isDown: boolean
+  /** What the question route answers. */
+  questionAnswer: FakeWikiQuestionAnswer
   /** Paths requested so far, relative to the reader prefix. */
   requests: string[]
 }
@@ -270,6 +356,8 @@ export type FakeWikiPageLoad = {
   isLoadedBeforeTheScript?: boolean
   /** The ids of headings the article's own content carries, in their order; none when omitted. A page published before the publisher kept such ids apart from the reader's may carry an id of the reader there. */
   articleHeadingIds?: string[]
+  /** The question form below the article, with the shell's theme button in the header; neither when omitted. */
+  composer?: FakeWikiPageComposer
 }
 
 /** A loaded fake page: its elements, its reader and the test's hands on time and input. */
@@ -288,6 +376,8 @@ export type FakeWikiPage = {
   injectedStyles(): string
   /** Clicks an element the way a learner does. @returns Whether the page swallowed the click. @throws When the element is undefined, so a selector that found nothing fails the test. */
   click(element: PageElement | undefined): Promise<{ wasSwallowed: boolean }>
+  /** Types a question into the page's form and submits it the way the learner's press of Ask Codebook does, then lets every request the page started and that is not held back finish. @returns Whether the page kept the browser from submitting the form itself. @throws When the page has no question form. */
+  ask(question: string): Promise<{ wasSubmissionPrevented: boolean }>
   /** Moves the clock by exactly the time given and lets every timer and request due by then finish. */
   advance(milliseconds: number): Promise<void>
   /** Hides or shows the tab. */
@@ -304,6 +394,69 @@ export type FakeWikiPage = {
   pendingTimerCount(): number
   /** How often the page reloaded itself. */
   reloadCount(): number
+}
+
+/** Builds the question form of one composer, as the shell writes it, and the connection note after it. */
+function buildComposer(composer: FakeWikiPageComposer): PageElement {
+  return new PageElement(
+    'section',
+    { class: 'composer', 'aria-label': 'Repository questions' },
+    [
+      new PageElement('form', { id: 'qa-form' }, [
+        new PageElement('label', { for: 'qa-input', class: 'sr-only' }, [
+          'Ask about this repository',
+        ]),
+        new PageElement('div', { class: 'question-row' }, [
+          new PageElement('textarea', {
+            id: 'qa-input',
+            name: 'question',
+            rows: '1',
+            required: '',
+            placeholder: 'Ask about this repository…',
+          }),
+          new PageElement('button', { type: 'submit' }, ['Ask Codebook']),
+        ]),
+        ...(composer === 'current-shell'
+          ? [
+              new PageElement('p', {
+                class: 'qa-status',
+                role: 'status',
+                'aria-live': 'polite',
+                'data-codebook-question-status': '',
+              }),
+            ]
+          : []),
+        Object.assign(
+          new PageElement(
+            'details',
+            { id: 'qa-response', class: 'answer-disclosure' },
+            [
+              new PageElement('summary', {}, ['Answer and source citations']),
+              new PageElement('div', {
+                class: 'qa-answer',
+                role: 'status',
+                'aria-live': 'polite',
+                tabindex: '0',
+              }),
+            ],
+          ),
+          { hidden: true },
+        ),
+      ]),
+      new PageElement('details', { class: 'connection' }, [
+        new PageElement('summary', {}, [
+          new PageElement(
+            'span',
+            { class: 'unavailable', 'data-codebook-status': '' },
+            ['Offline reader · connection help'],
+          ),
+        ]),
+        new PageElement('p', {}, [
+          'Read these pages offline. Open this Wiki through Codebook: Open DeepWiki in Browser to ask the editor model. No app or debugger is needed.',
+        ]),
+      ]),
+    ],
+  )
 }
 
 /** Builds the right rail of one layout. */
@@ -381,6 +534,7 @@ export async function openFakeWikiPage(
     freshnessDetail: {},
     isFreshnessFailing: false,
     isDown: false,
+    questionAnswer: QUESTION_ANSWER,
     ...reader,
     requests: [],
   }
@@ -409,7 +563,23 @@ export async function openFakeWikiPage(
   const head = new PageElement('head')
   const body = new PageElement('body', {}, [
     new PageElement('header', { class: 'site-header' }, [
-      new PageElement('div', { class: 'repo-meta' }),
+      new PageElement(
+        'div',
+        { class: 'repo-meta' },
+        load.composer
+          ? [
+              new PageElement(
+                'button',
+                {
+                  type: 'button',
+                  id: 'theme-toggle',
+                  'aria-label': 'Switch to dark theme',
+                },
+                ['Dark theme'],
+              ),
+            ]
+          : [],
+      ),
     ]),
     new PageElement('main', { class: 'reading-column' }, [
       new PageElement('article', { class: 'wiki-article' }, [
@@ -418,6 +588,7 @@ export async function openFakeWikiPage(
           (id) => new PageElement('h2', { id }, [`Section ${id}`]),
         ),
       ]),
+      ...(load.composer ? [buildComposer(load.composer)] : []),
     ]),
     ...buildRail(layout),
   ])
@@ -448,6 +619,9 @@ export async function openFakeWikiPage(
       root.querySelector(selector),
     querySelectorAll: (selector: string): PageElement[] =>
       root.querySelectorAll(selector),
+    // The first element with the id, as a browser answers it; an id the selector syntax cannot name finds nothing.
+    getElementById: (id: string): PageElement | null =>
+      /^[\w-]+$/.test(id) ? root.querySelector(`#${id}`) : null,
     addEventListener: listen(documentListeners),
   }
   const location = {
@@ -482,6 +656,10 @@ export async function openFakeWikiPage(
       }
       return { ok: true, json: async () => answer }
     }
+    if (route === 'api/ask') {
+      const answer = structuredClone(pageReader.questionAnswer)
+      return { ok: true, json: async () => answer }
+    }
     if (route === 'api/freshness' && !pageReader.isFreshnessFailing) {
       const answer = {
         status: pageReader.freshness,
@@ -496,13 +674,20 @@ export async function openFakeWikiPage(
   const dispatch = async (
     listeners: PageListener[] | undefined,
   ): Promise<PageEvent> => {
+    let isStopped = false
     const event: PageEvent = {
       defaultPrevented: false,
       preventDefault() {
         event.defaultPrevented = true
       },
+      stopImmediatePropagation() {
+        isStopped = true
+      },
     }
-    for (const listener of listeners ?? []) listener(event)
+    for (const listener of listeners ?? []) {
+      listener(event)
+      if (isStopped) break
+    }
     await settle()
     return event
   }
@@ -586,8 +771,16 @@ export async function openFakeWikiPage(
     body,
     find: (selector) => root.querySelector(selector) ?? undefined,
     isShown(element) {
-      for (let node = element ?? null; node; node = node.parentNode)
+      for (let node = element ?? null; node; node = node.parentNode) {
         if (node.hidden) return false
+        // A closed disclosure draws its summary alone, so nothing else it holds is in the page for the learner or assistive technology.
+        if (
+          node.parentNode?.tagName === 'details' &&
+          !node.parentNode.open &&
+          node.tagName !== 'summary'
+        )
+          return false
+      }
       return Boolean(element?.isConnected)
     },
     injectedStyles: () =>
@@ -603,6 +796,17 @@ export async function openFakeWikiPage(
         )
       const event = await dispatch(element.listeners.get('click'))
       return { wasSwallowed: event.defaultPrevented }
+    },
+    async ask(question) {
+      const form = root.querySelector('form#qa-form')
+      const field = form?.querySelector('textarea')
+      if (!form || !field)
+        throw new Error(
+          'The fake page has no question form: open it with a composer.',
+        )
+      field.value = question
+      const event = await dispatch(form.listeners.get('submit'))
+      return { wasSubmissionPrevented: event.defaultPrevented }
     },
     async advance(milliseconds): Promise<void> {
       // Each step may start a request whose answer sets the next timer, so the page settles between steps.

@@ -879,12 +879,12 @@ test('every page the reader serves lets only script files of its own origin and 
     {
       overview: {
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a data-codebook-unlinked="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script src="CLIENT"></script></body>',
       },
       asset: {
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article></article><script>run()</script><script src="CLIENT"></script></body>',
       },
     },
@@ -969,14 +969,14 @@ test('a script file of the Wiki folder is served as plain text, a page that poin
         type: 'text/html; charset=utf-8',
         sniffing: 'nosniff',
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
         body: '<!doctype html><body><article><script src="assets/planted.js"></script></article><script src="CLIENT"></script></body>',
       },
       openTag: {
         type: 'text/html; charset=utf-8',
         sniffing: 'nosniff',
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
         body: '<!doctype html><body><article></article><script src="planted.js" <script src="CLIENT"></script></body>',
       },
       ownScript: {
@@ -995,8 +995,8 @@ test('a script file of the Wiki folder is served as plain text, a page that poin
   )
 })
 
-// Value: protects=the shell's own script (the theme button, the offline note of the question form) on every page the reader serves, of this build and of the Wikis earlier builds published; fails_when=the reader's policy no longer names the hash of the script the bundled shell or the shell of 0.2.29.0 carries, so that script is refused and the page's theme button stops working, or a shell's script changes without its hash in the reader's list; why_new=Cycle 0046 /ship repeat review SC1: the shell's script runs by its hash instead of the nonce; seam=none
-test('the reader’s policy names the hash of the one script the shell of this build and the shell of 0.2.29.0 carry, unchanged since the first reader', async (context) => {
+// Value: protects=the shell's own script (the theme button, the offline note of the question form) on every page the reader serves, of this build and of the Wikis earlier builds published; fails_when=the reader's policy no longer names the hash of the script the bundled shell or the shell of 0.2.29.0 carries, so that script is refused and the page's theme button stops working, or a shell's script changes without its hash in the reader's list; why_new=Cycle 0046 /ship repeat review SC1: the shell's script runs by its hash instead of the nonce (D2 changed the bundled shell's script, so the two shells carry two scripts now); seam=none
+test('the reader’s policy names the hash of the one script the shell of this build carries and of the one the shell of 0.2.29.0 and every shell before it carries', async (context) => {
   // Arrange: the bundled shell, the shell of 0.2.29.0 kept beside the DOM check, and a reader of a one-page Wiki.
   const shells = await Promise.all(
     [
@@ -1046,11 +1046,11 @@ test('the reader’s policy names the hash of the one script the shell of this b
     },
     {
       scriptHashes: [
-        ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
+        ['IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='],
         ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
       ],
       policy:
-        "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='; object-src 'none'; base-uri 'none'",
+        "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
     },
   )
 })

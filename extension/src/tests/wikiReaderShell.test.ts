@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 
+import { WIKI_QUESTION_STATUS_STYLE } from '../constants'
 import { startDeepWikiReader } from '../deepWikiReader'
 import { rebindDeepWikiEditorLinks } from '../utils/rebindDeepWikiEditorLinks'
 import { withServedAddresses } from '../utils/withServedAddresses'
@@ -1123,6 +1124,30 @@ test('the published page gives the answer of a question the reader’s own focus
       '<div class="qa-answer" role="status" aria-live="polite" tabindex="0"></div>',
     ),
     'the answer is no longer a region the keyboard reaches',
+  )
+})
+
+// Value: protects=the announcement of a question's progress and of the offline note on every page this build publishes: the composer carries an empty status line between the question row and the answer's hidden disclosure, outside it, which takes no room while empty and has the same rules the reader adds to an older page; fails_when=the line is missing, holds text at rest, loses its role, moves into the disclosure (hidden and closed until the first question), or its rules differ from WIKI_QUESTION_STATUS_STYLE; why_new=D2; seam=none; no_claim=what a browser draws (the Wiki reader DOM check measures the composer in CI)
+test('the published page’s question form carries an empty question status line after the question row and outside the answer’s hidden disclosure, which takes no room while empty', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+
+  // Assert
+  assert.ok(
+    shell.includes(
+      '<button type="submit">Ask Codebook</button></div><p class="qa-status" role="status" aria-live="polite" data-codebook-question-status></p><details id="qa-response" class="answer-disclosure" hidden>',
+    ),
+    'the composer lacks the empty question status line before the answer’s disclosure',
+  )
+  assert.ok(
+    shell.includes(
+      '.qa-status{font-size:.85rem;margin:.4rem 0 0;overflow-wrap:anywhere}.qa-status:empty{margin:0}',
+    ),
+    'the shell lacks the rules of the question status line',
+  )
+  assert.equal(
+    WIKI_QUESTION_STATUS_STYLE,
+    '.qa-status{font-size:.85rem;margin:.4rem 0 0;overflow-wrap:anywhere}.qa-status:empty{margin:0}',
   )
 })
 
