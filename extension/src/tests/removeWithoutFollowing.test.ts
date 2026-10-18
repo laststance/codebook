@@ -19,6 +19,7 @@ import { test, type TestContext } from 'node:test'
 
 import type * as lookModule from '../utils/isFolderOfItsOwn'
 import { isFolderOfItsOwn } from '../utils/isFolderOfItsOwn'
+import type * as openModule from '../utils/openWithoutFollowing'
 import type * as removalModule from '../utils/removeWithoutFollowing'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
@@ -41,7 +42,7 @@ async function folderWithKeptFiles(context: TestContext): Promise<string> {
 }
 
 /**
- * Loads the walk on a file system of a test's own: the walk and the look it asks before it lists a directory ({@link lookModule.isFolderOfItsOwn}) both see that file system.
+ * Loads the walk on a file system of a test's own: its directory look ({@link lookModule.isFolderOfItsOwn}) and marker open ({@link openModule.openWithoutFollowing}) see the same file system.
  * @param fileSystem - The stand-in for `node:fs/promises`.
  * @returns The walk to call.
  * @example
@@ -54,9 +55,17 @@ async function loadWalkOn(
     resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
     { 'node:fs/promises': fileSystem },
   )
+  const opener = await loadModule<typeof openModule>(
+    resolve(__dirname, '../utils/openWithoutFollowing.js'),
+    { 'node:fs/promises': fileSystem },
+  )
   const walk = await loadModule<typeof removalModule>(
     resolve(__dirname, '../utils/removeWithoutFollowing.js'),
-    { 'node:fs/promises': fileSystem, './isFolderOfItsOwn': look },
+    {
+      'node:fs/promises': fileSystem,
+      './isFolderOfItsOwn': look,
+      './openWithoutFollowing': opener,
+    },
   )
   return walk.removeWithoutFollowing
 }
@@ -526,4 +535,219 @@ test('a folder that gains a file after every listing stops the walk with an erro
       left: ['codebook-owner.json', 'late-4.log', 'late-5.log'],
     },
   )
+})
+
+// Value: protects=the last marker when the directory identity changes before or during the final listing; fails_when=the last-entry phase reads or removes a marker below a path that no longer reports the original directory; why_new=Cycle 0046 row 1051: ordinary-entry guards did not cover the last-entry phase; seam=owned folders with a synthetic inode change after a chosen listing
+for (const { listing, stage } of [
+  { listing: 1, stage: 'before the last listing' },
+  { listing: 2, stage: 'during the last listing' },
+]) {
+  test(`a directory identity change ${stage} leaves its last marker unread and untouched`, async (context) => {
+    // Arrange: only the reported identity changes; the owned folder stays in place.
+    const parent = await folderWithKeptFiles(context)
+    const folder = join(parent, 'codebook-browser-x')
+    const marker = join(folder, 'codebook-owner.json')
+    await mkdir(folder)
+    await writeFile(marker, '{"pid":4242}')
+    let listings = 0
+    let hasChangedIdentity = false
+    let markerOpens = 0
+    const removeWithChangedIdentity = await loadWalkOn({
+      ...realFileSystem,
+      lstat: async (path: string) => {
+        const entry = await lstat(path, { bigint: true })
+        if (path === folder && hasChangedIdentity) entry.ino += 1n
+        return entry
+      },
+      readdir: async (path: string) => {
+        const names = await readdir(path)
+        if (path === folder && (listings += 1) === listing)
+          hasChangedIdentity = true
+        return names
+      },
+      open: async (...args: Parameters<typeof realFileSystem.open>) => {
+        if (args[0] === marker) markerOpens += 1
+        return realFileSystem.open(...args)
+      },
+    })
+
+    // Act
+    const outcome = await removeWithChangedIdentity(folder, {
+      lastEntry: 'codebook-owner.json',
+    }).then(
+      () => 'removed',
+      (error: Error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        outcome,
+        markerOpens,
+        marker: await readFile(marker, 'utf8').catch(() => undefined),
+      },
+      {
+        outcome: `The folder ${folder} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
+        markerOpens: 0,
+        marker: '{"pid":4242}',
+      },
+    )
+  })
+}
+
+// Value: protects=the marker after its saved bytes were read but the parent directory no longer reports the original identity; fails_when=the walk unlinks the last entry without checking its parent again; why_new=Cycle 0046 row 1051: checking only before the marker read leaves this separate await uncovered; seam=the marker open changes only the folder's reported inode
+test('a directory identity change while its last marker is read leaves that marker untouched', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(folder)
+  await writeFile(marker, '{"pid":4242}')
+  let hasChangedIdentity = false
+  const removeWithChangedIdentity = await loadWalkOn({
+    ...realFileSystem,
+    lstat: async (path: string) => {
+      const entry = await lstat(path, { bigint: true })
+      if (path === folder && hasChangedIdentity) entry.ino += 1n
+      return entry
+    },
+    open: async (...args: Parameters<typeof realFileSystem.open>) => {
+      const file = await realFileSystem.open(...args)
+      if (args[0] === marker) hasChangedIdentity = true
+      return file
+    },
+  })
+
+  // Act
+  const outcome = await removeWithChangedIdentity(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcome,
+      marker: await readFile(marker, 'utf8').catch(() => undefined),
+    },
+    {
+      outcome: `The folder ${folder} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
+      marker: '{"pid":4242}',
+    },
+  )
+})
+
+// Value: protects=the directory after the last marker's removal when its reported identity changes; fails_when=the walk removes the directory without confirming it still names the original folder; why_new=Cycle 0046 row 1051: the last unlink and directory removal are separate calls; seam=the marker unlink changes only the folder's reported inode
+test('a directory identity change after its last marker was removed stops the final directory removal', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(folder)
+  await writeFile(marker, '{"pid":4242}')
+  let hasChangedIdentity = false
+  const removeWithChangedIdentity = await loadWalkOn({
+    ...realFileSystem,
+    lstat: async (path: string) => {
+      const entry = await lstat(path, { bigint: true })
+      if (path === folder && hasChangedIdentity) entry.ino += 1n
+      return entry
+    },
+    unlink: async (path: string) => {
+      await unlink(path)
+      if (path === marker) hasChangedIdentity = true
+    },
+  })
+
+  // Act
+  const outcome = await removeWithChangedIdentity(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcome,
+      entries: await readdir(folder).catch(() => undefined),
+    },
+    {
+      outcome: `The folder ${folder} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
+      entries: [],
+    },
+  )
+})
+
+// Value: protects=the path whose directory identity changes during the failed final removal; fails_when=the old owner marker is restored into a directory that no longer reports the original identity; why_new=Cycle 0046 row 1051: restoration had no parent identity guard; seam=final rmdir reports ENOTEMPTY and changes only the folder's reported inode
+test('a directory identity change at the failed final removal prevents marker restoration and keeps the original error', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  const marker = join(folder, 'codebook-owner.json')
+  await mkdir(folder)
+  await writeFile(marker, '{"pid":4242}')
+  const refusal = Object.assign(new Error('The folder is not empty.'), {
+    code: 'ENOTEMPTY',
+  })
+  let wasMarkerRemoved = false
+  let hasChangedIdentity = false
+  const removeWithChangedIdentity = await loadWalkOn({
+    ...realFileSystem,
+    lstat: async (path: string) => {
+      const entry = await lstat(path, { bigint: true })
+      if (path === folder && hasChangedIdentity) entry.ino += 1n
+      return entry
+    },
+    unlink: async (path: string) => {
+      await unlink(path)
+      if (path === marker) wasMarkerRemoved = true
+    },
+    rmdir: async (path: string) => {
+      if (path === folder && wasMarkerRemoved) {
+        hasChangedIdentity = true
+        throw refusal
+      }
+      await realFileSystem.rmdir(path)
+    },
+  })
+
+  // Act
+  const failure = await removeWithChangedIdentity(folder, {
+    lastEntry: 'codebook-owner.json',
+  }).catch((error: unknown) => error)
+
+  // Assert
+  assert.equal(failure, refusal)
+  assert.deepEqual(await readdir(folder), [])
+})
+
+// Value: protects=the existing missing-directory result during the last-entry phase; fails_when=a new identity guard treats a folder another cleanup removed as an error; why_new=Cycle 0046 row 1051 adds identity checks to this phase; seam=the final listing removes only its owned fixture folder after reading the names
+test('a folder removed during the last listing still counts as removed', async (context) => {
+  // Arrange
+  const parent = await folderWithKeptFiles(context)
+  const folder = join(parent, 'codebook-browser-x')
+  await mkdir(folder)
+  await writeFile(join(folder, 'codebook-owner.json'), '{"pid":4242}')
+  let listings = 0
+  const removeBesideAnotherCleanup = await loadWalkOn({
+    ...realFileSystem,
+    readdir: async (path: string) => {
+      const names = await readdir(path)
+      if (path === folder && (listings += 1) === 2)
+        await rm(folder, { recursive: true })
+      return names
+    },
+  })
+
+  // Act
+  await removeBesideAnotherCleanup(folder, {
+    lastEntry: 'codebook-owner.json',
+  })
+
+  // Assert
+  assert.deepEqual(await readdir(parent), ['kept'])
 })

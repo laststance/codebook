@@ -46,7 +46,7 @@ async function namesIn(path: string): Promise<string[]> {
 type LookedDirectory = { dev: bigint; ino: bigint }
 
 /**
- * Confirms that a path still names the directory the walk looked at, before the walk lists it and before it removes each of its entries; called by {@link removeEntriesOf}.
+ * Confirms that a path still names the original directory before listing, removal and marker recovery; called by {@link removeEntriesOf}, {@link removeNamedEntries} and {@link removeLastEntryAndDirectory}.
  * Why: the walk removes an entry by its path below the directory's path, and a path whose directory was renamed and replaced by a link leads into the folder the link names, where the walk would remove that folder's entries of the same names.
  * @param path - The directory's path.
  * @param looked - Its device and file id at the walk's look.
@@ -178,6 +178,7 @@ async function removeLastEntryAndDirectory(
 ): Promise<void> {
   // Entries made after a listing are removed before the last entry; each listing may find new ones.
   for (let relist = 0; ; relist += 1) {
+    if (!(await isStillTheDirectory(path, looked))) return
     const others = (await namesIn(path)).filter((name) => name !== lastEntry)
     if (others.length === 0) break
     if (relist === REMOVAL_RELISTS_BEFORE_LAST_ENTRY)
@@ -186,14 +187,23 @@ async function removeLastEntryAndDirectory(
       )
     if (!(await removeNamedEntries(path, looked, others, order))) return
   }
+  // The listing and marker read can each let the path change before the next operation.
+  if (!(await isStillTheDirectory(path, looked))) return
   const lastEntryPath = join(path, lastEntry)
   const kept = await keptEntryAt(lastEntryPath)
+  if (!(await isStillTheDirectory(path, looked))) return
   await removeWithoutFollowing(lastEntryPath)
+  // The final removal must still target the directory whose marker was removed.
+  if (!(await isStillTheDirectory(path, looked))) return
   try {
     await rmdir(path)
   } catch (error) {
-    // An entry made after the last listing keeps the directory: the last entry goes back, made new and never through a link.
-    if (kept && NOT_EMPTY_CODES.includes(systemErrorCode(error)))
+    // Restore only in the original directory; a failed identity check must not hide the removal error.
+    if (
+      kept &&
+      NOT_EMPTY_CODES.includes(systemErrorCode(error)) &&
+      (await isStillTheDirectory(path, looked).catch(() => false))
+    )
       await writeFile(lastEntryPath, kept.bytes, {
         flag: 'wx',
         mode: kept.mode,
