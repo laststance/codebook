@@ -2194,6 +2194,36 @@ test("a reader that is disposed while its Study workspace is open beside the lea
   }
 })
 
+// Value: protects=the reader's answer to whether the editor's active editor is one of its own, which decides whether a disposal gives the keyboard an element again: a learner's Settings page while no captured source was ever shown is not its own; fails_when=hasOwnActiveEditor compares the missing active text editor with the missing captured source (undefined with undefined) and answers that the Settings page is the reader's own active editor, against its contract; why_new=Cycle 0046 second /ship OCR review OCR1-11; seam=the reader's private hasOwnActiveEditor, read through bracket access because close() reads it only behind its settlesKeyboard gate, which a disposal beside such a page never passes (namesOnlyMainEditorGroups answers false for a disposed reader); the harness's addOpaqueTab and focusOpaqueTab; no_claim=a pane or the captured source as the active editor, which the disposal tests of row 342 hold
+test("the reader does not take the learner's Settings page for its own active editor while it has shown no captured source", async () => {
+  // Arrange: an editor with one editor part; the Study workspace was never opened, so no captured source was shown; the Settings page in the first group is the active editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const settingsPage = harness.addOpaqueTab('Settings', 1)
+    harness.focusOpaqueTab(settingsPage)
+
+    // Act
+    const ownActiveEditor = harness.reader['hasOwnActiveEditor']()
+
+    // Assert
+    assert.deepEqual(
+      {
+        sourceUri: harness.reader.inspect().sourceUri,
+        activeTextEditor: harness.editor.window.activeTextEditor,
+        ownActiveEditor,
+      },
+      {
+        sourceUri: undefined,
+        activeTextEditor: undefined,
+        ownActiveEditor: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const wrapperRefresh of [false, true])
   test(`native disposal preserves the learner's actual auth keyboard and original file beside both owned panes with group wrapper refresh ${wrapperRefresh}`, async () => {
     // Arrange: native controls 447–449 retain login behind App and auth in the other learner group.

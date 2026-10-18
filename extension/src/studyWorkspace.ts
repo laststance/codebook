@@ -9163,9 +9163,12 @@ export class StudyWorkspace {
    * @example const closesActiveEditor = this.hasOwnActiveEditor()
    */
   private hasOwnActiveEditor(): boolean {
+    const activeDocument = this.activeTextDocumentUri()
+    // No active text editor is no captured source, also while no source was ever shown (OCR1-11).
     return (
       this.hasActiveStudyPane() ||
-      this.activeTextDocumentUri() === this.sourceUri?.toString()
+      (activeDocument !== undefined &&
+        activeDocument === this.sourceUri?.toString())
     )
   }
 
