@@ -485,8 +485,8 @@ interface LeftoverTabClose {
   capturedSourceKept: boolean
   /** `true` when a dead Codebook pane is still in the window. */
   deadPaneKept: boolean
-  /** `true` when the proof of the groups an earlier window recorded focused one of them before the close and so took the keyboard ({@link StudyWorkspace.retireLeftoverApplicationGroup}); `false` when no proof ran, and when it needed no focus. */
-  proofTookKeyboard: boolean
+  /** Set when the proof of the groups an earlier window recorded focused one of them before the close and so took the keyboard: the cause its give-back tells, which says whether a group was closed ({@link StudyWorkspace.retireLeftoverApplicationGroup}); `undefined` when no proof ran, and when it needed no focus. */
+  proofTookKeyboard: LeftoverProofKeyboard | undefined
 }
 
 /** What an Application preparation knows when it gives the keyboard back ({@link StudyWorkspace.returnPreparationFocus}). */
@@ -531,6 +531,11 @@ const selectionOwnsForeignReturn = (): void => {}
 
 /** Why the reader gave a chat its keyboard back, which names the sentence the learner is told once ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}, row 648). */
 type ChatKeyboardReturnCause = keyof typeof CHAT_KEYBOARD_RETURNED_MESSAGES
+/** What a proof of the groups an earlier window recorded owes the tab it took the keyboard from, as the cause of its give-back: `leftoverProof` once it retired a group, `unprovenLeftoverProof` when it focused a group and closed none ({@link StudyWorkspace.retireLeftoverApplicationGroup}, Cycle 0046 FX-D1-1). */
+type LeftoverProofKeyboard = Extract<
+  ChatKeyboardReturnCause,
+  'leftoverProof' | 'unprovenLeftoverProof'
+>
 
 /** The key of one keyboard notice in {@link keyboardNoticesTold}. */
 type KeyboardNotice =
@@ -1456,7 +1461,7 @@ export class StudyWorkspace {
    * @returns What closed and what stayed, see {@link LeftoverTabClose}.
    * @example
    * ```ts
-   * const closed = await this.closeLeftoverTabs(signal) // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false, proofTookKeyboard: false }
+   * const closed = await this.closeLeftoverTabs(signal) // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false, proofTookKeyboard: undefined }
    * ```
    */
   private async closeLeftoverTabs(
@@ -1632,9 +1637,11 @@ export class StudyWorkspace {
         )
       // The admission below reads the focus again: it finds the chat where the selection found it (row 608), and the learner is told why the chat has it (row 648).
       if (closed.proofTookKeyboard)
-        await giveKeyboardBack?.(true, undefined, 'leftoverProof').catch(
-          () => false,
-        )
+        await giveKeyboardBack?.(
+          true,
+          undefined,
+          closed.proofTookKeyboard,
+        ).catch(() => false)
     } finally {
       this.endPresentationTransition(transition)
     }
@@ -3214,7 +3221,11 @@ export class StudyWorkspace {
     toldCause: ChatKeyboardReturnCause | undefined,
   ): vscode.TabGroup | undefined {
     // A refused proof may have removed a group before the one the editor kept.
-    if (toldCause !== 'leftoverProof' && toldCause !== 'refusedLeftoverProof')
+    if (
+      toldCause !== 'leftoverProof' &&
+      toldCause !== 'refusedLeftoverProof' &&
+      toldCause !== 'unprovenLeftoverProof'
+    )
       return undefined
     const showing = vscode.window.tabGroups.all.filter(showsThatTab)
     return showing.length === 1 ? showing[0] : undefined
@@ -13373,7 +13384,7 @@ export class StudyWorkspace {
    * A proof that focused a group took the keyboard. The tab that had it before (a chat of another editor part) gets it back at the preparation's end, through the return the preparation captures ({@link captureApplicationPreparationReturn}), and not here: Cursor's Focus Agent answers before its chat input has the keyboard (Cursor 3.23.12 `workbench.desktop.main.js` 17914:19364, 18566:8949, 18566:8198), so a return run here gave the chat's part the focus again while the allocation that follows read its layout, and the preparation failed (C57 c57-cursor-1f and 1f2, row 646).
    * Beside Cursor's chat part the close of the focused leftover gives the next group's file the keyboard (C58: login-form.tsx for 124 ms): the editor closes a group with no focus to keep (17269:33927 `$closeGroup` → `removeGroup`), and `doRemoveEmptyGroup` focuses the group it activates whenever the page's focus was inside the editor part (17501:61528, 17501:43055). The proof cannot leave the leftover first: its layout read answers for the active part only (17501:90249) and the unlock acts on the active group (11684:15251), and any other main group's focus gives that group's file the keyboard too; a Focus Agent before the close is row 646's failure; and the allocation right after focuses the first group, that same file, anyway (row 655). So the time is bounded by the preparation, the chat gets the keyboard back at its end, and the learner is told once with {@link CHAT_KEYBOARD_RETURNED_MESSAGES}' `leftoverProof` sentence (row 657).
    * @param signal - The preparation's cancellation.
-   * @returns `proofKeptKeyboard`: `true` when the proof took the keyboard and no tab is known to get it back, so the main editor keeps it (the group the removal activated), which the preparation's notice then names ({@link tellPreparedApplicationKeyboard}); `chatReturn`: the return of the tab that had the keyboard before the proof, when the proof took it.
+   * @returns `proofKeptKeyboard`: `true` when the proof took the keyboard and no tab is known to get it back, so the main editor keeps it (the group the removal activated), which the preparation's notice then names ({@link tellPreparedApplicationKeyboard}); `chatReturn`: the return of the tab that had the keyboard before the proof, when the proof took it, which tells the proof's own sentence whatever cause its caller passes: that the groups were closed, or that none was (Cycle 0046 FX-D1-1).
    * @throws When the editor refuses a proved group's close, or the grid does not lose exactly that group.
    * @example const { proofKeptKeyboard, chatReturn } = await this.retireLeftoversBeforePreparation(signal) // => { proofKeptKeyboard: false, chatReturn } beside Cursor's chat
    */
@@ -13383,10 +13394,15 @@ export class StudyWorkspace {
     proofKeptKeyboard: boolean
     chatReturn: ReturnType<StudyWorkspace['retainForeignTabFocus']>
   }> {
-    const chatReturn = this.retainForeignTabFocus(undefined)
+    const giveBack = this.retainForeignTabFocus(undefined)
+    const proof = await this.retireLeftoverApplicationGroup(signal)
     // Only a proof that focused a group moved the keyboard.
-    if (!(await this.retireLeftoverApplicationGroup(signal)))
-      return { proofKeptKeyboard: false, chatReturn: undefined }
+    if (!proof) return { proofKeptKeyboard: false, chatReturn: undefined }
+    // The return tells the proof's own cause, whichever its caller names: a proof that closed nothing says so (Cycle 0046 FX-D1-1).
+    const chatReturn: ReturnType<StudyWorkspace['retainForeignTabFocus']> =
+      giveBack &&
+      ((takenByEditor, stillCurrent) =>
+        giveBack(takenByEditor, stillCurrent, proof))
     return { proofKeptKeyboard: chatReturn === undefined, chatReturn }
   }
 
@@ -15078,13 +15094,13 @@ export class StudyWorkspace {
    * Only {@link isApplicationGroupMarkerProven} authorizes each retirement; without that proof no group is unlocked or closed, and the record is kept. A version-1 record of a 0.2.30 candidate names the Application's group alone and is proved as before ({@link parseRecordedStudyGroups}).
    * A retirement that throws after a proof's focus command took the keyboard returns no answer, so its callers' give-backs never run: the tab that had the keyboard (a chat of another editor part) gets it back here, outside the layout queue, before the error escapes, and the learner is told once that the groups were not closed ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}' `refusedLeftoverProof`, Cycle 0046 OCR1-2).
    * @param signal - The entry's cancellation.
-   * @returns `true` when a proof focused a leftover group and so took the keyboard; `false` when nothing was issued, and when every proof acted on the group the only editor part named as its active one ({@link retireProvenLeftoverGroups}).
+   * @returns When a proof focused a leftover group and so took the keyboard, the cause the give-back of the tab that had it tells ({@link LeftoverProofKeyboard}): `leftoverProof` once a group was retired, `unprovenLeftoverProof` when the proof closed none (Cycle 0046 FX-D1-1); `undefined` when nothing was issued, and when every proof acted on the group the only editor part named as its active one ({@link retireProvenLeftoverGroups}).
    * @throws When the editor refuses a close, or the grid does not lose exactly that group.
-   * @example const proofTookKeyboard = await this.retireLeftoverApplicationGroup(signal)
+   * @example const proofTookKeyboard = await this.retireLeftoverApplicationGroup(signal) // => 'unprovenLeftoverProof' beside Cursor's chat after the learner resized the grid
    */
   private async retireLeftoverApplicationGroup(
     signal: AbortSignal | undefined,
-  ): Promise<boolean> {
+  ): Promise<LeftoverProofKeyboard | undefined> {
     const record = parseRecordedStudyGroups(
       this.context.workspaceState.get<unknown>(APPLICATION_GROUP_MARKER_KEY),
     )
@@ -15094,14 +15110,14 @@ export class StudyWorkspace {
       record.writer === this.applicationGroupMarkerWriter ||
       this.opened
     )
-      return false
+      return undefined
     const leftovers = recordedLeftoverGroups(
       record.columns,
       vscode.window.tabGroups.all,
       new Set(this.leftoverTabs()),
     )
     // No leftover group at a recorded column, or one the editor cannot focus: no native effect is issued.
-    if (!leftovers.length) return false
+    if (!leftovers.length) return undefined
     // Read before a proof moves the keyboard, as each caller reads its own give-back.
     const giveKeyboardBack = this.retainForeignTabFocus(undefined)
     let proofTookKeyboard = false
@@ -15134,7 +15150,7 @@ export class StudyWorkspace {
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
    * @param onKeyboardTaken - Called before each focus command a proof runs, so {@link retireLeftoverApplicationGroup} still knows that a proof took the keyboard when the retirement throws afterwards (Cycle 0046 OCR1-2).
-   * @returns `true` when a proof focused its group and so took the keyboard, `false` when none did, and when a failed first proof gave a text editor its keyboard back.
+   * @returns When a proof focused its group and so took the keyboard, the cause of the give-back it owes ({@link LeftoverProofKeyboard}): `leftoverProof` once a group was retired, `unprovenLeftoverProof` when the first proof failed and nothing was closed (Cycle 0046 FX-D1-1); `undefined` when none took the keyboard, and when a failed first proof gave a text editor its keyboard back.
    * @throws When the editor refuses a close, or the grid does not lose exactly that group; the record is forgotten all the same once an earlier group of it is gone.
    * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal) // => false for the active leftover of VS Code's only editor part
    */
@@ -15144,7 +15160,7 @@ export class StudyWorkspace {
     assertCurrent: () => void,
     signal: AbortSignal | undefined,
     onKeyboardTaken?: () => void,
-  ): Promise<boolean> {
+  ): Promise<LeftoverProofKeyboard | undefined> {
     let grid: { groupCount: number; layout: unknown } = record,
       retired = false,
       tookKeyboard = false
@@ -15184,7 +15200,9 @@ export class StudyWorkspace {
       // A retired leftover changed the grid the record describes, so the record goes, also when a later group is refused; without one it stays for a later proof.
       if (retired) await this.clearApplicationGroupMarker()
     }
-    return tookKeyboard
+    if (!tookKeyboard) return undefined
+    // The give-back says whether the proof closed anything.
+    return retired ? 'leftoverProof' : 'unprovenLeftoverProof'
   }
 
   /**
