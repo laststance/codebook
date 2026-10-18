@@ -243,7 +243,7 @@ const isWhereItWasResolved = (parent, identity, entries, root) => Promise.all([s
   ([now, ...realPaths]) => realPaths.every(real => isInProject(root, real)) && now.dev === identity.dev && now.ino === identity.ino,
   () => false);
 
-/** A refusal of a step whose path no longer holds, marked so that the step removes what it wrote ({@link removeWritten}). Called by {@link holdOfPath}, {@link makeFolderHeld} and {@link restoreManifestHeld}. @example throw holdRefusalOf(linkedPathRefusalOf('/repo/.codebook')) */
+/** A refusal of a step whose path no longer holds, marked so that the preparation and the recovery remove what they wrote ({@link removeWritten}); a publish removes what it wrote for every refusal before its swap. Called by {@link holdOfPath}, {@link makeFolderHeld} and {@link restoreManifestHeld}. @example throw holdRefusalOf(linkedPathRefusalOf('/repo/.codebook')) */
 const holdRefusalOf = sentence => Object.assign(new Error(sentence), { isHoldRefusal: true });
 
 /** Takes the look at the output's parent once the paths are resolved, for a preparation, a publish or a recovery, and answers the check that holds every later write to it: for an output inside the project, the parent and `entries` must still be where they were ({@link isWhereItWasResolved}), or the step is refused with the parent's sentence. The race left: between a check and the write or move after it, such a swap can still lead the write elsewhere; Node's file system has no call that writes relative to a folder it holds open, so no check closes that window. Called by {@link prepareWikiStage}, {@link publishWiki} and {@link recoverWikiPublication}. @returns The check, which resolves when the path still holds and throws otherwise. @example const requirePathHeld = await holdOfPath(paths, [paths.stage]); await requirePathHeld() // throws once .codebook was swapped for a link */
@@ -288,7 +288,7 @@ async function writeOwnFile(path, bytes, flag) {
   } finally { await handle.close(); }
 }
 
-/** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld}, {@link restoreManifestHeld} and {@link publishWiki} when a hold refuses. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText, 'wx')], ['/repo/.codebook/next']) */
+/** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses, and by {@link publishWiki} for every refusal before its swap. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText, 'wx')], ['/repo/.codebook/next']) */
 async function removeWritten(written, folders) {
   for (const file of [...written].reverse()) {
     const status = await lstat(file.path, { bigint: true }).catch(() => undefined);
@@ -379,14 +379,14 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const inspectPrior = () => inspectOutput(output, root, { allowLegacy: receipt.baseline?.legacy === true });
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
-  // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: a refused hold removes what is still its own ({@link removeWritten}), as the preparation's held writes do.
+  // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: every refusal before the swap removes what is still its own ({@link removeWritten}), so no copy of a learner's file is left to refuse the next publish as a file outside the manifest.
   const written = [], made = [];
   const writeHeld = async (path, content, flag) => {
     made.unshift(...(await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas)));
     written.push(await writeOwnFile(path, content, flag));
   };
   try { for (const [path, html] of rendered) await writeHeld(join(stage, path), html, 'w'); }
-  catch (error) { if (error.isHoldRefusal) await removeWritten(written, made); throw error; }
+  catch (error) { await removeWritten(written, made); throw error; }
   if (renderOnly) return { stage, renderedPages: rendered.size };
   const ownedFiles = Object.create(null);
   for (const path of owned) ownedFiles[path] = digest(await regularBytes(join(stage, path)));
@@ -427,8 +427,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length };
   } catch (error) {
     if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
-    // A hold refuses before anything is moved, so what this publish wrote still stands where it wrote it.
-    if (error.isHoldRefusal) await removeWritten(written, made);
+    // The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it.
+    await removeWritten(written, made);
     if (movedOld) {
       try { await rename(backup, output); }
       catch (cause) { throw new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause }); }

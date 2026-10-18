@@ -3312,6 +3312,120 @@ test('a preparation whose candidate is swapped for a link to the published Wiki 
   }
 })
 
+// Value: protects=the next publish of a candidate after a publish refused because the learner's files changed while it copied them; fails_when=only a refused hold removes what the publish wrote, so the copy of the learner's file stays in the candidate and the next publish is refused for a file outside its manifest; why_new=P2M1 (P2OCR2-2); seam=a copy of the shipped publisher whose `node:fs/promises` adds a learner's file to the published Wiki just before the publish copies the learner's first file (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=the refusal of a learner's file that conflicts with a new page (its own test below)
+test('a publish refused because the learner added a file while it copied the learner’s files leaves no copy in the candidate, and the candidate publishes when run again', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; just before the publish copies it, the learner adds another.
+  const { publishWiki: publishWhileTheLearnerWrites } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'manual.txt'),
+      () => writeFile(join(wiki.output, 'later.txt'), 'Notes added meanwhile'),
+    )
+
+    // Act: the refused publish, then the candidate published again.
+    const refusal = await publishWhileTheLearnerWrites({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const copyInTheCandidate = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, copyInTheCandidate, nextPublish },
+      {
+        refusal:
+          'Manual Wiki files changed during publication; output was preserved.',
+        copyInTheCandidate: 'no copy',
+        nextPublish: { preservedManualFiles: 2 },
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the next publish of a candidate after a publish refused because a learner's file stands where the candidate adds a page; fails_when=only a refused hold removes what the publish wrote, so its rendered pages and any copy of the learner's other files stay in the candidate and the next publish is refused for such a copy as a file outside its manifest; why_new=P2M1 (P2OCR2-2); seam=none; no_claim=which of the learner's files the publish copied before the conflict, which follows the order the file system lists them in
+test('a publish refused for a learner’s file that conflicts with a new page leaves none of the files it wrote in the candidate, and publishes once the conflict is gone', async () => {
+  // Arrange: the published Wiki holds the learner's a.txt and pages/notes.html, and the candidate adds the page pages/notes.html.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-conflict-copy-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'a.txt'), 'The learner’s own notes')
+    await mkdir(join(output, 'pages'))
+    await writeFile(join(output, 'pages/notes.html'), 'The learner’s own page')
+    await writeStage(next, root, '<h1>Next</h1>', 'notes.html', output)
+
+    // Act: the refused publish, then the learner's page moved away and the candidate published again.
+    const refusal = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const candidateFiles = (await readdir(next)).sort()
+    await rm(join(output, 'pages/notes.html'))
+    const nextPublish = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert: the candidate keeps its manifest, its record and the empty pages folder the test made; its pages and any copy of a.txt are gone.
+    assert.deepEqual(
+      { refusal, candidateFiles, nextPublish },
+      {
+        refusal:
+          'A manual Wiki file conflicts with the update: pages/notes.html',
+        candidateFiles: [
+          'codebook-publication.json',
+          'codebook-wiki.json',
+          'pages',
+        ],
+        nextPublish: { preservedManualFiles: 1 },
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 /**
  * Leaves a published Wiki as a publish stopped after it moved the prior Wiki aside: the Wiki folder missing, the prior Wiki kept at `wiki.previous-test`, a candidate beside it and the journal of a process that is gone.
  * @param {string} root - The project, or the folder that holds the output for an output outside the project.
