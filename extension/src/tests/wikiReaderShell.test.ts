@@ -776,7 +776,7 @@ test('a refresh in a served page loses its effect in any case of its name and va
   )
 })
 
-// Value: protects=a page that reads alike published today and served by the reader; fails_when=the reader's rule of an accepted address and the publisher's (`isAcceptedAddress` of render-wiki-diagrams.mjs) part, so the reader takes the link from an address the publisher prints or leaves one the publisher refuses; why_new=Cycle 0046 /ship finding AF6 (the reader keeps an address only if the publisher would accept it today); seam=none (the shipped publisher's check and the compiled reader)
+// Value: protects=a page that reads alike published today and served by the reader; fails_when=the reader's rule of an accepted address and the publisher's (`isAcceptedAddress` of render-wiki-diagrams.mjs) part, so the reader takes the link from an address the publisher prints or leaves one the publisher refuses; why_new=Cycle 0046 /ship finding AF6 (the reader keeps an address only if the publisher would accept it today); OCR review W18 adds the network paths a browser reads through named references; seam=none (the shipped publisher's check and the compiled reader)
 test('the reader keeps exactly the addresses the shipped publisher accepts in a page’s content', async () => {
   // Arrange: the publisher's check of a page's content, and addresses on both sides of its rule.
   const { scriptingClauseOf } = (await import(
@@ -815,6 +815,9 @@ test('the reader keeps exactly the addresses the shipped publisher accepts in a 
     '\\\\host\\x',
     '/\\host/x',
     'tel:+1',
+    '/&sol;host/x',
+    '/&bsol;host/x',
+    '/&NewLine;/host/x',
   ]
 
   // Act: for each address, whether the publisher accepts it in an href and whether the reader keeps it as one.
@@ -848,6 +851,9 @@ test('the reader keeps exactly the addresses the shipped publisher accepts in a 
       true,
       true,
       true,
+      false,
+      false,
+      false,
       false,
       false,
       false,

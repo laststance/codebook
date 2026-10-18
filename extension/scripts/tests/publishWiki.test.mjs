@@ -3871,7 +3871,7 @@ for (const [place, content, sentence] of [
     }
   })
 
-// Value: protects=the reader's origin, whose page may ask the editor's model, against markup an agent writes into a page's content when a repository's text steers it; fails_when=the publisher refuses script elements but accepts an event attribute or an address a browser runs as script (or one that a character reference, a tab or a number without its semicolon turns into one), so the published page runs script on the reader's origin or when opened from disk, or accepts an editor address that is not Codebook's own (another extension's URI handler, the editor's file handler), or an address that starts with two slashes or backslashes in any mix, which a page opened from disk on Windows reads as a network path (`file://host/…`), so an image fetches it over SMB without a click and may send the learner's NTLM credentials; why_new=Cycle 0046 /ship finding F2 (security, verified): render-wiki.mjs refused `<script>` and the like but no event attribute and no `javascript:` address; repeat review SC4: any vscode: or cursor: address was accepted; adversarial review AD5: `//host/x`, `\\host\share\x` and `/\host/x` were accepted as relative paths; seam=none
+// Value: protects=the reader's origin, whose page may ask the editor's model, against markup an agent writes into a page's content when a repository's text steers it; fails_when=the publisher refuses script elements but accepts an event attribute or an address a browser runs as script (or one that a character reference, a tab or a number without its semicolon turns into one), so the published page runs script on the reader's origin or when opened from disk, or accepts an editor address that is not Codebook's own (another extension's URI handler, the editor's file handler), or an address that starts with two slashes or backslashes in any mix, which a page opened from disk on Windows reads as a network path (`file://host/…`), so an image fetches it over SMB without a click and may send the learner's NTLM credentials; why_new=Cycle 0046 /ship finding F2 (security, verified): render-wiki.mjs refused `<script>` and the like but no event attribute and no `javascript:` address; repeat review SC4: any vscode: or cursor: address was accepted; adversarial review AD5: `//host/x`, `\\host\share\x` and `/\host/x` were accepted as relative paths; OCR review W18: `/&sol;host/x`, `/&bsol;host/x` and `/&NewLine;/host/x`, which a browser reads as `//host/x`, passed; seam=none
 for (const [form, content, sentence] of [
   [
     'an event attribute on an image',
@@ -3932,6 +3932,21 @@ for (const [form, content, sentence] of [
     'a cursor: address of another extension’s URI handler',
     '<h2 id="flow">Source flow</h2><p><a href="cursor://other.extension/run?task=1">Run</a></p>',
     'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="cursor://other.extension/run?task=1".',
+  ],
+  [
+    'an image of a network path written with a named slash',
+    '<h2 id="flow">Source flow</h2><p><img src="/&sol;host/x.png" alt=""></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="/&sol;host/x.png".',
+  ],
+  [
+    'an image of a network path written with a named backslash',
+    '<h2 id="flow">Source flow</h2><p><img src="/&bsol;host/x.png" alt=""></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="/&bsol;host/x.png".',
+  ],
+  [
+    'a link to a network path with a named line break between its slashes',
+    '<h2 id="flow">Source flow</h2><p><a href="/&NewLine;/host/x">Notes</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="/&NewLine;/host/x".',
   ],
   [
     'a vscode: address whose authority only starts with Codebook’s',

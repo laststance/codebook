@@ -416,8 +416,41 @@ const isAcceptedAddress = address => {
 };
 /** The addresses one attribute value holds: for `srcset` the address of each candidate, split at every comma, so a comma inside an address can only add a refusal; the whole value otherwise. Called by {@link attributeScriptingClauseOf}. @example addressesOf('srcset', 'small.png 1x, large.png 2x') // => ['small.png', 'large.png'] */
 const addressesOf = (name, text) => name === 'srcset' ? text.split(',').map(candidate => candidate.trim().split(/[\t\n\f\r ]/)[0]) : [text];
-/** The clause a refusal of an address attribute ends with when one of its addresses names another scheme than {@link ADDRESS_SCHEMES} and is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}); called by {@link attributeScriptingClauseOf}. @returns The clause, or undefined for an attribute that is no address or leads nowhere else. @example addressClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
-const addressClauseOf = (tag, name, written) => ADDRESS_ATTRIBUTES.has(name) && !addressesOf(name, attributeText(written)).every(isAcceptedAddress)
+/** The named references a browser reads in an attribute value whose character is ASCII, with their semicolon; every other name it knows stands for a character outside ASCII, which can be no letter, digit, colon, slash or white space of an address, so such a reference is left as written, which judges alike. The reader holds the same table (`browserAttributeText.ts`). */
+const ASCII_NAMED_REFERENCES = { 'Tab;': '\t', 'NewLine;': '\n', 'excl;': '!', 'quot;': '"', 'QUOT;': '"', 'num;': '#', 'dollar;': '$', 'percnt;': '%', 'amp;': '&', 'AMP;': '&', 'apos;': "'", 'lpar;': '(', 'rpar;': ')', 'ast;': '*', 'midast;': '*', 'plus;': '+', 'comma;': ',', 'period;': '.', 'sol;': '/', 'colon;': ':', 'semi;': ';', 'lt;': '<', 'LT;': '<', 'equals;': '=', 'gt;': '>', 'GT;': '>', 'quest;': '?', 'commat;': '@', 'lsqb;': '[', 'lbrack;': '[', 'bsol;': '\\', 'rsqb;': ']', 'rbrack;': ']', 'Hat;': '^', 'lowbar;': '_', 'UnderBar;': '_', 'grave;': '`', 'DiacriticalGrave;': '`', 'lcub;': '{', 'lbrace;': '{', 'verbar;': '|', 'vert;': '|', 'VerticalLine;': '|', 'rcub;': '}', 'rbrace;': '}', 'fjlig;': 'fj' };
+/** The names with an ASCII character that a browser reads without their semicolon too, longest first, and their characters. */
+const LEGACY_ASCII_NAMES = [['QUOT', '"'], ['quot', '"'], ['AMP', '&'], ['amp', '&'], ['LT', '<'], ['lt', '<'], ['GT', '>'], ['gt', '>']];
+/** A character reference in an attribute value as a browser's tokenizer finds it: a number with or without its semicolon, or a run of letters and digits after `&` with its semicolon if one follows. */
+const BROWSER_REFERENCE = /&(?:#([xX][0-9a-fA-F]+|[0-9]+);?|([A-Za-z][A-Za-z0-9]*;?))/g;
+/** Whether a code point lies in a range a browser does not name by a number: the surrogates, and the C1 range, which it maps to characters outside ASCII. Called by {@link isNamedCodePoint}. @example isSurrogateOrC1(0x85) // => true */
+const isSurrogateOrC1 = codePoint => (codePoint >= 0xd800 && codePoint <= 0xdfff) || (codePoint >= 0x80 && codePoint <= 0x9f);
+/** Whether a browser names a character by this number: one above 0, up to the last code point, and no surrogate or C1 character. Called by {@link browserNumber}. @example isNamedCodePoint(0x2f) // => true */
+const isNamedCodePoint = codePoint => codePoint > 0 && codePoint <= 0x10ffff && !isSurrogateOrC1(codePoint);
+/** The number a numeric reference writes, decimal or after `x` hexadecimal; one of more than eight significant digits lies past the last code point in either base. Called by {@link browserNumber}. @example codePointOf('x2f') // => 47 */
+const codePointOf = digits => {
+  const isHexadecimal = /^[xX]/.test(digits), significant = digits.replace(/^[xX]?0*/, '');
+  return significant.length > 8 ? Infinity : Number.parseInt(significant || '0', isHexadecimal ? 16 : 10);
+};
+/** The character a number names as a browser reads it; the replacement character for a number it names no character by ({@link isNamedCodePoint}). Called by {@link browserText}. @example browserNumber('x2f') // => '/' */
+const browserNumber = digits => {
+  const codePoint = codePointOf(digits);
+  return isNamedCodePoint(codePoint) ? String.fromCodePoint(codePoint) : '\uFFFD';
+};
+/** The character after a name at the start of a run of letters and digits: the run's next one, or the character after the run. Called by {@link legacyCharacters}. @example nextAfterName('ampx', 'amp', ';') // => 'x' */
+const nextAfterName = (run, name, next) => run.length > name.length ? run[name.length] : next;
+/** The characters of a name of {@link LEGACY_ASCII_NAMES} that starts a run without its semicolon, as a browser reads it in an attribute value: not before `=`, a letter or a digit. Called by {@link browserName}. @example legacyCharacters('amp', '/') // => '&'; legacyCharacters('ampx', ';') // => undefined */
+const legacyCharacters = (run, next) => {
+  const legacy = LEGACY_ASCII_NAMES.find(([name]) => run.startsWith(name));
+  if (legacy === undefined) return undefined;
+  return /[=A-Za-z0-9]/.test(nextAfterName(run, legacy[0], next) ?? '') ? undefined : legacy[1] + run.slice(legacy[0].length);
+};
+/** The characters of a named reference as a browser reads it in an attribute value: one of {@link ASCII_NAMED_REFERENCES}, or a name a browser reads without its semicolon ({@link legacyCharacters}); `undefined` to leave it as written. Called by {@link browserText}. @example browserName('sol;', 'h') // => '/' */
+const browserName = (run, next) => Object.hasOwn(ASCII_NAMED_REFERENCES, run) ? ASCII_NAMED_REFERENCES[run] : legacyCharacters(run, next);
+/** Reads an attribute value as a browser's tokenizer reads it ({@link browserNumber}, {@link browserName}), where {@link attributeText} reads only the references the publisher writes: `/&sol;host/x` is `//host/x` for a browser. Called by {@link addressClauseOf}. @example browserText('/&sol;host/x') // => '//host/x' */
+const browserText = written => written.replace(BROWSER_REFERENCE, (reference, digits, run, offset) => digits === undefined ? browserName(run, written[offset + reference.length]) ?? reference : browserNumber(digits));
+
+/** The clause a refusal of an address attribute ends with when one of its addresses names another scheme than {@link ADDRESS_SCHEMES}, is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}) or is a network path, read as the publisher reads it ({@link attributeText}) or as a browser does ({@link browserText}); called by {@link attributeScriptingClauseOf}. @returns The clause, or undefined for an attribute that is no address or leads nowhere else. @example addressClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
+const addressClauseOf = (tag, name, written) => ADDRESS_ATTRIBUTES.has(name) && [attributeText(written), browserText(written)].some(text => !addressesOf(name, text).every(isAcceptedAddress))
   ? `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`
   : undefined;
 /** The clause a refusal of one attribute of a start tag ends with: an event attribute, or an address of another scheme ({@link addressClauseOf}); called by {@link tagScriptingClauseOf}. @returns The clause, or undefined for an attribute that runs no script and leads nowhere else. @example attributeScriptingClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
