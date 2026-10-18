@@ -190,6 +190,24 @@ test('a cd alone, a pushd elsewhere or a popd makes the folder unknown, while cd
   assert.deepEqual(signs, [false, false, false, true, true, true])
 })
 
+// Value: protects=the first sign of an update whose chat writes its commands on separate lines, and the learner who leaves a comment that names the Wiki's folder; fails_when=a line break is read as white space, so `cd <skill>` and `node publish-wiki.mjs` on the next line are one command and give no sign, or a check on the first line hides the publisher on the second, or an unquoted `#` comment is read as words, so `echo done # ls <wiki>` counts as the chat's work; why_new=Cycle 0046 /ship third review W19 (OCR); seam=none
+test('a line break ends a command as a ; does, and on POSIX an unquoted word that starts with # comments out the rest of its line, while a # inside a word or in quotes is text', () => {
+  // Act
+  const signs = [
+    `cd ${PLACES.skillDirectory}\nnode publish-wiki.mjs --prepare`,
+    `node -e "1"\nnode ${PLACES.skillDirectory}/publish-wiki.mjs --prepare`,
+    'echo done # ls /repo/.codebook/wiki',
+    'echo done # a note\nls /repo/.codebook/wiki',
+    "echo '# not a comment' && ls /repo/.codebook/wiki",
+    'echo a#b /repo/.codebook/wiki',
+  ].map((commandLine) =>
+    isWikiUpdateSign({ kind: 'command', commandLine }, PLACES, 'linux'),
+  )
+
+  // Assert
+  assert.deepEqual(signs, [true, true, false, true, true, true])
+})
+
 // Value: protects=the learner who runs a command of their own that names the publisher in a way no shell reads as its path; fails_when=a home folder in single quotes or in a longer variable's name, a `~` in double quotes, or a `cd` whose next command does not run in its folder (after `||` or `|`) is read as the path, so the learner's command counts as the chat's work; why_new=Cycle 0046 /ship adversarial review AD19 (the forms a shell keeps as text); seam=none
 test('a home folder in single quotes or in a longer name, a ~ in double quotes, a cd that the next command does not follow, and Node.js that checks the publisher are no steps of an update', () => {
   // Arrange

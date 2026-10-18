@@ -53,23 +53,23 @@ function isInside(path: string, folder: string, separator: string): boolean {
   return path === folder || path.startsWith(folder + separator)
 }
 
-/** A word of a command line as a POSIX shell splits it, or a run of the characters that end a command (`;`, `&`, `|`): a word joins quoted parts (`'…'` literally, `"…"` with its escapes), escaped characters and plain characters until a space or such an operator. */
-const POSIX_WORD = /(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s'"\\;&|])+|[;&|]+/g
+/** A word of a command line as a POSIX shell splits it, a run of the characters that end a command (`;`, `&`, `|`), or a line break, which ends a command too: a word joins quoted parts (`'…'` literally, `"…"` with its escapes), escaped characters and plain characters until white space or such an operator. */
+const POSIX_WORD = /(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s'"\\;&|])+|[;&|]+|\n/g
 /** The same for the shells of Windows, where a backslash is a character of a path and no escape. */
-const WINDOWS_WORD = /(?:'[^']*'|"[^"]*"|[^\s'";&|])+|[;&|]+/g
+const WINDOWS_WORD = /(?:'[^']*'|"[^"]*"|[^\s'";&|])+|[;&|]+|\n/g
 /** The quoted parts and the escaped characters of one word of a POSIX shell, as {@link unquotedWord} reads them. */
 const POSIX_QUOTING = /'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/g
 /** The quoted parts of one word of the shells of Windows. */
 const WINDOWS_QUOTING = /'([^']*)'|"([^"]*)"/g
-/** An operator between two commands. */
-const COMMAND_OPERATOR = /^[;&|]+$/
+/** An operator between two commands: a run of `;`, `&` and `|`, or a line break. */
+const COMMAND_OPERATOR = /^(?:[;&|]+|\n)$/
 /** The home folder at the start of a word as it stands in the command line, as a POSIX shell reads it there: `~` unquoted, alone or before a separator; `$HOME` (not the start of a longer name) or `${HOME}`, unquoted or in double quotes. In single quotes, escaped, or `~` in double quotes, it is text. */
 const HOME_AT_WRITTEN_START =
   /^(?:~(?=[\\/]|$)|"?\$(?:HOME(?![A-Za-z0-9_])|\{HOME\}))/
 /** The same home folder at the start of the word's text once its quotes are gone, which {@link HOME_AT_WRITTEN_START} found there. */
 const HOME_AT_TEXT_START = /^(?:~|\$HOME|\$\{HOME\})/
-/** The operators after which the next command runs in the folder a `cd` before them changed to: `&&` and `;`. After `||`, `|` or `&` it runs in another folder or none. */
-const OPERATOR_THAT_KEEPS_THE_FOLDER = /^(?:&&|;)$/
+/** The operators after which the next command runs in the folder a `cd` before them changed to: `&&`, `;` and a line break. After `||`, `|` or `&` it runs in another folder or none. */
+const OPERATOR_THAT_KEEPS_THE_FOLDER = /^(?:&&|;|\n)$/
 /** The programs that change the folder of the commands after them: `cd`, `pushd`, `popd`, and `chdir` of Windows' cmd. */
 const FOLDER_CHANGING_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'chdir'])
 /** The options of `cd` and `pushd` that leave their folder argument readable: POSIX's `-P` and `-L`, the `/d` of Windows' cmd, and `--`. */
@@ -139,13 +139,53 @@ function withHomeFolder(
     : text
 }
 
+/** The state of one reading of a command line by {@link commandsOf}: the commands so far, and whether the reading stands in a comment. */
+type CommandReading = { commands: Command[]; isInComment: boolean }
+
+/**
+ * Starts the next command at an operator; called by {@link readWord}. Operators in a row (`&&` before a line break) end one command, and the first of them joins the next.
+ * @param commands - The commands so far.
+ * @param operator - The operator.
+ * @returns Nothing; `commands` holds the new command.
+ * @example
+ * startCommand([{ words: ['cd', '/repo'], operator: '' }], '&&')
+ */
+function startCommand(commands: Command[], operator: string): void {
+  if (commands.at(-1)?.words.length === 0) return
+  commands.push({ words: [], operator })
+}
+
+/**
+ * Reads one word or operator of a command line into the reading, as its shell does: on POSIX, an unquoted word that starts with `#` begins a comment, which the shell passes over up to the end of its line. Called by {@link commandsOf} for each.
+ * @param reading - The reading.
+ * @param word - The word or operator as the command line writes it.
+ * @param text - The word's text as the shell passes it on ({@link unquotedWord}, {@link withHomeFolder}).
+ * @param platform - The platform whose shells the command line is read for.
+ * @returns Nothing; `reading` holds the word.
+ * @example
+ * readWord(reading, '#', '#', 'linux') // the rest of the line is a comment
+ */
+function readWord(
+  reading: CommandReading,
+  word: string,
+  text: string,
+  platform: string,
+): void {
+  // A comment runs to the end of its line, where the next command starts.
+  if (reading.isInComment && word !== '\n') return
+  reading.isInComment = platform !== 'win32' && word.startsWith('#')
+  if (reading.isInComment) return
+  if (COMMAND_OPERATOR.test(word)) startCommand(reading.commands, word)
+  else reading.commands.at(-1)?.words.push(text)
+}
+
 /**
  * Splits a command line into its commands and each command into the words its shell passes on, by the boundaries of its arguments; called by {@link isUpdateCommandLine}.
- * Why: a path that merely stands inside another argument, in quoted text or at the start of a longer path (`/repo/.codebook/wiki-backup`) is no argument of its own.
+ * Why: a path that merely stands inside another argument, in quoted text, in a comment or at the start of a longer path (`/repo/.codebook/wiki-backup`) is no argument of its own.
  * @param commandLine - The command line as the terminal's shell integration reports it.
  * @param platform - The platform whose shells the command line is read for.
  * @param homeDirectory - The learner's home folder, which `~`, `$HOME` and `${HOME}` at the start of a word name ({@link withHomeFolder}).
- * @returns The commands between the operators `;`, `&` and `|` (and `&&`, `||`), each as its words and the operator before it.
+ * @returns The commands between the operators `;`, `&` and `|` (and `&&`, `||`) and line breaks, each as its words and the operator before it.
  * @example
  * commandsOf('cd ~/ext && node "publish-wiki.mjs" --output .codebook/wiki', 'linux', '/home/learner')
  * // => [{ words: ['cd', '/home/learner/ext'], operator: '' }, { words: ['node', 'publish-wiki.mjs', '--output', '.codebook/wiki'], operator: '&&' }]
@@ -155,21 +195,20 @@ function commandsOf(
   platform: string,
   homeDirectory: string,
 ): Command[] {
-  const commands: Command[] = [{ words: [], operator: '' }]
+  const reading: CommandReading = {
+    commands: [{ words: [], operator: '' }],
+    isInComment: false,
+  }
   for (const [word] of commandLine.matchAll(
     platform === 'win32' ? WINDOWS_WORD : POSIX_WORD,
-  )) {
-    // An operator ends the command before it.
-    if (COMMAND_OPERATOR.test(word))
-      commands.push({ words: [], operator: word })
-    else
-      commands
-        .at(-1)
-        ?.words.push(
-          withHomeFolder(word, unquotedWord(word, platform), homeDirectory),
-        )
-  }
-  return commands.filter(({ words }) => words.length > 0)
+  ))
+    readWord(
+      reading,
+      word,
+      withHomeFolder(word, unquotedWord(word, platform), homeDirectory),
+      platform,
+    )
+  return reading.commands.filter(({ words }) => words.length > 0)
 }
 
 /**
