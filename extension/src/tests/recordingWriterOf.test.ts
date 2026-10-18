@@ -632,6 +632,35 @@ test('a recording of an earlier process with this window’s process id, created
   })
 })
 
+// Value: protects=this window's own live recording under a host name that changed during the run, while this window's own process start cannot be read (a PowerShell or ps query that fails); fails_when=telling this window's own recording needs this process's start, so its own reservation counts as another host's whenever the start cannot be read: Saved studies lists it and a removal offers the dialog (TT36; the SX1 defect again); why_new=Cycle 0046 third testing review TT36: S1 tells it by this window's session, which needs no start; seam=the list's starts, in which this process's start cannot be read, and the header, which names this test process under another host name
+test('this window’s recording under a changed host name is still its own while this window’s own process start cannot be read', async (context) => {
+  // Arrange: this window's run, recording under the host name it had when it began; the start of this process reads as unknown.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rm(recordingOwnerRecordPath(storage.directory, recording.studyId))
+  await rewriteHeader(recording.folder, {
+    owner: { pid: process.pid, hostname: 'laptop.home-network' },
+  })
+  const startsWithoutOwn = (): ProcessStartsOfList =>
+    new Map([[process.pid, Promise.resolve(undefined)]])
+
+  // Act
+  const answers = {
+    counted: await writerOf(recording.folder, 'counts', startsWithoutOwn()),
+    leftToThisWindow: await writerOf(
+      recording.folder,
+      'ignored',
+      startsWithoutOwn(),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    counted: { kind: 'may-run' },
+    leftToThisWindow: { kind: 'left-to-caller' },
+  })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
