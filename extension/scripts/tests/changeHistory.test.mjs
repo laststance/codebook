@@ -6,7 +6,7 @@ import ts from 'typescript'
 
 const repositoryRoot = new URL('../../../', import.meta.url)
 
-/** The folders whose files are the product's own text: what a learner or an agent can be shown comes from one of them. Test files are left out ({@link productText}). */
+/** The folders whose files are the product's own text: what a learner or an agent can be shown comes from one of them. Test files, browser checks (`*-qa.mjs`) and fixtures are left out ({@link productText}). */
 const PRODUCT_FOLDERS = [
   'extension/src',
   'extension/skills',
@@ -151,6 +151,9 @@ async function productText() {
       if (!entry.isFile() || !TEXT_FILE.test(entry.name)) continue
       // A test may state a sentence the product no longer has.
       if (/[\\/]tests[\\/]/.test(path)) continue
+      // A browser check and its fixtures hold the texts they expect or an older build printed, not the product's.
+      if (entry.name.endsWith('-qa.mjs') || /[\\/]fixtures[\\/]/.test(path))
+        continue
       const text = await readFile(path, 'utf8')
       texts.push(
         ...(CODE_FILE.test(entry.name)
