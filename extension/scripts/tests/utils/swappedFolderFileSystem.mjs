@@ -6,7 +6,7 @@ export * from 'node:fs/promises'
 const pendingSwaps = { mkdir: undefined, writeFile: undefined }
 
 /**
- * Asks the next `mkdir` of a folder that `isAwaited` names to run `swap` first, once: as another process that swaps a folder on the Wiki output's path for a link between the publisher's look at the path and the folder it then makes. Called by the publisher's tests before they prepare or publish a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `swappedFolderHooks.mjs`).
+ * Asks the next `mkdir` of a folder that `isAwaited` names to run `swap` first, once: as another process that swaps a folder on the Wiki output's path for a link between the publisher's look at the path and the folder it then makes. Called by the publisher's tests before they prepare or publish a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {(path: string) => boolean} isAwaited - Whether a folder `mkdir` is asked for is the one before which the swap runs.
  * @param {() => Promise<void>} swap - The swap.
  * @returns {void}

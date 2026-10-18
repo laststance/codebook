@@ -2062,25 +2062,32 @@ test('a recovery whose output lies behind a link at its parent in the project is
   }
 })
 
-/** The load of the copy of the shipped publisher whose `node:fs/promises` calls a link a directory, once it has begun. */
-let publisherWhereTheLookIsWrong
+/** The loads of the marked copies of the shipped skill modules, by module and mark, once each has begun. */
+const markedCopies = new Map()
 /**
- * Loads a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, as the file system layer of Node.js does on Windows for a junction whose target is a volume: a loader hook (`scripts/tests/utils/wrongLookHooks.mjs`), registered once, hands the copy `wrongLookFileSystem.mjs`.
- * @returns {Promise<typeof import('../../skills/codebook/publish-wiki.mjs')>} The copy's exports.
+ * Loads a copy of a shipped skill module whose `node:fs/promises` is the stand-in of its mark: the one loader hook (`scripts/tests/utils/markedCopyHooks.mjs`), registered once, maps each mark to its stand-in.
+ * - `?wrong-look`: `lstat` calls a link a directory, as the file system layer of Node.js does on Windows for a junction whose target is a volume (`wrongLookFileSystem.mjs`).
+ * - `?swapped-folder`: a test's swap runs just before the `mkdir` of a folder ({@link swapBeforeMaking}) or the `writeFile` of a file ({@link swapBeforeWriting}) that the test names (`swappedFolderFileSystem.mjs`).
+ * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
+ * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
+ * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
+ * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell'} mark - The mark of its stand-in.
+ * @returns {Promise<Record<string, Function>>} The copy's exports.
  * @example
- * const { prepareWikiStage } = await loadPublisherWhereTheLookIsWrong()
+ * const { prepareWikiStage } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
  */
-function loadPublisherWhereTheLookIsWrong() {
-  if (!publisherWhereTheLookIsWrong) {
-    register(new URL('./utils/wrongLookHooks.mjs', import.meta.url))
-    publisherWhereTheLookIsWrong = import(
-      new URL(
-        '../../skills/codebook/publish-wiki.mjs?wrong-look',
-        import.meta.url,
-      ).href
+function loadMarkedCopy(module, mark) {
+  if (markedCopies.size === 0)
+    register(new URL('./utils/markedCopyHooks.mjs', import.meta.url))
+  const key = `${module}${mark}`
+  if (!markedCopies.has(key))
+    markedCopies.set(
+      key,
+      import(
+        new URL(`../../skills/codebook/${module}${mark}`, import.meta.url).href
+      ),
     )
-  }
-  return publisherWhereTheLookIsWrong
+  return markedCopies.get(key)
 }
 
 /**
@@ -2119,11 +2126,13 @@ const refusalOfWikiFolder = (path) =>
 /** The refusal of a stage beside the Wiki folder when it is no folder of its own, for the path it names. */
 const refusalOfStage = (path) =>
   `The Wiki stage ${path} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`
-// Value: protects=the folder outside the project that a `.codebook` junction to a volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher's walk trusts lstat and no longer compares a folder's real path with the project, so it prepares its stage beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of requireOwnFolder had no test); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, by a loader hook (scripts/tests/utils/wrongLookHooks.mjs)
+// Value: protects=the folder outside the project that a `.codebook` junction to a volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher's walk trusts lstat and no longer compares a folder's real path with the project, so it prepares its stage beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of requireOwnFolder had no test); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, by a loader hook (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
 test('the publisher refuses a folder on the output’s path in the project that lstat calls a directory although its real path leaves the project, names it and writes nothing there', async () => {
   // Arrange: a copy of the publisher whose lstat answers for a link what stat answers, and a project whose `.codebook` is a link to a folder outside it.
-  const { prepareWikiStage: prepareWhereTheLookIsWrong } =
-    await loadPublisherWhereTheLookIsWrong()
+  const { prepareWikiStage: prepareWhereTheLookIsWrong } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?wrong-look',
+  )
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-wrong-look-')),
   )
@@ -2150,7 +2159,7 @@ test('the publisher refuses a folder on the output’s path in the project that 
   }
 })
 
-// Value: protects=the folder outside the project that a `.codebook\\wiki` junction to another volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher looks at the Wiki folder itself with lstat alone again, so it prepares a candidate from the Wiki behind the junction, publishes through it, or recovers by writing a manifest into it; why_new=Cycle 0046 /ship finding AF3 (the parents, the update start and the reader compare real paths; the publisher's look at the Wiki folder itself did not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/wrongLookHooks.mjs)
+// Value: protects=the folder outside the project that a `.codebook\\wiki` junction to another volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher looks at the Wiki folder itself with lstat alone again, so it prepares a candidate from the Wiki behind the junction, publishes through it, or recovers by writing a manifest into it; why_new=Cycle 0046 /ship finding AF3 (the parents, the update start and the reader compare real paths; the publisher's look at the Wiki folder itself did not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
 for (const step of ['--prepare', 'publish', '--recover'])
   test(`${step} of a Wiki folder in the project that lstat calls a directory although its real path leaves the project is refused with the folder named, and nothing is written there or beside it`, async () => {
     // Arrange: a published Wiki moved out of the project behind a link at its folder's path, with a candidate prepared before the move for the publish, and an edited manifest behind the link for the recovery.
@@ -2158,7 +2167,7 @@ for (const step of ['--prepare', 'publish', '--recover'])
       prepareWikiStage,
       publishWiki: publishWhereTheLookIsWrong,
       recoverWikiPublication,
-    } = await loadPublisherWhereTheLookIsWrong()
+    } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
     const wiki = await publishedWikiMovedOutBehindALink({
       prepareNext: step === 'publish',
     })
@@ -2201,11 +2210,13 @@ for (const step of ['--prepare', 'publish', '--recover'])
     }
   })
 
-// Value: protects=the folder outside the project that a candidate folder beside the Wiki leads to when it is a junction to another volume on Windows; fails_when=the publisher looks at the candidate with lstat alone, so it renders the pages into the folder behind the junction and moves it into the Wiki's place; why_new=Cycle 0046 /ship finding AF3 (the stage beside the output is looked at the same way); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/wrongLookHooks.mjs)
+// Value: protects=the folder outside the project that a candidate folder beside the Wiki leads to when it is a junction to another volume on Windows; fails_when=the publisher looks at the candidate with lstat alone, so it renders the pages into the folder behind the junction and moves it into the Wiki's place; why_new=Cycle 0046 /ship finding AF3 (the stage beside the output is looked at the same way); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
 test('a publish whose candidate beside the Wiki in the project is a folder that lstat calls a directory although its real path leaves the project is refused with the candidate named, and the candidate and the Wiki are left as they are', async () => {
   // Arrange: a published Wiki with a candidate prepared beside it; the candidate is moved out of the project and a link to it stands in its place.
-  const { publishWiki: publishWhereTheLookIsWrong } =
-    await loadPublisherWhereTheLookIsWrong()
+  const { publishWiki: publishWhereTheLookIsWrong } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?wrong-look',
+  )
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-stage-')),
   )
@@ -2261,11 +2272,11 @@ test('a publish whose candidate beside the Wiki in the project is a folder that 
   }
 })
 
-// Value: protects=the folder outside the project that the prior Wiki's backup beside the Wiki folder leads to when it is a junction to another volume on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the recovery looks at the backup with lstat alone, so it reads the Wiki behind the junction and moves the junction into the Wiki folder's place; why_new=Cycle 0046 /ship Codex review CX18 (the output and the stage are held to the project's own folders, the backup the recovery moves was not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/wrongLookHooks.mjs)
+// Value: protects=the folder outside the project that the prior Wiki's backup beside the Wiki folder leads to when it is a junction to another volume on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the recovery looks at the backup with lstat alone, so it reads the Wiki behind the junction and moves the junction into the Wiki folder's place; why_new=Cycle 0046 /ship Codex review CX18 (the output and the stage are held to the project's own folders, the backup the recovery moves was not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
 test('a recovery whose kept prior Wiki beside the Wiki folder is a folder that lstat calls a directory although its real path leaves the project is refused with that folder named, and nothing is moved', async () => {
   // Arrange: a publish stopped after it moved the prior Wiki aside; the prior Wiki is then moved out of the project and a link to it stands at the backup's path.
   const { recoverWikiPublication: recoverWhereTheLookIsWrong } =
-    await loadPublisherWhereTheLookIsWrong()
+    await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-backup-')),
   )
@@ -2322,33 +2333,12 @@ test('a recovery whose kept prior Wiki beside the Wiki folder is a folder that l
   }
 })
 
-/** The load of the copy of the shipped publisher whose `node:fs/promises` fails `realpath` for the folder a test names, once it has begun. */
-let publisherWhoseRealPathFails
-/**
- * Loads a copy of the shipped publisher whose `realpath` fails for the folder a test names with {@link failRealPathOf}: a loader hook (`scripts/tests/utils/unnamedRealPathHooks.mjs`), registered once, hands the copy `unnamedRealPathFileSystem.mjs`.
- * @returns {Promise<typeof import('../../skills/codebook/publish-wiki.mjs')>} The copy's exports.
- * @example
- * const { prepareWikiStage } = await loadPublisherWhoseRealPathFails()
- */
-function loadPublisherWhoseRealPathFails() {
-  if (!publisherWhoseRealPathFails) {
-    register(new URL('./utils/unnamedRealPathHooks.mjs', import.meta.url))
-    publisherWhoseRealPathFails = import(
-      new URL(
-        '../../skills/codebook/publish-wiki.mjs?unnamed-real-path',
-        import.meta.url,
-      ).href
-    )
-  }
-  return publisherWhoseRealPathFails
-}
-
-// Value: protects=the learner whose project holds `.codebook` with a real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the publisher lets the system's error of `realpath` through instead of its refusal of a folder that leads out of the project, so the agent and the learner read a system error and no step; why_new=Cycle 0046 /ship adversarial review AD17 (the start check, the reader and the publisher refuse such a folder with the same sentences); seam=a copy of the shipped publisher whose `realpath` fails for one folder (scripts/tests/utils/unnamedRealPathHooks.mjs)
+// Value: protects=the learner whose project holds `.codebook` with a real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the publisher lets the system's error of `realpath` through instead of its refusal of a folder that leads out of the project, so the agent and the learner read a system error and no step; why_new=Cycle 0046 /ship adversarial review AD17 (the start check, the reader and the publisher refuse such a folder with the same sentences); seam=a copy of the shipped publisher whose `realpath` fails for one folder (scripts/tests/utils/markedCopyHooks.mjs, `?unnamed-real-path`)
 for (const code of ['EACCES', 'EINVAL'])
   test(`a preparation whose .codebook has a real path the system cannot name (${code}) is refused with the folder named, as one that leads out of the project, and nothing is written there`, async () => {
     // Arrange: a project with a real `.codebook`, met by a publisher whose realpath fails for it.
     const { prepareWikiStage: prepareWhereTheRealPathFails } =
-      await loadPublisherWhoseRealPathFails()
+      await loadMarkedCopy('publish-wiki.mjs', '?unnamed-real-path')
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-wiki-unnamed-real-path-')),
     )
@@ -2379,32 +2369,11 @@ for (const code of ['EACCES', 'EINVAL'])
     }
   })
 
-/** The load of the copy of the shipped publisher whose `node:fs/promises` runs a test's swap before it makes a folder, once it has begun. */
-let publisherWhoseFolderIsSwapped
-/**
- * Loads a copy of the shipped publisher whose `node:fs/promises` runs the swap a test asks for with {@link swapBeforeMaking} before it makes the folder the swap waits for: a loader hook (`scripts/tests/utils/swappedFolderHooks.mjs`), registered once, hands the copy `swappedFolderFileSystem.mjs`.
- * @returns {Promise<typeof import('../../skills/codebook/publish-wiki.mjs')>} The copy's exports.
- * @example
- * const { prepareWikiStage } = await loadPublisherWhoseFolderIsSwapped()
- */
-function loadPublisherWhoseFolderIsSwapped() {
-  if (!publisherWhoseFolderIsSwapped) {
-    register(new URL('./utils/swappedFolderHooks.mjs', import.meta.url))
-    publisherWhoseFolderIsSwapped = import(
-      new URL(
-        '../../skills/codebook/publish-wiki.mjs?swapped-folder',
-        import.meta.url,
-      ).href
-    )
-  }
-  return publisherWhoseFolderIsSwapped
-}
-
-// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it made its stage; fails_when=the preparation trusts its first look at the path and makes the stage, its receipt and the prior Wiki's copy behind the link; why_new=Cycle 0046 /ship Codex review CX17 (the look at the path and the folders made after it were never compared); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` for a link just before the stage is made (scripts/tests/utils/swappedFolderHooks.mjs)
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it made its stage; fails_when=the preparation trusts its first look at the path and makes the stage, its receipt and the prior Wiki's copy behind the link; why_new=Cycle 0046 /ship Codex review CX17 (the look at the path and the folders made after it were never compared); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` for a link just before the stage is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a preparation whose .codebook is swapped for a link to a folder outside the project just before its stage is made is refused with the folder named, and nothing is left behind the link', async () => {
   // Arrange: a project whose `.codebook` is a real folder when the publisher looks at the path, and a link to a folder outside it when the stage is made.
   const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
-    await loadPublisherWhoseFolderIsSwapped()
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-before-stage-')),
   )
@@ -2443,11 +2412,11 @@ test('a preparation whose .codebook is swapped for a link to a folder outside th
   }
 })
 
-// Value: protects=the folder outside the project that a missing `.codebook` leads to when another process makes it a link after the publisher looked at the path and before the publisher made it; fails_when=the preparation takes the missing folder as the end of its look, makes the parent through the link and then holds the Wiki behind it for an output outside the project, so it prepares there; why_new=Cycle 0046 /ship Codex review CX17 (the path was never looked at again once its missing folders were made); seam=a copy of the shipped publisher whose `node:fs/promises` makes `.codebook` a link just before the publisher makes it (scripts/tests/utils/swappedFolderHooks.mjs)
+// Value: protects=the folder outside the project that a missing `.codebook` leads to when another process makes it a link after the publisher looked at the path and before the publisher made it; fails_when=the preparation takes the missing folder as the end of its look, makes the parent through the link and then holds the Wiki behind it for an output outside the project, so it prepares there; why_new=Cycle 0046 /ship Codex review CX17 (the path was never looked at again once its missing folders were made); seam=a copy of the shipped publisher whose `node:fs/promises` makes `.codebook` a link just before the publisher makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a preparation whose missing .codebook becomes a link to a folder outside the project just before the publisher makes it is refused with the folder named, and nothing is written behind the link', async () => {
   // Arrange: a project without `.codebook` when the publisher looks at the path, and with a link of that name when the publisher makes the folder.
   const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
-    await loadPublisherWhoseFolderIsSwapped()
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-before-parent-')),
   )
@@ -2515,11 +2484,13 @@ async function publishedWikiWithACandidate() {
   }
 }
 
-// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it writes the rendered pages into the candidate; fails_when=the publish trusts its first look at the path, so it renders into the candidate behind the link, writes its journal and its backup there and moves the new Wiki into place there; why_new=Cycle 0046 /ship finding AF7 (CX17 held only the preparation to the look after creation); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the candidate's folder is made (scripts/tests/utils/swappedFolderHooks.mjs)
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it writes the rendered pages into the candidate; fails_when=the publish trusts its first look at the path, so it renders into the candidate behind the link, writes its journal and its backup there and moves the new Wiki into place there; why_new=Cycle 0046 /ship finding AF7 (CX17 held only the preparation to the look after creation); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the candidate's folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a publish whose .codebook is swapped for a link to a folder outside the project just before it writes into the candidate is refused with the folder named, and nothing is written behind the link', async () => {
   // Arrange: a published Wiki with a candidate; just before the publish makes the candidate's folder, `.codebook` is moved out of the project and a link to it stands in its place.
-  const { publishWiki: publishWhoseFolderIsSwapped } =
-    await loadPublisherWhoseFolderIsSwapped()
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
   const wiki = await publishedWikiWithACandidate()
   const movedOut = join(wiki.directory, 'codebook-moved-out')
   try {
@@ -2565,11 +2536,13 @@ test('a publish whose .codebook is swapped for a link to a folder outside the pr
   }
 })
 
-// Value: protects=the Wiki folder's parent the publish resolved, when another process replaces `.codebook` by another folder of the project before the publish writes; fails_when=the publish compares only real paths, so it writes into a folder that is not the one it looked at; why_new=Cycle 0046 /ship finding AF7 (the look after creation holds the parent's device and inode too); seam=a copy of the shipped publisher whose `node:fs/promises` replaces `.codebook` just before the candidate's folder is made (scripts/tests/utils/swappedFolderHooks.mjs)
+// Value: protects=the Wiki folder's parent the publish resolved, when another process replaces `.codebook` by another folder of the project before the publish writes; fails_when=the publish compares only real paths, so it writes into a folder that is not the one it looked at; why_new=Cycle 0046 /ship finding AF7 (the look after creation holds the parent's device and inode too); seam=a copy of the shipped publisher whose `node:fs/promises` replaces `.codebook` just before the candidate's folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a publish whose .codebook is replaced by another folder of the project just before it writes into the candidate is refused with the folder named, and the Wiki is not replaced', async () => {
   // Arrange: just before the publish makes the candidate's folder, `.codebook` is replaced by a new folder that holds the same Wiki and candidate.
-  const { publishWiki: publishWhoseFolderIsSwapped } =
-    await loadPublisherWhoseFolderIsSwapped()
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
   const wiki = await publishedWikiWithACandidate()
   const replaced = join(wiki.root, '.codebook-replaced')
   try {
@@ -2611,11 +2584,11 @@ test('a publish whose .codebook is replaced by another folder of the project jus
   }
 })
 
-// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the recovery looked at the path and before it restores an edited manifest; fails_when=the recovery trusts its first look at the path, so it writes its journal, the kept edited manifest and the restored manifest behind the link; why_new=Cycle 0046 /ship finding AF7 (recovery writes beside the Wiki folder and into it too); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the recovery writes its journal (scripts/tests/utils/swappedFolderHooks.mjs)
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the recovery looked at the path and before it restores an edited manifest; fails_when=the recovery trusts its first look at the path, so it writes its journal, the kept edited manifest and the restored manifest behind the link; why_new=Cycle 0046 /ship finding AF7 (recovery writes beside the Wiki folder and into it too); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the recovery writes its journal (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a recovery of an edited manifest whose .codebook is swapped for a link to a folder outside the project just before it writes its journal is refused with the folder named, and nothing is left or restored behind the link', async () => {
   // Arrange: a published Wiki whose manifest was edited by hand; just before the recovery writes its journal, `.codebook` is moved out of the project and a link to it stands in its place.
   const { recoverWikiPublication: recoverWhoseFolderIsSwapped } =
-    await loadPublisherWhoseFolderIsSwapped()
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
   const wiki = await publishedWikiWithACandidate()
   const movedOut = join(wiki.directory, 'codebook-moved-out')
   try {
@@ -3846,13 +3819,12 @@ test('a published page carries a Content-Security-Policy that lets only the shel
   }
 })
 
-// Value: protects=the theme button and the offline note of every page published from a Windows checkout with core.autocrlf=true, or from a VSIX packaged from one, where the reader shell has CRLF line endings; fails_when=the publisher hashes and writes the shell's script with its CRLF bytes, while a browser's HTML parser reads every CRLF and lone CR as LF before a Content-Security-Policy hashes an inline script, so the page's own policy names a hash that matches nothing and the shell's script is blocked, opened from disk and under the reader alike, and the reader's known hash no longer names it either; why_new=Cycle 0046 /ship Codex structured review CX5 (P2); seam=a copy of the page renderer whose `node:fs/promises` reads the reader shell with CRLF line endings, by a loader hook (scripts/tests/utils/crlfShellHooks.mjs)
+// Value: protects=the theme button and the offline note of every page published from a Windows checkout with core.autocrlf=true, or from a VSIX packaged from one, where the reader shell has CRLF line endings; fails_when=the publisher hashes and writes the shell's script with its CRLF bytes, while a browser's HTML parser reads every CRLF and lone CR as LF before a Content-Security-Policy hashes an inline script, so the page's own policy names a hash that matches nothing and the shell's script is blocked, opened from disk and under the reader alike, and the reader's known hash no longer names it either; why_new=Cycle 0046 /ship Codex structured review CX5 (P2); seam=a copy of the page renderer whose `node:fs/promises` reads the reader shell with CRLF line endings, by the loader hook of scripts/tests/utils/markedCopyHooks.mjs (`?crlf-shell`)
 test('a page rendered from a reader shell with CRLF line endings is written with LF line endings, and its policy names the hash of its script as a browser reads it, the known one', async () => {
   // Arrange: a copy of the page renderer that reads the shell as a Windows checkout with core.autocrlf=true holds it.
-  register(new URL('./utils/crlfShellHooks.mjs', import.meta.url))
-  const { renderWikiPages: renderFromCrlfShell } = await import(
-    new URL('../../skills/codebook/render-wiki.mjs?crlf-shell', import.meta.url)
-      .href
+  const { renderWikiPages: renderFromCrlfShell } = await loadMarkedCopy(
+    'render-wiki.mjs',
+    '?crlf-shell',
   )
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-reader-crlf-shell-')),

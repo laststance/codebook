@@ -3,7 +3,7 @@ import * as fileSystem from 'node:fs/promises'
 export * from 'node:fs/promises'
 
 /**
- * Reads a file as a Windows checkout with `core.autocrlf=true` holds it: the reader shell (`reader-shell.html`) comes with CRLF line endings, as such a checkout writes it and a VSIX packaged from it carries it; every other file is read as it is. The renderer's copy under test gets this module as its `node:fs/promises` (the loader hook of `crlfShellHooks.mjs`).
+ * Reads a file as a Windows checkout with `core.autocrlf=true` holds it: the reader shell (`reader-shell.html`) comes with CRLF line endings, as such a checkout writes it and a VSIX packaged from it carries it; every other file is read as it is. The renderer's copy under test gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {string | URL} path - The file to read.
  * @param {...unknown} options - The caller's encoding or options, handed on unchanged.
  * @returns {Promise<string | Buffer>} What `readFile` answers, with CRLF line endings for the reader shell read as text.

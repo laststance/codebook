@@ -6,7 +6,7 @@ export * from 'node:fs/promises'
 let failing
 
 /**
- * Asks `realpath` to fail for one folder with a system error, as it does for a folder of another user (`EACCES`) or for some junctions on Windows (`EINVAL`), until the test asks again. Called by the publisher's tests before they prepare a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `unnamedRealPathHooks.mjs`).
+ * Asks `realpath` to fail for one folder with a system error, as it does for a folder of another user (`EACCES`) or for some junctions on Windows (`EINVAL`), until the test asks again. Called by the publisher's tests before they prepare a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {string | undefined} path - The folder whose real path cannot be named; `undefined` to fail for none.
  * @param {'EACCES' | 'EINVAL'} [code] - The system error.
  * @returns {void}
