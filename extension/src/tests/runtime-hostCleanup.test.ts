@@ -1176,11 +1176,18 @@ test('a marked profile folder whose editor was killed is removed by the next run
   )
 })
 
-// Value: protects=the close of a managed run whose sweep of abandoned profile folders runs long (on Windows each judgement can cost a PowerShell query of up to 3 s, so a root with many leftovers would take minutes): the close waits for the sweep 2 s at most, says in the journal that the sweep outlived it, and completes, while the sweep goes on and its folders stay for the next sweep (AD23, /ship adversarial review Step 11); fails_when=the close waits for the sweep without a bound, so the run's close, and with it Close Study Workspace, waits for every judgement; why_new=every close test let its sweep end at once or released it; seam=the sweep's stand-in, which never ends, and the faked setTimeout of the close's wait
+// Value: protects=the close of a managed run whose sweep of abandoned profile folders runs long (on Windows each judgement can cost a PowerShell query of up to 3 s, so a root with many leftovers would take minutes): the close waits for the sweep 2 s at most, says in the journal that the sweep outlived it, and completes, while the sweep goes on and its folders stay for the next sweep (AD23, /ship adversarial review Step 11); fails_when=the close waits for the sweep without a bound, so the run's close, and with it Close Study Workspace, waits for every judgement; why_new=every close test let its sweep end at once or released it; the first form of this test gave the close's real file work a count of event-loop turns and failed under load (FL1); seam=the sweep's stand-in, which never ends, the journal, whose entry for the verified browser exit says that the close has reached its wait for the sweep, and the faked setTimeout of that wait
 test('a managed close waits for a sweep that never ends 2 s at most, journals that the sweep outlived it, and completes', async (context) => {
-  // Arrange: a launched managed browser whose sweep never ends.
+  // Arrange: a launched managed browser whose sweep never ends; the journal tells when the close has verified the browser's exit, the step before its wait for the sweep.
+  let reportBrowserExitVerified!: () => void
+  const browserExitVerified = new Promise<void>((resolve) => {
+    reportBrowserExitVerified = resolve
+  })
   const managed = await managedBrowser(context, {
     removeAbandonedProfiles: () => new Promise<string[]>(() => {}),
+    onEvent: (type) => {
+      if (type === 'browser.managed-exit-verified') reportBrowserExitVerified()
+    },
   })
   await managed.browser.launch(
     { type: 'editor-browser', name: 'owned', request: 'launch' },
@@ -1188,32 +1195,39 @@ test('a managed close waits for a sweep that never ends 2 s at most, journals th
   )
   context.mock.timers.enable({ apis: ['setTimeout'] })
   let closed = false
-  /** Lets real work run (the close's file work) for at most 1,000 real turns, or until the close ended. */
-  const afterRealTurns = async (): Promise<void> => {
-    for (let turn = 0; turn < 1_000 && !closed; turn += 1)
-      await nextEventLoopTurn()
-  }
-  // Act: the close reaches its wait for the sweep; the faked clock moves to 1 ms before the bound and then to the bound.
+  const sweepOutlivedTheClose = (): boolean =>
+    managed.events.some(
+      (event) => event.type === 'browser.abandoned-profile-sweep-left-running',
+    )
+  // Act: the close is followed to its wait for the sweep, whose timer is set in the same turn of the event loop as the verified exit; the faked clock then moves to 1 ms before the bound and then to the bound. No step between them does file work, so one turn after each move settles the wait.
   const closing = managed.browser.close().then(() => {
     closed = true
   })
-  await afterRealTurns()
+  await browserExitVerified
+  await nextEventLoopTurn()
   context.mock.timers.tick(1_999)
-  await afterRealTurns()
-  const closedBeforeTheBound = closed
+  await nextEventLoopTurn()
+  const beforeTheBound = {
+    closed,
+    sweepOutlivedTheClose: sweepOutlivedTheClose(),
+  }
   context.mock.timers.tick(1)
-  await afterRealTurns()
-  const closedAtTheBound = closed
-  // Assert: the close is awaited only after the assertion, so a close without a bound fails the test instead of holding it.
+  await nextEventLoopTurn()
+  const atTheBound = { sweepOutlivedTheClose: sweepOutlivedTheClose() }
+  // Assert: the wait is judged before the close is awaited, so a close without a bound fails the test instead of holding it.
   assert.deepEqual(
+    { beforeTheBound, atTheBound },
     {
-      closedBeforeTheBound,
-      closedAtTheBound,
-      journal: managed.events.map((event) => event.type),
+      beforeTheBound: { closed: false, sweepOutlivedTheClose: false },
+      atTheBound: { sweepOutlivedTheClose: true },
     },
+  )
+  // The rest of the close removes the run's own folder, which is real file work: its own completion is awaited, not counted in turns.
+  await closing
+  assert.deepEqual(
+    { closed, journal: managed.events.map((event) => event.type) },
     {
-      closedBeforeTheBound: false,
-      closedAtTheBound: true,
+      closed: true,
       journal: [
         'browser.managed-profile',
         'host.debugger-started',
@@ -1224,7 +1238,6 @@ test('a managed close waits for a sweep that never ends 2 s at most, journals th
       ],
     },
   )
-  await closing
 })
 
 // Value: protects=the first run after crashes starts its browser without waiting for the removal of the profile folders killed editors left (Cycle 0045 review PL-6); fails_when=the launch awaits the sweep (the awaited launch then never ends and the test runs into its time limit), or the run's close does not wait for it, so the sweep outlives the run; why_new=the sweep was awaited inside the launch until Cycle 0046, and the first form of this test decided both claims by races against the wall clock (Cycle 0046 row 97); seam=the sweep, which the test holds until it releases it, the adapter's folder removal, which only notes the folder, and the journal, whose entry for the verified browser exit says that the close has reached its wait for the sweep
