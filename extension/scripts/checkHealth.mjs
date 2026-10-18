@@ -473,7 +473,8 @@ function assertLimits(summary, limits) {
  * @param coverage - The run's `coverage-final.json`.
  * @param files - How many source files the coverage map measures.
  * @param format - Fallow's output format; `json` prints the checked report itself.
- * @returns Fallow's exit code: 0 with no finding beyond the baseline, 1 with findings.
+ * @returns The checked run's exit code: 0 with no finding beyond the baseline, 1 with findings.
+ * @throws When the checked run ends with another code or a signal, its report is not scored with this run's coverage or limits, or the run that shows the report ends otherwise than the checked run.
  * @example
  * await reportHealth(reference, '/tmp/x/coverage/coverage-final.json', 403, 'human') // => 1
  */
@@ -499,7 +500,12 @@ async function reportHealth(reference, coverage, files, format) {
     fallowArguments(reference, coverage, format),
     { stdio: ['ignore', 'inherit', 'inherit'] },
   )
-  return shownReport.code
+  // A shown run killed by a signal (code null), crashed, or with another verdict showed no report of the checked run.
+  if (shownReport.code !== checked.code)
+    throw new Error(
+      `Fallow's ${format} report ended with ${describeExit(shownReport.code, shownReport.signal)}; its checked JSON run ended with ${describeExit(checked.code, checked.signal)}.`,
+    )
+  return checked.code
 }
 
 /**

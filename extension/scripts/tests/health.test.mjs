@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { runPackageCommand } from '../utils/runPackageCommand.mjs'
 
@@ -622,6 +622,73 @@ test('names the first letter', () => {
     ),
     EMPTY_BASELINE,
   )
+})
+
+/**
+ * Writes a module for `NODE_OPTIONS=--import=…` that ends the Fallow run showing the human report at once, before Fallow reads anything; every other process it loads into (the build, the suite, the checked JSON run) goes on.
+ * @param fixture - The fixture of {@link createFixture}; the module goes beside its repository.
+ * @param ending - The module's last statement, such as `process.exit(3)`.
+ * @returns The `NODE_OPTIONS` value that loads the module.
+ * @example
+ * await endShownReportWith(fixture, "process.kill(process.pid, 'SIGKILL')") // => '--import=file:///tmp/codebook-health-fixture-x1/end-shown-report.mjs'
+ */
+async function endShownReportWith(fixture, ending) {
+  const path = join(dirname(fixture.repository), 'end-shown-report.mjs')
+  await writeFile(
+    path,
+    `const [, script, ...options] = process.argv
+if (/[\\\\/]fallow[\\\\/]bin[\\\\/]fallow$/.test(script ?? '') && options[options.indexOf('--format') + 1] === 'human') ${ending}
+`,
+  )
+  return `--import=${pathToFileURL(path).href}`
+}
+
+// Value: protects=a maintainer or CI job that reads the exit of `pnpm health` as its verdict; fails_when=the Fallow run that shows the human report is killed by a signal and the checker exits 0, a pass with no report and no checked verdict; why_new=OCR8-3; seam=a module in NODE_OPTIONS that kills that one Fallow run; no_claim=why a real Fallow run would be killed
+test(
+  'a human report that a signal ends refuses health instead of passing with no verdict',
+  {
+    skip:
+      process.platform === 'win32' &&
+      'Windows ends a killed process with an exit code, not a signal',
+  },
+  async (context) => {
+    // Arrange
+    const fixture = await createFixture(context)
+    const killing = await endShownReportWith(
+      fixture,
+      "process.kill(process.pid, 'SIGKILL')",
+    )
+
+    // Act
+    const result = await runChecker(fixture, [], { NODE_OPTIONS: killing })
+
+    // Assert: the checked JSON run passed, but the shown run gave no report, so there is no verdict.
+    assert.equal(result.code, 2, result.stderr)
+    assert.equal(
+      lineOf(result.stderr, 'Health refused:'),
+      "Health refused: Fallow's human report ended with signal SIGKILL; its checked JSON run ended with exit 0.",
+    )
+    assert.equal(result.stdout, '')
+    assert.deepEqual(await runDirectoriesIn(fixture.temporary), [])
+  },
+)
+
+// Value: protects=a maintainer or CI job that reads the exit of `pnpm health` as its verdict; fails_when=the Fallow run that shows the human report crashes with an exit code other than 0 or 1 and the checker passes that code on as if Fallow had given a verdict; why_new=OCR8-3; seam=a module in NODE_OPTIONS that ends that one Fallow run with exit 3; no_claim=which exit codes a real Fallow crash uses
+test('a human report that ends with an unexpected exit code refuses health instead of passing the code on', async (context) => {
+  // Arrange
+  const fixture = await createFixture(context)
+  const crashing = await endShownReportWith(fixture, 'process.exit(3)')
+
+  // Act
+  const result = await runChecker(fixture, [], { NODE_OPTIONS: crashing })
+
+  // Assert
+  assert.equal(result.code, 2, result.stderr)
+  assert.equal(
+    lineOf(result.stderr, 'Health refused:'),
+    "Health refused: Fallow's human report ended with exit 3; its checked JSON run ended with exit 0.",
+  )
+  assert.equal(result.stdout, '')
 })
 
 test('a setting changed after the baseline was taken refuses health', async (context) => {
