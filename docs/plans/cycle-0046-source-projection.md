@@ -1,6 +1,6 @@
 # Cycle 0046 — Preserve native source input across recorded stops
 
-Status: live552 bounded repair proved in both hosts; reviewed historical558 source draft implemented and controlled tests pass; corrected frozen reviews, clean installation and both-host native correction remain pending.
+Status: closed. Live defect 552 is proved in both hosts at its bounded level (C47), and historical defect 558 is implemented and natively verified in both hosts at bounded Ubuntu development level (C48); both rows are closed in the task table. The entries below record the plan and its intermediate states as they were written; their pending statements are history.
 Scope: live defect552 and historical defect558, with dependent original5 in the existing bug-fix cycle. No feature increment or acceptance waiver.
 
 ## Problem and evidence
