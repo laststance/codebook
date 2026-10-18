@@ -11,7 +11,7 @@ import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 import { windowsCommandLineArguments } from '../runtimeSupport/utils/windowsCommandLineArguments'
 
-/** The same per-input limit as the Wiki reader's synchronous-work regression. */
+/** How long the scan of the command with 40,000 possible terminators may take. On the development host (16 CPUs, Node 24.21.0; median of 20 runs in a worker, as the test runs it) the scan takes 2.5 ms, and 3.8 ms under c8; the scan that read every reading's growing prefix again, which row 1053 replaced, took 1,600 ms with or without c8. The bound is over 100 times the one and a quarter of the other, so a slower host or coverage does not reach it while that regression does on this host already. */
 const PROFILE_SCAN_BOUND_MS = 400
 /** A worker can be stopped even when a regressed parser blocks its own event loop. */
 const PROFILE_SCAN_DEADLINE_MS = 10_000
