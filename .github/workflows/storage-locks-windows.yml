@@ -120,6 +120,7 @@ on:
       - extension/src/utils/readLiveWikiUpdateMarker.ts
       - extension/src/utils/readProcessStart.ts
       - extension/src/utils/readRecordedOwner.ts
+      - extension/src/utils/readUpToLimit.ts
       - extension/src/utils/readWikiRegularFile.ts
       - extension/src/utils/recordedFileId.ts
       - extension/src/utils/refreshCursorMcpCatalog.ts
