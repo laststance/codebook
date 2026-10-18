@@ -4798,7 +4798,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says, when a presentation change is admitted and before any of its effects, whether the learner is known to type where the keyboard is: the Study pane's own report, or a fresh sign of the learner's hand in the active text editor ({@link knowsLearnersPlace}); asked by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement} for {@link endReadForAdmission}.
+   * Says, when a presentation change is admitted and before any of its effects, whether the learner is known to type where the keyboard is: the Study pane's own report, or a fresh sign of the learner's hand in the active text editor ({@link knowsLearnersPlace}); asked by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement} for {@link endReadForAdmission}, and by {@link performPresentation} for an agent's selection (row 613).
    * @returns `true` for such a report or sign; `false` otherwise, also for the Application pane, whose page sends no report.
    * @example this.knowsKeyboardPlaceAtAdmission() // => true while the Study pane reports its keyboard
    */
@@ -5044,9 +5044,7 @@ export class StudyWorkspace {
     const agentSelection =
       requester === 'agent'
         ? {
-            knowsLearnersPlace: this.knowsLearnersPlace(
-              [this.app, this.contextPanel].find((panel) => panel?.active),
-            ),
+            knowsLearnersPlace: this.knowsKeyboardPlaceAtAdmission(),
             returnsToForeignTab: returnForeignFocus !== undefined,
           }
         : undefined
