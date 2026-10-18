@@ -2,6 +2,7 @@ import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
 
 import {
   HTML_PARSER_ABSENT_END_STATE_NAMES,
+  HTML_PARSER_HIDDEN_INPUT_TABLE_MODES,
   HTML_PARSER_IN_BODY_MODE,
   HTML_PARSER_IN_ROW_MODE,
   HTML_PARSER_IN_SELECT_MODE,
@@ -166,7 +167,7 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
 
 /**
  * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlStartTags} for each page.
- * Its adapters use current select rules and require a matching table section before closing a row. Other tree construction stays with the pinned parser.
+ * Its adapters use current select rules (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule) and require a matching table section before closing a row. Other tree construction stays with the pinned parser.
  * @example new HtmlPageReader('<p>text</p>').tokenizer.write('<p>text</p>', true)
  */
 class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
@@ -207,6 +208,13 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       this.closeSelect()
       return
     }
+    // The body rule for input closes an open select first; a hidden input that a table rule takes leaves it open.
+    if (
+      token.tagID === htmlTree.TAG_ID.INPUT &&
+      this.hasOpenSelect() &&
+      !this.isHiddenInputOfTableRule(token)
+    )
+      this.closeSelect()
     super._startTagOutsideForeignContent(token)
     this.useCurrentSelectMode()
   }
@@ -225,17 +233,45 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       return
     }
     super._endTagOutsideForeignContent(token)
-    this.useCurrentSelectMode()
   }
 
   /**
-   * Keeps current select behavior after a table or another element resets insertion mode.
-   * @returns Nothing; all modes other than the two old select modes stay unchanged.
-   * @example reader._resetInsertionMode() // restores normal child parsing inside select
+   * Continues the insertion-mode reset below an open select, as current HTML has no select modes; the pinned reset calls this when it meets a select.
+   * @param selectIndex - Where the reset met the select on the stack of open elements.
+   * @returns Nothing; the mode is the one the elements below every open select give.
+   * @example reader._resetInsertionModeForSelect(3) // IN_CELL for a select in a table cell
    */
-  override _resetInsertionMode(): void {
-    super._resetInsertionMode()
-    this.useCurrentSelectMode()
+  override _resetInsertionModeForSelect(selectIndex: number): void {
+    const { tagIDs } = this.openElements
+    const hiddenSelects: number[] = []
+    // The pinned reset skips an unknown element, so each select below the one it met is read as one for this pass.
+    for (let index = selectIndex; index >= 0; index -= 1) {
+      if (tagIDs[index] !== htmlTree.TAG_ID.SELECT) continue
+      hiddenSelects.push(index)
+      tagIDs[index] = htmlTree.TAG_ID.UNKNOWN
+    }
+    try {
+      super._resetInsertionMode()
+    } finally {
+      for (const index of hiddenSelects) tagIDs[index] = htmlTree.TAG_ID.SELECT
+    }
+  }
+
+  /**
+   * Tells whether an input is hidden and comes in a mode where the table rule takes it without the body rule, so an open select stays open; called by {@link HtmlPageReader._startTagOutsideForeignContent}.
+   * @param token - An input start token.
+   * @returns Whether the input's `type` is `hidden` (ASCII case-insensitive) in a table, table-body or row mode.
+   * @example reader.isHiddenInputOfTableRule(hiddenInputToken) // true in a table, false in a cell
+   */
+  private isHiddenInputOfTableRule(token: Parse5.Token.TagToken): boolean {
+    return (
+      HTML_PARSER_HIDDEN_INPUT_TABLE_MODES.has(this.insertionMode) &&
+      token.attrs.some(
+        (attribute) =>
+          attribute.name === 'type' &&
+          asciiLowerCase(attribute.value) === 'hidden',
+      )
+    )
   }
 
   /**
@@ -281,8 +317,8 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Replaces only the pinned parser's old select modes; raw text and other modes keep their meaning.
-   * @returns Nothing; current select children use the in-body rules.
+   * Replaces the old select mode the pinned parser enters at a select start with the mode the elements below the select give; raw text and other modes keep their meaning.
+   * @returns Nothing; a select in a table cell leaves the cell mode, in body the body mode.
    * @example reader.useCurrentSelectMode() // leaves TEXT unchanged
    */
   private useCurrentSelectMode(): void {
@@ -290,7 +326,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       this.insertionMode === HTML_PARSER_IN_SELECT_MODE ||
       this.insertionMode === HTML_PARSER_IN_SELECT_IN_TABLE_MODE
     )
-      this.insertionMode = HTML_PARSER_IN_BODY_MODE
+      this._resetInsertionMode()
   }
 
   /**

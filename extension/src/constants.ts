@@ -1230,9 +1230,17 @@ export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
 
 /** Insertion mode identifiers of pinned parse5 8.0.1; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
 export const HTML_PARSER_IN_BODY_MODE = 6
+export const HTML_PARSER_IN_TABLE_MODE = 8
+export const HTML_PARSER_IN_TABLE_BODY_MODE = 12
 export const HTML_PARSER_IN_ROW_MODE = 13
 export const HTML_PARSER_IN_SELECT_MODE = 15
 export const HTML_PARSER_IN_SELECT_IN_TABLE_MODE = 16
+/** Insertion modes in which a hidden input takes the table rule, which leaves an open select open, instead of the body rule, which closes it; used by {@link readHtmlStartTags}. */
+export const HTML_PARSER_HIDDEN_INPUT_TABLE_MODES = new Set([
+  HTML_PARSER_IN_TABLE_MODE,
+  HTML_PARSER_IN_TABLE_BODY_MODE,
+  HTML_PARSER_IN_ROW_MODE,
+])
 /** Table-section ends for which {@link readHtmlStartTags} checks both the section and the row scope before the pinned parser can close either. */
 export const HTML_PARSER_TABLE_SECTION_NAMES = new Set([
   'tbody',

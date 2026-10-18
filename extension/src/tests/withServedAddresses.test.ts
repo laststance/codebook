@@ -78,7 +78,7 @@ for (const [name, page] of Object.entries(workerData.pages)) {
   return times
 }
 
-// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size; why_new=W1 and row1044 plus row1058's observed non-top insertion callback; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size; why_new=W1 and row1044 plus row1058's observed non-top insertion callback, and a closed camelCase svg name (clipPath) whose end the open-name index must lower; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker)
 test('the reader filters a page of more than 1 MB built to make a reading from every < slow within four times the time of an ordinary page of that size', async () => {
   // Arrange: large values and links, SVG markup, and absent or already closed names after deep foreign nesting.
   const pages = {
@@ -118,6 +118,11 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
       '<g>'.repeat(20_000) +
       '</span>'.repeat(20_000)
     ).padEnd(1_000_001, ' '),
+    closedCamelCaseForeignName: (
+      '<svg><clipPath></clipPath>' +
+      '<g>'.repeat(20_000) +
+      '</clippath>'.repeat(20_000)
+    ).padEnd(1_000_001, ' '),
   }
 
   // Act
@@ -130,7 +135,7 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the ordinary page's time.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
-    [true, true, true, true, true, true, true, true, true, true],
+    [true, true, true, true, true, true, true, true, true, true, true],
   )
   const ordinary = times.ordinary
   if (typeof ordinary !== 'number')
@@ -332,6 +337,29 @@ test('an ignored outer SVG end does not hide a link after an HTML child closes',
   )
 })
 
+// Value: protects=a served page's editor link after an svg element closes while another of its name stays open; fails_when=the reader's count of open names drops a name when one of two elements of that name closes, so a later end of that name is skipped and a live link in svg is served as written, or style text is renamed; why_new=the timing pages repeat names but compare times only, and no reader test closes one of two same-named svg elements; seam=none; no_claim=native editor or visual acceptance (Chrome 151's DOMParser fixed the expected pages)
+test('an end tag still closes an svg element after an inner one of the same name closed, so the link after it is judged where a browser reads it', () => {
+  // Arrange: the second </g> closes the outer g, so its style is svg markup; the second </svg> closes the outer svg, so its style holds text.
+  const outerGroupEnd =
+    '<svg><g><g></g><foreignObject></g><style><a href="vscode://file/etc/hosts">hosts</a></style>'
+  const outerSvgEnd =
+    '<svg><svg></svg><g></svg><style><a href="vscode://file/example">marker</a></style>'
+
+  // Act
+  const servedAfterGroup = withServedAddresses(outerGroupEnd, 'vscode')
+  const servedAfterSvg = withServedAddresses(outerSvgEnd, 'vscode')
+
+  // Assert
+  assert.equal(
+    servedAfterGroup,
+    '<svg><g><g></g><foreignObject></g><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+  )
+  assert.equal(
+    servedAfterSvg,
+    '<svg><svg></svg><g></svg><style><a href="vscode://file/example">marker</a></style>',
+  )
+})
+
 // Value: protects=served Wiki links after HTML tree recovery; fails_when=full tree construction retains the marker across implicit and non-top closes is lost; why_new=row1058 browser comparisons; seam=none; no_claim=native or visual acceptance
 test('HTML form, button, heading, table and formatting rules keep later foreign links visible', () => {
   // Arrange: each expected result is fixed by the inert-browser comparison.
@@ -367,9 +395,9 @@ test('HTML form, button, heading, table and formatting rules keep later foreign 
     assert.equal(withServedAddresses(page, 'vscode'), expected, page)
 })
 
-// Value: protects=served Wiki links after HTML tree recovery; fails_when=select compatibility stays in HTML dispatch and survives insertion-mode resets is lost; why_new=row1058 browser comparisons; seam=none; no_claim=native or visual acceptance
+// Value: protects=served Wiki links after HTML tree recovery; fails_when=select compatibility stays in HTML dispatch and survives insertion-mode resets is lost, or a nested select or a select end no longer closes the open select, or an outer select past the cell counts as open; why_new=row1058 browser comparisons; the last four rows came from the /ship coverage audit, where each kept the reader green while one select adapter was removed; seam=none; no_claim=native or visual acceptance
 test('current select rules keep foreign elements, end tags, table resets and templates', () => {
-  // Arrange: each expected result is fixed by the inert-browser comparison.
+  // Arrange: each expected result is fixed by the inert-browser comparison; the last six by Chrome 151's DOMParser.
   const cases: readonly [string, string][] = [
     [
       '<select><svg><style><p><a href="vscode://file/example">marker</a></p></style></svg></select>',
@@ -395,11 +423,115 @@ test('current select rules keep foreign elements, end tags, table resets and tem
       '<select><template><svg><style><p><a href="vscode://file/example">marker</a></p></style></svg></template></select>',
       '<select><template><svg><style><p><a data-codebook-unlinked="vscode://file/example">marker</a></p></style></svg></template></select>',
     ],
+    // A nested select closes the select of its cell, so the later section end closes the svg and the style holds text.
+    [
+      '<table><tr><td><select><select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+      '<table><tr><td><select><select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+    ],
+    // A closed select gives its cell back the table's rules, so the section end closes the svg.
+    [
+      '<table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+      '<table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+    ],
+    // The outer select is outside the cell's scope, so the inner select closes alone.
+    [
+      '<select><table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+      '<select><table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+    ],
+    // After a select inside foreignObject closes, the outer select's children are read as in body, so a later svg is foreign.
+    [
+      '<select><svg><foreignObject><select></select><svg><style><a href="vscode://file/example">marker</a></style>',
+      '<select><svg><foreignObject><select></select><svg><style><a data-codebook-unlinked="vscode://file/example">marker</a></style>',
+    ],
+    // A nested select closes the open one and is ignored, so the select end finds no select and the svg keeps a live link.
+    [
+      '<select><select><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+      '<select><select><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    ],
+    // A select end closes the select with the svg inside it, so the style holds text.
+    [
+      '<select><div><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+      '<select><div><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    ],
   ]
 
   // Act / Assert
   for (const [page, expected] of cases)
     assert.equal(withServedAddresses(page, 'vscode'), expected, page)
+})
+
+// Value: protects=the learner against an editor link after a select that Chromium closes at a table row, a new cell or an input; fails_when=the reader keeps the select open in body rules, so its end closes the svg and a live `vscode://file` link in svg's style is served as written; why_new=the /ship coverage audit found the three pages; the select table covers a select's own children, not the tokens that close it; seam=none; no_claim=native editor or visual acceptance (Chrome 151's DOMParser fixed the expected pages)
+test('an editor link after a select that a table row, a new cell or an input closes loses its link where Chromium reads it', () => {
+  // Arrange: in each page Chromium closes the select first, so </select> is ignored and the style stays svg markup with a live link.
+  const pages = [
+    '<table><select><tr><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><td><select><td><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<select><input><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select><td><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select></table><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><td><select></td><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><colgroup><select><tr><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<table><select><tr><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><td><select><td><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<select><input><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select><td><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select></table><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><td><select></td><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><colgroup><select><tr><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+  ])
+})
+
+// Value: protects=the learner against an editor link after a select that a hidden input closes only where Chromium's body rule takes the input; fails_when=every input closes an open select, so a hidden input in a table makes its style svg markup and renames text, or no input does, so a hidden input in a caption leaves a live `vscode://file` link served; why_new=row 1064, Chrome 151 DOMParser on the same pages; seam=none; no_claim=native editor (browser result from headless Chromium's DOMParser)
+test('a hidden input closes an open select in a table caption but not in the table itself, as Chromium reads them', () => {
+  // Arrange: in a table the table rule takes a hidden input and leaves the select open; in a caption the body rule closes the select.
+  const inTable =
+    '<table><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>'
+  const inCaption =
+    '<table><caption><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>'
+
+  // Act
+  const servedInTable = withServedAddresses(inTable, 'vscode')
+  const servedInCaption = withServedAddresses(inCaption, 'vscode')
+
+  // Assert: the table's select end closes the svg, so its anchor is style text; the caption's svg stays open with a live link.
+  assert.equal(
+    servedInTable,
+    '<table><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  )
+  assert.equal(
+    servedInCaption,
+    '<table><caption><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+  )
+})
+
+// Value: protects=a live editor link after a noscript that a browser with scripting reads as raw text; fails_when=the parser runs with scripting disabled, so the noscript's style swallows the link and it is served live, or the noscript's own text is renamed; why_new=no reader test wrote noscript (/ship coverage audit); seam=none; no_claim=native editor (Chrome 151 iframe srcdoc with scripting gave the result)
+test('a link after a noscript is judged as a browser with scripting reads it, and a link inside the noscript text is served as written', () => {
+  // Arrange: with scripting a noscript holds raw text up to its end tag.
+  const afterNoscript =
+    '<noscript><style></noscript><a href="vscode://file/etc/hosts">x</a>'
+  const insideNoscript =
+    '<noscript><a href="vscode://file/example">x</a></noscript>'
+
+  // Act
+  const servedAfter = withServedAddresses(afterNoscript, 'vscode')
+  const servedInside = withServedAddresses(insideNoscript, 'vscode')
+
+  // Assert
+  assert.equal(
+    servedAfter,
+    '<noscript><style></noscript><a data-codebook-unlinked="vscode://file/etc/hosts">x</a>',
+  )
+  assert.equal(
+    servedInside,
+    '<noscript><a href="vscode://file/example">x</a></noscript>',
+  )
 })
 
 // Value: protects=literal text after a heading-family end from foreign content; fails_when=the no-match shortcut discards an h2 end while h1 is open; why_new=row1058 browser capture054; seam=none
@@ -418,17 +550,24 @@ test('a heading-family end from a foreign child restores HTML style text', () =>
   )
 })
 
-// Value: protects=active Wiki links after an unmatched table-section end; fails_when=the parser closes a row because tr alone is in scope; why_new=row1058 inert Chromium captures055/056; seam=none; no_claim=native editor or visual acceptance
+// Value: protects=active Wiki links after an unmatched table-section end; fails_when=the parser closes a row because tr alone is in scope, or the row's guard also refuses a matching section that has no row; why_new=row1058 inert Chromium captures055/056; the section without a row came from the /ship coverage audit, where the reader stayed green with the guard in every insertion mode; seam=none; no_claim=native editor or visual acceptance
 test('an absent table section cannot hide a foreign link while a matching section restores style text', () => {
   // Arrange: the implicit section is tbody; thead is absent.
   const unmatched =
     '<table><tr><svg><g></thead><style><a href="vscode://file/example">marker</a></style>'
   const matched =
     '<table><tr><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>'
+  // A thead written without a row: its end closes it although no tr is open (Chrome 151's DOMParser).
+  const matchedWithoutRow =
+    '<table><thead><svg><g></thead><style><a href="vscode://file/example">marker</a></style>'
 
   // Act
   const unmatchedResult = withServedAddresses(unmatched, 'vscode')
   const matchedResult = withServedAddresses(matched, 'vscode')
+  const matchedWithoutRowResult = withServedAddresses(
+    matchedWithoutRow,
+    'vscode',
+  )
 
   // Assert: only the unmatched end leaves an active SVG anchor to filter.
   assert.equal(
@@ -438,6 +577,10 @@ test('an absent table section cannot hide a foreign link while a matching sectio
   assert.equal(
     matchedResult,
     '<table><tr><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+  )
+  assert.equal(
+    matchedWithoutRowResult,
+    '<table><thead><svg><g></thead><style><a href="vscode://file/example">marker</a></style>',
   )
 })
 
@@ -679,6 +822,24 @@ test('an attribute after a slash right after the tag’s name is judged', () => 
     served,
     '<a/data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
   )
+})
+
+// Value: protects=the learner against a link whose href follows an attribute name that starts with `=`, which a browser reads as the name's first character; fails_when=the reader scans a name from its first character, so `=` ends an empty name, `href=…` is read as its value and the live `vscode://file` link is served, or text in a value is renamed; why_new=the /ship coverage audit: no test writes `=` first in a name; seam=none; no_claim=native editor or visual acceptance (Chrome 151's DOMParser fixed the expected pages)
+test('an href after an attribute name that starts with = is judged, and an href inside the value of a name = is served as written', () => {
+  // Arrange: a browser reads `=` as a name of its own before ` href`, and `==` as the name `=` whose value is `href="…"`.
+  const pages = [
+    '<a = href="vscode://file/etc/hosts">hosts</a>',
+    '<a == href="vscode://file/etc/hosts">hosts</a>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<a = data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+    '<a == href="vscode://file/etc/hosts">hosts</a>',
+  ])
 })
 
 // Value: protects=the served page's text and the reader's answer to a page whose tag holds what looks like another tag's start, or a number past the last code point; fails_when=the filter reads a tag again from a `<` inside it and renames one name twice, which garbles the page, or it reads `&#1114112;` as a character and throws, so the reader answers the page with a 500; why_new=Cycle 0046 /ship third testing review TT26; seam=none, the served page is compared as text
