@@ -433,7 +433,6 @@ test('a link at a folder on the Wiki folder’s path in the project refuses the 
   }
 })
 
-// Value: protects=the learner who set the Wiki output to a folder outside the project and reaches it through a link of their own; fails_when=the start check refuses every link on the Wiki folder's path, also outside the project, so a configured outside output can no longer be updated; why_new=Cycle 0046 /ship finding F1: only the part of the path inside the project is held to folders of its own; seam=none (a junction on Windows)
 // Value: protects=the learner on Windows whose repository carries `.codebook` as a junction to a volume, which the file system layer of Node.js calls a directory; fails_when=the start check's walk trusts lstat and no longer compares the folder's real path with the project, so it asks an agent whose publisher would write beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of F1's walk had no test); seam=a file system whose lstat calls a link a directory
 test('a folder on the Wiki folder’s path in the project that lstat calls a directory although its real path leaves the project refuses the update at its start and is named', async () => {
   // Arrange: the published Wiki's `.codebook` folder is moved out of the project and a link to it stands in its place, on a file system whose look is wrong about links.
@@ -517,6 +516,7 @@ for (const code of ['EACCES', 'EINVAL'] as const)
     }
   })
 
+// Value: protects=the learner who set the Wiki output to a folder outside the project and reaches it through a link of their own; fails_when=the start check refuses every link on the Wiki folder's path, also outside the project, so a configured outside output can no longer be updated; why_new=Cycle 0046 /ship finding F1: only the part of the path inside the project is held to folders of its own; seam=none (a junction on Windows)
 test('an output outside the project reached through a link outside it does not block the start', async () => {
   // Arrange
   const directory = await realpath(
