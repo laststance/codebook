@@ -79,6 +79,16 @@ export interface RepositoryLayoutFocus {
  */
 export type RepositoryKeyboardReturn = () => Promise<boolean>
 
+/** How {@link RepositoryReader.open} enters an article; each field is `false` when omitted. */
+type RepositoryOpenOptions = {
+  /** Restore the actual Study Return's saved native arrangement. */
+  restoreReadingLayout?: boolean
+  /** Existing-Wiki agent reads and external Return commands keep native input; cold entry still activates its reader. */
+  preserveNativeInput?: boolean
+  /** `true` for codebook_open_book ({@link RepositoryReader.openFromAgent}): a cold entry shows the cited source and the Wiki without the keyboard, which stays where the learner had it (the chat view's input in VS Code); a keyboard its layout's measurement borrowed goes back through the arrangement's {@link RepositoryKeyboardReturn} (Cursor's chat tab), or to the Wiki with a notice told once (row 620). An external Return command's cold entry still activates the Wiki. */
+  forAgent?: boolean
+}
+
 /** The keyboard sentences of an agent's Wiki entry that {@link RepositoryReader} told in this editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE}): kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells none of them a second time. */
 const toldAgentWikiKeyboardSentences = new Set<string>()
 
@@ -267,17 +277,20 @@ export class RepositoryReader {
 
   /**
    * Opens an exact article; {@link openFromAgent} keeps existing native input while learner navigation activates the Wiki.
-   * @param restoreReadingLayout - Restore the actual Study Return's saved native arrangement.
-   * @param preserveNativeInput - Existing-Wiki agent reads and external Return commands keep native input; cold entry still activates its reader.
-   * @param forAgent - `true` for codebook_open_book ({@link openFromAgent}): a cold entry shows the cited source and the Wiki without the keyboard, which stays where the learner had it (the chat view's input in VS Code); a keyboard its layout's measurement borrowed goes back through the arrangement's {@link RepositoryKeyboardReturn} (Cursor's chat tab), or to the Wiki with a notice told once (row 620). An external Return command's cold entry still activates the Wiki.
+   * @param input - The article to open; the learner's saved selection, the current one or the library's first article when omitted.
+   * @param signal - Cancels this navigation.
+   * @param options - How the article is entered ({@link RepositoryOpenOptions}); a plain learner navigation when omitted.
    * @example await reader.open(selection)
+   * @example await reader.open(selection, undefined, { restoreReadingLayout: true, preserveNativeInput: true })
    */
   async open(
     input?: RepositorySelection,
     signal?: AbortSignal,
-    restoreReadingLayout = false,
-    preserveNativeInput = false,
-    forAgent = false,
+    {
+      restoreReadingLayout = false,
+      preserveNativeInput = false,
+      forAgent = false,
+    }: RepositoryOpenOptions = {},
   ): Promise<void> {
     signal?.throwIfAborted()
     this.navigation.abort()
@@ -805,9 +818,7 @@ export class RepositoryReader {
         anchorIndex: input.anchorIndex ?? 0,
       },
       signal,
-      false,
-      true,
-      true,
+      { preserveNativeInput: true, forAgent: true },
     )
     signal?.throwIfAborted()
     if (
@@ -1679,7 +1690,7 @@ export class RepositoryReader {
     const selection = this.deferredReturn
     if (!selection || !this.hasActiveWikiFocus()) return
     initialFocus?.dispose()
-    await this.open(selection, signal, true)
+    await this.open(selection, signal, { restoreReadingLayout: true })
   }
 
   /**

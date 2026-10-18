@@ -7572,7 +7572,10 @@ export async function articleRecordingLayoutHarness(
         selection: RepositorySelection,
         preserveNativeInput?: boolean,
       ): Promise<void> =>
-        wiki.open(selection, undefined, true, preserveNativeInput)
+        wiki.open(selection, undefined, {
+          restoreReadingLayout: true,
+          preserveNativeInput,
+        })
       return wiki
     }
     return {

@@ -373,7 +373,10 @@ export function activate(
       {
         connect,
         returnToRepository: (selection, preserveNativeInput) =>
-          repository().open(selection, undefined, true, preserveNativeInput),
+          repository().open(selection, undefined, {
+            restoreReadingLayout: true,
+            preserveNativeInput,
+          }),
         openArticle: (selection) => repository().open(selection),
         repositoryWikiOpen: () => Boolean(repositoryReader?.panelOpen()),
         repositoryWikiActive: () => Boolean(repositoryReader?.panelActive()),

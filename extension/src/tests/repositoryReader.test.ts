@@ -2312,7 +2312,10 @@ for (const input of ['chat', 'file'] as const)
       }
 
     // Act
-    await harness.reader.open(selection, undefined, true, true)
+    await harness.reader.open(selection, undefined, {
+      restoreReadingLayout: true,
+      preserveNativeInput: true,
+    })
 
     // Assert
     assert.equal(harness.focusedSource(), originalInput)
@@ -2360,7 +2363,10 @@ test('selecting Wiki during a Return freshness check completes that Return witho
       return inspect(...args)
     },
   )
-  const opening = harness.reader.open(harness.selection, undefined, true, true)
+  const opening = harness.reader.open(harness.selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   try {
     await started
 
@@ -2400,8 +2406,7 @@ test('a palette Return to Wiki from the Study pane does not restore the article 
         location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
       },
       undefined,
-      true,
-      true,
+      { restoreReadingLayout: true, preserveNativeInput: true },
     )
     .then(
       () => 'answered',
@@ -2444,7 +2449,10 @@ test('a palette Return to Wiki from the Study pane does not restore the article 
     nodeId: 'order',
     location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
   }
-  await harness.reader.open(selection, undefined, true, true)
+  await harness.reader.open(selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   const arrangementsBefore = harness.arrangements(),
     shownBefore = harness.shown.length
 
@@ -2477,7 +2485,10 @@ test('a palette Return to Wiki from the Study pane restores the article layout w
     nodeId: 'order',
     location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
   }
-  await harness.reader.open(selection, undefined, true, true)
+  await harness.reader.open(selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   const arrangementsBefore = harness.arrangements()
 
   // Act: the learner clicks the Wiki's tab.
@@ -2514,8 +2525,7 @@ test('a palette Return to Wiki is dropped once the learner moves to a file, so a
       location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
     },
     undefined,
-    true,
-    true,
+    { restoreReadingLayout: true, preserveNativeInput: true },
   )
   const arrangementsBefore = harness.arrangements(),
     shownBefore = harness.shown.length
@@ -2551,7 +2561,10 @@ test('a palette Return to Wiki survives a tab-group event that leaves the focus 
     nodeId: 'order',
     location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
   }
-  await harness.reader.open(selection, undefined, true, true)
+  await harness.reader.open(selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   const arrangementsBefore = harness.arrangements()
 
   // Act: the editor reports a tab-group event that names the same group; then the learner clicks the Wiki.
@@ -2614,8 +2627,7 @@ for (const refusal of ['unreadable source', 'learner click'] as const)
           location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
         },
         undefined,
-        true,
-        true,
+        { restoreReadingLayout: true, preserveNativeInput: true },
       )
       .then(
         () => 'answered',
@@ -2656,7 +2668,10 @@ test('a palette Return to Wiki completes at the learner’s click on the Wiki al
     nodeId: 'order',
     location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
   }
-  await harness.reader.open(selection, undefined, true, true)
+  await harness.reader.open(selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   const arrangementsBefore = harness.arrangements()
 
   // Act: the learner clicks the Wiki; the editor reports the lost text editor first, then the Wiki's group.
@@ -2696,7 +2711,10 @@ test('a palette Return to Wiki completes at the learner’s click on the Wiki al
     nodeId: 'order',
     location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
   }
-  await harness.reader.open(selection, undefined, true, true)
+  await harness.reader.open(selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   const arrangementsBefore = harness.arrangements()
 
   // Act: the learner clicks the Wiki's tab; the editor names its group first, with the Study's tab still in front, then brings the Wiki's tab to the front.
@@ -2733,7 +2751,10 @@ test('a palette Return to Wiki made while the learner types in a file in front o
     nodeId: 'order',
     location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
   }
-  await harness.reader.open(selection, undefined, true, true)
+  await harness.reader.open(selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
   const arrangementsBefore = harness.arrangements()
 
   // Act: the learner types on, which turns the file's tab dirty; then the learner clicks the Wiki's tab.
@@ -2780,8 +2801,7 @@ for (const move of [
         location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
       },
       undefined,
-      true,
-      true,
+      { restoreReadingLayout: true, preserveNativeInput: true },
     )
     const arrangementsBefore = harness.arrangements(),
       shownBefore = harness.shown.length
@@ -2825,9 +2845,7 @@ test('an agent’s read refused for the learner’s newer input during its load 
         location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
       },
       undefined,
-      false,
-      true,
-      true,
+      { preserveNativeInput: true, forAgent: true },
     )
     .then(
       () => 'answered',
@@ -2862,7 +2880,10 @@ test('a newer article retires an unvisited Return so later Wiki focus cannot res
   const harness = await readerHarness(context)
   await harness.reader.open(harness.selection)
   harness.focusUnrelatedDraft()
-  await harness.reader.open(harness.selection, undefined, true, true)
+  await harness.reader.open(harness.selection, undefined, {
+    restoreReadingLayout: true,
+    preserveNativeInput: true,
+  })
 
   // Act
   await harness.reader.openFromAgent({
@@ -3539,12 +3560,10 @@ for (const entry of ['ordinary open', 'Return without an open Wiki'] as const)
     const harness = await readerHarness(context)
     harness.requireSourceFocus()
     // Act
-    await harness.reader.open(
-      harness.selection,
-      undefined,
-      entry !== 'ordinary open',
-      entry !== 'ordinary open',
-    )
+    await harness.reader.open(harness.selection, undefined, {
+      restoreReadingLayout: entry !== 'ordinary open',
+      preserveNativeInput: entry !== 'ordinary open',
+    })
     // Assert
     assert.deepEqual(harness.panelColumns, [2])
     assert.deepEqual(harness.reveals, [2])
@@ -4083,11 +4102,9 @@ for (const entry of ['cold article', 'hidden Study Return'] as const)
     }
     const revealsBefore = harness.revealFocus.length,
       renderer = harness.holdRenderer(),
-      opening = harness.reader.open(
-        harness.selection,
-        undefined,
-        entry === 'hidden Study Return',
-      )
+      opening = harness.reader.open(harness.selection, undefined, {
+        restoreReadingLayout: entry === 'hidden Study Return',
+      })
     try {
       await renderer.started
       await waitUntil(
@@ -4174,7 +4191,10 @@ test('an external Return preserves native chat input and completes while the hid
     renderer = harness.holdRenderer()
   try {
     // Act
-    await harness.reader.open(harness.selection, undefined, true, true)
+    await harness.reader.open(harness.selection, undefined, {
+      restoreReadingLayout: true,
+      preserveNativeInput: true,
+    })
 
     // Assert
     assert.deepEqual(harness.revealFocus.slice(revealsBefore), [])
@@ -4196,7 +4216,9 @@ for (const recording of [false, true])
     harness.useNativeWikiSelection(recording)
     const revealsBefore = harness.revealFocus.length,
       renderer = harness.holdRenderer(),
-      opening = harness.reader.open(harness.selection, undefined, true),
+      opening = harness.reader.open(harness.selection, undefined, {
+        restoreReadingLayout: true,
+      }),
       result = opening.then(
         () => ({ opened: true, error: '' }),
         (error: unknown) => ({ opened: false, error: String(error) }),
@@ -4231,7 +4253,9 @@ test('a quiet Wiki selection cannot retire a text editor selected in another gro
 
   // Act / Assert
   await assert.rejects(
-    harness.reader.open(harness.selection, undefined, true),
+    harness.reader.open(harness.selection, undefined, {
+      restoreReadingLayout: true,
+    }),
     /Native focus changed/,
   )
   assert.equal(harness.focusListenerCount(), 0)
@@ -4249,7 +4273,9 @@ for (const recording of [false, true])
       harness.useNativeWikiSelection(recording)
       const revealsBefore = harness.revealFocus.length,
         renderer = harness.holdRenderer(),
-        opening = harness.reader.open(harness.selection, undefined, true),
+        opening = harness.reader.open(harness.selection, undefined, {
+          restoreReadingLayout: true,
+        }),
         failed = assert.rejects(opening, /Native focus changed/)
       try {
         await renderer.started
