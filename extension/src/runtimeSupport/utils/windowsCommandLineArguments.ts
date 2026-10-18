@@ -1,4 +1,4 @@
-/** Says whether a character separates two arguments after the program name outside quotes: a space or a tab. @example isArgumentSeparator('\t') // => true */
+/** Says whether a character ends an unquoted program name, or separates two arguments after it outside quotes: a space or a tab, and no other white space. @example isArgumentSeparator('\t') // => true */
 function isArgumentSeparator(character: string | undefined): boolean {
   return character === ' ' || character === '\t'
 }
@@ -12,7 +12,7 @@ function afterSeparators(commandLine: string, start: number): number {
 
 /**
  * Reads the program name, the first argument of a Windows command line, by `CommandLineToArgvW`'s own rule for it; called by {@link windowsCommandLineArguments}.
- * A name that begins with a quote ends at the next quote, whatever follows it (`"C:\P F\chrome.exe"--flag` is the program and `--flag`); any other name ends at the first white space, a line break among it. A backslash or a quote inside an unquoted name is a character of it, and a leading space gives an empty name.
+ * A name that begins with a quote ends at the next quote, whatever follows it (`"C:\P F\chrome.exe"--flag` is the program and `--flag`); any other name ends at the first space or tab ({@link isArgumentSeparator}), and other white space, a line break among it, is a character of it. A backslash or a quote inside an unquoted name is a character of it, and a leading space gives an empty name.
  * @param commandLine - The whole command line.
  * @returns The program name and the position after it.
  * @example
@@ -29,8 +29,9 @@ function programNameAt(commandLine: string): {
       ? { argument: commandLine.slice(1), end: commandLine.length }
       : { argument: commandLine.slice(1, closing), end: closing + 1 }
   }
-  const whiteSpace = commandLine.search(/\s/)
-  const end = whiteSpace === -1 ? commandLine.length : whiteSpace
+  // Wine's CommandLineToArgvW ends an unquoted name at a space or a tab only.
+  const separator = commandLine.search(/[ \t]/)
+  const end = separator === -1 ? commandLine.length : separator
   return { argument: commandLine.slice(0, end), end }
 }
 

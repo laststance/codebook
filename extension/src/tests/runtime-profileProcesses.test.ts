@@ -87,7 +87,7 @@ test('on Windows a profile whose path holds a space is matched in both quoted fo
   )
 })
 
-// Value: protects=the arguments a Windows command line holds as Chrome receives them, by which a profile is matched on Windows: Chrome reads its command line with CommandLineToArgvW, whose program name ends at its closing quote or at the first white space, and whose quoted parts, runs of quotes and backslashes before quotes follow its own rules (the inputs of the /ship adversarial review's probe, AD14); a backslash elsewhere stays a character of a path; fails_when=the splitter follows the C runtime's rules where they differ, so `"C:\P F\chrome.exe"--user-data-dir=X` hides the switch inside the program name, a doubled or tripled quote joins two arguments, or a path loses a backslash (CX2; AD14, /ship adversarial review Step 11); why_new=the splitter followed the C runtime; seam=none (expected values checked against the reviewer's port of Wine's CommandLineToArgvW)
+// Value: protects=the arguments a Windows command line holds as Chrome receives them, by which a profile is matched on Windows: Chrome reads its command line with CommandLineToArgvW, whose program name ends at its closing quote or at the first space or tab (a line break is a character of it), and whose quoted parts, runs of quotes and backslashes before quotes follow its own rules (the inputs of the /ship adversarial review's probe, AD14); a backslash elsewhere stays a character of a path; fails_when=the splitter follows the C runtime's rules where they differ, so `"C:\P F\chrome.exe"--user-data-dir=X` hides the switch inside the program name, a doubled or tripled quote joins two arguments, a path loses a backslash, or an unquoted program name ends at a line break, which Wine's loop does not end it at (CX2; AD14, /ship adversarial review Step 11; R15, the third OCR review); why_new=the splitter followed the C runtime; seam=none (expected values checked against the reviewer's port of Wine's CommandLineToArgvW)
 test('a Windows command line splits into the arguments Chrome receives, as CommandLineToArgvW splits it', () => {
   // Arrange
   const commandLines = {
@@ -159,8 +159,7 @@ test('a Windows command line splits into the arguments Chrome receives, as Comma
       '--user-data-dir=C:\\T\\codebook-browser-1',
     ],
     lineBreakInTheProgramName: [
-      'chrome',
-      '\n.exe',
+      'chrome\n.exe',
       '--user-data-dir=C:\\T\\codebook-browser-1',
     ],
     unterminatedQuotedProgramName: [
