@@ -55,17 +55,16 @@ function unconfirmedWriterTitleOf(
 ): string {
   const isElsewhere = hasWriterOnAnotherComputer(writers),
     isHere = writers.some((writer) => writer.place === 'this-computer')
-  const places =
-    isElsewhere && isHere
-      ? 'on another computer or in another editor window'
-      : isElsewhere
-        ? 'on another computer'
-        : 'in another editor window'
-  const subject =
-    writers.length === 1
-      ? "This study's recording"
-      : "Some of this study's recordings"
-  return `${subject} may still be running ${places}. Move the study to the ${trashName} anyway?`
+  // Each title is written out whole, so the change history's quotations of it stand in this source word for word.
+  if (writers.length === 1)
+    return isElsewhere
+      ? `This study's recording may still be running on another computer. Move the study to the ${trashName} anyway?`
+      : `This study's recording may still be running in another editor window. Move the study to the ${trashName} anyway?`
+  if (isElsewhere && isHere)
+    return `Some of this study's recordings may still be running on another computer or in another editor window. Move the study to the ${trashName} anyway?`
+  return isElsewhere
+    ? `Some of this study's recordings may still be running on another computer. Move the study to the ${trashName} anyway?`
+    : `Some of this study's recordings may still be running in another editor window. Move the study to the ${trashName} anyway?`
 }
 
 /**
