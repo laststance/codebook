@@ -92,7 +92,8 @@ function step(context: TestContext, durationMs: number): void {
  * Fakes `setTimeout` and `performance.now()` for one test, so bounds of several seconds pass without real waiting.
  *
  * Both are needed: timers hold the bounds, and polling waits such as {@link waitUntil} read their deadline from `performance.now()`.
- * The faked `performance.now()` answers its reading at this call plus the time the test advanced, so real time that passes afterwards never reaches a deadline.
+ * The faked `performance.now()` answers its reading at this call, rounded up to a whole millisecond, plus the time the test advanced, so real time that passes afterwards never reaches a deadline.
+ * The whole millisecond keeps a delay the product computes from two faked readings whole: from a fraction, a 5 s deadline minus the reading can come out as 5000.000000000004 ms in floating point, and Node's mock timers do not fire that delay when the clock reaches 5 s, only at the next step.
  * Call it after the arrangement that needs real timers, and {@link resetFakeClock} before real waits resume.
  *
  * @param context - The running test's context.
@@ -104,8 +105,8 @@ function step(context: TestContext, durationMs: number): void {
 export function enableFakeClock(context: TestContext): void {
   if (advancedMs.has(context)) return
   advancedMs.set(context, 0)
-  // Read once: a start time the product stored before this call stays comparable, and no later real time is added.
-  const fakedAtMs = performance.now()
+  // Read once: a start time the product stored before this call stays comparable, and no later real time is added. Rounded up, never down, so the faked clock does not read earlier than a real reading taken before it.
+  const fakedAtMs = Math.ceil(performance.now())
   const fakedNow = context.mock.method(
     performance,
     'now',

@@ -34,6 +34,29 @@ test('the faked clock does not move while real time passes', async (context) => 
   assert.equal(movedMs, 0)
 })
 
+// Value: protects=a bound the product computes from two faked readings (a deadline, then the time left to it) firing at the faked time it names; fails_when=the faked clock starts at the real reading's fraction of a millisecond, so the time left to a 5 s deadline comes out as 5000.000000000004 ms and Node's mock timer fires it one step after 5 s; why_new=Cycle 0046 FL4 (the reader's close bound fired at 5050 ms in measured gate runs, whenever the real clock read such a fraction when the test faked it); seam=the real clock's reading at the moment the test fakes it, fixed to a fraction that shows the error
+test('a bound computed from two faked readings fires at the faked time it names, whatever fraction of a millisecond the real clock read', async (context) => {
+  // Arrange: the real clock reads 30392.159931 ms when the test fakes it; the product reads a 5 s deadline, then the time left to it.
+  context.mock.method(performance, 'now', () => 30_392.159931)
+  enableFakeClock(context)
+  const deadlineMs = performance.now() + 5_000
+  let boundPassed = false
+  setTimeout(() => {
+    boundPassed = true
+  }, deadlineMs - performance.now())
+
+  // Act
+  const passedAfterMs = await advanceClockUntil(
+    context,
+    () => boundPassed,
+    6_000,
+  )
+  resetFakeClock(context)
+
+  // Assert
+  assert.equal(passedAfterMs, 5_000)
+})
+
 // Value: protects=the fake time a test leaves for the product's own timers when storage is slow; fails_when=advanceClockUntil moves the clock after a fixed number of real turns although a file request is still pending, so slow file work uses up fake time; why_new=Cycle 0045 D-M1 (50 fake ms passed per five real turns, whatever was pending); seam=none
 test('a wait spends no fake time while a real file read is pending', async (context) => {
   // Arrange: real file reads follow one another for 30 real ms, so one is pending at every event-loop turn.
