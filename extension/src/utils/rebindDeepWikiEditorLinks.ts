@@ -87,7 +87,7 @@ function openTargetHtml(target: OpenTarget, targetId: string): string {
 }
 
 /**
- * Chooses the id of the description the reader adds to a rail entry: the publisher's id, or that id with a number when an element of the page already carries it; called by {@link rebindDeepWikiEditorLinks} once for the page.
+ * Chooses the id of the description the reader adds to a rail entry: the publisher's id, or that id with a number when an element of the page already carries it; called by {@link rebindDeepWikiEditorLinks} at most once for a page, at its first entry that gets a target.
  *
  * A page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article. The entry's link names its description by id, and an id that stands twice names the first element, which would be that heading. The page's ids are read once, as a browser reads them ({@link readHtmlStartTags}), so a page that carries many numbered ids takes no more than one reading.
  *
@@ -116,7 +116,7 @@ function freeOpenTargetIdIn(html: string): string {
 /**
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
  *
- * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
+ * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}); the page's ids are read only for a page with such an entry.
  *
  * Last, in one pass over the page those edits made, every address the publisher refuses today loses its link, a refresh its effect, and every Codebook address gets the serving editor's scheme, in the addresses of the page's tags and never in its text ({@link withServedAddresses}). The edits above match raw text, and a match can start or end inside a quoted value, so they may change how a browser pairs the page's quotes; the filter reads the page they leave, so the page served is always the filter's output.
  *
@@ -147,8 +147,8 @@ export function rebindDeepWikiEditorLinks(
       (_entry, opening: string, linkEnd: string, closing: string) =>
         `${opening}${linkEnd}${closing}`,
     )
-  // The id of the added description is chosen once for the page, in one reading of its ids.
-  const targetId = freeOpenTargetIdIn(relabeledPage)
+  // The id of the added description is chosen once for the page, in one reading of its ids, and only when an entry gets a target.
+  let targetId: string | undefined
   // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
   const editedPage = relabeledPage.replace(
     OPEN_ENTRY_WITHOUT_TARGET,
@@ -161,6 +161,7 @@ export function rebindDeepWikiEditorLinks(
     ) => {
       const target = openTargetOf(linkAttributes, editorScheme)
       if (target === undefined) return entry
+      targetId ??= freeOpenTargetIdIn(relabeledPage)
       return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
     },
   )

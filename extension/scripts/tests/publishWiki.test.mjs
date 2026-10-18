@@ -1918,7 +1918,7 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
       helpScript,
     )?.[1],
     freeOpenTargetIdIn: [
-      /const targetId = (\w+)\(/.exec(entryScript)?.[1],
+      /targetId \?\?= (\w+)\(/.exec(entryScript)?.[1],
       /function freeOpenTargetIdIn\([\s\S]*?let id = (\w+)/.exec(
         entryScript,
       )?.[1],
