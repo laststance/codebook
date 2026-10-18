@@ -49,6 +49,7 @@ import {
   REMOVE_LINK_OR_RENAME_IT,
   stepPastNoRealFolder,
 } from '../utils/stepPastNoRealFolder'
+import { studyRemovalMessages } from '../utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
 
 /**
@@ -961,11 +962,12 @@ test('the packaged README says what is left of a study whose archive was removed
   // Act
   const delivered = heldSentences(readme, [
     '- An entry that cannot be opened (an older format, a study whose catalog file is missing, or what is left of a study whose archive was removed) can still be chosen and deleted.',
-    '- What is left of a study whose archive was removed (its catalog file, or a recording that no editor is still writing) stays in the list with `Archive missing; remaining files kept` in its label, so that the rest can be removed: **Delete saved study…** moves it to the Trash, and in a window without a Trash **Remove by hand** lists its files. Such an entry can be chosen and not opened, it has no **Repair saved study**, a reader that starts neither selects it nor shows it first, and it takes no place of the saved study limit. The finished recording of a run of this window whose archive could not be saved yet is listed with the same words; that study has not left the library, and **Retry storage / refresh** writes its archive.',
+    '- What is left of a study whose archive was removed (its catalog file, or a recording that no editor of this computer still writes) stays in the list with `Archive missing; remaining files kept` in its label, so that the rest can be removed: **Delete saved study…** moves it to the Trash, and in a window without a Trash **Remove by hand** lists its files. A recording that names another computer is listed too, and so is one whose editor Codebook cannot tell from another program of this computer; for such a recording **Delete saved study…** asks first, as the next point says. Such an entry can be chosen and not opened, it has no **Repair saved study**, a reader that starts neither selects it nor shows it first, and it takes no place of the saved study limit. The finished recording of a run of this window whose archive could not be saved yet is listed with the same words; that study has not left the library, and **Retry storage / refresh** writes its archive.',
     "The start of a Node test is different: it takes the storage lock (`writer.lock` in the learning storage) and reserves its history under it, so of two windows that start a test for the last free place one is refused with `Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.` A start that meets the lock while another window holds it, or a lock that stays, is refused with the storage lock's sentence, which [Delete a saved study](#delete-a-saved-study) quotes and explains; nothing was written then, and the test was not started.",
   ])
   const retired = [
     'An entry that cannot be opened (an older format, or a study whose catalog file is missing) can still be chosen and deleted.',
+    'or a recording that no editor is still writing)',
   ].filter((sentence) => readme.includes(sentence))
 
   // Assert: the README holds each sentence, and the section the last one points to.
@@ -1091,4 +1093,29 @@ test('the packaged README distinguishes a source-changed start that ran nothing 
 
   // Assert
   assert.deepEqual(delivered, [true, true])
+})
+
+// Value: protects=a learner whose Delete meets a recording that may still be written, reading in the README the dialog they will see, what each answer does, and the refusal for a recording another window of this computer still writes; fails_when=the README quotes another title, detail or button than the dialog, says nothing of the case of this computer or of several recordings, drops the refusal, or loses the line of a move whose state is unknown (PD8, AD10); why_new=Cycle 0046 design review PD8: the section quoted neither the dialog nor the refusal; seam=the messages of the removal, from which the expected sentences are built
+test('the packaged README quotes, under Delete a saved study, the dialog about a recording that may still be written, both of its places, the refusal for a recording another window still writes, and the line of a move whose state is unknown', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const section =
+    readme.split('\n#### Delete a saved study\n')[1]?.split('\n### ')[0] ??
+    'no section "Delete a saved study"'
+  const messages = studyRemovalMessages('Trash')
+
+  // Act
+  const delivered = heldSentences(section, [
+    `\`${messages.unconfirmedWriterTitle('another-computer')}\``,
+    `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
+    `**${messages.unconfirmedWriterButton}**`,
+    `\`${messages.unconfirmedWriterTitle('this-computer')}\``,
+    `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'this-computer' }])}\``,
+    'A study with several such recordings names each host and start. Nothing moves while the dialog is open.',
+    '`The saved study could not be moved to the Trash. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`',
+    `\`${messages.moveUnknown('').trimEnd()}\``,
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true, true, true, true, true, true, true, true])
 })
