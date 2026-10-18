@@ -258,12 +258,13 @@ async function holdOfPath(paths, entries) {
 /** Whether two statuses, taken with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
 const isSameFile = (status, other) => status.dev === other.dev && status.ino === other.ino;
 
-/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
+/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not, nor does any folder of a stage whose real path could not be named when the look was taken. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
 async function folderLookOf(stage) {
   const realStage = await realpath(stage).catch(() => undefined), firstSeen = new Map();
   return folder => Promise.all([realpath(folder), stat(folder, { bigint: true })]).then(([real, status]) => {
     if (!firstSeen.has(folder)) firstSeen.set(folder, status);
-    return real === join(realStage, relative(stage, folder)) && isSameFile(status, firstSeen.get(folder));
+    // A stage whose real path could not be named when the look was taken has nothing to compare with, so no folder of it holds.
+    return realStage !== undefined && real === join(realStage, relative(stage, folder)) && isSameFile(status, firstSeen.get(folder));
   }, () => false);
 }
 

@@ -2625,6 +2625,46 @@ for (const code of ['EACCES', 'EINVAL'])
     }
   })
 
+// Value: protects=the learner whose candidate's real path the system could not name at the moment the preparation took its look at the candidate (a folder moved away and back by another process); fails_when=the look compares later folders with a real path it never got, so it throws a system TypeError instead of answering that the folder does not hold, and the step skips its refusal and leaves the candidate it made; why_new=Cycle 0046 second /ship OCR6-2; seam=a copy of the shipped publisher whose `realpath` fails once for the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?unnamed-real-path`)
+test('a preparation whose candidate’s real path cannot be named once, when the publisher takes its look, is refused with the candidate’s sentence and leaves no candidate', async () => {
+  // Arrange: a Wiki output outside the project, so no look at the path names the candidate first, and a realpath that fails for the candidate's first call alone.
+  const { prepareWikiStage: prepareWhereTheRealPathFailsOnce } =
+    await loadMarkedCopy('publish-wiki.mjs', '?unnamed-real-path')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-candidate-real-path-once-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside'),
+    stage = join(outside, 'next')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    failRealPathOf(stage, 'EACCES', 1)
+
+    // Act
+    const refusal = await prepareWhereTheRealPathFailsOnce({
+      projectRoot: root,
+      outputDirectory: join(outside, 'wiki'),
+      stageDirectory: stage,
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, besideTheWiki: await readdir(outside) },
+      {
+        refusal: `The Wiki stage ${stage} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    failRealPathOf(undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it made its stage; fails_when=the preparation trusts its first look at the path and makes the stage, its receipt and the prior Wiki's copy behind the link; why_new=Cycle 0046 /ship Codex review CX17 (the look at the path and the folders made after it were never compared); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` for a link just before the stage is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a preparation whose .codebook is swapped for a link to a folder outside the project just before its stage is made is refused with the folder named, and nothing is left behind the link', async () => {
   // Arrange: a project whose `.codebook` is a real folder when the publisher looks at the path, and a link to a folder outside it when the stage is made.
