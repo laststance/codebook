@@ -1,7 +1,13 @@
+import { homedir } from 'node:os'
+import { posix, win32 } from 'node:path'
+
 import { WIKI_PUBLISH_STAGE_INFIX } from '../constants'
 
 /** The file name of the publisher's script, which every update runs to prepare, render and publish. Only a command that runs the bundled script, `<skillDirectory>/publish-wiki.mjs`, as its program or as the script after Node.js, is a step of an update by it ({@link isUpdateCommandLine}); a command that only names the file is none. */
 const PUBLISHER_SCRIPT_NAME = 'publish-wiki.mjs'
+
+/** One command of a command line: the words its shell passes on, and the operator that joins it to the command before it (empty for the first). */
+type Command = { words: string[]; operator: string }
 
 /** Something the editor reported while an update waited for the chat's first answer: a `file` document that was opened, by its path, or a command that started in a terminal, by its command line. */
 export type WikiUpdateSignCandidate =
@@ -57,6 +63,13 @@ const POSIX_QUOTING = /'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/g
 const WINDOWS_QUOTING = /'([^']*)'|"([^"]*)"/g
 /** An operator between two commands. */
 const COMMAND_OPERATOR = /^[;&|]+$/
+/** The home folder at the start of a word as it stands in the command line, as a POSIX shell reads it there: `~` unquoted, alone or before a separator; `$HOME` (not the start of a longer name) or `${HOME}`, unquoted or in double quotes. In single quotes, escaped, or `~` in double quotes, it is text. */
+const HOME_AT_WRITTEN_START =
+  /^(?:~(?=[\\/]|$)|"?\$(?:HOME(?![A-Za-z0-9_])|\{HOME\}))/
+/** The same home folder at the start of the word's text once its quotes are gone, which {@link HOME_AT_WRITTEN_START} found there. */
+const HOME_AT_TEXT_START = /^(?:~|\$HOME|\$\{HOME\})/
+/** The operators after which the next command runs in the folder a `cd` before them changed to: `&&` and `;`. After `||`, `|` or `&` it runs in another folder or none. */
+const OPERATOR_THAT_KEEPS_THE_FOLDER = /^(?:&&|;)$/
 /** A program that is Node.js, however it is named: `node`, `node.exe`, or either with its folder. */
 const NODE_PROGRAM = /(?:^|[\\/])node(?:\.exe)?$/i
 /** An option of Node.js that runs no script: it checks the script's syntax, evaluates or prints code of its own, or shows the help or the version (`-c`, `--check`, `-e`, `--eval`, `-p`, `--print`, `-h`, `--help`, `-v`, `--version`), also with its value after `=` or in a cluster of short options (`-pe`). */
@@ -86,25 +99,105 @@ function unquotedWord(word: string, platform: string): string {
 }
 
 /**
+ * Reads the home folder at the start of a word as its shell does ({@link HOME_AT_WRITTEN_START}); called by {@link commandsOf} for each word.
+ * @param written - The word as the command line writes it.
+ * @param text - The word's text, without its quotes ({@link unquotedWord}).
+ * @param homeDirectory - The learner's home folder.
+ * @returns The text with the home folder in place of `~`, `$HOME` or `${HOME}` at its start; the text as it is otherwise.
+ * @example
+ * withHomeFolder('"$HOME/x.mjs"', '$HOME/x.mjs', '/home/learner') // => '/home/learner/x.mjs'
+ * withHomeFolder("'$HOME/x.mjs'", '$HOME/x.mjs', '/home/learner') // => '$HOME/x.mjs'
+ */
+function withHomeFolder(
+  written: string,
+  text: string,
+  homeDirectory: string,
+): string {
+  return HOME_AT_WRITTEN_START.test(written)
+    ? text.replace(HOME_AT_TEXT_START, () => homeDirectory)
+    : text
+}
+
+/**
  * Splits a command line into its commands and each command into the words its shell passes on, by the boundaries of its arguments; called by {@link isUpdateCommandLine}.
  * Why: a path that merely stands inside another argument, in quoted text or at the start of a longer path (`/repo/.codebook/wiki-backup`) is no argument of its own.
  * @param commandLine - The command line as the terminal's shell integration reports it.
  * @param platform - The platform whose shells the command line is read for.
- * @returns The commands between the operators `;`, `&` and `|` (and `&&`, `||`), each as its words.
+ * @param homeDirectory - The learner's home folder, which `~`, `$HOME` and `${HOME}` at the start of a word name ({@link withHomeFolder}).
+ * @returns The commands between the operators `;`, `&` and `|` (and `&&`, `||`), each as its words and the operator before it.
  * @example
- * commandsOf('cd /repo && node "/ext/publish-wiki.mjs" --output .codebook/wiki', 'linux')
- * // => [['cd', '/repo'], ['node', '/ext/publish-wiki.mjs', '--output', '.codebook/wiki']]
+ * commandsOf('cd ~/ext && node "publish-wiki.mjs" --output .codebook/wiki', 'linux', '/home/learner')
+ * // => [{ words: ['cd', '/home/learner/ext'], operator: '' }, { words: ['node', 'publish-wiki.mjs', '--output', '.codebook/wiki'], operator: '&&' }]
  */
-function commandsOf(commandLine: string, platform: string): string[][] {
-  const commands: string[][] = [[]]
+function commandsOf(
+  commandLine: string,
+  platform: string,
+  homeDirectory: string,
+): Command[] {
+  const commands: Command[] = [{ words: [], operator: '' }]
   for (const [word] of commandLine.matchAll(
     platform === 'win32' ? WINDOWS_WORD : POSIX_WORD,
   )) {
     // An operator ends the command before it.
-    if (COMMAND_OPERATOR.test(word)) commands.push([])
-    else commands.at(-1)?.push(unquotedWord(word, platform))
+    if (COMMAND_OPERATOR.test(word))
+      commands.push({ words: [], operator: word })
+    else
+      commands
+        .at(-1)
+        ?.words.push(
+          withHomeFolder(word, unquotedWord(word, platform), homeDirectory),
+        )
   }
-  return commands.filter((words) => words.length > 0)
+  return commands.filter(({ words }) => words.length > 0)
+}
+
+/**
+ * Finds the folder each command runs in as far as the command line tells it: a `cd <folder>` changes it for the commands after `&&` or `;` ({@link OPERATOR_THAT_KEEPS_THE_FOLDER}); any other operator, a relative `cd` from a folder not known, or a `cd` with other words leaves it unknown. Called by {@link isUpdateCommandLine}.
+ * @param commands - The commands, as {@link commandsOf} split them.
+ * @param platform - The platform whose paths the folders are resolved by.
+ * @returns For each command, the absolute folder it runs in, or `undefined` when the command line does not tell it.
+ * @example
+ * foldersOf([{ words: ['cd', '/repo'], operator: '' }, { words: ['ls'], operator: '&&' }], 'linux') // => [undefined, '/repo']
+ */
+function foldersOf(
+  commands: Command[],
+  platform: string,
+): Array<string | undefined> {
+  const paths = platform === 'win32' ? win32 : posix
+  let folder: string | undefined
+  return commands.map(({ words, operator }) => {
+    // The folder a cd changed to holds only after `&&` or `;`.
+    if (!OPERATOR_THAT_KEEPS_THE_FOLDER.test(operator)) folder = undefined
+    const current = folder
+    const [program, target, ...rest] = words
+    // Only `cd <folder>` changes it; from a folder not known, a relative one stays unknown.
+    if (program === 'cd' && target !== undefined && rest.length === 0)
+      folder =
+        paths.isAbsolute(target) || current !== undefined
+          ? paths.resolve(current ?? '', target)
+          : undefined
+    return current
+  })
+}
+
+/**
+ * Reads a word as the path it names in the folder its command runs in; called by {@link isUpdateCommandLine} for the script and for each word compared with the Wiki's folder.
+ * @param word - The word.
+ * @param folder - The folder the command runs in, from {@link foldersOf}; `undefined` when not known.
+ * @param platform - The platform whose paths are resolved.
+ * @returns The absolute path a relative word names in a known folder; the word as it is otherwise.
+ * @example
+ * pathIn('.codebook/wiki', '/repo', 'linux')   // => '/repo/.codebook/wiki'
+ * pathIn('.codebook/wiki', undefined, 'linux') // => '.codebook/wiki'
+ */
+function pathIn(
+  word: string,
+  folder: string | undefined,
+  platform: string,
+): string {
+  return folder === undefined
+    ? word
+    : (platform === 'win32' ? win32 : posix).resolve(folder, word)
 }
 
 /**
@@ -162,25 +255,34 @@ function namesPath(word: string, path: string, rules: PathRules): boolean {
  * @param places - The Wiki's output folder and the bundled skill's folder.
  * @param rules - How paths are compared on this platform.
  * @param platform - The platform whose shells the command line is read for.
- * @returns `true` when one of its commands runs the bundled publisher (its path as the program, or as the script Node.js runs), or has the Wiki's output folder itself as an argument (the publisher's `--output` value, or a command that lists that folder); `false` when it names either only inside another argument, in quoted text, without its folder or in a longer path, or in a command of Node.js that runs no script ({@link runsNoScript}).
+ * @param homeDirectory - The learner's home folder, for `~`, `$HOME` and `${HOME}` at the start of a word.
+ * @returns `true` when one of its commands runs the bundled publisher (its path as the program, or as the script Node.js runs; from the home folder or relative to the folder of a `cd` before it, too), or has the Wiki's output folder itself as an argument (the publisher's `--output` value, or a command that lists that folder); `false` when it names either only inside another argument, in quoted text, without its folder or in a longer path, or in a command of Node.js that runs no script ({@link runsNoScript}).
  * @example
- * isUpdateCommandLine('node /ext/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki', places, pathRulesOf('linux'), 'linux') // => true
- * isUpdateCommandLine('ls /repo/.codebook/wiki-backup', places, pathRulesOf('linux'), 'linux')                                                                    // => false
+ * isUpdateCommandLine('node /ext/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki', places, pathRulesOf('linux'), 'linux', '/home/learner') // => true
+ * isUpdateCommandLine('ls /repo/.codebook/wiki-backup', places, pathRulesOf('linux'), 'linux', '/home/learner')                                                                    // => false
  */
 function isUpdateCommandLine(
   commandLine: string,
   places: WikiUpdatePlaces,
   rules: PathRules,
   platform: string,
+  homeDirectory: string,
 ): boolean {
   const publisher =
     places.skillDirectory + rules.separator + PUBLISHER_SCRIPT_NAME
-  return commandsOf(commandLine, platform).some(
-    (words) =>
+  const commands = commandsOf(commandLine, platform, homeDirectory)
+  const folders = foldersOf(commands, platform)
+  return commands.some(({ words }, index) => {
+    const named = (word: string): string =>
+      pathIn(word, folders[index], platform)
+    return (
       !runsNoScript(words) &&
-      (namesPath(scriptOf(words) ?? '', publisher, rules) ||
-        words.some((word) => namesPath(word, places.outputDirectory, rules))),
-  )
+      (namesPath(named(scriptOf(words) ?? ''), publisher, rules) ||
+        words.some((word) =>
+          namesPath(named(word), places.outputDirectory, rules),
+        ))
+    )
+  })
 }
 
 /**
@@ -216,9 +318,10 @@ function isUpdateDocument(
  * @param candidate - What the editor reported.
  * @param places - The Wiki's output folder and the bundled skill's folder, both absolute.
  * @param platform - The platform whose rules compare the paths; the one Codebook runs on when omitted.
+ * @param homeDirectory - The learner's home folder, which `~`, `$HOME` and `${HOME}` at the start of a command's word name; the one of this process when omitted.
  * @returns
  * - A document in the output folder, in a prepared folder beside it or in the skill's folder: `true`
- * - A command line that runs the bundled publisher or has the output folder itself as an argument, read by the boundaries of its arguments: `true`
+ * - A command line that runs the bundled publisher or has the output folder itself as an argument, read by the boundaries of its arguments, with the home folder and the folder of a `cd` before it read as its shell reads them: `true`
  * - Anything else: `false`
  * @example
  * isWikiUpdateSign({ kind: 'document', path: '/repo/.codebook/wiki/codebook-wiki.json' }, places) // => true
@@ -229,9 +332,16 @@ export function isWikiUpdateSign(
   candidate: WikiUpdateSignCandidate,
   places: WikiUpdatePlaces,
   platform: string = process.platform,
+  homeDirectory: string = homedir(),
 ): boolean {
   const rules = pathRulesOf(platform)
   return candidate.kind === 'command'
-    ? isUpdateCommandLine(candidate.commandLine, places, rules, platform)
+    ? isUpdateCommandLine(
+        candidate.commandLine,
+        places,
+        rules,
+        platform,
+        homeDirectory,
+      )
     : isUpdateDocument(candidate.path, places, rules)
 }
