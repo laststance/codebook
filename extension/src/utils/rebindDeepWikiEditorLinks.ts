@@ -118,20 +118,25 @@ function freeOpenTargetIdIn(html: string): string {
  *
  * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}); the page's ids are read only for a page with such an entry.
  *
- * Last, in one pass over the page those edits made, every address the publisher refuses today loses its link, a refresh its effect, and every Codebook address gets the serving editor's scheme, in the addresses of the page's tags and never in its text ({@link withServedAddresses}). The edits above match raw text, and a match can start or end inside a quoted value, so they may change how a browser pairs the page's quotes; the filter reads the page they leave, so the page served is always the filter's output.
+ * Then the caller's own edit runs on the page those edits made: the reader puts its script tag in there ({@link servedWikiPageHtml}).
+ * Last, in one pass over the page all those edits made, every address the publisher refuses today loses its link, a refresh its effect, and every Codebook address gets the serving editor's scheme, in the addresses of the page's tags and never in its text ({@link withServedAddresses}). The edits before it match or insert raw text, and a match or an insertion can start or end inside a quoted value or a script's text, so they may change how a browser pairs the page's quotes and where its script ends; the filter reads the page they leave, so the page served is always the filter's output.
  *
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
+ * @param editBeforeFilter - The caller's edit of the page after the rail's edits and before the filter reads it, so that no text it puts in reaches the learner unjudged; the page is left as the rail's edits made it when omitted.
  * @returns The page with no link but those the publisher accepts today, Codebook action links bound to the active editor, the rail's "Open in …" link named after it, and the file and line beside that link. An entry whose address names no path or line keeps its link alone.
  * @example
  * rebindDeepWikiEditorLinks('<a href="vscode://laststance.codebook/settings?root=%2Frepo">Settings</a>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/settings?root=%2Frepo">Settings</a>'
  * rebindDeepWikiEditorLinks('<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…">Open in VS Code</a></p>', 'cursor')
  * // => '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">src/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/a.ts:12</span></p>'
+ * rebindDeepWikiEditorLinks('<script>//</body><a href=vscode://file/etc/hosts>here</a></script>', 'vscode', (page) => page.replace('</body>', '</script></body>'))
+ * // => '<script>//</script></body><a data-codebook-unlinked=vscode://file/etc/hosts>here</a></script>'
  */
 export function rebindDeepWikiEditorLinks(
   html: string,
   editorScheme: 'vscode' | 'cursor',
+  editBeforeFilter: (editedPage: string) => string = (editedPage) => editedPage,
 ): string {
   // The published page says VS Code, its fallback; the served one names the editor that opens the source.
   const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}`
@@ -165,6 +170,6 @@ export function rebindDeepWikiEditorLinks(
       return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
     },
   )
-  // The filter reads the page as the edits above left it, so no tag or attribute they make reaches the learner unjudged.
-  return withServedAddresses(editedPage, editorScheme)
+  // The filter reads the page as the edits above and the caller's left it, so no tag or attribute they make reaches the learner unjudged.
+  return withServedAddresses(editBeforeFilter(editedPage), editorScheme)
 }
