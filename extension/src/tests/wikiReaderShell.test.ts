@@ -538,6 +538,23 @@ test('an entry of 0.2.29.0 whose address the reader refuses keeps its text witho
   )
 })
 
+// Value: protects=learners who open a served Wiki page whose rail entry was written to close a quote early; fails_when=the reader removes an entry's description after the address filter read the page, so the removed quote makes a browser read later text as the link's attributes (Chrome 151 keeps a live vscode://file/etc/hosts link there); why_new=SEC1; seam=none; no_claim=other ways of hiding an attribute from the filter
+test('a rail entry whose removed description holds the quote that closes an earlier value serves no editor link from the text after it', () => {
+  // Arrange: an entry in the shape of a build before finding 600, whose title opens a value that the description's first quote closes, then text that a browser reads as the link's attributes once that quote is gone.
+  const page =
+    '<p class="open-in-editor"><a title="foo aria-describedby="x">Open in VS Code</a> <span class="open-target">src/a.ts:1</span></p>' +
+    '<p>Say " href=vscode://file/etc/hosts>here</p>'
+
+  // Act
+  const servedByVsCode = rebindDeepWikiEditorLinks(page, 'vscode')
+
+  // Assert: the description is gone, and the address the removed quote exposes is one the filter read and took away.
+  assert.equal(
+    servedByVsCode,
+    '<p class="open-in-editor"><a title="foo>Open in VS Code</a></p><p>Say " data-codebook-unlinked=vscode://file/etc/hosts>here</p>',
+  )
+})
+
 // Value: protects=the text of a page that shows a Codebook address, for example an escaped code example about source links, when Cursor serves the page; fails_when=the reader rewrites the editor scheme in the page's text or in a comment again, so the example shows another address than its author wrote, or stops rewriting it in the address of a link, so a link of a page served by Cursor opens VS Code; why_new=Cycle 0046 row 135 (the scheme was rewritten in the whole page, as in 0.2.29.0); seam=none
 test('a page served by Cursor gets Cursor’s scheme in the address of every link, and a Codebook address shown in its text or in a comment stays as written', () => {
   // Arrange: an update link, a citation in single quotes and a settings link; then the same kind of address in an escaped code example, in plain text and inside a comment.
