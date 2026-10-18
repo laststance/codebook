@@ -18,6 +18,7 @@ import {
   WIKI_MISSING_PAGE_PATH_LIMIT_CHARS,
   WIKI_MISSING_PAGE_TEXT_DELAY_MS,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
+  WIKI_PAGE_NAVIGATION_DESTINATIONS,
   WIKI_PAGE_SERVE_DEADLINE_MS,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
@@ -446,6 +447,21 @@ export async function startDeepWikiReader(
     }
     if (request.method !== 'GET') {
       sendGetOnly(response)
+      return
+    }
+    // A page is prepared only for a browser that opens it: one asked for as an image, a style sheet or another part of a page would start a page worker for nothing, many at a time from one page. A client that names no destination is no browser and is served.
+    const destination = request.headers['sec-fetch-dest']
+    if (
+      relativePath.endsWith('.html') &&
+      destination !== undefined &&
+      !(
+        typeof destination === 'string' &&
+        WIKI_PAGE_NAVIGATION_DESTINATIONS.includes(destination)
+      )
+    ) {
+      sendJson(response, 403, {
+        error: 'A Wiki page is served only to be opened as a page.',
+      })
       return
     }
     if (relativePath === 'codebook-qa.js') {

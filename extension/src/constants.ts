@@ -883,6 +883,11 @@ export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192
 export const WIKI_PAGE_SERVE_DEADLINE_MS = 10_000
 /** How much old-generation heap a Wiki page worker may use, in megabytes; a worker that needs more ends with `ERR_WORKER_OUT_OF_MEMORY`, and the reader answers its page with the refusal page. The worker runs in the editor's extension host process, where a page of 20 MB took 1.6 GB and one of 60 MB 4.1 GB before the deadline without a limit. Under 512 MB a page of 1 MB peaked at about 0.25 GB and one of 5 MB was still served, while pages of 20 and 60 MB were refused at about 0.75 GB. */
 export const WIKI_PAGE_WORKER_HEAP_LIMIT_MB = 512
+/** The values of a request's `Sec-Fetch-Dest` header for which the Wiki reader prepares and serves a page: the browser opens it as a document, or in a frame (an editor's browser preview). Its pages make no other request for a page: their policy refuses frames and objects, no script of theirs runs, and the reader's own script fetches only its routes. A page asked for as anything else (an image, media, a style sheet, a font, a track, a script, a fetch) would start a page worker for nothing, many at a time from one page; a request without the header (a client that is no browser) is served. */
+export const WIKI_PAGE_NAVIGATION_DESTINATIONS: readonly string[] = [
+  'document',
+  'iframe',
+]
 export const WIKI_GIT_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_GIT_TIMEOUT_MS = 3_000
 export const REPOSITORY_EXCLUDED_DIRECTORIES = [

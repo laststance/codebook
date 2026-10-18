@@ -1017,6 +1017,88 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   })
 })
 
+// Value: protects=the editor's machine against a Wiki page that names a page of the Wiki many times as an image, media, a style sheet, a font, a track or a script (the page policy lets it load them from the reader's address), so that every such request starts a page worker that may keep a core busy until the deadline; fails_when=the reader prepares a page for a request the browser makes for anything but a page it opens (a Sec-Fetch-Dest other than document or iframe), or it refuses a page the browser opens as a document or in a frame, or one asked for by a client that names no destination; why_new=P2RT3; seam=the reader loaded with loadModule and a stand-in page-worker module that counts the pages it is asked to prepare; no_claim=a browser that sends no Sec-Fetch-Dest (it is served as before)
+test('a Wiki page asked for as an image, media, a style sheet, a font, a track, a script or by a fetch is refused with 403 before any page preparation starts, while a page opened as a document, in a frame or by a client that names no destination is served', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose page worker counts the pages it prepares.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-destination-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithCountingWorker } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './wikiPageWorker': countingWorker },
+      { URL },
+    )
+  const reader = await startReaderWithCountingWorker(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: the overview, asked for once with each destination a browser names, and once with none.
+  const answers: Record<string, { status: number; body: string }> = {}
+  for (const destination of [
+    'image',
+    'audio',
+    'video',
+    'style',
+    'font',
+    'track',
+    'script',
+    'empty',
+    'document',
+    'iframe',
+    undefined,
+  ]) {
+    const response = await fetch(
+      reader.url,
+      destination === undefined
+        ? {}
+        : { headers: { 'Sec-Fetch-Dest': destination } },
+    )
+    answers[destination ?? 'none'] = {
+      status: response.status,
+      body: await response.text(),
+    }
+  }
+
+  // Assert: seven refusals and three pages, and only the three pages were prepared.
+  const refusal = {
+    status: 403,
+    body: '{"error":"A Wiki page is served only to be opened as a page."}',
+  }
+  const page = { status: 200, body: '<p>Prepared page</p>' }
+  assert.deepEqual(
+    { answers, preparedPageCount },
+    {
+      answers: {
+        image: refusal,
+        audio: refusal,
+        video: refusal,
+        style: refusal,
+        font: refusal,
+        track: refusal,
+        script: refusal,
+        empty: refusal,
+        document: page,
+        iframe: page,
+        none: page,
+      },
+      preparedPageCount: 3,
+    },
+  )
+})
+
 // Value: protects=the reader's origin, whose page may ask the editor's model, against a script file written into the Wiki folder and named by the manifest, which a page file points at with a script tag, plainly or through a tag it leaves open before the reader's own; fails_when=the reader serves a `.js` file of the Wiki folder as JavaScript again, so the policy's `'self'` lets it run, or a response of the reader (a page, an asset, its own script, an answer, a refusal) comes without `nosniff`, so a browser may run a file of another type as script; why_new=Cycle 0046 /ship Codex review CX16: under a nonce, a script tag left open before the reader's own takes over its nonce in a browser that does not refuse such a tag (Chromium refuses it, Firefox and Safari were not tried); seam=none (the reader's real responses)
 test('a script file of the Wiki folder is served as plain text, a page that points at it plainly or through a tag left open before the reader’s own gets no secret to run it, and every response of the reader says nosniff', async (context) => {
   // Arrange: a script file in the Wiki folder that the manifest names, an overview that points at it, and a page that leaves a script tag open before the reader's own.
