@@ -2878,6 +2878,58 @@ test('in Cursor, the first Application preparation of a reloaded window whose le
   }
 })
 
+// Value: protects=the learner's keyboard when a cold Study open after a reload meets an empty group at the column the earlier window recorded, in a grid the learner resized since, so the record proves nothing: the proof that focused that group gives the learner's file its keyboard back at once, and the record stays, as a failed proof forgets nothing (finding 599); fails_when=the failed proof leaves the keyboard in the empty group (its caller gives a keyboard back only to a chat), and since the record stays, every later cold entry takes the keyboard from the learner's file the same way (Cycle 0046 CR5-4); why_new=Cycle 0046 CR5-4; seam=useNativeLayout (three columns the learner resized), applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, focusMutableDraft, the reader's open, the command log
+test('a cold Study open after a reload whose resized grid no longer proves the earlier window’s record gives the learner’s file its keyboard back right after the proof', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of three equal columns; after the reload that group stands empty and locked, the learner widened the second column, and the learner's notes there have the keyboard beside auth.ts in the third.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 300 }, { size: 600 }, { size: 300 }],
+  })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.open()
+
+    // Assert: the proof focused the empty group, and the second group's focus command gave the notes their keyboard back right after it; the earlier window's record stays for a later proof.
+    const marker = harness.applicationGroupMarkers.get(
+      'codebook.applicationGroup.v1',
+    ) as { writer?: unknown } | undefined
+    assert.deepEqual(
+      {
+        firstFocusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => command.startsWith('workbench.action.focus'))
+          .slice(0, 2),
+        earlierRecordKept: marker?.writer === 'the window before the reload',
+      },
+      {
+        firstFocusCommands: [
+          'workbench.action.focusFirstEditorGroup',
+          'workbench.action.focusSecondEditorGroup',
+        ],
+        earlierRecordKept: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of why VS Code's chat editor tab has the keyboard again after an agent's cold Study select retired the earlier window's leftover group: the proof focused that group, its removal gave the keyboard to the group before it, and the chat tab's group gets it back through its focus command; the sentence told once names the leftover's close and no pause; fails_when=the leftover proof's give-back tells row 632's pause sentence, "(at a pause, to the paused file the debugger opened)", for a pause that did not happen; why_new=Cycle 0046 row 648; seam=applicationGroupMarkers, leaveEmptyGroup, leaveDeadCodebookPane, focusChatEditorTab (VS Code's TabInputChat), closeDisposedPanelTabsLater, the reader's changePresentation for an agent (codebook_presentation), the command log and the information messages
 test('an agent’s cold Study select in VS Code that retires the earlier window’s leftover group while the chat editor tab has the keyboard gives that chat its keyboard back and says once that closing the leftover moved it, naming no pause', async () => {
   // Arrange: the earlier window recorded its Application group at column 1, where the old host's Application pane is left dead; the learner's notes stand in column 2, and VS Code's chat editor tab in column 3 has the keyboard.

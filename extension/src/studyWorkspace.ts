@@ -15077,14 +15077,14 @@ export class StudyWorkspace {
 
   /**
    * Retires, inside the layout queue, the leftover groups {@link retireLeftoverApplicationGroup} found at the columns of an earlier window's record, one after the other from the last column to the first ({@link retireProvenLeftoverGroup}), and forgets the record once one of them is gone.
-   * The first group is proved in the record's grid; each later one in the grid the removal before it left, as the editor answered it. A failed proof leaves that group and the ones after it; when the first proof fails, nothing changed and the record stays.
+   * The first group is proved in the record's grid; each later one in the grid the removal before it left, as the editor answered it. A failed proof leaves that group and the ones after it. When the first proof fails (the learner resized or rearranged the grid since, or the empty group at the record's column is the learner's own), nothing changed but the keyboard its focus command took: the text editor of the main editor that had the keyboard gets it back at once ({@link returnKeyboardAfterUnprovenLeftover}, Cycle 0046 CR5-4), and the record stays, since a failed proof forgets nothing (finding 599, row 610), so a later cold entry proves it again and gives the keyboard back the same way.
    * A leftover is focused for its proof unless the main editor is the only editor part (every group in the grid the proof expects) and names that leftover as its active group: the layout read then answers for the main editor and the unlock acts on that group without the keyboard moving, and its removal gives no other group the keyboard either (VS Code 1.140.0 `workbench.desktop.main.js` 1106:115762 restores the focus only from inside the editor area; row 612).
    * @param record - The earlier window's record.
    * @param leftovers - The empty groups at its columns, from the last column to the first.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
    * @param onKeyboardTaken - Called before each focus command a proof runs, so {@link retireLeftoverApplicationGroup} still knows that a proof took the keyboard when the retirement throws afterwards (Cycle 0046 OCR1-2).
-   * @returns `true` when a proof focused its group and so took the keyboard, `false` when none did.
+   * @returns `true` when a proof focused its group and so took the keyboard, `false` when none did, and when a failed first proof gave a text editor its keyboard back.
    * @throws When the editor refuses a close, or the grid does not lose exactly that group; the record is forgotten all the same once an earlier group of it is gone.
    * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal) // => false for the active leftover of VS Code's only editor part
    */
@@ -15098,6 +15098,8 @@ export class StudyWorkspace {
     let grid: { groupCount: number; layout: unknown } = record,
       retired = false,
       tookKeyboard = false
+    // Read before any proof moves the keyboard: the learner's text editor, which a failed first proof gives its keyboard back.
+    const keyboardEditor = this.activeTextEditorWithKeyboard()
     try {
       // From the last recorded column to the first: a removal renumbers only the columns after it.
       for (const { column, focusCommand } of leftovers) {
@@ -15115,7 +15117,16 @@ export class StudyWorkspace {
           assertCurrent,
           signal,
         )
-        if (!left) break
+        if (!left) {
+          // Only the first proof's failure removed nothing: its focus command alone changed the window.
+          if (
+            !retired &&
+            tookKeyboard &&
+            (await this.returnKeyboardAfterUnprovenLeftover(keyboardEditor))
+          )
+            tookKeyboard = false
+          break
+        }
         grid = left
         retired = true
       }
@@ -15124,6 +15135,32 @@ export class StudyWorkspace {
       if (retired) await this.clearApplicationGroupMarker()
     }
     return tookKeyboard
+  }
+
+  /**
+   * Gives a text editor of the main editor back the keyboard a leftover proof took, once the first proof failed and so nothing but that focus changed; called by {@link retireProvenLeftoverGroups} (Cycle 0046 CR5-4).
+   * The group that showed the editor still stands at its column, since no group was removed, and its focus command gives its front editor the keyboard. A chat of another editor part is given nothing here: its callers' give-back ({@link retainForeignTabFocus}) returns it, and a numbered focus command would open a new group in the main editor for that part's column.
+   * @param editor - The text editor that had the keyboard before the proof, `undefined` when none had it.
+   * @returns `true` once the group's focus command ran; `false` without such an editor, when its group no longer shows its document in front, and when the editor has no command for that group's column.
+   * @example await this.returnKeyboardAfterUnprovenLeftover(notesEditor) // => true after workbench.action.focusSecondEditorGroup
+   */
+  private async returnKeyboardAfterUnprovenLeftover(
+    editor: vscode.TextEditor | undefined,
+  ): Promise<boolean> {
+    if (!editor) return false
+    const group = this.groupOfKeyboardEditor(editor),
+      command = focusEditorGroupCommand(group.viewColumn)
+    // Only the group that still shows that document in front gives it the keyboard.
+    if (
+      !command ||
+      this.textTabUri(group.activeTab) !== editor.document.uri.toString()
+    )
+      return false
+    await vscode.commands.executeCommand(command).then(
+      () => undefined,
+      () => undefined,
+    )
+    return true
   }
 
   /**
