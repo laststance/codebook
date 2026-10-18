@@ -15228,7 +15228,7 @@ export class StudyWorkspace {
 
   /**
    * Retires, inside the layout queue, the leftover groups {@link retireLeftoverApplicationGroup} found at the columns of an earlier window's record, one after the other from the last column to the first ({@link retireProvenLeftoverGroup}), and forgets the record once one of them is gone.
-   * The first group is proved in the record's grid; each later one in the grid the removal before it left, as the editor answered it. A failed proof leaves that group and the ones after it. When the first proof fails (the learner resized or rearranged the grid since, or the empty group at the record's column is the learner's own), nothing changed but the keyboard its focus command took: the text editor of the main editor that had the keyboard gets it back at once ({@link returnKeyboardAfterUnprovenLeftover}, Cycle 0046 CR5-4), and the record stays, since a failed proof forgets nothing (finding 599, row 610), so a later cold entry proves it again and gives the keyboard back the same way.
+   * The first group is proved in the record's grid; each later one in the grid the removal before it left, as the editor answered it. A failed proof leaves that group and the ones after it. When the first proof fails (the learner resized or rearranged the grid since, or the empty group at the record's column is the learner's own), nothing changed but the keyboard its focus command took: the text editor of the main editor that had the keyboard gets it back at once ({@link returnKeyboardAfterUnprovenLeftover}, Cycle 0046 CR5-4), also when that proof throws after its focus command, before the refusal goes on, while the entry still owns the window ({@link isLayoutEntryCurrent}, Cycle 0046 P2CR-1), and the record stays, since a failed proof forgets nothing (finding 599, row 610), so a later cold entry proves it again and gives the keyboard back the same way.
    * A leftover is focused for its proof unless the main editor is the only editor part (every group in the grid the proof expects) and names that leftover as its active group: the layout read then answers for the main editor and the unlock acts on that group without the keyboard moving, and its removal gives no other group the keyboard either (VS Code 1.140.0 `workbench.desktop.main.js` 1106:115762 restores the focus only from inside the editor area; row 612).
    * @param record - The earlier window's record.
    * @param leftovers - The empty groups at its columns, from the last column to the first.
@@ -15236,7 +15236,7 @@ export class StudyWorkspace {
    * @param signal - The entry's cancellation.
    * @param onKeyboardTaken - Called before each focus command a proof runs, so {@link retireLeftoverApplicationGroup} still knows that a proof took the keyboard when the retirement throws afterwards (Cycle 0046 OCR1-2).
    * @returns When a proof focused its group and so took the keyboard, the cause of the give-back it owes ({@link LeftoverProofKeyboard}): `leftoverProof` once a group was retired, `unprovenLeftoverProof` when the first proof failed and nothing was closed (Cycle 0046 FX-D1-1); `undefined` when none took the keyboard, and when a failed first proof gave a text editor its keyboard back.
-   * @throws When the editor refuses a close, or the grid does not lose exactly that group; the record is forgotten all the same once an earlier group of it is gone.
+   * @throws When the editor refuses a close, the grid does not lose exactly that group, or the entry was cancelled, superseded or closed; the record is forgotten all the same once an earlier group of it is gone.
    * @example await this.retireProvenLeftoverGroups(record, recordedLeftoverGroups(record.columns, vscode.window.tabGroups.all), assertCurrent, signal) // => false for the active leftover of VS Code's only editor part
    */
   private async retireProvenLeftoverGroups(
@@ -15281,6 +15281,13 @@ export class StudyWorkspace {
         grid = left
         retired = true
       }
+    } catch (error) {
+      // A first proof that threw after its focus command closed nothing either: the learner's text editor gets the keyboard back before the refusal goes on, while this entry still owns the window (Cycle 0046 P2CR-1, P2OCR1-1).
+      if (!retired && tookKeyboard && this.isLayoutEntryCurrent(assertCurrent))
+        await this.returnKeyboardAfterUnprovenLeftover(keyboardEditor).catch(
+          () => false,
+        )
+      throw error
     } finally {
       // A retired leftover changed the grid the record describes, so the record goes, also when a later group is refused; without one it stays for a later proof.
       if (retired) await this.clearApplicationGroupMarker()
@@ -15291,7 +15298,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Gives a text editor of the main editor back the keyboard a leftover proof took, once the first proof failed and so nothing but that focus changed; called by {@link retireProvenLeftoverGroups} (Cycle 0046 CR5-4).
+   * Gives a text editor of the main editor back the keyboard a leftover proof took, once the first proof failed or threw and so nothing but that focus changed; called by {@link retireProvenLeftoverGroups} (Cycle 0046 CR5-4, P2CR-1).
    * The group that showed the editor still stands at its column, since no group was removed, and its focus command gives its front editor the keyboard. A chat of another editor part is given nothing here: its callers' give-back ({@link retainForeignTabFocus}) returns it, and a numbered focus command would open a new group in the main editor for that part's column.
    * @param editor - The text editor that had the keyboard before the proof, `undefined` when none had it.
    * @returns `true` once the group's focus command ran; `false` without such an editor, when its group no longer shows its document in front, and when the editor has no command for that group's column.
