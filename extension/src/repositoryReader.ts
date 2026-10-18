@@ -1516,10 +1516,10 @@ export class RepositoryReader {
         input instanceof vscode.TabInputText &&
         input.uri.toString() === show.uri
       )
-    // Only the chat's tab, which has no editor's input, is that place; any editor in front of another group is the learner's (row 714).
+    // Only the chat's group, whose tabs have no editor's input, is that place; any editor in front of another group is the learner's (row 714), also one the API gives no input (VS Code's Settings, its merge editor) in a group that holds an editor's tab (AD29).
     return (
       group.activeTab !== undefined &&
-      !holdsEditorTab({ tabs: [group.activeTab] }, editorTabInputKinds(vscode))
+      !holdsEditorTab(group, editorTabInputKinds(vscode))
     )
   }
 

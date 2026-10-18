@@ -5690,6 +5690,177 @@ test('in Cursor, an agent’s Return Current from a replay leaves the keyboard i
   }
 })
 
+// Value: protects=the learner's newer place during an agent's Return Current from a replay beside Cursor's Agent chat part (row 723's order), when the editor goes on reporting login-form.tsx, the first group's file, after the learner opened a new empty group right of the main editor's last group (Cursor 3.23.12 kept such a report after a new group, row 710): the empty group, with no tab in front, is the learner's place and not Cursor's chat part's, so the Return answers, the chat gets none back and nothing is told; fails_when=namesAnotherEditorPartsTab takes a group without an active tab for the chat's, since a group with no tabs holds no editor's tab either (AD29's whole-group reading), so isFirstGroupEditorUnderAnotherPartsName reads the empty group as the chat part's under the first group's reported file and Focus Agent takes the keyboard; why_new=Cycle 0046 AD29 (row 727's guard, active.activeTab !== undefined, which AD29's reading of the whole group leaves as the only thing that tells an empty group from the chat's; its earlier test no longer reaches it); seam=as in the test above, with focusEmptyGroup keeping the text editor's report (its new option); no_claim=that Cursor keeps the report after the learner's own new group, which row 710 saw after Codebook's
+test('in Cursor, an agent’s Return Current from a replay leaves the keyboard in the empty group the learner opened while the arrangement’s receipt was read, also while the editor still reports the first group’s file, and the chat gets none back', async () => {
+  // Arrange: as in row 723's test; after the editor applied the Study layout, while it answers the receipt read, the learner opens a new empty group right of the main editor's last group.
+  const harness = await recordedReaderHarness(true, true)
+  harness.useHostAppName('Cursor')
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.leavePaneFocusUnreportedBesideChat()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    harness.service.playback({
+      instanceId: harness.service.instanceId,
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focus()
+    const state = harness.reader.presentationState(),
+      commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+    const layoutCommands = harness.holdNextCommand('runCommands')
+    void layoutCommands.started.then(() => {
+      const receiptRead = harness.holdNextCommand('vscode.getEditorLayout')
+      void receiptRead.started.then(() => {
+        harness.focusEmptyGroup(4, true)
+        receiptRead.release()
+      })
+      layoutCommands.release()
+    })
+
+    // Act
+    const refusal = await harness.service
+      .returnToCurrent({
+        instanceId: harness.service.instanceId,
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => String(error),
+      )
+    await harness.controller.settle()
+
+    // Assert: the Return answered; the empty group is named with no tab in front and no text editor is active, only the borrow's focus command ran, the chat has no keyboard, and nothing was told.
+    const named = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        refusal,
+        named: `${named.viewColumn}:${named.tabs.length}:${named.activeTab?.label}`,
+        reportedTextEditor:
+          harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+        keyboardCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+              command,
+            ),
+          ),
+        chatHasKeyboard: chat.focused(),
+        messages: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        refusal: undefined,
+        named: '4:0:undefined',
+        reportedTextEditor: 'login-form.tsx',
+        keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+        chatHasKeyboard: false,
+        messages: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const editor of ['Settings', 'Merging: login-form.tsx'] as const)
+  // Value: protects=the learner's newer choice during an agent's Return Current from a replay beside Cursor's Agent chat part (row 723's order): after the editor applied the Study layout, while it answers the arrangement's receipt read, the learner opens an editor whose tab the extension API gives no input (VS Code's Settings, its merge editor) in front of the Wiki's group, and the editor goes on reporting login-form.tsx behind it (rows 659 and 671); the Return answers, that editor keeps the keyboard and the chat gets none back, since a tab without an editor's input in a group that holds an editor's tab is no tab of Cursor's chat part; fails_when=namesAnotherEditorPartsTab takes any front tab without an editor's input for the chat's tab, so isFirstGroupEditorUnderAnotherPartsName reads the Wiki's group as Cursor's chat part's group and the chat return (from finishCurrentReturn) runs Focus Agent over the learner's editor and tells the arrangement's sentence; why_new=Cycle 0046 AD29 (/ship's adversarial review: a tab with no typed input in the API is taken for Cursor's chat tab); seam=recordedReaderHarness, useHostAppName, useNativeLayout, addSeparateEditorPart and its focus, leavePaneFocusUnreportedBesideChat, focusMutableDraft, the service's playback and returnToCurrent, holdNextCommand on the layout's runCommands and on the receipt read after it, focusEditorWithoutTabInput (the new seam) keeping the text editor's report, the command log and the information messages; no_claim=Cursor's own Settings tab in a group of its own, which the API leaves untyped too: alone in a group beyond the main editor's measured ones it is read as the chat's
+  test(`in Cursor, an agent’s Return Current from a replay leaves the keyboard in ${editor} the learner opened in the Wiki’s group while the arrangement’s receipt was read, and the chat gets none back`, async () => {
+    // Arrange: as in row 723's test; after the editor applied the Study layout, while it answers the receipt read, the learner opens the editor in front of the Wiki's group, and login-form.tsx stays reported.
+    const harness = await recordedReaderHarness(true, true)
+    harness.useHostAppName('Cursor')
+    try {
+      await harness.reader.close()
+      harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+      const chat = harness.addSeparateEditorPart()
+      harness.leavePaneFocusUnreportedBesideChat()
+      harness.focusMutableDraft('login-form.tsx', 1)
+      harness.service.playback({
+        instanceId: harness.service.instanceId,
+        studyId: harness.studyId,
+        action: 'open',
+        expectedRevision: harness.controller.state().revision,
+      })
+      await harness.controller.settle()
+      harness.focusMutableDraft('login-form.tsx', 1)
+      chat.focus()
+      const wikiColumn = harness.groups.find((group) =>
+        group.tabs.some(
+          (tab) =>
+            Reflect.get(tab.input, 'viewType') === 'codebook.repositoryWiki',
+        ),
+      )!.viewColumn
+      const state = harness.reader.presentationState(),
+        commandsBefore = harness.commands.length,
+        messagesBefore = harness.informationMessages.length
+      const layoutCommands = harness.holdNextCommand('runCommands')
+      void layoutCommands.started.then(() => {
+        const receiptRead = harness.holdNextCommand('vscode.getEditorLayout')
+        void receiptRead.started.then(() => {
+          harness.focusEditorWithoutTabInput(editor, wikiColumn, true)
+          receiptRead.release()
+        })
+        layoutCommands.release()
+      })
+
+      // Act
+      const refusal = await harness.service
+        .returnToCurrent({
+          instanceId: harness.service.instanceId,
+          presentationId: state.presentationId,
+          expectedRevision: state.reader.contentRevision,
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => String(error),
+        )
+      await harness.controller.settle()
+
+      // Assert: the Return answered; the editor is in front of the named group, login-form.tsx is still reported, only the borrow's focus command ran, the chat has no keyboard, and nothing was told.
+      const named = harness.editor.window.tabGroups.activeTabGroup
+      assert.deepEqual(
+        {
+          refusal,
+          namedFront: named.activeTab?.label,
+          reportedTextEditor:
+            harness.editor.window.activeTextEditor?.document.uri.path
+              .split('/')
+              .at(-1),
+          keyboardCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) =>
+              /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+                command,
+              ),
+            ),
+          chatHasKeyboard: chat.focused(),
+          messages: harness.informationMessages
+            .slice(messagesBefore)
+            .map((message) => message.message),
+        },
+        {
+          refusal: undefined,
+          namedFront: editor,
+          reportedTextEditor: 'login-form.tsx',
+          keyboardCommands: ['workbench.action.focusFirstEditorGroup'],
+          chatHasKeyboard: false,
+          messages: [],
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 for (const host of ['VS Code', 'Cursor'] as const)
   // Value: protects=the fidelity of the workspace harness's new empty group, on which the tests of rows 714 and 727 with a learner's empty group rest: from the moment the editor tells its group and tab listeners, the new group is named in its own column right of the main editor's last group, shows no tab and no active tab, and no text editor is reported active, as root's probe of Cursor 3.23.12 saw after workbench.action.newGroupRight; fails_when=the fake names the new group only after its group event, keeps a tab in it, or keeps reporting the text editor that had the keyboard, so a reader test of a learner's empty group passes by another path; why_new=Cycle 0046 rows 714 and 727 (the coverage audit of /ship); seam=workspaceHarness's two columns, Cursor's chat part (addSeparateEditorPart, leavePaneFocusUnreportedBesideChat, which rebuilds the group objects), focusMutableDraft, the editor's onDidChangeTabs and onDidChangeTabGroups, focusEmptyGroup; no_claim=VS Code's own answer to newGroupRight, which the fake models the same way
   test(`the fake editor names the learner’s new empty group with no tab and reports no active text editor already while it tells its group and tab listeners (${host})`, async () => {

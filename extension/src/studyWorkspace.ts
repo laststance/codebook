@@ -3184,13 +3184,15 @@ export class StudyWorkspace {
    * Says whether the group the editor names shows another editor part's tab in front, Cursor's chat (its composer tab has no input, 3.23.12 `workbench.desktop.main.js` 17269:27859), rather than an editor of the main editor; asked by {@link isCapturedSourceUnderAnotherPartsName} (row 711) and {@link isFirstGroupEditorUnderAnotherPartsName} (row 723).
    * A terminal in the editor area, a notebook, a notebook diff, a custom editor or a diff in front of the named group is the learner's own newer choice, and so is a group without an active tab: only a tab without an editor's input is the chat's ({@link holdsEditorTab} with {@link editorTabInputKinds}, as row 714 tells the chat's tab in {@link RepositoryReader.isOwnQuietCopyShowPlace}; Cycle 0046 row 727).
    * @param active - The group the editor names as active now.
-   * @returns `true` while that group's front tab has no editor's input; `false` for an editor's tab and for a group without an active tab.
+   * A tab without an editor's input is no proof alone: the API types no input for VS Code's Settings editor and merge editor either. The chat's group holds chat tabs only, as row 689's proof reads every group beyond the measured columns (`holdsOnlyChatsBeyond`), so a group that holds any editor's tab is the main editor's, whatever stands in front of it (Cycle 0046 AD29). What the evidence does not tell apart: such an editor alone in a group of its own reads as the chat's.
+   * @returns `true` while that group has an active tab and holds no editor's tab; `false` for a group with an editor's tab, also behind a front tab without input, and for a group without an active tab.
    * @example this.namesAnotherEditorPartsTab(vscode.window.tabGroups.activeTabGroup) // => true while Cursor names its chat part's group, false while it names the group of a terminal the learner opened in the editor area
    */
   private namesAnotherEditorPartsTab(active: vscode.TabGroup): boolean {
+    // A group of another editor part holds no editor's tab at all (row 689); an editor the API gives no input, VS Code's Settings or merge editor, stands in a group of the main editor among its tabs (AD29).
     return (
       active.activeTab !== undefined &&
-      !holdsEditorTab({ tabs: [active.activeTab] }, editorTabInputKinds(vscode))
+      !holdsEditorTab(active, editorTabInputKinds(vscode))
     )
   }
 

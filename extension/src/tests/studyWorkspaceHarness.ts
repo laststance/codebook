@@ -1147,6 +1147,47 @@ export async function workspaceHarness(
     )
   }
   /**
+   * Opens a tab in the editor area of a group and gives it the keyboard, the body of `focusEditorTerminal` and `focusEditorWithoutTabInput`: the tab is the one its group shows, the group is the active one and named by the group event both editors send (Cursor's rebuild names it, as the main editor is the active part again), and no text editor is active, unless the one that had the keyboard stays reported.
+   * @param input - The tab's input: a terminal's, or one of no editor's kind.
+   * @param label - The tab's label.
+   * @param column - The view column of the group.
+   * @param keepsTextEditorReport - Whether the text editor that had the keyboard stays reported.
+   * @returns The tab.
+   * @example focusEditorAreaTab(new TabInputTerminal(), 'bash', 2, false)
+   */
+  function focusEditorAreaTab(
+    input: object,
+    label: string,
+    column: number,
+    keepsTextEditorReport: boolean,
+  ): Tab {
+    const reported = keepsTextEditorReport ? focusedSourceEditor() : undefined
+    assert.ok(
+      !keepsTextEditorReport || reported,
+      `No text editor has the keyboard before ${label}`,
+    )
+    const group = groups.find((candidate) => candidate.viewColumn === column)!
+    const tab = { input, label, isPreview: false, isDirty: false }
+    group.tabs.push(tab)
+    group.activeTab = tab
+    const previous = activeTabGroup
+    activeTabGroup = group
+    leaveChatForMainEditor()
+    keyboardOnBody = false
+    keyboardInView = false
+    innerFocusedPanel = undefined
+    // The kept report holds before any listener hears of the tab, and sends no active-editor event; Cursor's rebuild carries it to the group's new object (row 733).
+    if (reported)
+      textEditorReportedBehindWebview = { group, tab, editor: reported }
+    for (const listener of tabChangeListeners)
+      listener({ opened: [tab], closed: [], changed: [] })
+    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
+    else changedGroups({ opened: [], closed: [], changed: [previous, group] })
+    if (!reported) activeTextEditorChanged(undefined)
+    return tab
+  }
+
+  /**
    * Mirrors native group creation for the layout-return regressions without changing older fixtures.
    * @param column - The new group's view column; an existing main group of that column is answered as it is.
    * @param preserveLayout - Keeps the measured grid as it is.
@@ -6576,43 +6617,41 @@ export async function workspaceHarness(
      * @example harness.focusEditorTerminal(2) // the terminal in front of group 2 has the keyboard, and group 2 is named
      */
     focusEditorTerminal(column: number, keepsTextEditorReport = false): Tab {
-      const reported = keepsTextEditorReport ? focusedSourceEditor() : undefined
-      assert.ok(
-        !keepsTextEditorReport || reported,
-        'No text editor has the keyboard before the terminal',
+      return focusEditorAreaTab(
+        new TabInputTerminal(),
+        'bash',
+        column,
+        keepsTextEditorReport,
       )
-      const group = groups.find((candidate) => candidate.viewColumn === column)!
-      const tab = {
-        input: new TabInputTerminal(),
-        label: 'bash',
-        isPreview: false,
-        isDirty: false,
-      }
-      group.tabs.push(tab)
-      group.activeTab = tab
-      const previous = activeTabGroup
-      activeTabGroup = group
-      leaveChatForMainEditor()
-      keyboardOnBody = false
-      keyboardInView = false
-      innerFocusedPanel = undefined
-      // The kept report holds before any listener hears of the terminal, and sends no active-editor event; Cursor's rebuild carries it to the group's new object (row 733).
-      if (reported)
-        textEditorReportedBehindWebview = { group, tab, editor: reported }
-      for (const listener of tabChangeListeners)
-        listener({ opened: [tab], closed: [], changed: [] })
-      if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
-      else changedGroups({ opened: [], closed: [], changed: [previous, group] })
-      if (!reported) activeTextEditorChanged(undefined)
-      return tab
+    },
+    /**
+     * Opens an editor whose tab the extension API gives no input (VS Code 1.142's Settings editor, its merge editor; the API types neither) in a group and gives it the keyboard, as the learner's Preferences: Open Settings (UI) or Merge Editor's open does: as `focusEditorTerminal` does for a terminal, with a tab whose input is of no editor's kind, like Cursor's chat tab (Cycle 0046 AD29).
+     * @param label - The tab's label: `Settings`, or `Merging: <file>` for the merge editor.
+     * @param column - The view column of the group.
+     * @param keepsTextEditorReport - Whether the text editor that had the keyboard stays reported, as VS Code reports it behind an editor that is no code editor (rows 659 and 671).
+     * @returns The editor's tab.
+     * @example harness.focusEditorWithoutTabInput('Settings', 3, true) // Settings in front of group 3 has the keyboard, and login-form.tsx stays reported
+     */
+    focusEditorWithoutTabInput(
+      label: string,
+      column: number,
+      keepsTextEditorReport = false,
+    ): Tab {
+      return focusEditorAreaTab(
+        new TabInputUnknown(),
+        label,
+        column,
+        keepsTextEditorReport,
+      )
     },
     /**
      * Opens a new empty group right of the main editor's last group and gives it the keyboard, as the learner's `workbench.action.newGroupRight` from that group does in Cursor 3.23.12 (root's probe of 2026-10-18): the editor names the new group in its own column, which shows no tab (`activeTab` undefined, no tabs), reports no active text editor, and the page focus is in the empty group's container, which this model counts as the page body; the tab and group listeners are told (Cycle 0046 rows 714 and 727).
      * @param column - The new group's view column, the one after the main editor's last group.
+     * @param keepsTextEditorReport - Keeps the text editor that had the keyboard reported as the active one while the new empty group is the active group, as Cursor 3.23.12 kept it after a new group until a tab stood in front of it (row 710's `keepTextEditorReportAfterNewGroup`; Cycle 0046 AD29).
      * @returns The new empty group.
      * @example harness.focusEmptyGroup(4) // a new empty group in column 4 is named, and no text editor is active
      */
-    focusEmptyGroup(column: number) {
+    focusEmptyGroup(column: number, keepsTextEditorReport = false) {
       const lastMainColumn = Math.max(
         ...groups
           .filter((group) => group !== separateEditorPart?.group)
@@ -6623,14 +6662,21 @@ export async function workspaceHarness(
         lastMainColumn + 1,
         'The new group stands right of the main editor’s last group',
       )
+      const reported = keepsTextEditorReport ? focusedSourceEditor() : undefined
+      assert.ok(
+        !keepsTextEditorReport || reported,
+        'No text editor has the keyboard before the new group',
+      )
       leaveChatForMainEditor()
       keyboardOnBody = true
       keyboardInView = false
       innerFocusedPanel = undefined
+      // The kept report holds before any listener hears of the new group.
+      if (reported) textEditorKeptAtNewGroup = { column, editor: reported }
       const group = nativeGroup(column, false, true)
       for (const listener of tabChangeListeners)
         listener({ opened: [], closed: [], changed: [] })
-      activeTextEditorChanged(undefined)
+      if (!reported) activeTextEditorChanged(undefined)
       return group
     },
     addOpaqueTab(label: string, column: number) {
