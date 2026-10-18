@@ -243,7 +243,7 @@ export class HostBrowser {
 
   /**
    * Names the managed profile folder the last {@link close} could not remove, for the run's cleanup record; read by {@link ConfiguredBrowserRun} in its view.
-   * A folder that stays is no failed release: the browser's processes are gone, and a later run removes the folder once this editor has ended.
+   * A folder that stays is no failed release: the browser's processes are gone, or the listing failed and the close could not check them (`browser.managed-exit-unverified`); the folder keeps its owner marker, so a later run removes it once this editor has ended.
    * @returns
    * - `undefined` when the run has no managed profile, has not closed yet, or its folder was removed
    * - The folder and the removal's error when the folder is still there
@@ -508,7 +508,7 @@ export class HostBrowser {
 
   /**
    * Starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) beside a managed run's start, which does not wait for it; called by {@link launch} once its owner is read and its signal is still not aborted.
-   * This run's own folder is never removed by the sweep, because its marker names this running process. The sweep never fails the launch, and {@link close} awaits it.
+   * This run's own folder is never removed by the sweep, because its marker names this running process. The sweep never fails the launch, and {@link close} waits for it at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS} ({@link awaitSweepWithinBound}) before it removes this run's own folder.
    * A browser that is closing starts none: its close may already have passed the step that waits for a sweep, and a sweep started after it would outlive the run. A browser starts at most one sweep, and a launch whose root has a sweep running, one that outlived an earlier run's close, joins it instead of starting another ({@link sweepOfRoot}).
    * @param owner - The machine, the boot and the start of this process, by which a folder's marker is judged.
    * @example
@@ -783,7 +783,7 @@ export class HostBrowser {
     ])
     if (failures.length)
       throw new Error(`Browser cleanup incomplete: ${failures.join('; ')}`)
-    // Only here every acquisition has ended and no profile process is left: a browser that starts late never loses its folder.
+    // Only here every acquisition has ended and the wait for the browser's exit is over: the exit was verified, or the listing failed and it could not be checked (AD22); the folder goes either way, its marker last, so a folder Chrome still holds stays marked for a later sweep.
     await this.removeManagedProfile()
     this.record('browser.cleanup-verified', {
       host: this.host.id,
@@ -792,7 +792,7 @@ export class HostBrowser {
   }
 
   /**
-   * Waits for the sweep of abandoned profile folders a managed launch started, for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; called by {@link close} after the browser's exit was verified.
+   * Waits for the sweep of abandoned profile folders a managed launch started, for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; called by {@link close} after its wait for the browser's exit, whether that exit was verified or, with a failed listing, could not be checked.
    * Why bounded: on Windows each judgement of a folder can cost a PowerShell query of up to 3 s, so a root with many leftovers would hold the close for minutes. A sweep that is still running at the bound goes on in the background; the folders it has not judged stay for the next sweep, and its later result is not journaled into this run (`browser.abandoned-profile-sweep-left-running` says that it outlived the close).
    * @returns Once the sweep ended or the bound passed; at once without a sweep.
    * @example
@@ -829,7 +829,7 @@ export class HostBrowser {
   }
 
   /**
-   * Removes this run's own profile folder once its browser is verified gone, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list.
+   * Removes this run's own profile folder once the close's wait for the browser's exit is over, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list. The exit is verified then, or, when the process listing failed, could not be checked (AD22): the folder is removed all the same, so no folder is left that no later close or sweep (both need the listing) would remove.
    * A folder that cannot be removed is journaled as `browser.managed-profile-left` and kept for {@link profileLeft}; it is never a failed release, so the run's outcome and the next start are not affected. A removed folder is remembered, which makes a repeated close a no-op here.
    * The folder is removed by {@link removeWithoutFollowing} with its owner marker ({@link MANAGED_PROFILE_OWNER_FILE}) as the entry that goes last, as the sweep removes a folder: a removal that stops at a file Chrome still holds, or one this user may not remove, leaves a folder that keeps its marker, which a later sweep removes once the file is free. The recursive `rm` of Node.js would remove the marker beside the entry that refuses, and the folder would stay unknown to every sweep. A busy answer is tried again, after 100, 200 and 300 ms ({@link retryWhileBusy}), as `rm` did with its retries, for a file Windows still holds a moment after the browser ended.
    * @example

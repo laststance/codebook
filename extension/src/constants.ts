@@ -1185,7 +1185,7 @@ export const GIT_CONFIGURATION_IN_OPENED_FOLDER = [
 ] as const
 /** What the name of every managed browser profile folder begins with; the rest is random. */
 export const MANAGED_PROFILE_PREFIX = 'codebook-browser-'
-/** The file in a managed browser profile folder that names the editor process, the machine and the boot that made it. Only a folder that carries it is ever removed by a later run. */
+/** The file in a managed browser profile folder that names the editor process, the machine and the boot that made it, and, since CX7, the operating-system user it ran as. Only a folder that carries it is ever removed by a later run, and a sweep leaves a folder whose marker names another user, on every system. */
 export const MANAGED_PROFILE_OWNER_FILE = 'codebook-owner.json'
 /** How many profile folders with an owner marker the start of a managed run judges for ones a killed editor left; more than that wait for a later run. A folder without a readable marker is passed over and is not counted. */
 export const MANAGED_PROFILE_SWEEP_LIMIT = 64

@@ -200,7 +200,7 @@ async function printedListing(
  * The listing is bounded: it is ended with a signal it cannot ignore after {@link PROCESS_LISTING_TIMEOUT_MS}, and when it prints more than {@link PROCESS_LISTING_MAX_BYTES}. Its input is closed ({@link runBoundedQuery}).
  * @param inputs - The platform, the runner, the time bound, the environment that names the Windows system root, and the paths and file check of `ps`, of {@link ProcessListingInputs}; the real ones when left out.
  * @returns Every process the listing printed with a command line, in its order; a line that names no process id or no command line is left out.
- * @throws What running the listing throws, for example on a machine without the command; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}); on Windows without a system root, the refusal of {@link listingFormOf}, before any program is started. A caller that removes by the listing removes nothing then.
+ * @throws What running the listing throws; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}); the refusal of {@link listingFormOf}, before any program is started, on Windows when neither SystemRoot nor windir names the Windows folder, and on macOS and Linux when no `ps` lies at `/bin/ps` or `/usr/bin/ps`. A caller that removes by the listing removes nothing then.
  * @example
  * await listProcesses() // => [{ pid: 1, command: '/sbin/launchd' }, { pid: 4242, command: '/Applications/Google Chrome --user-data-dir=/tmp/codebook-browser-a1b2c3' }, …]
  * await listProcesses({ platform: 'win32' }) // => [{ pid: 4242, command: '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir=C:\\Temp\\codebook-browser-a1b2c3' }, …]
