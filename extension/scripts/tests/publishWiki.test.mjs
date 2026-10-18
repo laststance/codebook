@@ -273,6 +273,259 @@ test('prepared updates retain exact published metadata and copy only owned asset
   }
 })
 
+// Value: protects=Wiki updates whose image inventory exceeds process memory; fails_when=preparation reads every asset before the first write or rollback retains past asset Buffers; why_new=row 1054; seam=the existing filesystem seam observes real Buffers in a child with explicit garbage collection, using only twelve 64 KiB images
+test('preparing a Wiki copies each owned image before reading the next and releases past image buffers', async (context) => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-buffers-')),
+  )
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+  const manifest = JSON.parse(
+    await readFile(join(first, 'codebook-wiki.json'), 'utf8'),
+  )
+  manifest.assets = Array.from(
+    { length: 12 },
+    (_unused, index) => `assets/image-${index}.png`,
+  )
+  await mkdir(join(first, 'assets'))
+  // A fixed 768 KiB inventory is enough to distinguish retained buffers from per-file copying.
+  for (const [index, path] of manifest.assets.entries()) {
+    const bytes = Buffer.alloc(64 * 1024, index)
+    PNG_ASSET_BYTES.copy(bytes)
+    await writeFile(join(first, path), bytes)
+  }
+  await writeFile(join(first, 'codebook-wiki.json'), JSON.stringify(manifest))
+  await publishWiki({
+    projectRoot: root,
+    outputDirectory: output,
+    stageDirectory: first,
+  })
+  const before = await readFile(join(output, 'codebook-wiki.json'))
+
+  // Act
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--expose-gc',
+      fileURLToPath(
+        new URL('./utils/prepareWikiBufferProbe.mjs', import.meta.url),
+      ),
+      root,
+      output,
+      next,
+    ],
+    { encoding: 'utf8', timeout: 10_000 },
+  )
+
+  // Assert: no RSS or timing threshold; count the actual image Buffers still reachable at the final write.
+  assert.equal(result.status, 0, result.stderr)
+  const probe = JSON.parse(result.stdout)
+  context.diagnostic(JSON.stringify(probe))
+  assert.equal(probe.readsAtFirstWrite, 1)
+  assert.equal(probe.copiedAssets, 12)
+  assert.ok(
+    probe.liveBuffersAtLastWrite <= 2,
+    `${probe.liveBuffersAtLastWrite} past image buffers remain live`,
+  )
+  assert.deepEqual(await readFile(join(next, 'codebook-wiki.json')), before)
+  for (const [index, path] of manifest.assets.entries()) {
+    const expected = Buffer.alloc(64 * 1024, index)
+    PNG_ASSET_BYTES.copy(expected)
+    assert.deepEqual(await readFile(join(next, path)), expected)
+  }
+})
+
+// Value: protects=the empty candidate left when a prior image cannot be read, and the intact published Wiki; fails_when=lazy copying leaves earlier assets or metadata after a later read error; why_new=row 1054 moves asset reads into the write loop; seam=the existing read seam fails only after stage creation
+test('a failed prior image read leaves the new stage empty and the published Wiki intact', async (context) => {
+  // Arrange
+  const { prepareWikiStage: prepareWithFailedRead } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await candidateWithAnAsset('assets/first.png', PNG_ASSET_BYTES)
+  context.after(() => rm(wiki.root, { recursive: true, force: true }))
+  const manifest = JSON.parse(
+    await readFile(join(wiki.stage, 'codebook-wiki.json'), 'utf8'),
+  )
+  manifest.assets.push('assets/last.png')
+  await writeFile(join(wiki.stage, 'assets/last.png'), PNG_ASSET_BYTES)
+  await writeFile(
+    join(wiki.stage, 'codebook-wiki.json'),
+    JSON.stringify(manifest),
+  )
+  await publishWiki({
+    projectRoot: wiki.root,
+    outputDirectory: wiki.output,
+    stageDirectory: wiki.stage,
+  })
+  const next = join(wiki.root, '.codebook/failed-read')
+  swapBeforeMaking(
+    (path) => path === next,
+    async () => {
+      swapBeforeReading(
+        (path) => path === join(wiki.output, 'assets/last.png'),
+        async () => {
+          throw Object.assign(new Error('Forced image read failure'), {
+            code: 'EIO',
+          })
+        },
+      )
+    },
+  )
+
+  // Act
+  await assert.rejects(
+    prepareWithFailedRead({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: next,
+    }),
+    /Forced image read failure/,
+  )
+
+  // Assert
+  assert.deepEqual(await readdir(next), [])
+  assert.deepEqual(
+    await readFile(join(wiki.output, 'assets/first.png')),
+    PNG_ASSET_BYTES,
+  )
+  assert.deepEqual(
+    await readFile(join(wiki.output, 'assets/last.png')),
+    PNG_ASSET_BYTES,
+  )
+})
+
+// Value: protects=an outside file when a prior asset becomes a symlink between inventory and copying; fails_when=lazy copying follows the link or leaves metadata after refusing it; why_new=row 1054 preserves regular-file reads while moving them into the write loop; seam=the existing mkdir seam replaces only a fixture-owned asset after inventory
+test('a prior image replaced by a link after inventory is refused without copying it or leaving candidate files', async (context) => {
+  // Arrange
+  const { prepareWikiStage: prepareWithLinkedAsset } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await candidateWithAnAsset('assets/first.png', PNG_ASSET_BYTES)
+  context.after(() => rm(wiki.root, { recursive: true, force: true }))
+  await publishWiki({
+    projectRoot: wiki.root,
+    outputDirectory: wiki.output,
+    stageDirectory: wiki.stage,
+  })
+  const next = join(wiki.root, '.codebook/linked-image'),
+    outside = join(wiki.root, 'manual.png')
+  await writeFile(outside, 'Preserve the unowned image')
+  swapBeforeMaking(
+    (path) => path === next,
+    async () => {
+      await rm(join(wiki.output, 'assets/first.png'))
+      await symlink(outside, join(wiki.output, 'assets/first.png'))
+    },
+  )
+
+  // Act
+  await assert.rejects(
+    prepareWithLinkedAsset({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: next,
+    }),
+    /Wiki publication requires a regular file/,
+  )
+
+  // Assert
+  assert.deepEqual(await readdir(next), [])
+  assert.equal(await readFile(outside, 'utf8'), 'Preserve the unowned image')
+})
+
+for (const isHoldRefusal of [true, false]) {
+  // Value: protects=edits and partial writes during image copying while completed owned files are rolled back only for a refused hold; fails_when=digest rollback deletes changed or partial bytes, misses an unchanged completed file, or changes ordinary I/O failure behavior; why_new=row 1054 changes rollback ownership evidence; seam=the existing write seam injects a bounded partial write and the failure
+  test(`a preparation preserves edited and partial image bytes after ${isHoldRefusal ? 'a refused hold and removes its other completed files' : 'a disk error and retains its completed files'}`, async (context) => {
+    // Arrange
+    const { prepareWikiStage: prepareWithFailedWrite } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?swapped-folder',
+    )
+    const wiki = await candidateWithAnAsset('assets/first.png', PNG_ASSET_BYTES)
+    context.after(() => rm(wiki.root, { recursive: true, force: true }))
+    const manifest = JSON.parse(
+      await readFile(join(wiki.stage, 'codebook-wiki.json'), 'utf8'),
+    )
+    manifest.assets.push('assets/second.png', 'assets/last.png')
+    await writeFile(join(wiki.stage, 'assets/second.png'), PNG_ASSET_BYTES)
+    await writeFile(join(wiki.stage, 'assets/last.png'), PNG_ASSET_BYTES)
+    await writeFile(
+      join(wiki.stage, 'codebook-wiki.json'),
+      JSON.stringify(manifest),
+    )
+    await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.stage,
+    })
+    const next = join(wiki.root, '.codebook/failed-images')
+    swapBeforeWriting(
+      (path) => path === join(next, 'assets/last.png'),
+      async () => {
+        await writeFile(
+          join(next, 'assets/first.png'),
+          'Manual edit after copying',
+        )
+        await writeFile(
+          join(next, 'assets/last.png'),
+          Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+          { flag: 'wx' },
+        )
+        throw Object.assign(new Error('Forced image write failure'), {
+          isHoldRefusal,
+        })
+      },
+    )
+
+    // Act
+    await assert.rejects(
+      prepareWithFailedWrite({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: next,
+      }),
+      /Forced image write failure/,
+    )
+
+    // Assert: rollback owns only completed writes whose bytes still match.
+    assert.equal(
+      await readFile(join(next, 'assets/first.png'), 'utf8'),
+      'Manual edit after copying',
+    )
+    assert.deepEqual(
+      await readFile(join(next, 'assets/last.png')),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    )
+    assert.deepEqual(
+      await readdir(next),
+      isHoldRefusal
+        ? ['assets']
+        : ['assets', 'codebook-publication.json', 'codebook-wiki.json'],
+    )
+    if (isHoldRefusal)
+      await assert.rejects(access(join(next, 'assets/second.png')))
+    else
+      assert.deepEqual(
+        await readFile(join(next, 'assets/second.png')),
+        PNG_ASSET_BYTES,
+      )
+    assert.deepEqual(
+      await readFile(join(wiki.output, 'assets/first.png')),
+      PNG_ASSET_BYTES,
+    )
+    assert.deepEqual(
+      await readFile(join(wiki.output, 'assets/last.png')),
+      PNG_ASSET_BYTES,
+    )
+  })
+}
+
 test('an older prepared candidate cannot replace a newer published Wiki', async () => {
   // Arrange
   const root = await realpath(

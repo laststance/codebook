@@ -9,6 +9,23 @@ const pendingSwaps = {
   readFile: undefined,
 }
 
+/** The optional read observer of {@link observeFileReads}; it holds no file bytes itself. */
+let readObserver
+
+/**
+ * Observes completed reads for the bounded image-buffer probe without keeping their bytes in this seam.
+ * @param {(path: string, bytes: string | Buffer) => void} observer - Receives the read path and result.
+ * @returns {() => void} Stops this observer without clearing a newer one.
+ * @example
+ * const stop = observeFileReads((path, bytes) => { if (Buffer.isBuffer(bytes)) references.push(new WeakRef(bytes)) }); stop()
+ */
+export function observeFileReads(observer) {
+  readObserver = observer
+  return () => {
+    if (readObserver === observer) readObserver = undefined
+  }
+}
+
 /**
  * Asks the next `mkdir` of a folder that `isAwaited` names to run `swap` first, once: as another process that swaps a folder on the Wiki output's path for a link between the publisher's look at the path and the folder it then makes. Called by the publisher's tests before they prepare or publish a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {(path: string) => boolean} isAwaited - Whether a folder `mkdir` is asked for is the one before which the swap runs.
@@ -97,5 +114,7 @@ export async function writeFile(path, ...rest) {
  */
 export async function readFile(path, ...options) {
   await swapIfAwaited('readFile', path)
-  return fileSystem.readFile(path, ...options)
+  const bytes = await fileSystem.readFile(path, ...options)
+  readObserver?.(String(path), bytes)
+  return bytes
 }
