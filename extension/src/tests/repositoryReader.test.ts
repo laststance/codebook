@@ -167,11 +167,12 @@ async function readerHarness(context: TestContext) {
   const namesChatPartGroup = (): boolean =>
     chatPartGroup !== undefined && activeGroup === chatPartGroup
   let windowFocused = true
-  let activateWikiPanel = (): void => {}
+  let activateWikiPanel: (editorReportFirst?: boolean) => void = () => {}
   let blurWikiPanel = (): void => {}
   let focusStudyPanel = (): void => {}
   let closeStudyPanel = (): void => {}
   let clickWikiTab = (): void => {}
+  let clickWikiTabReportingGroupFirst = (): void => {}
   let hideWikiPanel = (): void => {}
   let nativeWikiSelection = false
   let retireWikiTextEditor = false
@@ -636,19 +637,29 @@ async function readerHarness(context: TestContext) {
               fireTabChange({ closed: studyTabs })
               activateWikiPanel()
             }
+            clickWikiTabReportingGroupFirst = (): void => {
+              // The editor names the Wiki's group while another tab is still in front of it, and brings the Wiki's tab to the front in its next report (AD28).
+              activeGroup = otherGroup
+              for (const listener of groupListeners) listener()
+              clickWikiTab()
+            }
             clickWikiTab = (): void => {
               // The learner's click selects the Wiki's tab in its group, in front of the Study's, and the Wiki takes the keyboard.
               otherGroup.activeTab = wikiTab
               fireTabChange({ changed: [wikiTab] })
               activateWikiPanel()
             }
-            activateWikiPanel = (): void => {
+            activateWikiPanel = (editorReportFirst = false): void => {
               activeEditor = undefined
+              // The extension host can hear of the lost text editor before it hears of the newly named group (AD28).
+              if (editorReportFirst)
+                for (const listener of focusListeners) listener()
               activeGroup = otherGroup
               panel.active = true
               panel.visible = true
               void beginDocument()
-              for (const listener of focusListeners) listener()
+              if (!editorReportFirst)
+                for (const listener of focusListeners) listener()
               for (const listener of groupListeners) listener()
               viewStateChanged()
             }
@@ -992,8 +1003,13 @@ async function readerHarness(context: TestContext) {
       windowFocused = focused
       for (const listener of windowFocusListeners) listener({ focused })
     },
-    focusWiki(): void {
-      activateWikiPanel()
+    /**
+     * Gives the Wiki the keyboard as the learner's click on its tab does: no text editor is active, the editor names the Wiki's group, the panel is active and visible, and the active-editor, group and view-state listeners are told.
+     * @param editorReportFirst - Tells the active-editor listeners of the lost text editor while the editor still names the group it named before, and only then names the Wiki's group: the extension host receives the editors and the tab model on separate channels, so a host may report the two in that order (Cycle 0046 AD28).
+     * @example harness.focusWiki(true) // notes.ts is reported gone first, then the Wiki's group is named
+     */
+    focusWiki(editorReportFirst = false): void {
+      activateWikiPanel(editorReportFirst)
     },
     focusStudy(): void {
       focusStudyPanel()
@@ -1022,6 +1038,17 @@ async function readerHarness(context: TestContext) {
      */
     clickWikiTab(): void {
       clickWikiTab()
+    },
+    /**
+     * Models the learner's click on the Wiki's tab, in the group where another tab stands in front of it, as an editor may report it in two steps: first the Wiki's group is named with the other tab still in front, then the Wiki's tab comes to the front and the Wiki becomes the active panel ({@link clickWikiTab}); Cycle 0046 AD28.
+     * @example
+     * ```ts
+     * harness.focusStudy()
+     * harness.clickWikiTabReportingGroupFirst()
+     * ```
+     */
+    clickWikiTabReportingGroupFirst(): void {
+      clickWikiTabReportingGroupFirst()
     },
     /** Models the selected Wiki tab callbacks for Return regressions; recording Return also retires that group's text editor. @param retiresEditor - Emits the observed text-editor loss after tab selection. @example harness.useNativeWikiSelection(true) */
     useNativeWikiSelection(retiresEditor = false): void {
@@ -2513,6 +2540,84 @@ for (const refusal of ['unreadable source', 'learner click'] as const)
       { outcome: 'refused', arrangements: 0, shown: 0 },
     )
   })
+
+// Value: protects=the article Return the learner asked for from the Command Palette while typing in notes.ts in the first group, when the editor reports the learner's click on the Wiki in an order that first says the text editor is gone and only then names the Wiki's group: that first report is no move of the learner's elsewhere, so the Return still waits and completes at the Wiki's selection; fails_when=the deferred Return's watch takes any changed place without the Wiki's focus for a move away, so the lone report of the lost text editor, in the group the editor named before, expires the Return and the learner's own click restores no layout; why_new=Cycle 0046 AD28 (/ship's adversarial review: an event order of the editor could expire the Return on the learner's own click; the extension host hears of editors and of the tab model on separate channels); seam=readerHarness with focusUnrelatedDraft and switchTabGroup(true), requireSourceFocus, open with preserveNativeInput, focusWiki(true) (the new option: the lost text editor reported before the newly named group), arrangements; no_claim=which order Cursor 3.23 uses: VS Code 1.142 names the group first, and this test pins that the reader does not depend on it
+test('a palette Return to Wiki completes at the learner’s click on the Wiki also when the editor reports the lost text editor before it names the Wiki’s group', async (context) => {
+  // Arrange: the learner types in notes.ts in the first group, which the editor names; the palette's Return to Wiki defers the article's layout.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft('notes.ts')
+  harness.switchTabGroup(true)
+  harness.requireSourceFocus()
+  const selection = {
+    ...harness.selection,
+    nodeId: 'order',
+    location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+  }
+  await harness.reader.open(selection, undefined, true, true)
+  const arrangementsBefore = harness.arrangements()
+
+  // Act: the learner clicks the Wiki; the editor reports the lost text editor first, then the Wiki's group.
+  harness.focusWiki(true)
+  // A dropped Return arranges nothing: the wait ends without a refusal, and the assertion below reads what happened.
+  await waitUntil(
+    () =>
+      harness.arrangements() === arrangementsBefore + 1 &&
+      !harness.reader.inspect().view.loading,
+    'original article layout restored after the learner selected the Wiki',
+    2_000,
+  ).catch(() => undefined)
+
+  // Assert: the layout was restored once, for the selected article.
+  assert.deepEqual(
+    {
+      arrangements: harness.arrangements() - arrangementsBefore,
+      selection: harness.reader.inspect().view.selection,
+      error: harness.reader.inspect().view.error,
+    },
+    { arrangements: 1, selection, error: '' },
+  )
+})
+
+// Value: protects=the article Return the learner asked for from the Command Palette while typing in notes.ts in the first group, when the Study's tab stands in front of the Wiki in its group and the editor reports the learner's click on the Wiki in two steps, first naming the Wiki's group with the Study's tab still in front, then bringing the Wiki's tab to the front: the first step is no move of the learner's elsewhere, so the Return still waits and completes at the Wiki's selection; fails_when=the deferred Return's watch takes the Wiki's own group, named with another tab in front and no text editor of that group active, for a move away, so the learner's own click restores no layout; why_new=Cycle 0046 AD28 (/ship's adversarial review: a group's activation may be reported apart from its front tab's); seam=readerHarness with hideWiki, focusStudy (the Study's tab in front of the Wiki's group), focusUnrelatedDraft and switchTabGroup(true), requireSourceFocus, open with preserveNativeInput, clickWikiTabReportingGroupFirst (the new seam), arrangements; no_claim=which order either editor uses for such a click
+test('a palette Return to Wiki completes at the learner’s click on the Wiki also when the editor names the Wiki’s group before the Wiki’s tab comes to its front', async (context) => {
+  // Arrange: the Study's tab stands in front of the Wiki in its group; the learner types in notes.ts in the first group, which the editor names; the palette's Return to Wiki defers the article's layout.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+  harness.focusStudy()
+  harness.focusUnrelatedDraft('notes.ts')
+  harness.switchTabGroup(true)
+  harness.requireSourceFocus()
+  const selection = {
+    ...harness.selection,
+    nodeId: 'order',
+    location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+  }
+  await harness.reader.open(selection, undefined, true, true)
+  const arrangementsBefore = harness.arrangements()
+
+  // Act: the learner clicks the Wiki's tab; the editor names its group first, with the Study's tab still in front, then brings the Wiki's tab to the front.
+  harness.clickWikiTabReportingGroupFirst()
+  // A dropped Return arranges nothing: the wait ends without a refusal, and the assertion below reads what happened.
+  await waitUntil(
+    () =>
+      harness.arrangements() === arrangementsBefore + 1 &&
+      !harness.reader.inspect().view.loading,
+    'original article layout restored after the learner selected the Wiki',
+    2_000,
+  ).catch(() => undefined)
+
+  // Assert: the layout was restored once, for the selected article.
+  assert.deepEqual(
+    {
+      arrangements: harness.arrangements() - arrangementsBefore,
+      selection: harness.reader.inspect().view.selection,
+      error: harness.reader.inspect().view.error,
+    },
+    { arrangements: 1, selection, error: '' },
+  )
+})
 
 test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
   // Arrange

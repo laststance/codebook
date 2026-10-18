@@ -1683,28 +1683,47 @@ export class RepositoryReader {
 
   /**
    * Keeps a command's deferred Return ({@link deferredReturn}) for the learner's own selection of the Wiki only; called by {@link open} as soon as its background entry (Return to Wiki from the Command Palette) defers the Return, with the learner's input elsewhere, so the watch covers the open's own loading too: a Study close while the Return loads makes the editor select the Wiki, and the open's completion step must not take that for the learner's selection (Cycle 0046 AD2).
-   * The Return and its cited source's preview ({@link sourceDeferred}) expire at the first change of the native focus that does not land on the Wiki, and at any tab the editor closes: the editor activates a neighbour of a closed tab or group by itself (a Study close that removes its panes' groups, a neighbouring group's close), and a Wiki it activates so is no selection of the learner's. Without this, such an activation, minutes later, restored the article's layout and could give the cited source the keyboard (Cycle 0046 R6). A selection of the Wiki that changes no other place keeps the Return for {@link revealDeferredSource}.
+   * The Return and its cited source's preview ({@link sourceDeferred}) expire at the first change of the native focus that does not land on the Wiki (another named group or front tab, or another active text editor; a click on the Wiki is judged by its end, whatever order its reports come in, AD28), and at any tab the editor closes: the editor activates a neighbour of a closed tab or group by itself (a Study close that removes its panes' groups, a neighbouring group's close), and a Wiki it activates so is no selection of the learner's. Without this, such an activation, minutes later, restored the article's layout and could give the cited source the keyboard (Cycle 0046 R6). A selection of the Wiki that changes no other place keeps the Return for {@link revealDeferredSource}.
    * @example this.watchDeferredReturn() // after the palette's Return to Wiki while the learner types in auth.ts
    */
   private watchDeferredReturn(): void {
     this.forgetDeferredReturnWatch()
     /** Names the place of the native focus: the named group with its front tab, and the active text editor. */
-    const focusPlace = (): string => {
+    const focusPlace = (): { group: string; editor: string } => {
       const group = vscode.window.tabGroups.activeTabGroup,
         editor = vscode.window.activeTextEditor
-      return JSON.stringify([
-        group.viewColumn,
-        group.activeTab?.label,
-        group.activeTab?.input,
-        editor?.document.uri.toString(),
-        editor?.viewColumn,
-      ])
+      return {
+        group: JSON.stringify([
+          group.viewColumn,
+          group.activeTab?.label,
+          group.activeTab?.input,
+        ]),
+        editor: JSON.stringify([
+          editor?.document.uri.toString(),
+          editor?.viewColumn,
+        ]),
+      }
     }
     const placeBefore = focusPlace()
+    /**
+     * Says whether the focus moved elsewhere than the Wiki since the Return was deferred: another named group or front tab, or another active text editor.
+     * The learner's click on the Wiki is reported in parts, and the reader judges it by its end, whatever the order of the parts (Cycle 0046 AD28): the extension host hears of the editors and of the tab model on separate channels, and of a group's activation apart from its front tab's.
+     * - A lone report that the text editor is gone, in the group named before, is no move yet: the Wiki's group may be named next.
+     * - The Wiki's own group named while another tab is still in front of the Wiki is no move either, unless a text editor of that group is active: the Wiki's tab may come to the front next; a file of that group the learner chose is a move.
+     */
+    const movedAway = (): boolean => {
+      if (this.hasNativeWikiFocus()) return false
+      const place = focusPlace(),
+        editor = vscode.window.activeTextEditor,
+        wikiColumn = this.panel?.viewColumn
+      if (vscode.window.tabGroups.activeTabGroup.viewColumn === wikiColumn)
+        return editor?.viewColumn === wikiColumn
+      if (place.group !== placeBefore.group) return true
+      return place.editor !== placeBefore.editor && editor !== undefined
+    }
     // Only a change of the focus that lands on the Wiki keeps the Return.
     const observe = (): void => {
-      if (focusPlace() !== placeBefore && !this.hasNativeWikiFocus())
-        this.expireDeferredReturn()
+      if (movedAway()) this.expireDeferredReturn()
     }
     this.deferredReturnWatch = [
       vscode.window.tabGroups.onDidChangeTabs((event) => {
