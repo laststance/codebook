@@ -1099,6 +1099,66 @@ test('a Wiki page asked for as an image, media, a style sheet, a font, a track, 
   )
 })
 
+// Value: protects=the editor's machine against a crafted page that is reloaded or whose tab is closed: the page's worker must stop with the request instead of keeping a core busy until the deadline; fails_when=the reader no longer aborts the page's preparation when the response closes before it is finished, so the worker is abandoned and runs on; why_new=P2T5; seam=the reader loaded with loadModule and a stand-in page-worker module that keeps the signal it is handed and answers only when that signal aborts; no_claim=the real worker's stop at an abort (the page-worker tests cover it)
+test('a page whose browser tab goes while the page is prepared has its preparation stopped', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose page worker answers only when its request goes.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-page-abort-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let preparationSignal: AbortSignal | undefined
+  let notePreparationStarted = (): void => {}
+  const preparationStarted = new Promise<void>((resolveStarted) => {
+    notePreparationStarted = resolveStarted
+  })
+  const workerAnsweringOnlyAtAbort: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: (_html, _options, limits) =>
+      new Promise((resolvePage) => {
+        preparationSignal = limits.signal
+        limits.signal.addEventListener(
+          'abort',
+          () => resolvePage({ state: 'failed' }),
+          { once: true },
+        )
+        notePreparationStarted()
+      }),
+  }
+  const { startDeepWikiReader: startReaderWithStandInWorker } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './wikiPageWorker': workerAnsweringOnlyAtAbort },
+      { URL },
+    )
+  const reader = await startReaderWithStandInWorker(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).catch(
+    () => 'request gone',
+  )
+  await preparationStarted
+
+  // Act: the tab goes while the page is prepared.
+  browserTab.abort()
+  await opening
+  const preparationEnd = await Promise.race([
+    new Promise<'stopped'>((resolveStop) => {
+      if (preparationSignal?.aborted) resolveStop('stopped')
+      preparationSignal?.addEventListener('abort', () => resolveStop('stopped'))
+    }),
+    new Promise<'still running'>((resolveWait) =>
+      setTimeout(() => resolveWait('still running'), 2_000),
+    ),
+  ])
+
+  // Assert
+  assert.equal(preparationEnd, 'stopped')
+})
+
 // Value: protects=the reader's origin, whose page may ask the editor's model, against a script file written into the Wiki folder and named by the manifest, which a page file points at with a script tag, plainly or through a tag it leaves open before the reader's own; fails_when=the reader serves a `.js` file of the Wiki folder as JavaScript again, so the policy's `'self'` lets it run, or a response of the reader (a page, an asset, its own script, an answer, a refusal) comes without `nosniff`, so a browser may run a file of another type as script; why_new=Cycle 0046 /ship Codex review CX16: under a nonce, a script tag left open before the reader's own takes over its nonce in a browser that does not refuse such a tag (Chromium refuses it, Firefox and Safari were not tried); seam=none (the reader's real responses)
 test('a script file of the Wiki folder is served as plain text, a page that points at it plainly or through a tag left open before the reader’s own gets no secret to run it, and every response of the reader says nosniff', async (context) => {
   // Arrange: a script file in the Wiki folder that the manifest names, an overview that points at it, and a page that leaves a script tag open before the reader's own.

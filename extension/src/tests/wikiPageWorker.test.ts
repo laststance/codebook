@@ -331,3 +331,52 @@ test('a worker left without a page for longer than its idle time ends, and the n
     },
   )
 })
+
+// Value: protects=the editor's machine and every later page against a request that goes while its page is prepared (a reload, a closed tab): its worker must stop at once and its place go to the next page; fails_when=an aborted page leaves its worker running until the deadline, or keeps its place among the busy workers, so the next page waits for the deadline or for good; why_new=P2T5; seam=the page-worker module loaded with a Worker class that records the threads it starts (the threads are real), and a constants module whose WIKI_PAGE_WORKER_CONCURRENCY_LIMIT is 1, so the one place is the aborted page's; no_claim=the reader's abort when the response closes (the reader test covers it)
+test('a page whose request goes while it is prepared stops its worker, and the next page gets its place at once', async () => {
+  // Arrange: one worker at a time, and the slow page under a deadline of 30 s.
+  const pool = await loadPageWorkerRecordingThreads({
+    WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+  })
+  const slowRequest = new AbortController()
+  const slow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 30_000,
+    signal: slowRequest.signal,
+  })
+  await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+
+  // Act: the slow page's request goes, then the next page is asked for.
+  slowRequest.abort()
+  const slowAnswer = await within(slow, 1_000)
+  const next = await within(
+    pool.servedWikiPageOffThread(
+      '<body><p>Next page</p></body>',
+      PAGE_OPTIONS,
+      {
+        deadlineMs: 10_000,
+        signal: new AbortController().signal,
+      },
+    ),
+    5_000,
+  )
+  const abortedWorkerEnd = await within(pool.endOfWorker(0), 2_000)
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      slowAnswer,
+      next,
+      abortedWorkerEnd,
+      startedWorkers: pool.startedWorkers.length,
+    }),
+    {
+      slowAnswer: { state: 'failed' },
+      next: {
+        state: 'served',
+        html: '<body><p>Next page</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      abortedWorkerEnd: 'ended',
+      startedWorkers: 2,
+    },
+  )
+})
