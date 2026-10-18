@@ -35,6 +35,7 @@ import {
   REPLAY_MODEL_SELECTION_SCENARIO,
   selectionsThroughScenario,
   type ReplayModelSelectionDriver,
+  type ReplayModelSelectionFrame,
 } from './utils/replayModelSelectionScenario'
 
 // Regression: 558 — replacing the historical source cannot orphan its native keyboard.
@@ -890,7 +891,7 @@ test('the Run and Debug hint stays while Play advances through the same recorded
   }
 })
 
-// Value: protects=the fidelity of the workspace harness's historical debugger to the real owner's model selection (F6): the fake is driven through the scenario table the real owner is held to in replayDebugger.test (REPLAY_MODEL_SELECTION_SCENARIO: the same selection again, another label, another snapshot, an invalidation), so the workspace tests that rest on focusProcess's reveal of the captured source (row 721) see what the real owner does; fails_when=the fake runs focusProcess at every presentation with values, or departs from the table in another step; why_new=N8, Cycle 0046 (the harness kept the rule from before F6); TR8 (the expectations are one table for the fake and the real owner); seam=recordedReaderHarness, the reader's openRecording and a seek to the recorded stop, the fake owner's present and invalidate, and the fake editor's command log
+// Value: protects=the fidelity of the workspace harness's historical debugger to the real owner's model selection (F6): the fake is driven through the scenario table the real owner is held to in replayDebugger.test (REPLAY_MODEL_SELECTION_SCENARIO: the same selection again, another label, another snapshot, an invalidation), so the workspace tests that rest on focusProcess's reveal of the captured source (row 721) see what the real owner does; fails_when=the fake runs focusProcess at every presentation with values, asks the host again while a selection is in flight, settles a selection no longer shown, or departs from the table in another step; why_new=N8, Cycle 0046 (the harness kept the rule from before F6); TR8 (the expectations are one table for the fake and the real owner); Q10 (round 3, OCR: the fake had neither the real owner's answer in flight nor its check that the selection is still shown); seam=recordedReaderHarness, the reader's openRecording and a seek to the recorded stop, the fake owner's present and invalidate, the fake editor's command log, and its holds of a command, each with a promise that resolves once the command is held
 test('the workspace harness’s historical debugger follows the model-selection scenario the real owner is held to', async () => {
   // Arrange: the learner opened a saved recording and sought its stop, which has recorded values; that stop is the first of the scenario's two, and a copy of it the second.
   const harness = await recordedReaderHarness(true, true)
@@ -918,6 +919,19 @@ test('the workspace harness’s historical debugger follows the model-selection 
         (command) => command === 'workbench.action.debug.focusProcess',
       ).length
     const selectionsBefore = modelSelections()
+    /** Presents a frame of the scenario's stops; a presentation the test abandoned ends too. */
+    const presentFrame = (
+      frame: ReplayModelSelectionFrame,
+      signal = new AbortController().signal,
+    ): Promise<unknown> =>
+      debuggerView
+        .present(
+          snapshots[frame.stop],
+          frame.label,
+          signal,
+          shown.sourceDocument,
+        )
+        .catch(() => undefined)
     const driver: ReplayModelSelectionDriver = {
       present: async (stop, label, circumstance) => {
         if (circumstance === 'host refuses')
@@ -935,9 +949,7 @@ test('the workspace harness’s historical debugger follows the model-selection 
           harness.reportStopFrame('learner-node')
         }
         const abandon = new AbortController()
-        const presenting = debuggerView
-          .present(snapshots[stop], label, abandon.signal, shown.sourceDocument)
-          .catch(() => undefined)
+        const presenting = presentFrame({ stop, label }, abandon.signal)
         // The presentation is abandoned while the host still answers its selection, which it answers afterwards.
         if (held) {
           await held.started
@@ -947,6 +959,25 @@ test('the workspace harness’s historical debugger follows the model-selection 
         await presenting
         if (circumstance === 'live session owns the view')
           harness.endDebugSession('learner-node')
+      },
+      presentWhileHostAnswers: async (first, next, nextIsAnotherSelection) => {
+        const firstHold = harness.holdNextCommand(
+          'workbench.action.debug.focusProcess',
+        )
+        const firstPresenting = presentFrame(first)
+        await firstHold.started
+        // A frame of another stop runs its own selection, which the host answers first; a frame of the same stop waits for the answer in flight from its presentation on.
+        const nextHold = nextIsAnotherSelection
+          ? harness.holdNextCommand('workbench.action.debug.focusProcess')
+          : undefined
+        const nextPresenting = presentFrame(next)
+        if (nextHold) {
+          await nextHold.started
+          nextHold.release()
+          await nextPresenting
+        }
+        firstHold.release()
+        await Promise.all([firstPresenting, nextPresenting])
       },
       invalidate: () => debuggerView.invalidate(),
       selections: () => modelSelections() - selectionsBefore,

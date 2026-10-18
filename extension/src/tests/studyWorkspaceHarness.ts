@@ -631,6 +631,11 @@ export async function workspaceHarness(
     private modelSelectionSettledFor?: TestReplayDebugger['selection']
     /** Positive discovery of {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, kept as the real owner keeps `registeredNativeFocusCommand` (F6). */
     private registeredNativeFocusCommand = false
+    /** The model selection the fake host still answers, as the real owner keeps `modelSelectionInFlight` (AD25, Q10): a later frame of the same selection waits for this answer instead of asking the host again. */
+    private modelSelectionInFlight?: {
+      selection: TestReplayDebugger['selection']
+      answer: Promise<boolean>
+    }
     /**
      * Registers the fake owner so {@link loadHistoricalDebugValues} and {@link endHistoricalDebugSession} can notify the workspace, as the real owner does.
      * @throws When an earlier owner is still registered: the editor accepts one descriptor factory per debug type.
@@ -699,6 +704,7 @@ export async function workspaceHarness(
     }
     /**
      * Selects the native debugger model of a presented stop as the real owner does (`ReplayDebugger.selectNativeInspectionModel`): where the host registers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, it runs that command with `null`, which the fake editor answers by revealing the stop's source (`revealHistoricalStopSource`). The real owner runs it only once native Call Stack fetched the stop and while no other debug session is active, which the fake reads as no live stop the editor reports (Cycle 0046 row 721), and once per selection, asking the host for its commands until it found the command (F6).
+     * As for the real owner, the question whether the selection is settled is asked again after the command discovery's await (Q1), and a later frame of a selection the host still answers waits for that answer instead of asking again (AD25, Q10).
      * @param sourceUri - The stop's captured source, whose document the recorded frame names.
      * @param selection - The presented selection, noted as settled once its model was selected or the host has no command for it.
      * @example await this.selectNativeInspectionModel(capturedSourceUri, this.selection) // the captured source's group is the active one, its text editor the active text editor
@@ -716,18 +722,51 @@ export async function workspaceHarness(
         this.modelSelectionSettledFor = selection
         return
       }
-      historicalStopSource = sourceUri
-      // As for the real owner, the host's refusal fails no frame and leaves the selection unsettled for the next frame (AD25).
-      try {
-        await this.editor.commands.executeCommand(
-          NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
-          null,
-        )
-      } catch (error) {
-        this.failed(error)
+      // Another frame's answer may have settled the selection during the discovery.
+      if (this.modelSelectionSettledFor === selection) return
+      const inFlight = this.modelSelectionInFlight
+      // A selection the host still answers is this frame's too.
+      if (inFlight && inFlight.selection === selection) {
+        await inFlight.answer
         return
       }
-      this.modelSelectionSettledFor = selection
+      historicalStopSource = sourceUri
+      await this.runNativeInspectionModelSelection(selection)
+    }
+    /**
+     * Runs {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for a selection as the real owner does (`ReplayDebugger.runNativeInspectionModelSelection`), for {@link selectNativeInspectionModel}: the answer is kept in flight for later frames of the selection, and it settles the selection only while that selection is still the shown one.
+     * @param selection - The selection whose model is selected.
+     * @returns `true` once the host selected the model; `false` when it refused, which fails no frame (AD25) and goes to the error channel.
+     * @example await this.runNativeInspectionModelSelection(this.selection) // => true
+     */
+    private runNativeInspectionModelSelection(
+      selection: TestReplayDebugger['selection'],
+    ): Promise<boolean> {
+      const answer = Promise.resolve(
+        this.editor.commands.executeCommand(
+          NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
+          null,
+        ),
+      )
+        .then(
+          () => true,
+          (error: unknown) => {
+            this.failed(error)
+            return false
+          },
+        )
+        .then((selected) => {
+          // A later stop may have been shown meanwhile; only the still shown selection is settled.
+          if (selected && this.selection === selection)
+            this.modelSelectionSettledFor = selection
+          return selected
+        })
+        .finally(() => {
+          if (this.modelSelectionInFlight?.answer === answer)
+            this.modelSelectionInFlight = undefined
+        })
+      this.modelSelectionInFlight = { selection, answer }
+      return answer
     }
     /**
      * Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter.
