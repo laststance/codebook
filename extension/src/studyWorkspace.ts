@@ -7421,7 +7421,10 @@ export class StudyWorkspace {
               void this.renderSelection().catch((error) =>
                 this.report('reader', error),
               )
-            else void this.closeApplicationPaneOfEndedRun()
+            else
+              void this.closeApplicationPaneOfEndedRun().catch((error) =>
+                this.report('reader', error),
+              )
           },
         },
         studyRecord && createRecordingObserver(studyRecord),
@@ -9200,8 +9203,10 @@ export class StudyWorkspace {
    * Closes the Application pane a live run leaves behind when no Study workspace shows its history, and gives the keyboard an element again when that pane had it; called by the lease's `released` of {@link presentation} at the run's end, while the reader is closed or has no study to show.
    * A pane that is closed while it has the keyboard leaves the keyboard on the page body: a key the learner presses then goes nowhere until they click (Cursor 3.23.12 at the end of a run of five stops, measured natively on 2026-10-07: the extension host named a text editor as active, the workbench page had no focus). So when the pane was the editor's active editor in the focused window, the active editor group gets the keyboard once the pane's tab and the group it may have left empty are gone, by the rule of a Close ({@link giveActiveGroupKeyboardAfterClose}), and the learner is told once in an editor session with {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}.
    * Native active-tab flags do not prove keyboard ownership beside a terminal, view or side-view chat. The current owned document is inspected without focus effects through {@link readWebviewFocus}: an explicit false leaves outside typing alone, while an unavailable receipt keeps the guarded native fallback. A newer lease, reader opening or document is never retired after the inspection wait. A window without the focus is left alone.
+   * The editor may refuse to close the group the pane leaves empty, or remove it late: that refusal is reported on the reader's layout line and ends nothing else, so the keyboard is still settled; the group stays this reader's ({@link applicationGroup}), and the next preparation or Close retires it again ({@link releaseApplicationGroup}, Cycle 0046 OCR1-3).
    * @returns Once the pane is disposed and, where it had the keyboard, the focus command was answered.
-   * @example else void this.closeApplicationPaneOfEndedRun()
+   * @throws What the keyboard's inspection or settle threw; the caller reports it.
+   * @example else void this.closeApplicationPaneOfEndedRun().catch((error) => this.report('reader', error))
    */
   private async closeApplicationPaneOfEndedRun(): Promise<void> {
     const panel = this.app
@@ -9222,7 +9227,10 @@ export class StudyWorkspace {
     )
       return
     panel.dispose()
-    await this.releaseApplicationGroup()
+    // A refused or late group close is told and keeps the keyboard's settle below.
+    await this.releaseApplicationGroup().catch((error: unknown) =>
+      this.report('layout', error),
+    )
     if (heldKeyboard) await this.settleKeyboardAfterRunClosedPane()
   }
 

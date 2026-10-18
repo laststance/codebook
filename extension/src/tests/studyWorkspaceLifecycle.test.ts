@@ -4150,6 +4150,77 @@ test('a live run that ends while its Application pane has the keyboard and the S
   }
 })
 
+// Value: protects=the extension host and the learner's keyboard at the end of a live run whose Application pane had the keyboard, with the Study workspace closed, when the editor refuses to close the empty group the pane leaves: the refusal is reported on the reader's layout line, no rejection is left unhandled, and the active editor group still gets the keyboard with its one sentence; fails_when=the run's end does not catch the refused group close, so the rejection is unhandled and the keyboard settle after it never runs, which leaves the keyboard on the page body (Cycle 0046 OCR1-3); why_new=Cycle 0046 OCR1-3; seam=the workspace harness with the controlled runtime, a live run's viewport and its close, the Application pane's reveal with the focus, refuseNextGroupClose, process unhandledRejection, the reader's error lines, keyboardOnBody, command log and information messages
+test('a live run that ends while its Application pane has the keyboard, and whose empty group the editor refuses to close, reports the refusal and still leaves the keyboard in the active editor group', async () => {
+  // Arrange: the learner's file is the tab of the first group; a live run shows its Application pane in its own group with the Study workspace closed, and the pane has the keyboard. The editor will refuse to close the group the pane leaves empty.
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    const live = await harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.reader['app']!.reveal(undefined, false)
+    harness.refuseNextGroupClose()
+    const commandsBefore = harness.commands.length,
+      messagesBefore = harness.informationMessages.length
+
+    // Act: the run ends and gives its pane back.
+    live.close()
+    await waitUntil(
+      () => harness.informationMessages.length > messagesBefore,
+      'the notice of the run that closed its pane',
+      2_000,
+    ).catch(() => undefined)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Assert: the pane is gone, the refused close is on the layout line and unhandled nowhere, and the active editor group has the keyboard with the run's sentence.
+    assert.deepEqual(
+      {
+        panels: harness.counts().panels,
+        unhandledRejections,
+        layoutLine: harness.reader['errors'].get('layout'),
+        keyboardOnBody: harness.keyboardOnBody(),
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        sentences: harness.informationMessages
+          .slice(messagesBefore)
+          .map((message) => message.message),
+      },
+      {
+        panels: 0,
+        unhandledRejections: [],
+        layoutLine:
+          'Error: The editor refused to retire an empty Codebook group.',
+        keyboardOnBody: false,
+        focusCommands: ['workbench.action.focusActiveEditorGroup'],
+        sentences: [
+          'The run ended and Codebook closed its Application pane. The keyboard is in the active editor group now: closing the pane can leave it nowhere, and the editor does not tell Codebook whether it was in the pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await harness.close()
+  }
+})
+
 for (const situation of [
   'the learner works in a file of their own and the pane is not the active editor',
   'the work window does not have the focus',
