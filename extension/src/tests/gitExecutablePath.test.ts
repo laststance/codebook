@@ -24,20 +24,21 @@ function programFiles(programs: string[]): {
   }
 }
 
-// Value: protects=the learner's rights when a cloned repository carries a git.exe or git.com at its root: on Windows, where a bare program name is looked up in the spawn's current folder (the opened project) before PATH, Git is found by an absolute path from PATH alone, and neither a relative or empty PATH entry nor the current folder is ever looked in; the PATHEXT names Node.js starts without a shell are tried in order, a name in any case is read (SX2, Cycle 0046 repeat security review); fails_when=a relative entry (`.`, `tools`) or an empty one is looked in, a folder rooted on the current drive is taken, a batch file is taken, or Git is not found in an absolute PATH folder; why_new=Git was started by its bare name with the project as its folder; seam=the platform, the environment and the program check the lookup is given
+// Value: protects=the learner's rights when a cloned repository carries a git.exe or git.com at its root: on Windows, where a bare program name is looked up in the spawn's current folder (the opened project) before PATH, Git is found by an absolute path from PATH alone, and neither a relative or empty PATH entry nor the current folder is ever looked in; the PATHEXT names Node.js starts without a shell are tried in order, a name in any case is read (SX2, Cycle 0046 repeat security review); fails_when=a relative entry (`.`, `tools`) or an empty one is looked in, a folder rooted on the current drive (`\bin`) or relative to a drive's current folder (`C:tools`, which spawn resolves against the project's folder when C is its drive) is taken, a batch file is taken, or Git is not found in an absolute PATH folder; why_new=Git was started by its bare name with the project as its folder; seam=the platform, the environment and the program check the lookup is given
 test('on Windows Git is found by an absolute path from PATH alone, and no relative, empty or current-drive entry is ever looked in', async () => {
-  // Arrange: the project holds a git.exe; PATH names the current folder, a relative folder, an empty entry, a folder on the current drive and Git's own folder in quotes.
+  // Arrange: the project holds a git.exe; PATH names the current folder, a relative folder, an empty entry, a folder on the current drive, a folder relative to drive C's current folder and Git's own folder in quotes.
   const files = programFiles([
     'C:\\project\\git.exe',
     'tools\\git.exe',
     '\\bin\\git.exe',
+    'C:tools\\git.exe',
     'C:\\Program Files\\Git\\cmd\\git.exe',
   ])
   // Act
   const found = await gitExecutablePath({
     platform: 'win32',
     environment: {
-      Path: '.;tools;;\\bin;"C:\\Program Files\\Git\\cmd";C:\\Windows',
+      Path: '.;tools;;\\bin;C:tools;"C:\\Program Files\\Git\\cmd";C:\\Windows',
       PATHEXT: '.BAT;.COM;.EXE;.CMD',
     },
     isProgramFile: files.isProgramFile,
@@ -50,6 +51,29 @@ test('on Windows Git is found by an absolute path from PATH alone, and no relati
       asked: [
         'C:\\Program Files\\Git\\cmd\\git.com',
         'C:\\Program Files\\Git\\cmd\\git.exe',
+      ],
+    },
+  )
+})
+
+// Value: protects=Git on a Windows machine whose PATH names a folder of a network share, and whose environment sets no PATHEXT: a UNC folder is absolute and is looked in, and without PATHEXT the extensions Windows takes by default are read, of which .com and .exe start without a shell (SX2; TT14, the third testing review); fails_when=a UNC folder is skipped as not absolute, so Git there reads as missing, or a missing PATHEXT gives no extension, so no Git is ever found; why_new=every Windows row named a drive folder and set PATHEXT; seam=the platform, the environment and the program check the lookup is given
+test('on Windows Git is found in a folder of a network share, and without PATHEXT the default extensions that start without a shell are tried', async () => {
+  // Arrange
+  const files = programFiles(['\\\\server\\share\\Git\\cmd\\git.exe'])
+  // Act
+  const found = await gitExecutablePath({
+    platform: 'win32',
+    environment: { Path: '\\\\server\\share\\Git\\cmd' },
+    isProgramFile: files.isProgramFile,
+  })
+  // Assert
+  assert.deepEqual(
+    { found, asked: files.asked },
+    {
+      found: '\\\\server\\share\\Git\\cmd\\git.exe',
+      asked: [
+        '\\\\server\\share\\Git\\cmd\\git.com',
+        '\\\\server\\share\\Git\\cmd\\git.exe',
       ],
     },
   )
