@@ -1355,7 +1355,7 @@ export function activate(
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
    * @param host - Editor host that was asked.
-   * @param acknowledgedLeftovers - The leftovers the refusal named when the learner chose "Update anyway" on it; empty for an ordinary press. Only a leftover equal to one of them ({@link isAcknowledgedWikiLeftover}) lets the start go on; a leftover that appeared since refuses it again with a notice of its own.
+   * @param acknowledgedLeftovers - The leftovers named by the refusals on which the learner chose "Update anyway", one press after the other: each press adds what its refusal named (one chat's leftovers); empty for an ordinary press. Only a leftover equal to one of them ({@link isAcknowledgedWikiLeftover}) lets the start go on; every other leftover, there already or appeared since, refuses it with a notice of its own, and another window's running update refuses it whatever was pressed.
    * @returns
    * - The start may go ahead: what the run begins with; the Wiki's marker is claimed for it
    * - The start was refused or nothing needs updating: undefined, after the state was recorded and the learner told
@@ -1577,7 +1577,7 @@ export function activate(
     }
     return undefined
   }
-  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param acknowledgedLeftovers - Given when the learner pressed "Update anyway": the leftovers the refusal named, which alone are ignored; another window's running update and a leftover that appeared since still refuse the start. @example await updateDeepWiki() */
+  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param acknowledgedLeftovers - Given when the learner pressed "Update anyway": the leftovers named by the refusals it was pressed on, one press after the other, which alone are ignored; every other leftover, there already or appeared since, refuses the start with a notice of its own, and another window's running update still refuses it. @example await updateDeepWiki() */
   const updateDeepWiki = async (
     acknowledgedLeftovers: readonly WikiLeftover[] = [],
   ): Promise<void> => {
