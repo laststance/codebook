@@ -603,6 +603,26 @@ test('package inspection rejects a VS Code import in the standalone Cursor MCP b
   )
 })
 
+// Value: protects=the Wiki reader, which prepares every page on a worker thread that loads dist/wikiPageWorker.js, where the extension host's vscode module does not exist; fails_when=the worker's bundle may import the editor's module, so every page is refused once it loads; why_new=Cycle 0046 second /ship PERF1 residual (pages are prepared off the host's thread); seam=a metafile written by the test
+test('package inspection rejects a VS Code import in the Wiki page worker', async (context) => {
+  // Arrange
+  const fixture = await sourceFixture(context)
+  const metafile = {
+    inputs: {},
+    outputs: {
+      'dist/extension.js': { imports: [{ path: 'vscode', external: true }] },
+      'dist/wikiPageWorker.js': {
+        imports: [{ path: 'vscode', external: true }],
+      },
+    },
+  }
+  // Act / Assert
+  await assert.rejects(
+    inspectBundle(metafile, fixture.repository, new Map()),
+    /Wiki page worker contains an editor-only import/,
+  )
+})
+
 test('a bundled dependency without its license text prevents package staging', async (context) => {
   // Arrange
   const fixture = await sourceFixture(context),

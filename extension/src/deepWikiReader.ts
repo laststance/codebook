@@ -18,6 +18,7 @@ import {
   WIKI_MISSING_PAGE_PATH_LIMIT_CHARS,
   WIKI_MISSING_PAGE_TEXT_DELAY_MS,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
+  WIKI_PAGE_SERVE_DEADLINE_MS,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
   WIKI_QUESTION_STATUS_STYLE,
@@ -53,8 +54,9 @@ import { labelQuestionField } from './utils/labelQuestionField'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
-import { servedWikiPageHtml } from './utils/servedWikiPageHtml'
+import { wikiPageRefusalHtml } from './utils/wikiPageRefusalHtml'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
+import { servedWikiPageOffThread } from './wikiPageWorker'
 
 /** A started Wiki reader: where the browser opens it, how it is told where the editor forwards it and that a project file changed, and how it is closed. */
 export type DeepWikiReader = {
@@ -488,12 +490,31 @@ export async function startDeepWikiReader(
         'Content-Security-Policy',
         `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
-      response.end(
-        servedWikiPageHtml(content.toString('utf8'), {
+      // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
+      const preparation = new AbortController()
+      response.on('close', () => {
+        if (!response.writableFinished) preparation.abort()
+      })
+      const served = await servedWikiPageOffThread(
+        content.toString('utf8'),
+        {
           editorScheme,
           clientAddress: `${prefix}codebook-qa.js`,
           publication,
-        }),
+        },
+        {
+          deadlineMs: WIKI_PAGE_SERVE_DEADLINE_MS,
+          signal: preparation.signal,
+        },
+      )
+      if (served.state === 'served') {
+        response.end(served.html)
+        return
+      }
+      // A page the worker did not prepare is never served as the folder holds it.
+      response.statusCode = 503
+      response.end(
+        wikiPageRefusalHtml(served.state, WIKI_PAGE_SERVE_DEADLINE_MS),
       )
       return
     }

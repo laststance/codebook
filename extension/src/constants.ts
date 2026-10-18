@@ -879,6 +879,8 @@ export const WIKI_MISSING_PAGE_PATH_LIMIT_CHARS = 200
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536
 export const WIKI_CURSOR_PROMPT_LIMIT_BYTES = 131_072
 export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192
+/** How long the Wiki reader lets a worker thread prepare one page (bind its addresses and read its tags) before it stops the worker and answers the learner that the page is not shown. An ordinary page of more than 1 MB took 0.17 to 0.22 s through a new worker on the development host (16 CPUs, Node 24), the worker's start included, and 0.48 to 0.54 s under coverage; a two-core runner takes several times as long. A page built to make the HTML parser slow takes from 13 s to minutes. Ten seconds leave an ordinary page a margin of about eighteen times under coverage, and a crafted page stops its worker by then while the editor's own thread runs on. */
+export const WIKI_PAGE_SERVE_DEADLINE_MS = 10_000
 export const WIKI_GIT_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_GIT_TIMEOUT_MS = 3_000
 export const REPOSITORY_EXCLUDED_DIRECTORIES = [

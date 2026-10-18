@@ -81,6 +81,8 @@ export async function buildPackage(
         entryPoints: {
           extension: 'extension/dist/extension.js',
           cursorMcpBridge: 'extension/dist/cursorMcpBridgeEntry.js',
+          // The Wiki reader prepares each page on a worker thread, which loads this file beside the extension's bundle.
+          wikiPageWorker: 'extension/dist/wikiPageWorker.js',
         },
         outdir: join(stage, 'dist'),
         bundle: true,
@@ -139,7 +141,7 @@ export async function buildPackage(
         'package.json',
         Buffer.from(`${JSON.stringify(installedManifest, null, 2)}\n`),
       )
-      for (const name of ['extension', 'cursorMcpBridge']) {
+      for (const name of ['extension', 'cursorMcpBridge', 'wikiPageWorker']) {
         const output = result.outputFiles.find(
           (file) => file.path === join(stage, 'dist', `${name}.js`),
         )

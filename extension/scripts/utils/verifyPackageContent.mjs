@@ -11,6 +11,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'readme.md',
   'dist/extension.js',
   'dist/cursorMcpBridge.js',
+  'dist/wikiPageWorker.js',
   'dist/build.json',
   'src/assets/book.svg',
   'skills/codebook/SKILL.md',
