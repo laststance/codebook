@@ -16,7 +16,7 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { REPOSITORY_SOURCE_LIMIT_BYTES } from '../constants'
-import { domainError } from '../errors'
+import { domainError, StudyError } from '../errors'
 import { bookDocumentSchema } from '../repositorySchemas'
 import type * as sourceModule from '../repositorySource'
 import { RepositorySourceService } from '../repositorySource'
@@ -697,5 +697,50 @@ test('source discovery runs no fsmonitor hook that the repository’s own config
       ),
     },
     { files: ['src/module.ts'], hookRan: false },
+  )
+})
+
+// Value: protects=the agent's next step on a machine without Git: the lookup's "spawn git ENOENT" becomes source discovery's PREREQUISITE_MISSING, whose recovery tells the agent to fix the named prerequisite, with the lookup's words as its cause (SX2; TT15, the third testing review); fails_when=the lookup's error escapes discovery as a raw system error, for example when the lookup moves out of the guarded step; why_new=the lookup's test checked only its own error, and no caller test ran without Git; seam=the Git lookup the loaded service is given, which fails as a Git that cannot be started fails
+test('source discovery on a machine whose PATH holds no Git fails with a missing prerequisite that names Git', async (context) => {
+  // Arrange: a repository with one tracked source; the Git lookup finds none. The loaded service reads errors by this context's Error, as the product's lookup and service share one.
+  const { directory, track } = await sourceHarness(context)
+  await track('src/module.ts')
+  const { RepositorySourceService: ServiceWithoutGit } = await loadModule<
+    typeof sourceModule
+  >(
+    resolve(__dirname, '../repositorySource.js'),
+    {
+      './utils/gitExecutablePath': {
+        gitExecutablePath: async () => {
+          throw Object.assign(new Error('spawn git ENOENT'), {
+            code: 'ENOENT',
+            errno: -2,
+            syscall: 'spawn git',
+            path: 'git',
+          })
+        },
+      },
+    },
+    { Error },
+  )
+  // Act
+  const failure: unknown = await new ServiceWithoutGit(directory).list().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.deepEqual(
+    {
+      code: failure.code,
+      message: failure.message,
+      cause: failure.causeDetail,
+    },
+    {
+      code: 'PREREQUISITE_MISSING',
+      message:
+        'Repository source discovery requires Git, a working-tree root and a bounded readable index.',
+      cause: 'spawn git ENOENT',
+    },
   )
 })

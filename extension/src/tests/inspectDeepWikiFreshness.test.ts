@@ -927,3 +927,55 @@ test('the Wiki freshness check runs no fsmonitor hook that the repository’s ow
     { status: 'changed', hookRan: false },
   )
 })
+
+// Value: protects=the learner's Wiki page on a machine without Git: the lookup's "spawn git ENOENT" becomes the freshness check's own answer, unknown with the cause `git-missing` and the sentence that Git is not installed, instead of an error the page cannot show (SX2; TT15, the third testing review); fails_when=the lookup's error escapes the check, for example when the lookup moves out of the guarded step; why_new=the lookup's test checked only its own error, and no caller test ran without Git; seam=the Git lookup the loaded check is given, which fails as a Git that cannot be started fails
+test('the Wiki freshness check on a machine whose PATH holds no Git answers unknown because Git is missing', async (context) => {
+  // Arrange: a project whose one indexed source is unchanged; the Git lookup finds none.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-freshness-no-git-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const root = await realpath(directory)
+  const source = 'export const answer = 1;\n'
+  await writeFile(join(root, 'source.ts'), source)
+  const { inspectDeepWikiFreshness: inspectWithoutGit } = await loadModule<
+    typeof freshnessModule
+  >(resolve(__dirname, '../utils/inspectDeepWikiFreshness.js'), {
+    './gitExecutablePath': {
+      gitExecutablePath: async () => {
+        throw Object.assign(new Error('spawn git ENOENT'), {
+          code: 'ENOENT',
+          errno: -2,
+          syscall: 'spawn git',
+          path: 'git',
+        })
+      },
+    },
+  })
+  // Act
+  const freshness = await inspectWithoutGit(
+    root,
+    [
+      {
+        path: 'source.ts',
+        sha256: createHash('sha256').update(source).digest('hex'),
+      },
+    ],
+    '0123456789abcdef0123456789abcdef01234567',
+    [],
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      status: freshness.status,
+      unknownCause: freshness.unknownCause,
+      reason: freshness.reason,
+    },
+    {
+      status: 'unknown',
+      unknownCause: 'git-missing',
+      reason:
+        'Git is not installed, so added source files could not be checked.',
+    },
+  )
+})
