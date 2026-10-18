@@ -789,6 +789,98 @@ test('an address that a browser reads as a network path or another scheme once i
   )
 })
 
+// Value: protects=a page published before the publisher held a quote's source to its schemes, which the reader serves beside pages published today; fails_when=the reader leaves `cite` out of its address attributes, so a quote, an inline quote or an edit serves a `javascript:`, editor or network-path source the publisher refuses today; why_new=Cycle 0046 second /ship MAINT2 (W4 added `cite` to the publisher's address attributes alone); seam=none, the served page is compared as text; no_claim=a browser follows `cite` without a script
+test('a quote, an inline quote and an edit whose cite names another scheme or a network path lose that address, as the publisher refuses it, and a cite of the web stays', () => {
+  // Arrange
+  const page =
+    '<blockquote cite="javascript:run()"><p>a</p></blockquote>' +
+    '<q cite="vscode://file/etc/hosts">b</q>' +
+    '<del cite="//host/x">c</del>' +
+    '<ins cite="https://example.com/why">d</ins>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<blockquote data-codebook-unlinked="javascript:run()"><p>a</p></blockquote>' +
+      '<q data-codebook-unlinked="vscode://file/etc/hosts">b</q>' +
+      '<del data-codebook-unlinked="//host/x">c</del>' +
+      '<ins cite="https://example.com/why">d</ins>',
+  )
+})
+
+// Value: protects=the parity of the reader's and the publisher's address rules, so a page reads alike published today and served; fails_when=one of the two copies of the address attributes gains or loses an attribute and the other does not, as `cite` drifted unseen; why_new=Cycle 0046 second /ship MAINT2 (no test held the two sets together); seam=none (the shipped publisher and the compiled reader); no_claim=attributes outside the listed address-valued ones of HTML and SVG
+test('the reader takes the effect from an address of another scheme in exactly the attributes in which the shipped publisher refuses it', async () => {
+  // Arrange: the publisher's refusal of a page's content, and every attribute HTML or SVG reads as an address.
+  const { scriptingClauseOf } = (await import(
+    pathToFileURL(
+      join(
+        __dirname,
+        '..',
+        '..',
+        'skills',
+        'codebook',
+        'render-wiki-diagrams.mjs',
+      ),
+    ).href
+  )) as { scriptingClauseOf: (html: string) => string | undefined }
+  const addressValuedNames = [
+    'action',
+    'archive',
+    'attributionsrc',
+    'background',
+    'cite',
+    'classid',
+    'codebase',
+    'data',
+    'dynsrc',
+    'formaction',
+    'href',
+    'icon',
+    'imagesrcset',
+    'itemid',
+    'itemtype',
+    'longdesc',
+    'lowsrc',
+    'manifest',
+    'ping',
+    'poster',
+    'profile',
+    'src',
+    'srcset',
+    'usemap',
+    'xlink:href',
+  ]
+
+  // Act: the attributes whose `javascript:` address each side judges as an address.
+  const publisherRefuses = addressValuedNames.filter(
+    (name) =>
+      scriptingClauseOf(`<p ${name}="javascript:run()">x</p>`)?.startsWith(
+        'must link only to',
+      ) === true,
+  )
+  const readerUnlinks = addressValuedNames.filter((name) =>
+    withServedAddresses(
+      `<p ${name}="javascript:run()">x</p>`,
+      'vscode',
+    ).includes('data-codebook-unlinked'),
+  )
+
+  // Assert
+  assert.deepEqual(readerUnlinks, publisherRefuses)
+  assert.deepEqual(publisherRefuses, [
+    'action',
+    'cite',
+    'formaction',
+    'href',
+    'src',
+    'srcset',
+    'xlink:href',
+  ])
+})
+
 // Value: protects=the learner against a link that a comment's end lets out where an earlier attribute's quoted value seems to hold it; fails_when=the filter reads the comment's end differently from a browser, so the live `vscode://file` link after `-->` is served as written, or it renames the text after it; why_new=Cycle 0046 /ship third testing review TT23 (the order of renames across tag starts; the single reading's equivalent is where the comment ends); seam=none, the served page is compared as text
 test('a link that a comment’s end lets out of what looks like a quoted value loses its link, and the text after it stays', () => {
   // Arrange: a browser ends the comment at `-->`, inside what looks like the title's value, so the second link is live and the rest is text.

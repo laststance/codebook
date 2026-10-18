@@ -6,7 +6,7 @@ import { escapeHtml } from './escapeHtml'
 import { type HtmlAttribute, readHtmlStartTags } from './readHtmlStartTags'
 import { trimMatchingEnds } from './trimMatchingEnds'
 
-/** The attributes a browser follows as an address: the ones the publisher holds to its schemes (`ADDRESS_ATTRIBUTES` of `render-wiki-diagrams.mjs`). */
+/** The attributes whose value is an address: the ones the publisher holds to its schemes (`ADDRESS_ATTRIBUTES` of `render-wiki-diagrams.mjs`), `cite`, the source of a quote, among them. A test holds the two sets alike. */
 const ADDRESS_ATTRIBUTES = new Set([
   'href',
   'src',
@@ -14,6 +14,7 @@ const ADDRESS_ATTRIBUTES = new Set([
   'formaction',
   'xlink:href',
   'srcset',
+  'cite',
 ])
 /** The schemes an address may name for any place, as the publisher accepts them (`ADDRESS_SCHEMES` of `render-wiki-diagrams.mjs`): the web's and mail's. */
 const ADDRESS_SCHEMES = new Set(['http', 'https', 'mailto'])
