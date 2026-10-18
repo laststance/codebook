@@ -380,3 +380,33 @@ test('a page whose request goes while it is prepared stops its worker, and the n
     },
   )
 })
+
+// Value: protects=an ordinary page asked for while crafted pages hold every page worker (tabs restored); fails_when=a waiting page's deadline counts from its request instead of from the moment a worker takes it, so the page is refused as past its deadline; why_new=the P2RT3 test's waiting page has 10 s, more than its wait; seam=the page-worker module loaded with one worker at a time; no_claim=the shipped limit of two workers
+test('a page that waited for a free worker gets its whole deadline from the moment a worker takes it, and is served', async () => {
+  // Arrange: one worker at a time.
+  const pool = await loadPageWorkerRecordingThreads({
+    WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+  })
+  const signal = new AbortController().signal
+
+  // Act: the slow page under a deadline of 1.5 s, and a small page under a deadline of 1 s asked for while the slow page is prepared.
+  const slow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 1_500,
+    signal,
+  })
+  const waiting = pool.servedWikiPageOffThread(
+    '<body><p>Waiting page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 1_000, signal },
+  )
+  const answers = await Promise.all([slow, waiting])
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(structuredClone(answers), [
+    { state: 'deadline' },
+    {
+      state: 'served',
+      html: '<body><p>Waiting page</p><script src="/w/t/codebook-qa.js"></script></body>',
+    },
+  ])
+})
