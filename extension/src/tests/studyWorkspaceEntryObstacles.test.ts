@@ -2930,6 +2930,78 @@ test('a cold Study open after a reload whose resized grid no longer proves the e
   }
 })
 
+// Value: protects=the learner's own Study Application pane when an agent's run prepares its Application while the layout queue is busy and the learner's Open makes that pane outside the queue meanwhile: the run's preparation, refused afterwards by its focus return, retires only what it made itself, so the Open's pane and the Study stay; fails_when=the preparation decides what it made from the pane it saw before it waited for the queue, so the refused focus return disposes the pane the Open made and closes the group it was moved into, and the Open is left without its Application (Cycle 0046 OCR1-7); why_new=Cycle 0046 OCR1-7; seam=the reader's withLayout held by the test (another layout operation in the queue), focusMutableDraft with workInActiveTextEditor and replaceContent (the learner typing during the placement), holdNextCommand on workbench.action.lockEditorGroup, presentation.createViewport (the MCP-first preparation), the reader's open, counts and panelColumn
+test('a run’s Application preparation refused by its focus return after it waited for the layout queue leaves the Application pane the learner’s Open made meanwhile', async () => {
+  // Arrange: the learner works in notes.ts in the second of two groups; another layout operation holds the queue, so an agent's run's preparation waits for it, and the learner's Open makes the Application pane outside the queue meanwhile.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  let releaseQueue = (): void => {}
+  try {
+    const notes = harness.focusMutableDraft('notes.ts', 2)
+    harness.workInActiveTextEditor('keyboard')
+    const queueHeld = harness.reader['withLayout'](
+      undefined,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseQueue = resolve
+        }),
+    )
+    const preparing = Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'mcp-first-run',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    ).then(
+      (viewport) => {
+        viewport.close()
+        return 'prepared'
+      },
+      (error: unknown) => String(error),
+    )
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await waitUntil(
+      () => harness.counts().panels > 0,
+      'the Open’s Application pane',
+      2_000,
+    )
+    const lock = harness.holdNextCommand('workbench.action.lockEditorGroup')
+
+    // Act: the queue frees; the learner types in notes.ts while the run's new group is locked, so the run's focus return refuses.
+    releaseQueue()
+    await queueHeld
+    await lock.started
+    notes.replaceContent('The learner typed during the placement.\n')
+    lock.release()
+    const preparation = await preparing
+    const open = await opening
+
+    // Assert: the run's preparation is refused for the learner's typing, and the Open's Application pane stands in column 1 beside the Study.
+    assert.deepEqual(
+      {
+        preparation,
+        open,
+        panels: harness.counts().panels,
+        applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+      },
+      {
+        preparation:
+          'Error: The previously focused document changed during presentation; its current reading position was preserved.',
+        open: 'opened',
+        panels: 2,
+        applicationColumn: 1,
+      },
+    )
+  } finally {
+    releaseQueue()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's knowledge of why VS Code's chat editor tab has the keyboard again after an agent's cold Study select retired the earlier window's leftover group: the proof focused that group, its removal gave the keyboard to the group before it, and the chat tab's group gets it back through its focus command; the sentence told once names the leftover's close and no pause; fails_when=the leftover proof's give-back tells row 632's pause sentence, "(at a pause, to the paused file the debugger opened)", for a pause that did not happen; why_new=Cycle 0046 row 648; seam=applicationGroupMarkers, leaveEmptyGroup, leaveDeadCodebookPane, focusChatEditorTab (VS Code's TabInputChat), closeDisposedPanelTabsLater, the reader's changePresentation for an agent (codebook_presentation), the command log and the information messages
 test('an agent’s cold Study select in VS Code that retires the earlier window’s leftover group while the chat editor tab has the keyboard gives that chat its keyboard back and says once that closing the leftover moved it, naming no pause', async () => {
   // Arrange: the earlier window recorded its Application group at column 1, where the old host's Application pane is left dead; the learner's notes stand in column 2, and VS Code's chat editor tab in column 3 has the keyboard.

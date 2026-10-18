@@ -13306,7 +13306,6 @@ export class StudyWorkspace {
         retiredContextGroup,
       )
       if (existing) return existing
-      const appBefore = this.app
       const preparation = await this.withLayout(
         signal,
         async (lifetime, assertCurrent) =>
@@ -13323,8 +13322,8 @@ export class StudyWorkspace {
       await preparation
         .restoreFocus?.({ proofKeptKeyboard, forAgentRun })
         .catch(async (error: unknown) => {
-          // A focus return refused after this preparation placed its own Application leaves no Application group behind, as a refusal inside the layout queue does (row 659).
-          if (preparation.panel !== appBefore)
+          // A focus return refused after this preparation placed its own Application leaves no Application group behind, as a refusal inside the layout queue does (row 659); a pane an Open made while this preparation waited for the queue is not this preparation's (Cycle 0046 OCR1-7).
+          if (preparation.created)
             await this.retireRefusedPreparationApplication(
               preparation.panel,
             ).catch(() => undefined)
@@ -13413,7 +13412,7 @@ export class StudyWorkspace {
    * Reconciles existing owners or selects the single fresh allocation path for {@link prepareApplicationGroup} inside its layout queue.
    * @param signal - The existing preparation cancellation.
    * @param input - Current queue lifetime/guard and the caller's Context retirement and focus-return authority; `chatReturn` is the return of the tab a leftover proof before the queue took the keyboard from ({@link retireLeftoversBeforePreparation}, row 646).
-   * @returns The retained panel and any focus return that must run after the queue releases; its argument says whether a leftover proof before the queue took the keyboard ({@link retireLeftoversBeforePreparation}) and whether the preparation is a live run's ({@link prepareApplicationGroup}).
+   * @returns The retained panel, whether this preparation created it (`created`, decided by {@link reserveApplicationGroup} right before its own {@link ensureApp}; absent for a panel that was retained or reconciled), and any focus return that must run after the queue releases; its argument says whether a leftover proof before the queue took the keyboard ({@link retireLeftoversBeforePreparation}) and whether the preparation is a live run's ({@link prepareApplicationGroup}).
    * @throws When native scope, ownership or accepted-effect recovery cannot be retained.
    * @example const prepared = await this.prepareApplicationLayout(signal, input)
    */
@@ -13428,6 +13427,7 @@ export class StudyWorkspace {
     },
   ): Promise<{
     panel: vscode.WebviewPanel
+    created?: boolean
     restoreFocus?: (preparation: {
       proofKeptKeyboard: boolean
       forAgentRun: boolean
@@ -13548,7 +13548,7 @@ export class StudyWorkspace {
    * @param assertCurrent - Rejects later intent after accepted native effects drain.
    * @param cancelEntryFocusReturn - The caller owns the final handoff when this callback is present.
    * @param chatReturn - The return of the tab a leftover proof took the keyboard from before this reservation ({@link retireLeftoversBeforePreparation}); the reservation's focus return gives that tab the keyboard back (row 646).
-   * @returns The prepared App and its guarded focus return, still deferred outside the native queue.
+   * @returns The prepared App, whether this transaction created it (`created`: no pane existed right before its {@link ensureApp}, so a pane an Open made outside the queue meanwhile is not counted, Cycle 0046 OCR1-7), and its guarded focus return, still deferred outside the native queue.
    * @throws The original preparation or cleanup error without adopting a foreign group.
    * @example const prepared = await this.reserveApplicationGroup(signal, lifetime, assertCurrent)
    */
@@ -13611,8 +13611,10 @@ export class StudyWorkspace {
         assertCurrent,
       )
       this.claimApplicationAllocation(identity, grid.groups.length + 1)
+      // Decided right before the pane exists: an Open may have made one outside the queue since this transaction began (Cycle 0046 OCR1-7).
+      const paneBefore = this.app
       const panel = this.ensureApp()
-      if (!existingPanel) createdPanel = panel
+      if (!paneBefore) createdPanel = panel
       const groupsRemovedByMove = this.watchGroupLeftByApplication(panel)
       // Move only the owned panel; none of the original groups or their lock states is modified.
       if (panel.viewColumn !== vscode.ViewColumn.One)
@@ -13692,7 +13694,11 @@ export class StudyWorkspace {
         }
       }
       assertCurrent()
-      return { panel, restoreFocus: restorePreparationFocus }
+      return {
+        panel,
+        created: createdPanel !== undefined,
+        restoreFocus: restorePreparationFocus,
+      }
     } catch (error) {
       await this.retireFailedApplicationPreparation(allocated, createdPanel)
       throw error
