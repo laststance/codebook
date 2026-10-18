@@ -3530,6 +3530,128 @@ test('a server stop the debugger binds and pauses two lines below fails when the
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
+// Value: protects=a server stop on the first line of a declaration over several lines never pausing inside that statement, where the binding it requires has no value yet, in a partly scanned module the server has not loaded before the input; fails_when=the stop is requested on its declared line because no debugger could be asked for its break locations, so the input runs and the required inspection fails afterwards; why_new=CR10-1 (Cycle 0045 PL-21 on the server path); seam=none; no_claim=a server module that is loaded before the stop is armed, which the break locations decide
+test('a server stop on the first line of a declaration over several lines in a partly scanned module the server has not loaded is refused before the input, naming the line after the statement', async (context) => {
+  // Arrange: lines 1 to 3 declare mode through a call over several lines and line 4 reads it; the citation covers lines 1 to 4. The scan stops at its segment limit before any mapping, and the server loads the module only when the input runs.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: `${'A,'.repeat(200_000)}A;AACA;AACA;AACA` },
+    fixture: {
+      server: {
+        source: 'export const mode = pick(\n  "display",\n)\nuse(mode)\n',
+        citationEndLine: 4,
+      },
+    },
+  })
+
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/mode.ts:1 requires mode, which line 1 declares in a statement that ends on line 3, so mode has no value before line 4; the sealed map was too large to scan completely and the server has not loaded the module yet, so Codebook cannot find where the debugger can pause from line 4 on. Declare this stop on line 4 or a later line, within a citation that covers that line (configuration.source). Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
+  )
+  assert.equal(harness.breakpoints.length, 0)
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+})
+
+// Value: protects=a later server stop on a line that declares the binding it requires never being armed inside that statement when its module is still not loaded at its turn; fails_when=the stop is requested on its declared line and the browser stop's pause is resumed, so the server pauses where the binding has no value yet; why_new=CR10-1, the later-stop path of the same arming; seam=none; no_claim=a refusal before the first input, which only the first stop can give
+test('a later server stop on a line that declares the binding it requires, in a partly scanned module the server has not loaded at its turn, is refused before the browser stop is resumed', async (context) => {
+  // Arrange: line 1 of the server module declares mode and line 2 reads it; the citation covers lines 1 to 2. The scan stops at its segment limit before any mapping. The browser stop pauses first; the server module is still not loaded when the server stop is armed.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['browser', 'server'],
+    {
+      mappings: { server: `${'A,'.repeat(200_000)}A;AACA` },
+      fixture: {
+        server: {
+          source: 'export const mode = "display";\nuse(mode)\n',
+          citationEndLine: 2,
+        },
+      },
+    },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'browser')
+
+  // Act
+  const failure = await harness.run.continue('browser', first.pause).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/mode.ts:1 requires mode, which line 1 declares, so mode has no value before line 2; the sealed map was too large to scan completely and the server has not loaded the module yet, so Codebook cannot find where the debugger can pause from line 2 on. Declare this stop on line 2 or a later line, within a citation that covers that line (configuration.additionalStops[0].source). Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
+  )
+  assert.equal(
+    harness.run.view().failures[0],
+    `Next declared stop was not armed and no resume was sent: Declared stop src/mode.ts:1 requires mode, which line 1 declares, so mode has no value before line 2; the sealed map was too large to scan completely and the server has not loaded the module yet, so Codebook cannot find where the debugger can pause from line 2 on. Declare this stop on line 2 or a later line, within a citation that covers that line (configuration.additionalStops[0].source). Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method === 'continue'),
+    false,
+  )
+})
+
+// Value: protects=a later server stop on the first line of a declaration over several lines, in a partly scanned module the server already loaded, still taking its place from the debugger's break locations after the statement; fails_when=the refusal of an unloaded module also refuses a loaded one, or the stop is requested inside the statement; why_new=CR10-1 control: the refusal must keep the path where the debugger can be asked; seam=the adapter's possible break locations
+test('a later server stop on the first line of a declaration over several lines, in a partly scanned module the server already loaded, is requested on the first line after the statement that can pause', async (context) => {
+  // Arrange: lines 1 to 3 declare mode through a call over several lines and line 4 reads it; the citation covers lines 1 to 4. The scan stops at its segment limit before any mapping. The server announces its module before the server stop is armed, and its debugger lists break locations inside the initializer (line 2) and on line 4.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['browser', 'server'],
+    {
+      mappings: { server: `${'A,'.repeat(200_000)}A;AACA;AACA;AACA` },
+      fixture: {
+        server: {
+          source: 'export const mode = pick(\n  "display",\n)\nuse(mode)\n',
+          citationEndLine: 4,
+        },
+      },
+    },
+  )
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 1, columnNumber: 0 },
+    { lineNumber: 3, columnNumber: 0 },
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'browser')
+  harness.announceScript(
+    'server',
+    'server',
+    'webpack-internal:///(action-browser)/./src/mode.ts',
+  )
+
+  // Act
+  await harness.run.continue('browser', first.pause)
+  const requested = harness.breakpoints.map(
+      (breakpoint) => breakpoint.location.range.start,
+    ),
+    failures = [...harness.run.view().failures]
+  await harness.run.stop()
+
+  // Assert: requested at editor position 3:0 (source 4:1), after the statement that ends on line 3.
+  assert.deepEqual(
+    requested.map((start) => ({
+      line: start.line,
+      character: start.character,
+    })),
+    [{ line: 3, character: 0 }],
+  )
+  assert.deepEqual(failures, [])
+})
+
 // Value: protects=the deadline of a later server stop saying what is known about its breakpoint; fails_when=a stop whose registration is still pending (never verified in a loaded module) is told "its line must execute after the preceding continuation" as if it were bound there; why_new=Cycle 0036 C02c (0043 named only an acknowledged move); seam=the harness clock
 test('a later server stop whose registration is still pending when its deadline passes ends the run saying the breakpoint was never verified', async (context) => {
   // Arrange: the adapter acknowledges the second registration as unverified and no pause arrives.

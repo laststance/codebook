@@ -695,7 +695,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param scan - The stop's one scan of its sealed map, from the declared line to the end of its citation.
    * @param citationEndLine - The last line of the stop's citation.
    * @returns `armed` and `earliestLine`:
-   * - `armed`: the first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings; `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the text cannot tell where it ends), or the scan finds no later line of the citation to request (a partial scan may have missed it): the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled
+   * - `armed`: the first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings; `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the text cannot tell where it ends), or the scan finds no later line of the citation to request (a partial scan may have missed it): the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled; a server stop so placed by a partial scan is refused at its arming when its module is not loaded yet ({@link confirmRequestedPlace})
    * - `earliestLine`: the line after the declaring statement when the statement's end is known, otherwise the declared line; {@link confirmRequestedPlace} searches the debugger's break locations from it when the scan was partial
    * @example
    * ```ts
@@ -760,7 +760,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * The breakpoint is requested at {@link PreparedStop.armed}: the declared position, or, because the debugger verifies nothing on a line without a mapped position, the first mapped position after such a declared line ({@link resolveArmedPlace}). The stop's rule is measured from that requested line. The requested column is a preference: a browser stop records the debugger's verified binding as its position, on the requested line or on a line the rule accepts, and a server stop's owned breakpoint is given the same rule for its acknowledgement.
    * For both participants, a binding acknowledged on a later line although the requested line can pause is answered with one more request, at that line's break location before the requested column ({@link rearmOnRequestedLine}), whether the stop's rule accepts that later line or refuses it; the stop is refused only when the second request is bound on a later line again, or no break location lies before the requested column. A later line the rule refuses is refused as such only when the requested line cannot pause, or the debugger cannot say.
    * @param stop - The declared stop that is next in order.
-   * @throws When a browser binding lands on a line the rule refuses or never verifies, a server registration is refused, or a second request is bound past its line again; each failure names the declared stop.
+   * @throws When a browser binding lands on a line the rule refuses or never verifies, a server registration is refused, a second request is bound past its line again, or a server stop's place lies inside the statement that declares a binding it requires and its module is not loaded yet ({@link confirmRequestedPlace}); each failure names the declared stop.
    * @example
    * ```ts
    * await this.armStop(this.stops[0]!)
@@ -1789,14 +1789,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Chooses the place of a stop whose sealed map was too large to scan completely and whose scan found no position on the line it is requested on, when {@link armStop} first arms it: a partial scan cannot say whether that line, or which later line, holds code, so the debugger's break locations decide.
    * The stop is requested at the first place the debugger can pause at from its earliest line ({@link PreparedStop.earliestRequestLine}) to the end of its citation: the declared line itself when it can pause there ("not found in a partial scan" is not "absent"), otherwise the first later line that can, and the stop's line rule is then measured from that line. A stop whose declared line declares a binding it requires is searched from the line after that whole declaration, so a break location inside a multi-line initializer or its callback, where the binding has no value yet, is never requested. A line that only looks like code in the text (the body of a block comment, a `>` that closes an opening tag) has no break location and is never requested.
-   * The place chosen at preparation is kept when the debugger cannot be asked: the module is not parsed yet (a server stop before the input), the adapter cannot list break locations, or none lies in the citation.
+   * The place chosen at preparation is kept when the debugger cannot be asked: the module is not parsed yet (a server stop before the input), the adapter cannot list break locations, or none lies in the citation. A server stop whose module is not parsed yet and whose place lies before its earliest line, inside the statement that declares a binding it requires, is refused instead ({@link armsInsideDeclarationUnasked}): it would pause where that binding has no value yet.
    * @param stop - The stop being armed for the first time.
+   * @throws The binding failure that names the declared stop, the declaring statement and the line to declare the stop on ({@link insideUnloadedDeclarationText}), for such a server stop: before the input for the first stop, before the preceding stop is resumed for a later one.
    * @example
    * ```ts
    * await this.confirmRequestedPlace(stop) // stop.armed: { line: 39, column: 9 } for a blank declared line 38
    * ```
    */
   private async confirmRequestedPlace(stop: PreparedStop): Promise<void> {
+    // No break locations can move this server stop past its declaring statement, so it is refused before it can pause inside it.
+    if (this.armsInsideDeclarationUnasked(stop))
+      throw this.bindingFailure(stop, this.insideUnloadedDeclarationText(stop))
     if (this.keepsPlaceUnasked(stop)) return
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!,
       first = (await this.mappedBreakLocations(stop))
@@ -1823,7 +1827,51 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Says whether a stop keeps the place its scan chose without the debugger being asked, as the first check of {@link confirmRequestedPlace}.
+   * Says whether a server stop would be armed inside the statement its declared line begins, with no debugger to ask for a later place, as the first check of {@link confirmRequestedPlace}.
+   * A stop whose declared line declares a binding it requires is requested after that whole statement ({@link requestAfterSelfDeclaringLine}). When the map was too large to scan completely and the partial scan found no position after the statement, the place chosen at preparation lies on the declared line, and only the debugger's break locations can move it. A browser stop's module is parsed when the stop is armed; a server module is often loaded only by the application input, and then nothing can be asked.
+   * @param stop - The stop being armed for the first time.
+   * @returns `true` for a server stop with a partial scan, a module that is not parsed yet, and a place before its earliest line ({@link PreparedStop.earliestRequestLine}); `false` otherwise, also for every browser stop and for a complete scan, whose place the scan already chose.
+   * @example
+   * ```ts
+   * this.armsInsideDeclarationUnasked(stop) // true for a server stop on `export const mode = pick(` whose statement ends on line 3, partly scanned, before the server loaded the module
+   * ```
+   */
+  private armsInsideDeclarationUnasked(stop: PreparedStop): boolean {
+    return (
+      stop.participant === 'server' &&
+      !stop.scan.complete &&
+      !stop.script &&
+      stop.armed.line < stop.earliestRequestLine
+    )
+  }
+
+  /**
+   * Words the refusal of a server stop that {@link armsInsideDeclarationUnasked} finds, for {@link confirmRequestedPlace}: it names the bindings, the declaring statement and the first line the stop may be declared on, so the agent can move the stop past the statement.
+   * @param stop - The server stop being armed; its declared line declares a binding it requires.
+   * @returns The text without a trailing period, for {@link bindingFailure}; a one-line declaration is named by its line alone.
+   * @example
+   * ```ts
+   * this.insideUnloadedDeclarationText(stop) // 'Declared stop src/mode.ts:1 requires mode, which line 1 declares in a statement that ends on line 3, so mode has no value before line 4; … Declare this stop on line 4 or a later line, within a citation that covers that line (configuration.source)'
+   * ```
+   */
+  private insideUnloadedDeclarationText(stop: PreparedStop): string {
+    const bindings = requiredBindingsDeclaredOn(
+        stop,
+        stop.bundle.source.split(/\r\n|\r|\n/),
+      ),
+      names = bindings.join(' and '),
+      firstLine = stop.earliestRequestLine,
+      statementEnd = firstLine - 1
+    // A statement that ends on its own line needs no second line number.
+    const declaration =
+      statementEnd === stop.source.line
+        ? `which line ${stop.source.line} declares`
+        : `which line ${stop.source.line} declares in a statement that ends on line ${statementEnd}`
+    return `Declared stop ${this.declaredAt(stop)} requires ${names}, ${declaration}, so ${names} ${bindings.length === 1 ? 'has' : 'have'} no value before line ${firstLine}; the sealed map was too large to scan completely and the server has not loaded the module yet, so Codebook cannot find where the debugger can pause from line ${firstLine} on. Declare this stop on line ${firstLine} or a later line, within a citation that covers that line (${this.declaredField(stop)})`
+  }
+
+  /**
+   * Says whether a stop keeps the place its scan chose without the debugger being asked, as the second check of {@link confirmRequestedPlace}.
    * @param stop - The stop being armed for the first time.
    * @returns `true` for a complete scan, for a partial one that found the line the stop is requested on when that line is not before its earliest line ({@link PreparedStop.earliestRequestLine}): they already chose the place, and for a module that is not parsed yet (the debugger cannot be asked); `false` when the break locations must decide.
    * @example
