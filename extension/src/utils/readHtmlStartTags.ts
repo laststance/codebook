@@ -195,7 +195,8 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
 
 /**
  * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlStartTags} for each page.
- * Its adapters use current select rules (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule) and require a matching table section before closing a row. Other tree construction stays with the pinned parser.
+ * Its adapters use current select rules (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule) and require a matching table section before closing a row; it skips each end tag that provably changes nothing, and compares a foreign element's name with an end's as a browser does. Other tree construction stays with the pinned parser.
+ * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); and the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries.
  * @example new HtmlPageReader('<p>text</p>').tokenizer.write('<p>text</p>', true)
  */
 class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
@@ -274,6 +275,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    * @example reader._resetInsertionModeForSelect(3) // IN_CELL for a select in a table cell
    */
   override _resetInsertionModeForSelect(selectIndex: number): void {
+    // parse5 8.0.1 internals: the pinned _resetInsertionMode calls this protected hook, and this pass rewrites the @internal openElements.tagIDs for one reset; parse5 is pinned, so recheck both, with the hooks _startTagOutsideForeignContent and _endTagOutsideForeignContent, before an upgrade.
     const { tagIDs } = this.openElements
     const hiddenSelects: number[] = []
     // The pinned reset skips an unknown element, so each select below the one it met is read as one for this pass.
