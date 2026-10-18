@@ -1144,9 +1144,9 @@ test('a Trash move that rejects after the folder left the library and another wa
   assert.deepEqual(await readdir(recordingFolder), [])
 })
 
-// Value: protects=a removal whose moved folder cannot be looked at afterwards never tells the learner that nothing was deleted; fails_when=a look that fails after a rejected move counts as the path still being there, so the outcome reads "Nothing was deleted" and the Trash's refusal, although the recording is in the Trash (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the injected mover, which moves the recording folder, puts a file where its parent folder was (so the look answers ENOTDIR, as a folder this user may not read answers EACCES) and rejects
+// Value: protects=a removal whose moved folder cannot be looked at afterwards never tells the learner that nothing was deleted; fails_when=a look that fails after a rejected move counts as the path still being there, so the outcome reads "Nothing was deleted" and the Trash's refusal, although the recording is in the Trash (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the injected mover, which moves the recording folder, puts a link that leads to itself where its parent folder was (so the look answers ELOOP, as a folder this user may not read answers EACCES, for root as well) and rejects
 test('a Trash move that rejects for a folder that cannot be looked at afterwards ends as partly moved and says that whether it moved is unknown', async (context) => {
-  // Arrange: a saved study with a recording; the Trash takes the recording folder, then a file stands where the recordings folder was, then the call rejects.
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then a link that leads to itself stands where the recordings folder was, then the call rejects.
   const storage = await removalStorage(context, 4)
   const study = await saveStudyWithRecording(storage)
   const recordingsRoot = join(storage.directory, 'recordings.v2'),
@@ -1155,7 +1155,7 @@ test('a Trash move that rejects for a folder that cannot be looked at afterwards
     await storage.moveToTrash(path)
     if (path !== recordingFolder) return
     await rm(recordingsRoot, { recursive: true })
-    await writeFile(recordingsRoot, '')
+    await symlink('recordings.v2', recordingsRoot)
     throw new Error('Trash answered late')
   }
   // Act
@@ -1166,13 +1166,46 @@ test('a Trash move that rejects for a folder that cannot be looked at afterwards
   // Assert
   assert.deepEqual(removal, {
     outcome: 'partly-moved',
-    cause: `Trash answered late; whether ${recordingFolder} left the library could not be checked: ENOTDIR: not a directory, lstat '${recordingFolder}'`,
+    cause: `Trash answered late; whether ${recordingFolder} left the library could not be checked: ELOOP: too many symbolic links encountered, lstat '${recordingFolder}'`,
     moveUnknown: true,
   })
   assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
   assert.deepEqual(
     (await storage.library.list()).map((entry) => entry.id),
     [study.id],
+  )
+})
+
+// Value: protects=a recording folder the Trash took is counted as moved when a file stands where its parent folder was before the editor's call rejected; fails_when=the look's ENOTDIR (nothing can be at a path whose folder is a file) is read as unknown, so the removal stops and says that Codebook could not tell whether the study moved (S7); why_new=Cycle 0046 CodeRabbit review CR2 (S7); seam=the injected mover, which moves the recording folder, puts a file where recordings.v2 was and rejects
+test('a Trash move that rejects after the folder left the library and a file took its parent folder’s place counts the folder as moved, and the removal completes', async (context) => {
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then a file stands where the recordings folder was, then the call rejects.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const recordingsRoot = join(storage.directory, 'recordings.v2'),
+    recordingFolder = join(recordingsRoot, study.id)
+  const moverWhoseParentBecameAFile: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path !== recordingFolder) return
+    await rm(recordingsRoot, { recursive: true })
+    await writeFile(recordingsRoot, '')
+    throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverWhoseParentBecameAFile,
+  )
+  // Assert
+  assert.deepEqual(
+    { removal, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
   )
 })
 

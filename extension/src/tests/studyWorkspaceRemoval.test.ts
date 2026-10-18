@@ -7,6 +7,7 @@ import fsPromises, {
   realpath,
   rename,
   rm,
+  symlink,
   unlink,
   utimes,
   writeFile,
@@ -1286,9 +1287,9 @@ test('a study the Trash took only partly stays listed and shown, and deleting it
   }
 })
 
-// Value: protects=the learner is told that it is unknown whether the study moved when the removal could not look at a path after the Trash rejected it, and can delete it again; fails_when=the pane says "Nothing was deleted" for a recording that is in the Trash, or shows the line of a partly moved study as if what moved were known (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the editor's Trash, stubbed at the vscode boundary: before it rejects the study's recording folder, the test moves that folder away and puts a file where the recordings folder was, so the look afterwards answers ENOTDIR
+// Value: protects=the learner is told that it is unknown whether the study moved when the removal could not look at a path after the Trash rejected it, and can delete it again; fails_when=the pane says "Nothing was deleted" for a recording that is in the Trash, or shows the line of a partly moved study as if what moved were known (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the editor's Trash, stubbed at the vscode boundary: before it rejects the study's recording folder, the test moves that folder away and puts a link that leads to itself where the recordings folder was, so the look afterwards answers ELOOP
 test('a study whose recording folder could not be looked at after the Trash rejected it shows that Codebook could not tell whether it moved, and deleting it again finishes the removal', async () => {
-  // Arrange: a saved study with an empty recording folder; the Trash takes the folder, then a file stands where the recordings folder was, then the call rejects.
+  // Arrange: a saved study with an empty recording folder; the Trash takes the folder, then a link that leads to itself stands where the recordings folder was, then the call rejects.
   const harness = await workspaceHarness()
   try {
     const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
@@ -1302,7 +1303,7 @@ test('a study whose recording folder could not be looked at after the Trash reje
       if (path !== recordingFolder) return
       await rename(path, join(harness.directory, 'moved-recording'))
       await rm(recordingsRoot, { recursive: true })
-      await writeFile(recordingsRoot, '')
+      await symlink('recordings.v2', recordingsRoot)
     })
     harness.rejectTrashMoves((path) => path === recordingFolder)
     // Act
@@ -1316,7 +1317,7 @@ test('a study whose recording folder could not be looked at after the Trash reje
     assert.deepEqual(structuredClone(afterUnknownMove.studyRemoval), {
       status: 'failed',
       studyId: shown.id,
-      text: `Codebook could not tell whether the saved study was moved to the ${TRASH}; delete it again to finish. Trash refused ${shown.id}; whether ${recordingFolder} left the library could not be checked: ENOTDIR: not a directory, lstat '${recordingFolder}'`,
+      text: `Codebook could not tell whether the saved study was moved to the ${TRASH}; delete it again to finish. Trash refused ${shown.id}; whether ${recordingFolder} left the library could not be checked: ELOOP: too many symbolic links encountered, lstat '${recordingFolder}'`,
     })
     assert.equal(afterSecondRemoval.studyRemoval?.status, 'moved')
     assert.deepEqual(
