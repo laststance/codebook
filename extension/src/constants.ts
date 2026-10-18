@@ -1294,6 +1294,10 @@ export const HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES = new Map<
 ])
 /** Ends the body rules act on although no element of their name is open, so {@link readHtmlStartTags} never skips them: `</p>` inserts an empty p and `</br>` a br, and in foreign content each first leaves it. */
 export const HTML_PARSER_ABSENT_END_BODY_NAMES = new Set(['br', 'p'])
+/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.0.1's table (36) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
+export const HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS = new Map([
+  ['fedropshadow', 'feDropShadow'],
+])
 /** Heading names: the body rules close an open heading of any level at the end of any of them, so {@link readHtmlStartTags} skips an absent one only while no heading is open. */
 export const HTML_PARSER_HEADING_NAMES = new Set([
   'h1',

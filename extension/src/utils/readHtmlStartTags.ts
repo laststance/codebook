@@ -3,6 +3,7 @@ import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
 import {
   HTML_PARSER_ABSENT_END_BODY_NAMES,
   HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES,
+  HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS,
   HTML_PARSER_HEADING_NAMES,
   HTML_PARSER_HIDDEN_INPUT_TABLE_MODES,
   HTML_PARSER_IN_ROW_MODE,
@@ -106,6 +107,21 @@ const RESET_MODE_TAG_IDS = new Set([
  */
 function asciiLowerCase(name: string): string {
   return name.replace(/[A-Z]+/g, (capitals) => capitals.toLowerCase())
+}
+
+/**
+ * Writes a tag token's name in svg case as Chrome does in svg content: by parse5's svg case table and by the names the HTML standard's table has beyond it ({@link HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS}); called by {@link HtmlPageReader} for a start or an end tag under an svg element.
+ * @param token - A start or end token whose name is in ASCII lower case.
+ * @returns Nothing; the token's name and tag id are those of the svg element's own name.
+ * @example
+ * writeInSvgCase(fedropshadowEnd) // its name is now feDropShadow
+ */
+function writeInSvgCase(token: Parse5.Token.TagToken): void {
+  foreignContent.adjustTokenSVGTagName(token)
+  const svgCaseName = HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS.get(token.tagName)
+  if (svgCaseName === undefined) return
+  token.tagName = svgCaseName
+  token.tagID = htmlTree.getTagID(svgCaseName)
 }
 
 /**
@@ -230,7 +246,7 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
 /**
  * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlStartTags} for each page.
  * Its adapters use current select rules (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule) and require a matching table section before closing a row; an open select ends every scope but the table scope; it resets the insertion mode by HTML elements alone, skips each end tag that provably changes nothing, writes an end's name in svg case under an svg element and compares a foreign element's name with it as Chrome does, and ignores a body-rule end at an svg or MathML integration point. Other tree construction stays with the pinned parser.
- * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table.
+ * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table, which lacks the names of `HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS` (recheck the table against the HTML standard's at an upgrade), the hook `shouldProcessStartTagTokenInForeignContent` it overrides to add them for start tags, and `_getAdjustedCurrentElement`.
  * @example new HtmlPageReader('<p>text</p>').tokenizer.write('<p>text</p>', true)
  */
 class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
@@ -272,6 +288,24 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       start === undefined ? undefined : readTagAt(this.page, start + 1)
     if (tag) this.startTags.push(tag)
     super.onStartTag(token)
+  }
+
+  /**
+   * Answers, as the pinned parser does, whether a start tag takes the rules of foreign content, and then writes a name its svg case table lacks in svg case under an svg element; the pinned parser calls this for each start tag and then writes the names its table has in svg case.
+   * @param token - The start token.
+   * @returns Whether the token takes the rules of foreign content.
+   * @example reader.shouldProcessStartTagTokenInForeignContent(fedropshadowStart) // true in an svg, and the token is named feDropShadow
+   */
+  protected override shouldProcessStartTagTokenInForeignContent(
+    token: Parse5.Token.TagToken,
+  ): boolean {
+    if (!super.shouldProcessStartTagTokenInForeignContent(token)) return false
+    if (
+      this.treeAdapter.getNamespaceURI(this._getAdjustedCurrentElement()) ===
+      htmlTree.NS.SVG
+    )
+      writeInSvgCase(token)
+    return true
   }
 
   /**
@@ -770,7 +804,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
         this.treeAdapter.isElementNode(current) &&
         this.treeAdapter.getNamespaceURI(current) === htmlTree.NS.SVG
       )
-        foreignContent.adjustTokenSVGTagName(token)
+        writeInSvgCase(token)
       this.endTagInForeignContent(token)
       return
     }

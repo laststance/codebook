@@ -733,6 +733,28 @@ test('an end tag in svg content with a name svg writes in mixed case leaves an H
   ])
 })
 
+// Value: protects=the learner against an editor link after a feDropShadow start or end in svg content, the one name of the HTML standard's svg case table (37 names, as Chrome has it) that parse5 8.0.1's table (36) lacks; fails_when=the reader leaves fedropshadow in lower case, so an end in svg content closes an HTML fedropshadow element with the svg in it and a plaintext hides a live link, or an svg feDropShadow element keeps a lower-case name, so its end in svg content no longer closes it and a CDATA start in the svg title hides a live link, or a lower-case end in MathML content closes it and a plaintext's text is renamed; why_new=Cycle 0046 second /ship pass 2 fixing cycle finding FX-A-3 (the parent's Chrome oracle on the P2T1 fix); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a feDropShadow start or end in svg content is written in svg case as Chrome writes it, so the link after a plaintext or in a CDATA start is judged where a browser reads it', () => {
+  // Arrange: an HTML fedropshadow element with an svg in it and the end in lower and in svg case; an svg feDropShadow with an svg title and the end in svg content; an svg feDropShadow and a lower-case end in MathML text.
+  const pages = [
+    '<article><fedropshadow><svg></fedropshadow><plaintext></plaintext></svg></fedropshadow><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fedropshadow><svg></feDropShadow><plaintext></plaintext></svg></fedropshadow><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<svg><fedropshadow><title><svg></fedropshadow></svg><![CDATA[ x ><a href="vscode://file/etc/hosts">Open the source</a> ]]>',
+    '<svg><feDropShadow><foreignObject><math><mtext></fedropshadow><plaintext><a href="vscode://file/etc/hosts">Open the source</a>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<article><fedropshadow><svg></fedropshadow><plaintext></plaintext></svg></fedropshadow><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fedropshadow><svg></feDropShadow><plaintext></plaintext></svg></fedropshadow><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<svg><fedropshadow><title><svg></fedropshadow></svg><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a> ]]>',
+    '<svg><feDropShadow><foreignObject><math><mtext></fedropshadow><plaintext><a href="vscode://file/etc/hosts">Open the source</a>',
+  ])
+})
+
 // Value: protects=a served page's text after an end tag written in MathML content with the lower-case name of an svg element that svg writes in mixed case and that is open further down; fails_when=the reader compares the end's name with the element's name lowered, so it closes the svg element and the MathML above it, and a plaintext or xmp that a browser reads as raw text inside the MathML text is read as an svg element, so the text after it is read as tags and renamed; why_new=Cycle 0046 second /ship pass 2 testing review P2T1 (Chrome compares the element's own name with the end's, which only svg content writes in svg case); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
 test('an end tag in MathML content leaves open an svg element whose name svg writes in mixed case, so a plaintext or xmp after it holds text as a browser reads it', () => {
   // Arrange: an svg clipPath, foreignObject or linearGradient, MathML text inside it, and the svg element's end in lower case.
