@@ -2935,7 +2935,7 @@ for (const [kind, assetPath, assetBytes] of [
           ).catch(() => 'no candidate'),
         },
         {
-          refusal: `Wiki asset ${assetPath} must be a PNG, JPEG, GIF, WebP or AVIF image, named .png, .jpg, .jpeg, .gif, .webp or .avif and holding the bytes of that format.`,
+          refusal: `Wiki asset ${assetPath} is not a PNG, JPEG, GIF, WebP or AVIF image by its name or its first bytes. Nothing was written. Convert it to one of these formats, or delete the file from the stage and its entry from assets, then publish again.`,
           beside: ['next'],
           candidatePage: wiki.authoredPage,
         },
@@ -4879,7 +4879,8 @@ test('a comment that shows an element with the slot attribute and an attribute v
   }
 })
 
-test('a stray file left in a prepared stage cannot be published as Wiki content', async () => {
+// Value: protects=the agent or the learner who finds a file in the stage that the manifest does not list, as after dropping an asset's entry while its file stays; fails_when=the refusal names no file and gives no step, so nothing tells which file is meant; why_new=Cycle 0046 /ship third review W11 (PD3-7; the test held only the refusal's words before); seam=none
+test('a stray file left in a prepared stage cannot be published as Wiki content, and the refusal names the file and what to do', async () => {
   // Arrange
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-stray-stage-file-')),
@@ -4898,7 +4899,9 @@ test('a stray file left in a prepared stage cannot be published as Wiki content'
     })
 
     // Assert
-    await assert.rejects(publishing, /outside its published manifest/)
+    await assert.rejects(publishing, {
+      message: `The staged Wiki contains a file outside its published manifest: scratch-notes.md. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.`,
+    })
     await assert.rejects(access(output))
     await assert.rejects(access(output + '.publish-journal.json'))
     assert.equal(

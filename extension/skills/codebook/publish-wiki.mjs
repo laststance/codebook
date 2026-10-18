@@ -39,10 +39,10 @@ const formatTestOf = path => {
   return Object.hasOwn(RASTER_ASSET_FORMATS, extension) ? RASTER_ASSET_FORMATS[extension] : () => false;
 };
 
-/** Refuses an asset of a candidate that is no raster image ({@link RASTER_ASSET_FORMATS}) by its extension and by its first bytes, before anything is written; the asset is read as a regular file of the stage, never through a link ({@link regularBytes}). The learner's own files in the Wiki folder, which no manifest lists, are not judged. Called by {@link publishWiki} for every asset its manifest lists. @example await requireRasterAsset('/repo/.codebook/next', 'assets/notes.html') // throws: Wiki asset assets/notes.html must be a PNG, JPEG, GIF, WebP or AVIF image, … */
+/** Refuses an asset of a candidate that is no raster image ({@link RASTER_ASSET_FORMATS}) by its extension and by its first bytes, before anything is written; the asset is read as a regular file of the stage, never through a link ({@link regularBytes}). The learner's own files in the Wiki folder, which no manifest lists, are not judged. Called by {@link publishWiki} for every asset its manifest lists. @example await requireRasterAsset('/repo/.codebook/next', 'assets/notes.html') // throws: Wiki asset assets/notes.html is not a PNG, JPEG, GIF, WebP or AVIF image by its name or its first bytes. … */
 async function requireRasterAsset(stage, path) {
   if (!formatTestOf(path)(await regularBytes(join(stage, path))))
-    throw new Error('Wiki asset ' + path + ' must be a PNG, JPEG, GIF, WebP or AVIF image, named .png, .jpg, .jpeg, .gif, .webp or .avif and holding the bytes of that format.');
+    throw new Error('Wiki asset ' + path + ' is not a PNG, JPEG, GIF, WebP or AVIF image by its name or its first bytes. Nothing was written. Convert it to one of these formats, or delete the file from the stage and its entry from assets, then publish again.');
 }
 
 /** Parses inventory for {@link publishWiki} and recovery before any owned file can be replaced. @example parseManifest(bytes, '/repo') */
@@ -354,7 +354,9 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   await requireNoJournal(journal);
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
-  if (files.some(path => ![MANIFEST, RECEIPT].includes(path) && !owned.has(path))) throw new Error('The staged Wiki contains a file outside its published manifest.');
+  // A file of the stage the manifest does not list is named, so the step that removes it is clear.
+  const stray = files.find(path => ![MANIFEST, RECEIPT].includes(path) && !owned.has(path));
+  if (stray !== undefined) throw new Error('The staged Wiki contains a file outside its published manifest: ' + stray + ". Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.");
   // An asset is a raster image or nothing; checked before anything is rendered or written.
   for (const path of manifest.assets) await requireRasterAsset(stage, path);
   // Validate authored content without modifying either the stage or published output.
