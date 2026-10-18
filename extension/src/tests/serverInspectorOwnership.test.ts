@@ -310,3 +310,77 @@ test(
     inspector.close()
   },
 )
+
+// Value: protects=server debugger control of a learner's dev server on a Node.js release without process.getBuiltinModule (20.9 to 20.15, 22.0 to 22.2, which Next.js 16 allows): the thread probe loads node:worker_threads by the require the inspector offers instead; fails_when=the probe looks for require in the global scope only, where it is not defined, so its answer names no thread and the owned main server is refused with a raw ZodError; why_new=OCR8-1; seam=a real worker Inspector whose process.getBuiltinModule the test removes, as such a release lacks it, and whose global require of an evaluated worker text it removes, as a dev server's code has none; no_claim=a real Node.js 20.9 to 20.15 or 22.0 to 22.2 process, which this machine does not have
+test('a server inspector on a Node.js without process.getBuiltinModule still names its thread', async (context) => {
+  // Arrange: a worker of the owned process whose process.getBuiltinModule is removed before its inspector is asked, and whose global require, which only code evaluated as a worker's text gets, is removed too, as a dev server's own code has none.
+  const processGroup = Number(
+    execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], {
+      encoding: 'utf8',
+    }).trim(),
+  )
+  const modulePath = resolve(
+    __dirname,
+    '../utils/verifyServerInspectorOwnership.js',
+  )
+  const worker = new Worker(
+    `const { parentPort } = require('node:worker_threads');
+const { Session } = require('node:inspector');
+const { verifyServerInspectorOwnership } = require(${JSON.stringify(modulePath)});
+process.getBuiltinModule = undefined;
+delete globalThis.require;
+const session = new Session();
+session.connect();
+const inspector = { request: (method, parameters) => new Promise((resolve, reject) => session.post(method, parameters, (error, response) => error ? reject(error) : resolve(response))) };
+verifyServerInspectorOwnership(inspector, process.cwd(), ${processGroup}, new AbortController().signal, () => {}).then(
+  identity => { parentPort.postMessage(identity); session.disconnect(); },
+  error => { parentPort.postMessage({ error: String(error) }); session.disconnect(); }
+);`,
+    { eval: true, env: { ...process.env, NEXT_PRIVATE_WORKER: '1' } },
+  )
+  context.after(() => worker.terminate())
+
+  // Act
+  const identity = await new Promise<Record<string, unknown>>(
+    (resolve, reject) => {
+      worker.once('message', resolve)
+      worker.once('error', reject)
+    },
+  )
+
+  // Assert: the worker is still told from the main thread.
+  assert.equal(identity.error, undefined)
+  assert.equal(identity.pid, process.pid)
+  assert.equal(identity.isMainThread, false)
+  assert.equal(typeof identity.threadId, 'number')
+})
+
+// Value: protects=a learner whose dev server runs a Node.js that offers the inspector no way to load node:worker_threads: the refusal names that Node.js release; fails_when=the probe's answer of the release is parsed as a thread identity, so the refusal is a raw ZodError that names nothing the learner can act on; why_new=OCR8-1; seam=the inspector's answers, which the test gives; no_claim=a Node.js release that really lacks both loaders
+test('a server inspector that can load no module is refused with its Node.js release named', async () => {
+  // Arrange: the thread probe answers the release in place of a thread.
+  const processGroup = Number(
+    execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], {
+      encoding: 'utf8',
+    }).trim(),
+  )
+  const inspector = inspectorResponse(
+    { pid: process.pid, cwd: process.cwd(), worker: '1' },
+    false,
+    { nodeVersion: 'v20.9.0' },
+  )
+  // Act / Assert
+  await assert.rejects(
+    verifyServerInspectorOwnership(
+      inspector,
+      process.cwd(),
+      processGroup,
+      new AbortController().signal,
+      () => undefined,
+    ),
+    {
+      message:
+        'Server inspector cannot name its thread on Node.js v20.9.0: neither process.getBuiltinModule nor require is offered to the inspector',
+    },
+  )
+  inspector.close()
+})
