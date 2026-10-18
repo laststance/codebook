@@ -26,6 +26,10 @@ import { systemTrashName } from '../utils/systemTrashName'
 import { validateStudy } from '../utils/validateStudy'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { loadModule } from './utils/loadModule'
 
 const workspaceKey = sha256('workspace-a'),
@@ -581,16 +585,14 @@ test('a link or a folder where the progress file should be is refused with the f
   const linkedPath = join(withLink, 'progress.repository.v4.json'),
     folderPath = join(withFolder, 'progress.repository.v4.json')
   await fsPromises.rename(linkedPath, join(withLink, 'kept-progress.json'))
-  const isLinkMade = await fsPromises
-    .symlink(join(withLink, 'kept-progress.json'), linkedPath)
-    .then(
-      () => true,
-      () => false,
-    )
-  if (!isLinkMade)
-    return context.skip(
-      'creating a symbolic link to a file was refused: this user lacks the right (on Windows: no administrator and no developer mode)',
-    )
+  // Only a user without the right to create a link skips; every other error of the creation fails the test.
+  if (
+    !(await createLinkIfAllowed(
+      join(withLink, 'kept-progress.json'),
+      linkedPath,
+    ))
+  )
+    return context.skip(LINK_NOT_ALLOWED)
   await fsPromises.mkdir(folderPath, { recursive: true })
   const read = (directory: string): Promise<string> =>
     new LearningLibrary(directory, workspaceKey).readProgress().then(
