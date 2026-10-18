@@ -179,6 +179,18 @@ test('browser addresses trim every C0 control and ASCII space only at their ends
   ])
 })
 
+// Value: protects=the reading of an attribute value the filter judges, as a browser reads it; fails_when=a number of the C1 range is read as the replacement character instead of the Windows-1252 character a browser gives it, or a named reference of a character outside ASCII (with or without its semicolon) is left as written, so the reader's text of the value is not the browser's; why_new=S1 (the hand-written decoder gave way to the HTML standard's, `decodeHTMLAttribute` of entities; each expected text is Chrome 151's DOMParser reading of the value); seam=none; no_claim=the filter's judgment of these values, which a character outside ASCII does not change
+test('an attribute value with a C1 number or a reference to a character outside ASCII is read as Chrome reads it', () => {
+  // Arrange: two C1 numbers, decimal and hexadecimal, a no-break space with its semicolon and an e acute without it.
+  const written = ['&#128;', '&#x96;', 'a&nbsp;b', '&eacute']
+
+  // Act
+  const read = written.map(browserAttributeText)
+
+  // Assert
+  assert.deepEqual(read, ['\u20ac', '\u2013', 'a\u00a0b', '\u00e9'])
+})
+
 // Value: protects=unknown character references in a source link when the reader binds it to the serving editor; fails_when=inherited Object properties replace unknown references with function text; why_new=the named-reference cases cover known names and numbers, not inherited property names; seam=none; no_claim=browser navigation (pure reader output)
 test('a source link keeps unknown character references when it is bound to the serving editor', () => {
   // Arrange
