@@ -177,6 +177,28 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
   ])
 })
 
+// Value: protects=the Windows listing's reading of what PowerShell printed: a line whose text is no percent-encoding, or one whose escapes are no UTF-8, is left out alone, while the rest of the listing stays, and a line whose escaping left RFC 2396's characters as they are (`!*'()`, as `[uri]::EscapeDataString` of an older .NET leaves `(x86)`) is read (AD22a; TT16, the third testing review); fails_when=the text is decoded without its check, so a text the query never prints becomes a command line, a malformed escape rejects the whole listing, which a sweep then reads as "remove nothing" and a close as an unverified exit, or a path with `(x86)` is left out, so a Chrome under Program Files (x86) is not seen; why_new=every fixture line was a well-formed, fully escaped text; seam=the injected platform, environment and runner
+test('the Windows listing leaves out a line that is no percent-encoding of UTF-8 and keeps the rest, and reads a path whose escaping left RFC 2396’s characters as they are', async () => {
+  // Arrange: a text with a `+`, which the query's escaping never prints; an escape cut inside a character; and Chrome under Program Files (x86), its `!*'()` left unescaped.
+  const listing = answeringListing({
+    stdout:
+      "7 abc+def\r\n8 %E5%AD\r\n9 %22C%3A%5CProgram%20Files%20(x86)%5Cit's!*%5Cchrome.exe%22%20--headless\r\n",
+  })
+  // Act
+  const listed = await listProcesses({
+    platform: 'win32',
+    run: listing.run,
+    environment: { SystemRoot: 'C:\\Windows' },
+  })
+  // Assert
+  assert.deepEqual(listed, [
+    {
+      pid: 9,
+      command: `"C:\\Program Files (x86)\\it's!*\\chrome.exe" --headless`,
+    },
+  ])
+})
+
 // Value: protects=the process listing of a Windows machine whose PowerShell runs in Constrained Language mode (AppLocker or App Control for Business on a managed machine put every PowerShell there): the query names only .NET types that mode allows (about_Language_Modes: `[uri]`, `[string]`), so it runs there, and every attach and close of a managed run can see its Chrome (AD22, /ship adversarial review Step 11); fails_when=the query names a type that mode refuses, as `[Convert]` and `[Text.Encoding]` were, so "Method invocation is supported only on core types in this language mode" fails every listing; why_new=the query's types were never checked against the mode; seam=the injected platform, environment and runner. The real query runs in the Windows job, in its full language mode.
 test('the Windows listing query names only .NET types that PowerShell’s Constrained Language mode allows', async () => {
   // Arrange
