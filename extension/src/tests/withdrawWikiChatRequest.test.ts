@@ -79,6 +79,34 @@ test('a hand-over command that threw before the withdrawal is reported as a requ
   assert.deepEqual(ranCommands, [])
 })
 
+// Value: protects=the learner's own requests in the chat focused last when Codebook's request ended with a complete reply in the moment between the bound of the first answer and the withdrawal; fails_when=the withdrawal runs "Remove All Queued" or the chat's Cancel although its request has ended, so they remove the learner's queued requests or stop the learner's request in progress; why_new=Cycle 0046 second ship, OCR batch 8 finding 2; seam=none
+test('a hand-over command that has already returned a complete reply is reported as a request that ended, and no chat command runs, in a shared session or in one of its own', async () => {
+  // Arrange: the chat's response is complete ({} is a reply that waits for nothing).
+  const ranCommands: string[] = []
+  const { sleep } = manualSleep()
+  const withdrawnIn = (session: 'own' | 'shared') =>
+    withdrawWikiChatRequest({
+      handOver: Promise.resolve({}),
+      runChatCommand: async (command) => {
+        ranCommands.push(command)
+      },
+      session,
+      signal: new AbortController().signal,
+      settleMs: 2_000,
+      sleep,
+    })
+
+  // Act
+  const withdrawals = {
+    shared: await withdrawnIn('shared'),
+    own: await withdrawnIn('own'),
+  }
+
+  // Assert
+  assert.deepEqual(withdrawals, { shared: 'withdrawn', own: 'withdrawn' })
+  assert.deepEqual(ranCommands, [])
+})
+
 // Value: protects=what the learner typed into the chat while an update waited for its first answer; fails_when=in a session of Codebook's own the withdrawal runs the chat's "Remove All Queued", which removes the learner's queued requests, or waits two seconds before it stops its own request; why_new=Cycle 0046 row 129; seam=the withdrawal's sleep, on a manual clock
 test('in a session of its own Codebook stops its request with the chat’s Cancel at once, and the queue’s command never runs', async () => {
   // Arrange: the request is the session's request in progress; the Cancel ends the hand-over command with an empty reply.

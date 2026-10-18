@@ -10,7 +10,7 @@ const REMOVE_QUEUED_CHAT_REQUESTS_COMMAND =
 /** VS Code's command behind the chat's Cancel button: stops the one request in progress of the chat the learner focused last, and touches no queued request. */
 const CANCEL_CHAT_REQUEST_COMMAND = 'workbench.action.chat.cancel'
 
-/** How the withdrawal of an unanswered Wiki update request ended: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `withdrawn` when Codebook saw the hand-over command return with the end of its request after one of the chat's commands, so nothing of the request is loading or queued; `left` when it did not, so the request may still be in the chat. */
+/** How the withdrawal of an unanswered Wiki update request ended: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `withdrawn` when Codebook saw the hand-over command return with the end of its request, before the withdrawal or after one of the chat's commands, so nothing of the request is loading or queued; `left` when it did not, so the request may still be in the chat. */
 export type WikiChatWithdrawal = 'not-sent' | 'withdrawn' | 'left'
 
 /** What one of the chat's commands did to the request: `ended` (the hand-over command returned), `pending` (the command ran and the hand-over command is still pending) or `not-run` (the command threw, did not return in time or was not started because the withdrawal was aborted, so nothing can be said about the chat). */
@@ -71,7 +71,7 @@ function watchHandOver(handOver: Promise<unknown>): HandOverWatch {
 /**
  * Says whether the chat never held the request: the hand-over command returned before the withdrawal without a reply (the chat made no response: it refused the request, or the command threw); called by {@link withdrawWikiChatRequest} before any command.
  * @param handOver - The watch of the hand-over command.
- * @returns `true` for a command that has returned without a reply; `false` while it is pending, and for one that returned a reply in the moment after the bound (that request is stopped like a pending one).
+ * @returns `true` for a command that has returned without a reply; `false` while it is pending, and for one that returned a reply in the moment after the bound: a complete reply ended the request ({@link hasEndedWithReply}), and one that waits for a confirmation is stopped like a pending one.
  * @example
  * isRequestNotSent({ hasEnded: true, hadReply: false, ended }) // => true
  */
@@ -139,6 +139,18 @@ async function clearSharedQueue(
 }
 
 /**
+ * Says whether the request already ended with a reply before the withdrawal: the hand-over command returned a complete response in the moment between the bound of the first answer and this call; called by {@link withdrawWikiChatRequest} before any command.
+ * Why: the chat's commands act on the chat focused last, not on Codebook's request, so once that request has ended they can only remove the learner's queued requests or stop the learner's request in progress.
+ * @param handOver - The watch of the hand-over command.
+ * @returns `true` for a command that returned the end of its request with a reply; `false` while it is pending, for a reply that waits for a confirmation, and for a return without a reply ({@link isRequestNotSent}).
+ * @example
+ * hasEndedWithReply({ hasEnded: true, hadReply: true, ended }) // => true
+ */
+function hasEndedWithReply(handOver: HandOverWatch): boolean {
+  return handOver.hasEnded && handOver.hadReply
+}
+
+/**
  * Words the end of the withdrawal after its last step; called by {@link withdrawWikiChatRequest}.
  * @param step - What the last command that ran did to the request.
  * @returns `withdrawn` for a request that ended; `left` for one that is still pending or whose command did not run.
@@ -154,7 +166,7 @@ function withdrawalAfter(step: WithdrawalStep): WikiChatWithdrawal {
  * Takes back the Wiki update request an unanswering VS Code chat still holds, so nothing of it stays loading or queued when Codebook says the update was not started.
  *
  * Why: the chat keeps a request it cannot answer (Copilot Chat disabled for the launch shows "Getting chat ready" for good); a chat that becomes ready later would run it with no watch, and the editor asks about a session in progress when it quits.
- * Trigger: {@link startWikiChatUpdate} calls it when the bound of the first sign passed, before the result is published. A hand-over command that has already returned without a reply made no request, and no command runs.
+ * Trigger: {@link startWikiChatUpdate} calls it when the bound of the first sign passed, before the result is published. A hand-over command that has already returned without a reply made no request, and one that has already returned a complete reply ended its request: for neither does a command run.
  *
  * How: in a session of Codebook's own ({@link handWikiRequestToChat}) the request is the session's request in progress, and the chat's Cancel stops it; nothing else runs. In a shared session the queue's command runs first ({@link clearSharedQueue}), and the Cancel only when the hand-over command is still pending after it. A cancelled response counts as complete (`chatModel.ts`, `isComplete`), so the hand-over command returns, and that return is the only proof that Codebook's own request ended. A return that waits for a confirmation is no such proof: the chat has started and waits for the learner, and whether a Cancel that ran at the same moment stopped that request the command no longer says. The result is then `left`, as for a first approval that comes after the settle time; a watch is not started for it, because it could wait 15 minutes for a request the Cancel did stop.
  *
@@ -170,7 +182,7 @@ function withdrawalAfter(step: WithdrawalStep): WikiChatWithdrawal {
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
  * @returns
  * - `not-sent`: the hand-over command had returned without a reply; no command ran
- * - `withdrawn`: the hand-over command returned with the end of its request after one of the chat's commands
+ * - `withdrawn`: the hand-over command had returned a complete reply, and no command ran; or it returned with the end of its request after one of the chat's commands
  * - `left`: a command threw or did not return in time, the signal aborted, or after the Cancel the hand-over command stayed pending or had returned a reply that waits for a confirmation
  *
  * @example
@@ -196,6 +208,8 @@ export async function withdrawWikiChatRequest(options: {
   // A hand-over command that returned before this call is seen one turn after the watch was set.
   await Promise.resolve()
   if (isRequestNotSent(handOver)) return 'not-sent'
+  // A request that already ended leaves the chat's commands only the learner's requests to act on.
+  if (hasEndedWithReply(handOver)) return 'withdrawn'
   const queueStep = await clearSharedQueue(
     options.session,
     options.runChatCommand,
