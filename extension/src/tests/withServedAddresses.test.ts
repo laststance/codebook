@@ -836,6 +836,38 @@ test('a select inside svg markup with a column group or frameset keeps the mode 
   ])
 })
 
+// Value: protects=the learner's page and its editor links where svg or MathML markup holds an element with a table cell's name (an svg td or a MathML th) and a template or a table inside its integration point closes; fails_when=the reader's insertion-mode reset reads such an element as an HTML cell, as the pinned parser's does, so the table end pops the whole stack and the parser throws (the reader then refuses the page, while Chrome shows it with a live link); why_new=Cycle 0046 second /ship fixer A's finding FX-A-2 (a grid of 209,304 pages made plain parse5 throw on 318 and the reader on 108); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a template or a table that closes inside svg or MathML markup with a table cell’s name leaves the table’s mode as a browser reads it, so the page is read without a throw and the link after the table loses its link', () => {
+  // Arrange: an svg or MathML td or th that the HTML standard does not read as a cell, an integration point in it, a template or table that opens and closes there, and the table's end; after it a style with text and a refused link.
+  const pages = [
+    '<table><svg><td><foreignObject><template></template></table><style><a href="vscode://file/example">marker</a></style><a href="vscode://file/etc/hosts">hosts</a>',
+    '<table><tbody><svg><th><desc><template></template></tbody><style><a href="vscode://file/example">marker</a></style><a href="vscode://file/etc/hosts">hosts</a>',
+    '<table><tr><svg><td><title><template></template></tr><style><a href="vscode://file/example">marker</a></style><a href="vscode://file/etc/hosts">hosts</a>',
+    '<table><caption><svg><td><foreignObject><table></table></table><style><a href="vscode://file/example">marker</a></style><a href="vscode://file/etc/hosts">hosts</a>',
+    '<table><math><th><mtext><template></template></table><style><a href="vscode://file/example">marker</a></style><a href="vscode://file/etc/hosts">hosts</a>',
+    '<table><caption><math><td><annotation-xml encoding="text/html"><table></table></table><style><a href="vscode://file/example">marker</a></style><a href="vscode://file/etc/hosts">hosts</a>',
+  ]
+
+  // Act: each page as served, or the error the filter threw.
+  const served = pages.map((page) => {
+    try {
+      return withServedAddresses(page, 'vscode')
+    } catch (error) {
+      return String(error)
+    }
+  })
+
+  // Assert: the style holds text and the link after the table loses its link.
+  assert.deepEqual(served, [
+    '<table><svg><td><foreignObject><template></template></table><style><a href="vscode://file/example">marker</a></style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+    '<table><tbody><svg><th><desc><template></template></tbody><style><a href="vscode://file/example">marker</a></style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+    '<table><tr><svg><td><title><template></template></tr><style><a href="vscode://file/example">marker</a></style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+    '<table><caption><svg><td><foreignObject><table></table></table><style><a href="vscode://file/example">marker</a></style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+    '<table><math><th><mtext><template></template></table><style><a href="vscode://file/example">marker</a></style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+    '<table><caption><math><td><annotation-xml encoding="text/html"><table></table></table><style><a href="vscode://file/example">marker</a></style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+  ])
+})
+
 // Value: protects=a served page's text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is renamed; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
 test('a hidden input in a table body or a row, or written HIDDEN, leaves an open select open, so the style text after the select stays as written', () => {
   // Arrange: the table rule takes each input, so </select> closes the select with the svg in it and the style holds text.
