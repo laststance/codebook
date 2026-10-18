@@ -71,6 +71,7 @@ import {
   isRecordingWriterLive,
   type ProcessStartsOfList,
 } from './utils/isRecordingWriterLive'
+import { rememberOwnRecordingSession } from './utils/ownRecordingSessions'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingOfDirectory } from './utils/readRecordingWriterRecord'
@@ -170,6 +171,8 @@ export class RecordingStore {
     }
     if (this.limits.journalBytes <= RECORDING_TERMINAL_RESERVE_BYTES)
       throw new Error('Recording journal must reserve terminal metadata.')
+    // Every header this store writes names its session: this process tells its own recordings by it.
+    rememberOwnRecordingSession(this.sessionId)
   }
 
   /** Reports the current admission setting without blocking history discovery on bad configuration; called by {@link StudyService.status} and by the service's admission of a run, which refuses an invalid setting before it asks the library. @example store.capacityStatus().limit // 64 */

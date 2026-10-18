@@ -8,6 +8,7 @@ import { isProcessGone } from './isProcessGone'
 import { isProcessOfAnotherUser } from './isProcessOfAnotherUser'
 import { isRecordedOwnerGone } from './isRecordedOwnerGone'
 import { isSameStorageMachine } from './isSameStorageMachine'
+import { isOwnRecording } from './ownRecordingSessions'
 import { processStartedAtMs } from './processStartedAtMs'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { RecordedOwner } from './readRecordedOwner'
@@ -15,7 +16,7 @@ import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 
 /** What a recording's header says of its writer: the editor process (its id and its host name) and the time the recording was created. */
 export type RecordingWriterOfHeader = {
-  owner: Pick<RecordingHeader['owner'], 'pid' | 'hostname'>
+  owner: Pick<RecordingHeader['owner'], 'pid' | 'hostname' | 'sessionId'>
   createdAt: RecordingHeader['createdAt']
 }
 
@@ -90,8 +91,8 @@ async function writerStateByRecord(
       kind: 'on-another-host',
       host: owner.hostname ?? header.owner.hostname,
     }
-  // This process's own recording is left to the caller's own run state when it asks so.
-  if (ownProcess === 'ignored' && owner.pid === process.pid)
+  // This process's own recording, by the session its header names, is left to the caller's own run state when it asks so.
+  if (ownProcess === 'ignored' && isOwnRecording(header.owner))
     return { kind: 'left-to-caller' }
   if (await isRecordedOwnerGone(owner, identity, readStart))
     return { kind: 'gone' }
@@ -180,34 +181,12 @@ async function liveWriterStateHere(
 }
 
 /**
- * Says whether a header names this very process as a recording's writer: its process id is this process's, and the recording was not created before this process began (by the clock, with the tolerance of a corrected clock); called by {@link writerStateByHeader} before it compares the host name, which can change while this window records (macOS takes it from the network).
- * @param header - What the header says of the writer.
- * @param readStart - The list's reader of process starts ({@link readStartOncePerList}); this process's own start is read once and kept ({@link readProcessStart}).
- * @returns `true` when the id is this process's and the recording began after it, or this process's start cannot be read; `false` for another process id, and for a recording created before this process began, which an earlier process of that id made.
- * @example await isThisProcessWriter({ owner: { pid: process.pid, hostname: 'laptop.home-network' }, createdAt: new Date().toISOString() }, readStart) // => true
- */
-async function isThisProcessWriter(
-  header: RecordingWriterOfHeader,
-  readStart: ProcessStartReader,
-): Promise<boolean> {
-  if (header.owner.pid !== process.pid) return false
-  const start = await readStart(process.pid).catch(() => undefined)
-  const startedAtMs =
-    start === undefined ? undefined : processStartedAtMs(start)
-  return (
-    startedAtMs === undefined ||
-    Date.parse(header.createdAt) >=
-      startedAtMs - STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
-  )
-}
-
-/**
  * Judges a recording's writer by its header alone, for a recording without a record of its full identity (one 0.2.29.0 made, or one whose record could not be written); called by {@link recordingWriterState}.
  * @param header - What the header says of the writer.
  * @param ownProcess - Whether this process's own recording counts.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns
- * - for this process's own recording ({@link isThisProcessWriter}), whatever host name the header gives: `left-to-caller` with `ignored`, `may-run` with `counts`
+ * - for this process's own recording (its header names this process and a writer session of it, {@link isOwnRecording}), whatever host name the header gives: `left-to-caller` with `ignored`, `may-run` with `counts`
  * - `on-another-host` for a writer of another host name, which cannot be probed
  * - `gone` for a process of this host that is gone
  * - for a live process of this host, what {@link liveWriterStateHere} answers: `unconfirmed-here` or `may-run`
@@ -220,7 +199,7 @@ async function writerStateByHeader(
 ): Promise<RecordingWriterState> {
   const { owner } = header
   // This window's own recording, also one whose host name changed while it records, is told first: it may run, or it is left to the caller's own run state.
-  if (await isThisProcessWriter(header, readStart))
+  if (isOwnRecording(owner))
     return ownProcess === 'ignored'
       ? { kind: 'left-to-caller' }
       : { kind: 'may-run' }

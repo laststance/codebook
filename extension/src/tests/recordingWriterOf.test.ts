@@ -525,6 +525,34 @@ test('a recording whose header names this window’s own process under another h
   })
 })
 
+// Value: protects=the live recording of another computer whose editor has this window's process id, in a shared storage folder, with its header alone; fails_when=the process id and a creation time after this window began are taken for proof that the recording is this window's, so it is left to this window ('ignored') and a removal moves it with no dialog while the other computer records (S1); why_new=Cycle 0046 third review S1: only the session this window gave its own headers proves it; seam=the recording's header, which names another host, this test process's id, a creation time of now and a session of no store of this process, without a record of its writer
+test('a recording of another computer whose editor has this window’s process id, created after this window began, has a writer on another host', async (context) => {
+  // Arrange: the header names another host and this process's id, now, with another editor's session.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rm(recordingOwnerRecordPath(storage.directory, recording.studyId))
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: process.pid,
+      hostname: 'other-computer.lan',
+      sessionId: randomUUID(),
+    },
+    createdAt: new Date().toISOString(),
+  })
+
+  // Act
+  const answers = {
+    counted: await writerOf(recording.folder),
+    leftToThisWindow: await writerOf(recording.folder, 'ignored'),
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    counted: { kind: 'on-another-host', host: 'other-computer.lan' },
+    leftToThisWindow: { kind: 'on-another-host', host: 'other-computer.lan' },
+  })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
