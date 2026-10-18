@@ -12,7 +12,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -391,6 +391,27 @@ test('64 marked profile folders of other users listed before a folder of this us
   assert.deepEqual(
     { removed, left: (await readdir(root)).length },
     { removed: [listedLast], left: 64 },
+  )
+})
+
+// Value: protects=every profile folder the product leaves after a killed editor: its marker names the operating-system user (CX7), and the sweep, given no user, judges it as the user this process runs as, the one the launch wrote, so the folder is removed (TT12, the third testing review); fails_when=the sweep's own user differs from the one the launch writes into the marker, so every new profile folder is taken for another user's and stays for good; why_new=every user test named the sweep's user, and the managed-browser sweep rows wrote markers without one; seam=none (the real user of this process, read by `os.userInfo`)
+test('a sweep given no user removes a killed editor’s folder whose marker names the user this process runs as', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-of-this-user')
+  await profileFolder(folder, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+    user: userInfo().username,
+  })
+  // Act
+  const removed = await removeAbandonedProfiles(root, {
+    hostname: 'workstation',
+  })
+  // Assert
+  assert.deepEqual(
+    { removed, left: await readdir(root) },
+    { removed: [folder], left: [] },
   )
 })
 
