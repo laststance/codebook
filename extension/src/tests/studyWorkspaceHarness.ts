@@ -1016,6 +1016,8 @@ export async function workspaceHarness(
   let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
   let replacesGroupObjectsOnTabChanges = false
+  /** The fake editor answers a removed group with new Tab objects, as Cursor does; see `rebuildTabObjectsAtGroupRemoval`. */
+  let rebuildsTabObjectsAtGroupRemoval = false
   /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
@@ -2238,6 +2240,8 @@ export async function workspaceHarness(
       if (remaining.viewColumn > emptied.viewColumn) remaining.viewColumn--
     // Removing an earlier native group renumbers the source receipt too; it is not another source reveal.
     if (sourceColumn > emptied.viewColumn) sourceColumn--
+    // Cursor's extension host builds every tab object anew from the whole tab model a removed group brings.
+    if (rebuildsTabObjectsAtGroupRemoval) rebuildTabObjects()
     for (const retained of panels)
       retained.viewColumn = groups.find((candidate) =>
         candidate.tabs.includes(retained.nativeTab),
@@ -2272,6 +2276,34 @@ export async function workspaceHarness(
         )
       )
         current.dispose()
+  }
+  /**
+   * Gives every tab of the fake tab model a new Tab object with the same input, label and state, as Cursor 3.23.12 does when the editor answers a removed group with a whole new tab model (`workbench.desktop.main.js` 17269:26248 `onDidRemoveGroup` → `_createTabsModel`), from which its extension host builds every group and tab object anew (`$acceptEditorTabModel`); called by {@link removeEmptiedGroup} in the model of `rebuildTabObjectsAtGroupRemoval`.
+   * The harness's own notes of a tab (a dead pane, a restored captured source, a tab that refuses its close), the panels' tabs and the chat part's tab follow their new objects; an object a test kept is in no group any more.
+   * @example rebuildTabObjects() // harness.groups[0].tabs[0] is another object for the same tab
+   */
+  function rebuildTabObjects(): void {
+    const rebuilt = new Map<Tab, Tab>()
+    for (const group of groups) {
+      group.tabs = group.tabs.map((tab) => {
+        const next = { ...tab }
+        rebuilt.set(tab, next)
+        return next
+      })
+      if (group.activeTab)
+        group.activeTab = rebuilt.get(group.activeTab) ?? group.activeTab
+    }
+    // A note the harness keeps of a tab follows the tab, not its object.
+    for (const notes of [leftoverCapturedTabs, deadPaneTabs, closeRefusingTabs])
+      for (const [previous, next] of rebuilt)
+        if (notes.delete(previous)) notes.add(next)
+    for (const current of panels) {
+      const next = rebuilt.get(current.nativeTab)
+      if (next) current.refreshTabWrapper(next)
+    }
+    if (separateEditorPart)
+      separateEditorPart.tab =
+        rebuilt.get(separateEditorPart.tab) ?? separateEditorPart.tab
   }
   /**
    * Closes tabs as the editor does, group by group, for the reader's `tabGroups.close` requests and for the Close Editor command.
@@ -5521,6 +5553,14 @@ export async function workspaceHarness(
      */
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor answer every removal of a group with new Tab objects for every tab that remains, as Cursor 3.23.12 does: its editor sends a whole new tab model when a group is removed (`workbench.desktop.main.js` 17269:26248 `onDidRemoveGroup` → `_createTabsModel`), and its extension host builds every tab object anew from it (`$acceptEditorTabModel`), so no tab object survives the removal (Cycle 0046 OCR1-1).
+     * Off by default, which is VS Code: its extension host keeps the object of a tab it knows (`_reconcileTabs`).
+     * @example harness.rebuildTabObjectsAtGroupRemoval()
+     */
+    rebuildTabObjectsAtGroupRemoval(): void {
+      rebuildsTabObjectsAtGroupRemoval = true
     },
     /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. Whatever gives an editor group, a text editor or the chat the keyboard ends that: a group focus command, Cursor's Focus Agent, a pane revealed or a document shown with the focus, the chat's `focus` and `focusTab`, and the learner's `focusMutableDraft`. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
     keyboardOnBody: () => keyboardOnBody,

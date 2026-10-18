@@ -286,6 +286,7 @@ import {
   unconfirmedLayoutReason,
 } from './utils/unconfirmedLayoutReason'
 import { unconfirmedWritersInLocalTime } from './utils/unconfirmedWritersInLocalTime'
+import { unmatchedByKey } from './utils/unmatchedByKey'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
 import { untilAborted } from './utils/untilAborted'
 import { withoutEditorLayoutLeaves } from './utils/withoutEditorLayoutLeaves'
@@ -1445,6 +1446,7 @@ export class StudyWorkspace {
    * Closes, in one request, the tabs {@link leftoverTabs} lists; called by {@link selectAfterClosingLeftoverTabs} once the library key is known, by {@link open} at the start of every cold entry and by {@link retirePreviousApplicationPanes}.
    * Before any of them closes, the groups an earlier window recorded are retired on their proof ({@link retireLeftoverApplicationGroup}, row 608): a closed leftover tab lets an editor that removes emptied groups shrink the recorded grid, and nothing could be proved any more. A retired group's leftover tabs close with it and count as closed here, the focused one too.
    * The editor closes group by group and answers once for the whole request, so what closed is read from the tab model: a tab the editor keeps holds back the requested tabs of its own group only. A request the editor refuses or rejects changes nothing here; the caller decides what a kept tab means.
+   * Cursor builds every tab object anew when a group is removed and when a tab closes (3.23.12 `workbench.desktop.main.js` 17269:26248, {@link closeLeftoverAsIssuedRemoval}), so the tabs to close are listed again after the retirement, and what stayed is listed again after the close and matched to the tabs listed first by {@link learnerTabKey}, not by object (Cycle 0046 OCR1-1).
    * @param signal - The entry's cancellation, for the retirement.
    * @returns What closed and what stayed, see {@link LeftoverTabClose}.
    * @example
@@ -1458,21 +1460,19 @@ export class StudyWorkspace {
     const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
       leftover = this.leftoverTabs()
     const proofTookKeyboard = await this.retireLeftoverApplicationGroup(signal)
-    const open = new Set(
-        vscode.window.tabGroups.all.flatMap((group) => group.tabs),
-      ),
-      requested = leftover.filter((tab) => open.has(tab))
-    // Only what the retirement left is requested; the rest has gone with its group.
+    // Only what the retirement left is requested, read again in the tab objects the editor names now; the rest has gone with its group.
+    const requested = this.leftoverTabs()
     if (requested.length)
       await vscode.window.tabGroups.close(requested, true).then(
         () => undefined,
         () => undefined,
       )
-    const remaining = new Set(
-        vscode.window.tabGroups.all.flatMap((group) => group.tabs),
-      ),
-      closed = leftover.filter((tab) => !remaining.has(tab)),
-      kept = leftover.filter((tab) => remaining.has(tab))
+    // What stayed is read again too, and each tab listed at first is known among it by its key: a tab with no counterpart left closed.
+    const keyOf = (tab: vscode.Tab): string => this.learnerTabKey(tab),
+      remaining = this.leftoverTabs(),
+      closed = unmatchedByKey(leftover, remaining, keyOf),
+      unlisted = unmatchedByKey(remaining, leftover, keyOf),
+      kept = remaining.filter((tab) => !unlisted.includes(tab))
     return {
       closedAny: closed.length > 0,
       closedFocus:
@@ -9729,7 +9729,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names a tab by a key that outlives the editor's tab objects, for {@link learnersTabKeysOf} and {@link learnerViewOfGroup}.
+   * Names a tab by a key that outlives the editor's tab objects, for {@link learnersTabKeysOf}, {@link learnerViewOfGroup} and {@link closeLeftoverTabs}.
    * @param tab - A tab of an editor group.
    * @returns A text tab's document URI; for any other tab its webview's view type, or `tab`, with its label.
    * @example this.learnerTabKey(tab) // => 'file:///work/login-form.tsx', or 'tab:Cursor Settings'
