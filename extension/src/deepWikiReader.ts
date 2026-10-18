@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { readFile, realpath } from 'node:fs/promises'
+import { lstat, open, readFile, realpath } from 'node:fs/promises'
 import {
   createServer,
   type IncomingMessage,
@@ -18,6 +18,7 @@ import {
   WIKI_MISSING_PAGE_PATH_LIMIT_CHARS,
   WIKI_MISSING_PAGE_TEXT_DELAY_MS,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
+  WIKI_PAGE_FILE_LIMIT_BYTES,
   WIKI_PAGE_NAVIGATION_DESTINATIONS,
   WIKI_PAGE_SERVE_DEADLINE_MS,
   WIKI_QUESTION_LIMIT_CHARS,
@@ -52,6 +53,7 @@ import {
 } from './utils/installWikiUpdateStatus'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
 import { labelQuestionField } from './utils/labelQuestionField'
+import { readUpToLimit } from './utils/readUpToLimit'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
@@ -500,7 +502,6 @@ export async function startDeepWikiReader(
     const publication = relativePath.endsWith('.html')
       ? await readWikiPublicationIdentity(outputDirectory)
       : undefined
-    const content = await readFile(filePath)
     if (relativePath.endsWith('.html')) {
       // A script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries. Everything else the page fetches, frames or submits stays on this origin.
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -508,6 +509,27 @@ export async function startDeepWikiReader(
         'Content-Security-Policy',
         `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
+      // A page file larger than any page costs the editor's process nothing of its size: its size is looked at on the resolved path before it is opened, and the read stops one byte past the limit, also when the file grew since.
+      let content: Buffer | undefined
+      if ((await lstat(filePath)).size <= WIKI_PAGE_FILE_LIMIT_BYTES) {
+        const pageFile = await open(filePath, 'r')
+        try {
+          content = await readUpToLimit(
+            pageFile,
+            (await pageFile.stat()).size,
+            WIKI_PAGE_FILE_LIMIT_BYTES,
+          )
+        } finally {
+          await pageFile.close()
+        }
+      }
+      if (!content) {
+        response.statusCode = 503
+        response.end(
+          wikiPageRefusalHtml('too-large', WIKI_PAGE_SERVE_DEADLINE_MS, prefix),
+        )
+        return
+      }
       // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
       const preparation = new AbortController()
       response.on('close', () => {
@@ -545,7 +567,7 @@ export async function startDeepWikiReader(
           ? 'text/plain; charset=utf-8'
           : 'application/octet-stream',
     )
-    response.end(content)
+    response.end(await readFile(filePath))
   }
   try {
     await new Promise<void>((resolve, reject) => {

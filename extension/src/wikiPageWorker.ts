@@ -16,9 +16,10 @@ import type { WikiPageRefusalReason } from './utils/wikiPageRefusalHtml'
 
 /** How {@link servedWikiPageHtml} is told the editor, the reader's script address and the publication of the page it prepares. */
 type ServedWikiPageOptions = Parameters<typeof servedWikiPageHtml>[1]
-/** What {@link servedWikiPageOffThread} answers: the page as served, or why it is not served. */
+/** What {@link servedWikiPageOffThread} answers: the page as served, or why it is not served; a page file too large to prepare is refused by the reader before it is read. */
 type ServedWikiPage =
-  { state: 'served'; html: string } | { state: WikiPageRefusalReason }
+  | { state: 'served'; html: string }
+  | { state: Exclude<WikiPageRefusalReason, 'too-large'> }
 /** What the reader hands a worker for each page: the page as the Wiki folder holds it and the options it is served with. */
 type WikiPageRequest = { html: string; options: ServedWikiPageOptions }
 /** What a worker is started with: the mark of a worker this module started. */

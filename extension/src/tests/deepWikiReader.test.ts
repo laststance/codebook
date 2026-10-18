@@ -13,8 +13,9 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import * as fileSystemPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
@@ -1015,6 +1016,103 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
     policy: SERVED_PAGE_POLICY,
     body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Reload the page; if it is still not shown, generate the Wiki again.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
   })
+})
+
+// Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
+test('a page file larger than the reader prepares is answered with 503 and a sentence that says so, without the file being opened, while a page within the limit is read and served', async (context) => {
+  // Arrange: an overview of 2,021 bytes and a page of 33 bytes, a reader that prepares pages of 1,000 bytes at most, a file system that notes the files the reader opens or reads, and a page worker that counts its pages.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-large-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    `<!doctype html><body>${'x'.repeat(2_000)}</body>`,
+  )
+  await writeFile(
+    join(outputDirectory, 'small.html'),
+    '<!doctype html><body>Small</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'small.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const filesTheReaderRead: string[] = []
+  const recordingFileSystem = {
+    ...fileSystemPromises,
+    open: (...parameters: Parameters<typeof open>) => {
+      filesTheReaderRead.push(basename(String(parameters[0])))
+      return open(...parameters)
+    },
+    readFile: (...parameters: Parameters<typeof readFile>) => {
+      filesTheReaderRead.push(basename(String(parameters[0])))
+      return readFile(...parameters)
+    },
+  }
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithSmallPageLimit } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
+        'node:fs/promises': recordingFileSystem,
+        './wikiPageWorker': countingWorker,
+      },
+      { URL },
+    )
+  const reader = await startReaderWithSmallPageLimit(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const overviewResponse = await fetch(reader.url)
+  const overview = {
+    status: overviewResponse.status,
+    type: overviewResponse.headers.get('content-type'),
+    policy: overviewResponse.headers.get('content-security-policy'),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await overviewResponse.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+  const smallResponse = await fetch(new URL('small.html', reader.url))
+  const small = {
+    status: smallResponse.status,
+    body: await smallResponse.text(),
+  }
+
+  // Assert: the overview's file was never opened, and only the small page was prepared.
+  assert.deepEqual(
+    { overview, small, filesTheReaderRead, preparedPageCount },
+    {
+      overview: {
+        status: 503,
+        type: 'text/html; charset=utf-8',
+        policy: SERVED_PAGE_POLICY,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      small: { status: 200, body: '<p>Prepared page</p>' },
+      filesTheReaderRead: ['small.html'],
+      preparedPageCount: 1,
+    },
+  )
 })
 
 // Value: protects=the editor's machine against a Wiki page that names a page of the Wiki many times as an image, media, a style sheet, a font, a track or a script (the page policy lets it load them from the reader's address), so that every such request starts a page worker that may keep a core busy until the deadline; fails_when=the reader prepares a page for a request the browser makes for anything but a page it opens (a Sec-Fetch-Dest other than document or iframe), or it refuses a page the browser opens as a document or in a frame, or one asked for by a client that names no destination; why_new=P2RT3; seam=the reader loaded with loadModule and a stand-in page-worker module that counts the pages it is asked to prepare; no_claim=a browser that sends no Sec-Fetch-Dest (it is served as before)

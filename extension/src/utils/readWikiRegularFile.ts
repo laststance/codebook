@@ -1,15 +1,13 @@
 import type { FileHandle } from 'node:fs/promises'
 
-import {
-  WIKI_METADATA_FILE_LIMIT_BYTES,
-  WIKI_METADATA_READ_CHUNK_BYTES,
-} from '../constants'
+import { WIKI_METADATA_FILE_LIMIT_BYTES } from '../constants'
 
 import { modifiedAtMsOf } from './modifiedAtMsOf'
 import {
   openWithoutFollowing,
   type NoFollowOpenConstants,
 } from './openWithoutFollowing'
+import { readUpToLimit } from './readUpToLimit'
 
 /** A manifest or receipt of a Wiki folder as one read saw it. */
 export type WikiRegularFile = {
@@ -21,45 +19,11 @@ export type WikiRegularFile = {
 }
 
 /**
- * Reads an open file from its start to its end, and never more than one byte past the limit; called by {@link readWikiRegularFile} after the size at `stat` was within the limit, because the file can grow while it is read.
- * @param file - The open regular file.
- * @param sizeAtStat - Its size when it was opened; the first read asks for that and one byte more.
- * @param limitBytes - The largest size the caller accepts.
- * @returns The bytes of the whole file, at most `limitBytes` of them.
- * @throws A `RangeError` when the byte past the limit arrives: the file grew after its `stat`.
- * @example
- * await readUpToLimit(file, 12, 64) // => <Buffer of 12 bytes>; rejects when the file grew past 64 bytes meanwhile
- */
-async function readUpToLimit(
-  file: FileHandle,
-  sizeAtStat: number,
-  limitBytes: number,
-): Promise<Buffer> {
-  const chunks: Buffer[] = []
-  let readBytes = 0
-  // One byte past the limit is the most that is ever read.
-  while (readBytes <= limitBytes) {
-    // The first read takes the whole file as it was at its stat; what arrived since is read in further chunks.
-    const chunk = Buffer.allocUnsafe(
-      Math.min(
-        Math.max(sizeAtStat + 1 - readBytes, WIKI_METADATA_READ_CHUNK_BYTES),
-        limitBytes + 1 - readBytes,
-      ),
-    )
-    const { bytesRead } = await file.read(chunk, 0, chunk.length, readBytes)
-    if (bytesRead === 0) return Buffer.concat(chunks)
-    chunks.push(chunk.subarray(0, bytesRead))
-    readBytes += bytesRead
-  }
-  throw new RangeError('The file grew past the limit while it was read.')
-}
-
-/**
  * Reads an opened file when it is a regular file within the limit; called by {@link readWikiRegularFile} between the open and the close.
  * @param file - The open file.
  * @param limitBytes - The largest size the caller accepts; a larger file is refused by its size at `stat`, before any byte of it is read.
- * @returns Its bytes, inode number and modification time, all from the one open file; `undefined` for what is no regular file and for a file larger than `limitBytes`.
- * @throws What the status or a read throws, and the `RangeError` of {@link readUpToLimit} for a file that grew past the limit after its `stat`.
+ * @returns Its bytes, inode number and modification time, all from the one open file; `undefined` for what is no regular file, for a file larger than `limitBytes`, and for one that grew past the limit after its `stat` ({@link readUpToLimit}).
+ * @throws What the status or a read throws.
  * @example
  * await readOpenedFile(file, WIKI_METADATA_FILE_LIMIT_BYTES) // => { bytes, inode: '1837462', modifiedAtMs: 1790000000000 }
  */
@@ -71,8 +35,11 @@ async function readOpenedFile(
   const fileStat = await file.stat({ bigint: true })
   const sizeAtStat = Number(fileStat.size)
   if (!fileStat.isFile() || sizeAtStat > limitBytes) return undefined
+  const bytes = await readUpToLimit(file, sizeAtStat, limitBytes)
+  // A file that grew past the limit after its stat is refused.
+  if (!bytes) return undefined
   return {
-    bytes: await readUpToLimit(file, sizeAtStat, limitBytes),
+    bytes,
     inode: fileStat.ino.toString(),
     modifiedAtMs: modifiedAtMsOf(fileStat),
   }
@@ -108,7 +75,7 @@ export async function readWikiRegularFile(
     () => undefined,
   )
   if (!file) return undefined
-  // A file that cannot be read, also one that grew past the limit after its stat, is refused.
+  // A file that cannot be read is refused.
   const read = await readOpenedFile(file, limitBytes).catch(() => undefined)
   // The close is part of the read: a handle whose close fails is answered as a file that could not be read, never as a rejection, which would end a watch or leave a run without its end.
   const didClose = await file.close().then(
