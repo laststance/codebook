@@ -18,6 +18,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type * as lookModule from '../utils/isFolderOfItsOwn'
+import { isFolderOfItsOwn } from '../utils/isFolderOfItsOwn'
 import type * as removalModule from '../utils/removeWithoutFollowing'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
@@ -314,6 +315,57 @@ test('a folder that a running program replaces by another real folder between th
     {
       outcome: `The folder ${swapped} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
       otherAtThePath: 'other',
+    },
+  )
+})
+
+// Value: protects=the folder a link leads to when a running program renames the folder the walk is emptying and puts the link at its path after the walk asked whether the folder is its parent's own and before it lists it: the walk looks at the path again before the listing, stops with an error that names the path, and never lists through the link (CX6; TT43, the third testing review); fails_when=the walk lists the path without that look, so it reads the folder the link leads to, and with an empty one there it ends with the system's ENOTDIR instead of saying what happened; why_new=the CX6 test swapped the folder inside the listing, where only the look before each removal could see it; seam=the walk's look whether a folder is its parent's own, which a running program follows at once with the swap, and a file system stand-in that counts the listings of the path
+test('a folder that a running program replaces by a link right before the walk lists it stops the walk with an error that says so, and nothing is listed through the link', async (context) => {
+  // Arrange: a folder with a file, and an empty folder the link will lead to; the program swaps them right after the walk's look whether the folder is its parent's own.
+  const folder = await folderWithKeptFiles(context)
+  const swapped = join(folder, 'swapped')
+  const emptyTarget = join(folder, 'empty-target')
+  await mkdir(swapped)
+  await writeFile(join(swapped, 'notes.txt'), 'own')
+  await mkdir(emptyTarget)
+  let listingsOfThePath = 0
+  let hasSwapped = false
+  const walk = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    {
+      'node:fs/promises': {
+        ...realFileSystem,
+        readdir: async (path: string) => {
+          if (path === swapped) listingsOfThePath += 1
+          return readdir(path)
+        },
+      },
+      './isFolderOfItsOwn': {
+        isFolderOfItsOwn: async (path: string) => {
+          const isOwn = await isFolderOfItsOwn(path)
+          if (path === swapped && !hasSwapped) {
+            hasSwapped = true
+            await rename(swapped, join(folder, 'moved-away'))
+            await symlink(emptyTarget, swapped, 'junction')
+          }
+          return isOwn
+        },
+      },
+    },
+  )
+
+  // Act
+  const outcome = await walk.removeWithoutFollowing(swapped).then(
+    () => 'removed',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, listingsOfThePath },
+    {
+      outcome: `The folder ${swapped} was replaced by another entry while Codebook emptied it; nothing more in it was removed.`,
+      listingsOfThePath: 0,
     },
   )
 })
