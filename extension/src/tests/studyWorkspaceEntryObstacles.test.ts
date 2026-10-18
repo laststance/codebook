@@ -3475,6 +3475,63 @@ test('an agent’s run that prepares the Application while VS Code’s chat edit
   }
 })
 
+// Value: protects=an agent's run whose Application preparation is placed while the editor refuses the focus command that gives VS Code's chat editor tab its keyboard back: the run still gets its Application pane in its own group; fails_when=the preparation's return of the keyboard to the chat rejects inside its focus return, so the preparation takes a refused keyboard courtesy for a refused placement, disposes the new Application pane, closes its group and fails the agent's run; why_new=Cycle 0046 second /ship OCR review OCR1-9 (returnPreparationFocus awaited the give-back without a catch, unlike every other give-back of the flow); seam=useNativeLayout, focusMutableDraft, focusChatEditorTab (VS Code's TabInputChat without an active text editor), failNextCommand on the chat group's focus command, presentation.createViewport (the MCP-first preparation), the command log; no_claim=what the learner is told about the keyboard after the refused command
+test('an agent’s run whose return of the keyboard to VS Code’s chat editor tab the editor refuses still gets its Application pane in its own group', async () => {
+  // Arrange: actions.ts is in the first group, and the learner typed the request into the chat, opened as an editor tab of the second group in front of auth.ts. The editor will refuse the focus command of the chat's group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.leaveEmptyGroup(1)
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.leaveEmptyGroup(2)
+    harness.focusMutableDraft('auth.ts', 2)
+    harness.focusChatEditorTab(2)
+    const commandsBefore = harness.commands.length
+    harness.failNextCommand('workbench.action.focusThirdEditorGroup')
+
+    // Act: what the preparation answers, its viewport or its refusal.
+    let failure: string | undefined
+    const viewport = await Promise.resolve()
+      .then(() =>
+        harness.reader.presentation.createViewport(
+          'mcp-first-run',
+          () => {},
+          () => {},
+          'normal',
+        ),
+      )
+      .catch((error: unknown) => {
+        failure = String(error)
+        return undefined
+      })
+
+    try {
+      // Assert: the chat's group, now column 3, was asked for its focus and refused it; the Application stands in its own group at column 1 all the same.
+      assert.deepEqual(
+        {
+          failure,
+          applicationColumn: harness.panelColumn('codebook.scopedBrowser'),
+          focusCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) => /^workbench\.action\.focus/.test(command)),
+        },
+        {
+          failure: undefined,
+          applicationColumn: 1,
+          focusCommands: [
+            'workbench.action.focusFirstEditorGroup',
+            'workbench.action.focusThirdEditorGroup',
+          ],
+        },
+      )
+    } finally {
+      viewport?.close()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of VS Code's chat editor tab that the learner moved into a floating window (Chat: Move Chat into New Window), where the learner typed the request: an agent's run places its Application in a new group above the first one, and the chat gets its keyboard back through the numbered focus command of its group's column, which in VS Code counts the groups of every editor part, raises the floating window and gives the chat editor's input the keyboard (1.140.0 workbench.desktop.main.js 987:4284, 1106:181056, 1106:133818, 3129:7546); the measurement's focus of the first group gave the learner's file the keyboard for a moment, so the return says so once (rows 647 and 655); fails_when=the floating window's group counts as another editor part, whose only give-back is Cursor's Focus Agent, so VS Code runs nothing and tells nothing while the Application's group keeps the keyboard, or the return after the measurement's borrow is made without a word; why_new=Cycle 0046 row 636, and rows 647 and 655 (the sentence); seam=useNativeLayout, focusMutableDraft, addSeparateEditorPart('vscode-floating-chat') and its focusTab, presentation.createViewport (the MCP-first preparation), the command log, the chat's keyboard and the information messages
 test('an agent’s run that prepares the Application while VS Code’s chat editor tab in a floating window has the keyboard gives that chat its keyboard back and says once that a file of the main editor had it for a moment', async () => {
   // Arrange: actions.ts is in the first group and auth.ts in the second; the learner typed the request into the chat editor tab moved into a floating window, whose group the editor counts at column 3.

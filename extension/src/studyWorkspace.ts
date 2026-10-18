@@ -13742,6 +13742,7 @@ export class StudyWorkspace {
     // A learner's Live Return adds no return before its own final handoff; an agent's still settles the keyboard beside a chat view (codebook_return_current).
     if (ownedByReturn && !forAgentRun) return
     // A chat that held the keyboard beside the main editor, or VS Code's chat editor tab of a main group (row 625), gets it back, from a Live Return only at its end; nothing else is focused after that return.
+    // A give-back the editor refuses (its layout read or the chat's focus command rejects) is no return, and never a refusal of the placed preparation (OCR1-9).
     if (
       giveBack &&
       !ownedByReturn &&
@@ -13749,7 +13750,7 @@ export class StudyWorkspace {
         !captured.toChatEditorTab,
         placed.stillCurrent,
         captured.toldCause,
-      ))
+      ).catch(() => false))
     )
       return
     // The Return's end tells the sentence only when the remembered tab gets nothing back (row 625).
