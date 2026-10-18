@@ -300,3 +300,67 @@ for (const form of SERVED_FORMS)
       },
     )
   })
+
+/** The late replies to an earlier question that a newer question's answer must outlast: a refusal, and a hand-off to the editor chat. */
+const LATE_REPLIES = [
+  {
+    kind: 'refusal',
+    questionAnswer: { error: 'The editor model could not answer.' },
+  },
+  {
+    kind: 'hand-off',
+    questionAnswer: {
+      handoff:
+        'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.',
+    },
+  },
+] as const
+
+// Value: protects=a learner who asks again before the first question's reply came: the newer answer stays shown, and its status line stays as the newer question left it, when the earlier question's refusal or hand-off arrives late; fails_when=the reply of an older question still writes the status line and hides the answer's disclosure (the latest-question guard of codebook-qa.js is dropped), so the newer answer vanishes and the line names the older reply; why_new=D2 added the disclosure's hiding; every question test asks once; seam=openFakeWikiPage with the bundled shell's script and the served codebook-qa.js, holdNext('api/ask') for the first question, the fake reader's answer changed between the questions; no_claim=the answer region itself, which the latest reply writes whichever question it answers
+for (const late of LATE_REPLIES)
+  test(`a newer question’s answer stays shown with its status line as it left it when an earlier question’s ${late.kind} comes back after it`, async () => {
+    // Arrange: the first question's reply is held back; the reader answers the second question at once.
+    const script = `${await shellScriptOf('skills/codebook/reader-shell.html')}\n${await readServedWikiScript()}`
+    const page = await openFakeWikiPage(
+      script,
+      'current-shell',
+      { questionAnswer: late.questionAnswer },
+      { composer: 'current-shell' },
+    )
+    page.holdNext('api/ask')
+    await page.ask('Where is the order created?')
+    page.reader.questionAnswer = {
+      answer: 'The order is saved in src/store.ts.',
+      citations: [
+        {
+          path: 'src/store.ts',
+          line: 8,
+          uri: 'vscode://laststance.codebook/source?root=%2Frepo&path=src%2Fstore.ts&line=8',
+        },
+      ],
+      sourceChanged: false,
+    }
+    await page.ask('Where is the order saved?')
+
+    // Act: the first question's reply comes back after the second question's answer.
+    await page.release('api/ask')
+
+    // Assert
+    assert.deepEqual(
+      {
+        status: questionStatusOf(page),
+        answer: page.find('.qa-answer')?.textContent,
+        isAnswerDisclosureShown: page.isShown(page.find('#qa-response')),
+      },
+      {
+        status: {
+          role: 'status/polite',
+          text: '',
+          isShown: true,
+          isInADisclosure: false,
+        },
+        answer: 'The order is saved in src/store.ts.src/store.ts:8',
+        isAnswerDisclosureShown: true,
+      },
+    )
+  })
