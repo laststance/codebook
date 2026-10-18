@@ -27,23 +27,15 @@ const HOLDS_POSIX_PROFILE_SWITCH = new RegExp(POSIX_PROFILE_SWITCH.source)
 /** Where a switch terminator (`--`) may stand in the text `ps` prints: two dashes between white space, or before the line's end. */
 const POSIX_SWITCH_TERMINATOR = /(?<=\s)--(?=\s|$)/g
 
-/**
- * Reads the value of the last profile switch in a part of a command line `ps` printed; called by {@link namesProfileByText} for each reading of the line.
- * @param text - The part of the line Chrome would read switches in.
- * @returns The text after the last switch, up to the part's end; `undefined` when the part holds no profile switch.
- * @example
- * lastProfileValueIn('chrome --user-data-dir=/tmp/a --user-data-dir=/tmp/b --headless') // => '/tmp/b --headless'
- */
-function lastProfileValueIn(text: string): string | undefined {
-  const last = [...text.matchAll(POSIX_PROFILE_SWITCH)].at(-1)
-  return last === undefined
-    ? undefined
-    : text.slice(last.index + last[0].length)
-}
+/** Profile switches and possible terminators in source order, so {@link namesProfileByText} never reads a growing prefix again. */
+const POSIX_PROFILE_READING_PART = new RegExp(
+  `${POSIX_PROFILE_SWITCH.source}|${POSIX_SWITCH_TERMINATOR.source}`,
+  'g',
+)
 
 /**
  * Says whether a switch's value, read up to the end of its part of the line, is the folder: the folder alone, or the folder and the white space that ends its argument; called by {@link namesProfileByText}.
- * @param value - The text after the switch ({@link lastProfileValueIn}).
+ * @param value - The text after the final profile switch through the command's end.
  * @param folder - The resolved profile folder.
  * @returns `false` for a folder that only shares a prefix with it.
  * @example
@@ -68,17 +60,30 @@ function isFolderValue(value: string, folder: string): boolean {
  * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-a --user-data-dir=/tmp/other', '/tmp/codebook-browser-a')        // => false
  */
 function namesProfileByText(command: string, folder: string): boolean {
-  const readingEnds = [
-    ...[...command.matchAll(POSIX_SWITCH_TERMINATOR)].map(
-      (terminator) => terminator.index,
-    ),
-    command.length,
-  ]
-  // Each reading ends where a terminator may stand; the last one is the whole line.
-  return readingEnds.some((end) => {
-    const value = lastProfileValueIn(command.slice(0, end))
-    return value !== undefined && isFolderValue(value, folder)
-  })
+  let valueStart: number | undefined
+  let hasFolderPrefix: boolean | undefined
+  // A later switch replaces the value; each possible terminator still gets its own reading.
+  for (const part of command.matchAll(POSIX_PROFILE_READING_PART)) {
+    if (part[0] !== SWITCH_TERMINATOR) {
+      valueStart = part.index + part[0].length
+      hasFolderPrefix = undefined
+      continue
+    }
+    if (valueStart === undefined || part.index - valueStart < folder.length)
+      continue
+    // Compare once, only after the reading contains the whole folder. A later switch starts beyond this compared span.
+    hasFolderPrefix ??= command.startsWith(folder, valueStart)
+    const folderEnd = valueStart + folder.length
+    if (
+      hasFolderPrefix &&
+      (folderEnd === part.index || /\s/.test(command.charAt(folderEnd)))
+    )
+      return true
+  }
+  // The whole command is the final reading, even after earlier possible terminators.
+  return (
+    valueStart !== undefined && isFolderValue(command.slice(valueStart), folder)
+  )
 }
 
 /** The white space Chrome trims from both ends of each argument on macOS and Linux before it reads a switch (`TrimWhitespaceASCII` with `kWhitespaceASCII`). */

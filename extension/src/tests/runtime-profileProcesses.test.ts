@@ -5,10 +5,118 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { Worker } from 'node:worker_threads'
 
 import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 import { windowsCommandLineArguments } from '../runtimeSupport/utils/windowsCommandLineArguments'
+
+/** The same per-input limit as the Wiki reader's synchronous-work regression. */
+const PROFILE_SCAN_BOUND_MS = 400
+/** A worker can be stopped even when a regressed parser blocks its own event loop. */
+const PROFILE_SCAN_DEADLINE_MS = 10_000
+
+// Value: protects=cleanup polls from repeated prefix scans of unrelated process commands; fails_when=each possible terminator restarts profile parsing; why_new=row 1053; seam=a worker so a synchronous regression can be stopped
+test('a POSIX command with 40,000 possible terminators is matched in under 400 ms', async (context) => {
+  // Arrange
+  const profile = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-linear-')),
+  )
+  context.after(() => rm(profile, { recursive: true, force: true }))
+  const worker = new Worker(
+    `const { parentPort, workerData } = require('node:worker_threads')
+const { profileProcesses } = require(workerData.module)
+const command = 'chrome --user-data-dir=/other' + ' -- x'.repeat(40_000)
+const started = performance.now()
+profileProcesses(workerData.profile, [{ pid: 101, command }], { platform: 'darwin' })
+  .then(found => parentPort.postMessage({ milliseconds: performance.now() - started, pids: found.map(({ pid }) => pid) }))`,
+    {
+      eval: true,
+      workerData: {
+        module: join(
+          __dirname,
+          '..',
+          'runtimeSupport',
+          'utils',
+          'profileProcesses.js',
+        ),
+        profile,
+      },
+    },
+  )
+  const deadline = setTimeout(() => {
+    void worker.terminate()
+  }, PROFILE_SCAN_DEADLINE_MS)
+  try {
+    // Act
+    const result = await new Promise<{ milliseconds: number; pids: number[] }>(
+      (resolve, reject) => {
+        worker.once('message', resolve)
+        worker.once('error', reject)
+        worker.once('exit', (code) =>
+          reject(
+            new Error(`Profile worker exited before its answer (${code}).`),
+          ),
+        )
+      },
+    )
+
+    // Assert
+    assert.deepEqual(result.pids, [])
+    assert.ok(
+      result.milliseconds < PROFILE_SCAN_BOUND_MS,
+      `${result.milliseconds} ms exceeded 400 ms`,
+    )
+  } finally {
+    clearTimeout(deadline)
+    await worker.terminate()
+  }
+})
+
+// Value: protects=every conservative POSIX reading when a profile path itself contains a possible terminator and a trailing space; fails_when=only the first or last terminator is considered, an overwritten switch counts, or a reading ending exactly at the folder is lost; why_new=row 1053; seam=ps command text and a real folder
+test('each possible POSIX terminator uses its latest profile switch, even inside a folder name', async (context) => {
+  // Arrange
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-readings-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(parent, 'owned -- profile ')
+  await mkdir(profile)
+  const listing = [
+    {
+      pid: 1,
+      command: `chrome --user-data-dir=/other -- -user-data-dir=${profile}\t-- --user-data-dir=/other`,
+    },
+    {
+      pid: 2,
+      command: `chrome --user-data-dir=${profile} --user-data-dir=/other -- --user-data-dir=/other`,
+    },
+    {
+      pid: 3,
+      command: `chrome --user-data-dir=${profile}-- --user-data-dir=/other`,
+    },
+    {
+      pid: 4,
+      command: `chrome --user-data-dir=/other -- -user-data-dir=${profile}x --`,
+    },
+    { pid: 5, command: `chrome --user-data-dir=/other -- --user-data-dir=` },
+    {
+      pid: 6,
+      command: `chrome --user-data-dir=/other\n--\n-user-data-dir=${profile}`,
+    },
+  ]
+
+  // Act
+  const observed = await profileProcesses(profile, listing, {
+    platform: 'darwin',
+  })
+
+  // Assert
+  assert.deepEqual(
+    observed.map(({ pid }) => pid),
+    [1, 3, 6],
+  )
+})
 
 // Value: protects=Chrome's different POSIX and Windows whitespace sets, including NEXT LINE and the byte order mark; fails_when=the linear trim changes the set or removes internal whitespace; why_new=row 1052 replaces both argument trims; seam=exact Linux arguments and Windows command text
 test('profile switches keep Chrome’s exact whitespace sets on Linux and Windows', async (context) => {
