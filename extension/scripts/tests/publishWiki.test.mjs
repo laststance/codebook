@@ -2890,7 +2890,7 @@ async function candidateWithAnAsset(assetPath, assetBytes) {
   }
 }
 
-// Value: protects=the learner who opens a published Wiki from disk, where no reader sends a policy, against an asset the agent wrote that runs script, acts on an event attribute or fetches a network path (`//host`, `\\host`) or another address, when its page links to it or it is opened itself; fails_when=the publisher checks only each page's content and publishes any file the manifest lists under `assets`, or trusts an asset's name and not its bytes; why_new=Cycle 0046 /ship finding AF9; seam=none (the shipped publisher)
+// Value: protects=the learner who opens a published Wiki from disk, where no reader sends a policy, against an asset the agent wrote that runs script, acts on an event attribute or fetches a network path (`//host`, `\\host`) or another address, when its page links to it or it is opened itself; fails_when=the publisher checks only each page's content and publishes any file the manifest lists under `assets`, or trusts an asset's name and not its bytes; why_new=Cycle 0046 /ship finding AF9; third testing review TT27 and OCR review W20: a wrong-bytes row for each format, an AVIF brand after the first box, and a name that every object carries as a property; seam=none (the shipped publisher)
 for (const [kind, assetPath, assetBytes] of [
   [
     'an HTML asset',
@@ -2907,6 +2907,36 @@ for (const [kind, assetPath, assetBytes] of [
     'an asset named as a PNG image that holds HTML',
     'assets/fake.png',
     '<!doctype html><script>run()</script>',
+  ],
+  [
+    'an asset named as a JPEG image that holds text',
+    'assets/photo.jpg',
+    'not a picture',
+  ],
+  [
+    'an asset named as a GIF image whose signature is no GIF version',
+    'assets/anim.gif',
+    Buffer.from('GIF90a\x01\x00\x01\x00', 'latin1'),
+  ],
+  [
+    'an asset named as a WebP image that is a RIFF file of sound',
+    'assets/shot.webp',
+    Buffer.from('RIFF\x24\x00\x00\x00WAVEfmt ', 'latin1'),
+  ],
+  [
+    'an asset named as an AVIF image whose first box names HEIC brands',
+    'assets/shot.avif',
+    Buffer.from('\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic', 'latin1'),
+  ],
+  [
+    'an asset named as an AVIF image whose avif brand stands after its first box',
+    'assets/box.avif',
+    Buffer.from('\x00\x00\x00\x10ftypmif1\x00\x00\x00\x00avif', 'latin1'),
+  ],
+  [
+    'an asset named after a property every object has',
+    'assets/notes.constructor',
+    'any bytes',
   ],
 ])
   test(`a publish whose manifest lists ${kind} is refused with the sentence that names the asset and the images it may be, before anything is written`, async () => {
@@ -2945,12 +2975,13 @@ for (const [kind, assetPath, assetBytes] of [
     }
   })
 
-// Value: protects=the article images an agent lists under `assets`, which the refusal of other assets must not take; fails_when=the publisher refuses a raster image of one of the six formats, by a name in capitals or by bytes the format starts with; why_new=Cycle 0046 /ship finding AF9 (assets are raster images only); seam=none (the shipped publisher)
+// Value: protects=the article images an agent lists under `assets`, which the refusal of other assets must not take; fails_when=the publisher refuses a raster image of one of the six formats, by a name in capitals or by bytes the format starts with, a GIF87a image or an AVIF sequence (brand avis); why_new=Cycle 0046 /ship finding AF9 (assets are raster images only); third testing review TT27 and OCR review W20 (GIF87a and avis); seam=none (the shipped publisher)
 for (const [format, assetPath, assetBytes] of [
   ['PNG', 'assets/flow.png', PNG_ASSET_BYTES],
   ['JPEG', 'assets/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00])],
   ['JPEG', 'assets/photo.JPEG', Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00])],
   ['GIF', 'assets/anim.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1')],
+  ['GIF', 'assets/old.gif', Buffer.from('GIF87a\x01\x00\x01\x00', 'latin1')],
   [
     'WebP',
     'assets/shot.webp',
@@ -2963,6 +2994,11 @@ for (const [format, assetPath, assetBytes] of [
       '\x00\x00\x00\x1cftypmif1\x00\x00\x00\x00mif1avifmiaf',
       'latin1',
     ),
+  ],
+  [
+    'AVIF',
+    'assets/sequence.avif',
+    Buffer.from('\x00\x00\x00\x18ftypavis\x00\x00\x00\x00avismsf1', 'latin1'),
   ],
 ])
   test(`a publish whose manifest lists a ${format} image ${assetPath} publishes it with its bytes`, async () => {
@@ -2983,7 +3019,10 @@ for (const [format, assetPath, assetBytes] of [
       assert.deepEqual(
         {
           published,
-          asset: await readFile(join(wiki.output, assetPath)),
+          // A refused publish leaves no Wiki folder to read the asset from.
+          asset: await readFile(join(wiki.output, assetPath)).catch(
+            () => 'no asset',
+          ),
         },
         { published: wiki.output, asset: assetBytes },
       )
