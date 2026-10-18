@@ -87,7 +87,7 @@ async function loadHostBrowser(
  * @param options.realpathOfProfileFails - Makes `realpath` of the loaded browser refuse every profile folder (`EISDIR`), as the system does on some Windows volumes; the refused paths are noted in `refusedRealpaths`.
  * @param options.ownerMarkerWriteFails - Makes the loaded browser's write of an owner marker fail (`EACCES`), as on a volume that refuses new files.
  * @param options.rootChosenByTheBrowser - Gives the browser no profile root, so it chooses its own as the product does (managedProfileRoot): its loaded context reads `LOCALAPPDATA` as the test's root then, and answers a home folder and a temp folder (`os.homedir`, `os.tmpdir`) that no system's root may be taken from. By default the browser is given the test's root.
- * @returns The browser, its root, every journal entry as plain data, every profile whose processes were asked for, and the paths `realpath` refused. A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
+ * @returns The browser, its root, every journal entry as plain data, every profile whose processes were asked for, the paths `realpath` refused, and `laterRun`, which makes the browser of a later run of the same editor (the same loaded adapter and root, a journal of its own). A profile's processes are looked up like the real utility does it: the folder is resolved first, which fails once it is gone, and the processes `options.processesOfProfile` names are found.
  * @example
  * const managed = await managedBrowser(context)
  * await managed.browser.launch(configuration, signal); await managed.browser.close() // managed.events names browser.managed-profile-removed
@@ -206,31 +206,41 @@ async function managedBrowser(
           : process,
     },
   )
-  const browser = new HostBrowser(
-    {
-      id: 'vscode',
-      productVersion: 'test',
-      apiVersion: 'test',
-      commit: 'test',
-      browserBackend: 'managed',
-      chrome: { binary: process.execPath, version: 'test' },
-    },
-    'owned-run',
-    'http://127.0.0.1/owned',
-    (type, detail) => {
-      // The adapter runs in a context of its own; its details are kept as plain data of this one.
-      events.push({
-        type,
-        detail: detail === undefined ? undefined : structuredClone(detail),
-      })
-      options.onEvent?.(type)
-    },
-    'normal',
-    undefined,
-    options.createViewport,
-    options.rootChosenByTheBrowser ? undefined : root,
-  )
-  return { browser, root, events, processProbes, refusedRealpaths }
+  /** Makes a managed browser of the loaded adapter that journals into the given list; a later run of the same editor is another one of the same adapter. */
+  const browserJournalingInto = (
+    journal: { type: string; detail: unknown }[],
+  ) =>
+    new HostBrowser(
+      {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+        browserBackend: 'managed',
+        chrome: { binary: process.execPath, version: 'test' },
+      },
+      'owned-run',
+      'http://127.0.0.1/owned',
+      (type, detail) => {
+        // The adapter runs in a context of its own; its details are kept as plain data of this one.
+        journal.push({
+          type,
+          detail: detail === undefined ? undefined : structuredClone(detail),
+        })
+        options.onEvent?.(type)
+      },
+      'normal',
+      undefined,
+      options.createViewport,
+      options.rootChosenByTheBrowser ? undefined : root,
+    )
+  const browser = browserJournalingInto(events)
+  /** Makes the browser of a later run in the same editor: the same loaded adapter and root, a journal of its own. */
+  const laterRun = () => {
+    const laterEvents: { type: string; detail: unknown }[] = []
+    return { browser: browserJournalingInto(laterEvents), events: laterEvents }
+  }
+  return { browser, root, events, processProbes, refusedRealpaths, laterRun }
 }
 
 /** Reads from a managed browser's journal the profile folder its launch created. @example profileOf(managed.events) // => '/tmp/codebook-profile-root-x/codebook-browser-a1b2c3' */
@@ -1392,6 +1402,68 @@ test('a managed close waits for a sweep that never ends 2 s at most, journals th
         'host.debugger-started',
         'browser.managed-exit-verified',
         'browser.abandoned-profile-sweep-left-running',
+        'browser.managed-profile-removed',
+        'browser.cleanup-verified',
+      ],
+    },
+  )
+})
+
+// Value: protects=the next managed run after a close that stopped waiting for its sweep at the 2 s bound: its launch joins the sweep of the same root that still runs instead of starting a second one, which would read every marker's process start again (on Windows a PowerShell query of up to 3 s each) and remove nothing the first does not (R5, /ship third review, PD3-3); fails_when=the guard against a second sweep is kept per HostBrowser, which every ConfiguredBrowserRun makes anew, so each run starts a sweep of the root beside the one that runs; why_new=every sweep test used one browser; seam=the sweep's stand-in, which counts its starts and ends only when the test releases it, a later run of the same loaded adapter (`laterRun`), the journal's verified exit, and the faked setTimeout of the first close's bounded wait
+test('a managed launch while the sweep of its root outlives an earlier run’s close joins that sweep and starts no second one', async (context) => {
+  // Arrange: the first run's close stops waiting for its sweep at the bound; the sweep still runs.
+  let sweepsStarted = 0
+  let releaseSweep!: (removed: string[]) => void
+  const sweep = new Promise<string[]>((resolve) => {
+    releaseSweep = resolve
+  })
+  let reportBrowserExitVerified!: () => void
+  const browserExitVerified = new Promise<void>((resolve) => {
+    reportBrowserExitVerified = resolve
+  })
+  const managed = await managedBrowser(context, {
+    removeAbandonedProfiles: () => {
+      sweepsStarted += 1
+      return sweep
+    },
+    onEvent: (type) => {
+      if (type === 'browser.managed-exit-verified') reportBrowserExitVerified()
+    },
+  })
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const closing = managed.browser.close()
+  await browserExitVerified
+  await nextEventLoopTurn()
+  context.mock.timers.tick(2_000)
+  await closing
+  context.mock.timers.reset()
+  const later = managed.laterRun()
+  // Act
+  await later.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  const sweepsAtTheLaterLaunch = sweepsStarted
+  releaseSweep([])
+  await later.browser.close()
+  // Assert
+  assert.deepEqual(
+    {
+      sweepsAtTheLaterLaunch,
+      firstJournalEnd: managed.events.at(-3)?.type,
+      laterJournal: later.events.map((event) => event.type),
+    },
+    {
+      sweepsAtTheLaterLaunch: 1,
+      firstJournalEnd: 'browser.abandoned-profile-sweep-left-running',
+      laterJournal: [
+        'browser.managed-profile',
+        'host.debugger-started',
+        'browser.managed-exit-verified',
         'browser.managed-profile-removed',
         'browser.cleanup-verified',
       ],

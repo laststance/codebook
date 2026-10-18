@@ -84,6 +84,32 @@ function profileProcessPollIntervalMs(platform: NodeJS.Platform): number {
     : POLL_INTERVAL_MS
 }
 
+/** The sweep of abandoned profile folders that runs for each profile root in this editor's process, until it ends; every managed run of the root joins it ({@link sweepOfRoot}). */
+const runningSweeps = new Map<string, Promise<string[]>>()
+
+/**
+ * Gives the sweep of abandoned profile folders for a root: the one that still runs, or a new one ({@link removeAbandonedProfiles}); called by {@link HostBrowser} once per managed launch.
+ * Why per root: since a close waits for its sweep only {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}, a sweep can outlive its run, and the next run, a new {@link HostBrowser}, would start a second sweep of the same root beside it, which reads every marker's process start again (on Windows a query of up to 3 s each) and finds nothing the first does not remove.
+ * @param root - The managed profile root.
+ * @param owner - This process's owner identity, by which a new sweep judges the markers.
+ * @returns The running sweep's promise, which gives the folders it removed and never rejects.
+ * @example
+ * await sweepOfRoot('/tmp', owner) // => ['/tmp/codebook-browser-a1b2c3']; a second call before it ended gives the same promise
+ */
+function sweepOfRoot(
+  root: string,
+  owner: StorageOwnerIdentity,
+): Promise<string[]> {
+  const running = runningSweeps.get(root)
+  // A sweep of this root still runs: the launch joins it.
+  if (running) return running
+  const sweep = removeAbandonedProfiles(root, owner).finally(() => {
+    runningSweeps.delete(root)
+  })
+  runningSweeps.set(root, sweep)
+  return sweep
+}
+
 /**
  * Writes the owner marker into a managed run's profile folder, the proof by which a later run may remove the folder should this editor be killed before the run closes; called by {@link HostBrowser.launch} for its resolved folder and by {@link leaveUnresolvedProfileFolder} for a folder that could neither be resolved nor removed.
  * @param folder - The profile folder.
@@ -483,17 +509,14 @@ export class HostBrowser {
   /**
    * Starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) beside a managed run's start, which does not wait for it; called by {@link launch} once its owner is read and its signal is still not aborted.
    * This run's own folder is never removed by the sweep, because its marker names this running process. The sweep never fails the launch, and {@link close} awaits it.
-   * A browser that is closing starts none: its close may already have passed the step that waits for a sweep, and a sweep started after it would outlive the run. A browser starts at most one sweep.
+   * A browser that is closing starts none: its close may already have passed the step that waits for a sweep, and a sweep started after it would outlive the run. A browser starts at most one sweep, and a launch whose root has a sweep running, one that outlived an earlier run's close, joins it instead of starting another ({@link sweepOfRoot}).
    * @param owner - The machine, the boot and the start of this process, by which a folder's marker is judged.
    * @example
    * this.startAbandonedProfileSweep(await currentStorageOwner()) // journal, once the sweep ended: browser.abandoned-profiles-removed { profiles: ['/tmp/codebook-browser-a1b2c3'] }
    */
   private startAbandonedProfileSweep(owner: StorageOwnerIdentity): void {
     if (this.closing || this.abandonedProfileSweep) return
-    this.abandonedProfileSweep = removeAbandonedProfiles(
-      this.managedRoot,
-      owner,
-    )
+    this.abandonedProfileSweep = sweepOfRoot(this.managedRoot, owner)
       .then((abandoned) => {
         // A sweep that outlived the run's close journals nothing into the run that already ended.
         if (abandoned.length && !this.sweepOutlivedClose)
