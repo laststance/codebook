@@ -1,5 +1,7 @@
 import { UNICODE_LAST_CODE_POINT } from '../constants'
 
+import { type HtmlAttribute, readHtmlStartTags } from './readHtmlStartTags'
+
 /** The attributes a browser follows as an address: the ones the publisher holds to its schemes (`ADDRESS_ATTRIBUTES` of `render-wiki-diagrams.mjs`). */
 const ADDRESS_ATTRIBUTES = new Set([
   'href',
@@ -16,13 +18,6 @@ const CODEBOOK_ADDRESS_STARTS = [
   'vscode://laststance.codebook/',
   'cursor://laststance.codebook/',
 ]
-/** Every `<` before a letter: where a browser may start a tag. */
-const TAG_START = /<[A-Za-z]/g
-/** The rest of a tag's name after its first letter, tried where that letter ends: up to white space, a slash or `>`, as a browser reads it. */
-const TAG_NAME_REST = /[^\t\n\f\r />]*/y
-/** One attribute of a start tag as a browser's tokenizer reads it, tried where the last one ended: the separators before it (white space or a slash; none after a quoted value), its name (which may start with `=`), and, when `=` follows, its value in double quotes, in single quotes or bare. A quote that never ends takes the rest of the page, as a browser's does. */
-const ATTRIBUTE =
-  /([\t\n\f\r /]*)([^\t\n\f\r />][^\t\n\f\r />=]*)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r >]*)))?/y
 /** The character references the publisher reads in an attribute value (`CHARACTER_REFERENCE` of `render-wiki-diagrams.mjs`): a decimal or hexadecimal number and the five names it writes, each with its semicolon. */
 const CHARACTER_REFERENCE =
   /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g
@@ -122,15 +117,15 @@ function isAcceptedAddress(address: string): boolean {
 }
 
 /**
- * Whether one attribute, as {@link ATTRIBUTE} matched it, has to lose its effect: an address attribute ({@link ADDRESS_ATTRIBUTES}) that holds an address the publisher refuses today ({@link isAcceptedAddress}), or an `http-equiv` of `refresh`, by which a page moves the browser to another address by itself. Called by {@link refusedNamesOfTagAt}.
- * @param attribute - The match: the separators, the name, and the value in one of three forms.
+ * Whether one attribute, as a browser reads it ({@link readHtmlStartTags}), has to lose its effect: an address attribute ({@link ADDRESS_ATTRIBUTES}) that holds an address the publisher refuses today ({@link isAcceptedAddress}), or an `http-equiv` of `refresh`, by which a page moves the browser to another address by itself. Called by {@link withoutRefusedAddresses}.
+ * @param attribute - The attribute: its name in lower case and its value as written.
  * @returns Whether the attribute is renamed.
  * @example
- * isRefusedAttribute(ATTRIBUTE.exec(' HREF=javascript:run()')) // => true
+ * isRefusedAttribute({ name: 'href', written: 'javascript:run()', … }) // => true
  */
-function isRefusedAttribute(attribute: RegExpExecArray): boolean {
-  const name = (attribute[2] ?? '').toLowerCase()
-  const text = attributeText(attribute[3] ?? attribute[4] ?? attribute[5] ?? '')
+function isRefusedAttribute(attribute: HtmlAttribute): boolean {
+  const { name } = attribute
+  const text = attributeText(attribute.written ?? '')
   if (name === 'http-equiv') return text.trim().toLowerCase() === 'refresh'
   return (
     ADDRESS_ATTRIBUTES.has(name) &&
@@ -139,39 +134,10 @@ function isRefusedAttribute(attribute: RegExpExecArray): boolean {
 }
 
 /**
- * Finds where the names of the attributes of {@link isRefusedAttribute} stand in a tag that may start at one `<`, reading its attributes as a browser's tokenizer does up to the `>` that ends it. Called by {@link withoutRefusedAddresses} for every `<` before a letter.
- * @param html - The page.
- * @param tagStart - Where the `<` stands.
- * @returns The start and the end of each such name.
- * @example
- * refusedNamesOfTagAt('<a href="javascript:run()">x</a>', 0) // => [[3, 7]]
- */
-function refusedNamesOfTagAt(
-  html: string,
-  tagStart: number,
-): Array<[number, number]> {
-  TAG_NAME_REST.lastIndex = tagStart + 2
-  TAG_NAME_REST.exec(html)
-  ATTRIBUTE.lastIndex = TAG_NAME_REST.lastIndex
-  const names: Array<[number, number]> = []
-  // Each attribute in turn, up to the `>` that ends the tag or the end of the page.
-  for (
-    let attribute = ATTRIBUTE.exec(html);
-    attribute;
-    attribute = ATTRIBUTE.exec(html)
-  ) {
-    const nameStart = attribute.index + (attribute[1] ?? '').length
-    if (isRefusedAttribute(attribute))
-      names.push([nameStart, nameStart + (attribute[2] ?? '').length])
-  }
-  return names
-}
-
-/**
  * Keeps in a served page only the addresses the publisher accepts today, and takes the effect from every other one while its text stays: an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …) and a refresh (`<meta http-equiv="refresh">`). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing.
  *
  * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. Codebook's own addresses stay, for {@link rebindDeepWikiEditorLinks} to bind to the serving editor.
- * How: every `<` before a letter is read as a tag start, also inside a comment or another tag's quoted value, where a browser reads text: a link a browser can follow is never left out, and text loses no more than the name of such an attribute. Only a name is replaced, by letters and hyphens, so no quote or `>` moves and the page is read as before.
+ * How: the page is read once, as a browser reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. Only a name is replaced, by letters and hyphens, so no quote or `>` moves and the page is read as before. The time grows with the page's size alone.
  * Called by {@link rebindDeepWikiEditorLinks} first, for every page the reader serves.
  *
  * @param html - The page as the Wiki folder holds it.
@@ -181,16 +147,14 @@ function refusedNamesOfTagAt(
  * // => '<a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a><meta data-codebook-unlinked="refresh" content="0;url=x">'
  */
 export function withoutRefusedAddresses(html: string): string {
-  const names = [...html.matchAll(TAG_START)]
-    .flatMap((tag) => refusedNamesOfTagAt(html, tag.index))
-    .sort(([start], [otherStart]) => start - otherStart)
-  let served = ''
+  const pieces: string[] = []
   let from = 0
-  // Each name in page order; a name read from two tag starts is replaced once.
-  for (const [start, end] of names) {
-    if (start < from) continue
-    served += `${html.slice(from, start)}${UNLINKED_NAME}`
-    from = end
-  }
-  return served + html.slice(from)
+  // Each refused attribute in page order; the text between is copied as it stands.
+  for (const { attributes } of readHtmlStartTags(html))
+    for (const attribute of attributes.filter(isRefusedAttribute)) {
+      pieces.push(html.slice(from, attribute.nameStart), UNLINKED_NAME)
+      from = attribute.nameEnd
+    }
+  pieces.push(html.slice(from))
+  return pieces.join('')
 }
