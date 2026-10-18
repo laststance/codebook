@@ -586,6 +586,145 @@ test('a recorded stop shown while another debugger was active selects its native
   }
 })
 
+// Value: protects=Play through a recorded stop whose native model selection the host refuses: the refusal is a view selection that did not happen, so the frame is still shown (its values unrequested within the grace), the refusal reaches the reader's error channel once, and the next frame of the same stop selects the model, after which a third frame selects nothing; fails_when=a rejected workbench.action.debug.focusProcess fails the presentation, so the frame is not shown and Play pauses on an error the learner did not cause, or the refusal is noted as a settled selection and the stop's model is never selected; why_new=Cycle 0046 AD25 (/ship's adversarial review, probe rd "reject"); seam=the editor's command port, whose first focusProcess rejects and whose later ones let the client load the values, the owner's failed channel, the native client's threads and stackTrace requests, the inspection grace on the faked clock
+test('a recorded stop whose native model selection the host rejects still shows its frame, reports the refusal once, and selects the model at the next frame of the stop', async (context) => {
+  // Arrange: a client that fetches the stack after the presentation; the host refuses the first model selection; a clock that only the test moves.
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const failures: string[] = []
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    { failed: (error) => failures.push(String(error)) },
+  )
+  let selections = 0
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async () => {
+      selections += 1
+      if (selections === 1) throw new Error('focusProcess failed')
+      fixture.inspect()
+      return undefined
+    },
+  }
+  /** Presents the stop's frame and tells how the presentation ended. */
+  const presentFrame = (): Promise<string> =>
+    fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause · 1.00 s',
+        new AbortController().signal,
+      )
+      .then(
+        (inspection) => inspection,
+        (error: unknown) => `refused: ${String(error)}`,
+      )
+  try {
+    const firstFrame = presentFrame()
+    await fixture.started
+    await flushNative()
+    const thread = fixture.request('threads').body.threads[0]
+    fixture.request('stackTrace', { threadId: thread.id })
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+
+    // Act
+    const first = await firstFrame
+    const selectionsAtTheFirstFrame = selections
+    const second = await presentFrame()
+    const third = await presentFrame()
+
+    // Assert
+    assert.deepEqual(
+      {
+        first,
+        selectionsAtTheFirstFrame,
+        second,
+        third,
+        selections,
+        failures,
+      },
+      {
+        first: 'uninspected',
+        selectionsAtTheFirstFrame: 1,
+        second: 'inspected',
+        third: 'inspected',
+        selections: 2,
+        failures: ['Error: focusProcess failed'],
+      },
+    )
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+for (const ending of ['superseded', 'aborted'] as const)
+  // Value: protects=one native model selection per recorded stop when the presentation that asked for it ends before the host answers (a newer frame of the same stop supersedes it, or its frame is abandoned): the host still selects the model, so the newer frame waits for that answer instead of asking again, and later frames of the stop select nothing; fails_when=only a selection finished by the presentation that asked counts, so the newer frame runs workbench.action.debug.focusProcess a second time for the same stop (probe rd: 2 calls); why_new=Cycle 0046 AD25 (/ship's adversarial review, probe rd "supersede" and "abort"); seam=the editor's command port, whose first focusProcess waits for the test before the client loads the values, the presentation's signal, the native client's threads and stackTrace requests
+  test(`a recorded stop’s model selection still in flight when its presentation is ${ending} is the selection of the next frame of that stop, which asks no second time`, async () => {
+    // Arrange: the host holds its answer to the first model selection until the test releases it.
+    const fixture = harness(undefined, undefined, 0, false, true)
+    let selections = 0,
+      answerFirstSelection = (): void => {}
+    fixture.editor.commands = {
+      getCommands: async () => ['workbench.action.debug.focusProcess'],
+      executeCommand: async () => {
+        selections += 1
+        if (selections === 1)
+          await new Promise<void>((resolve) => {
+            answerFirstSelection = resolve
+          })
+        fixture.inspect()
+        return undefined
+      },
+    }
+    /** Presents the stop's frame and tells how the presentation ended. */
+    const presentFrame = (signal: AbortSignal): Promise<string> =>
+      fixture.owner
+        .present(inspectedSnapshot, 'Recorded pause · 1.00 s', signal)
+        .then(
+          (inspection) => inspection,
+          (error: unknown) =>
+            `refused: ${error instanceof Error ? error.message : String(error)}`,
+        )
+    try {
+      const firstSignal = new AbortController()
+      const firstFrame = presentFrame(firstSignal.signal)
+      await fixture.started
+      await flushNative()
+      const thread = fixture.request('threads').body.threads[0]
+      fixture.request('stackTrace', { threadId: thread.id })
+      for (let turn = 0; turn < 4; turn++) await flushNative()
+
+      // Act: the first presentation ends while the host still answers its selection; the next frame of the stop is shown, and the host answers.
+      if (ending === 'aborted')
+        firstSignal.abort(new Error('New playback frame'))
+      const nextFrame = presentFrame(new AbortController().signal)
+      for (let turn = 0; turn < 4; turn++) await flushNative()
+      answerFirstSelection()
+      const first = await firstFrame
+      const next = await nextFrame
+      const later = await presentFrame(new AbortController().signal)
+
+      // Assert: the model was selected once, for the stop.
+      assert.deepEqual(
+        { firstEnded: first.startsWith('refused: '), next, later, selections },
+        {
+          firstEnded: true,
+          next: 'inspected',
+          later: 'inspected',
+          selections: 1,
+        },
+      )
+    } finally {
+      await fixture.owner.dispose()
+    }
+  })
+
 test('a background native debugger cannot be selected by historical default-session resolution', async () => {
   // Arrange: the host resolver may choose any paused session when no explicit native model is supplied.
   const fixture = harness(undefined, undefined, 0, false, true)
