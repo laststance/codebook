@@ -216,9 +216,9 @@ test('the test execution guide says that the Wiki reader DOM check takes its upd
   ])
 })
 
-// Value: protects=a developer or an agent who runs a Reader DOM check while another run of it is going on the same machine; fails_when=the guide names another form of the browser session than the scripts give, or no longer says which runs may go side by side and which may not; why_new=Cycle 0046 row 122: the name held the mode alone, two runs in two checkouts closed each other's browser, and the guide named the old form; seam=none
+// Value: protects=a developer or an agent who runs a Reader DOM check while another run of it is going on the same machine; fails_when=the guide names another form of the browser session than the scripts give, or no longer says which runs may go side by side and which may not; why_new=Cycle 0046 row 122: the name held the mode alone, two runs in two checkouts closed each other's browser, and the guide named the old form; OCR4-2: the test read the name of two of the five checks only; seam=none
 test('the test execution guide names the browser session of each Reader DOM check as the scripts name it, and says that two runs keep their own browsers when their output folders differ', async () => {
-  // Arrange: the guide and the two checks.
+  // Arrange: the guide and the five checks.
   const guide = await readFile(
     new URL('../../../docs/qa/test-execution.md', import.meta.url),
     'utf8',
@@ -229,6 +229,18 @@ test('the test execution guide names the browser session of each Reader DOM chec
   )
   const wikiCheck = await readFile(
     new URL('../wiki-reader-dom-qa.mjs', import.meta.url),
+    'utf8',
+  )
+  const readingPoseCheck = await readFile(
+    new URL('../study-reading-pose-qa.mjs', import.meta.url),
+    'utf8',
+  )
+  const understandingCheck = await readFile(
+    new URL('../understanding-focus-qa.mjs', import.meta.url),
+    'utf8',
+  )
+  const repositoryPaneCheck = await readFile(
+    new URL('../repository-return-qa.mjs', import.meta.url),
     'utf8',
   )
 
@@ -250,8 +262,20 @@ test('the test execution guide names the browser session of each Reader DOM chec
     "**Runs side by side.** Each check names its browser session after itself, its mode and a digest of its output folder's path: `cb-bootstrap-<mode>-<digest>`, `cb-wiki-reader-<mode>-<digest>`, `cb-reading-pose-<mode>-<digest>`, `cb-understanding-<mode>-<digest>` and `cb-repository-pane-<mode>-<digest>` (`extension/scripts/utils/readerDomSessionName.mjs`). Two runs on one machine keep their own browsers when their output folders differ: the checks of one checkout, one check in two checkouts, or one check started twice from one checkout with two folders. Two runs into the same folder share one session: the later one closes the earlier one's browser, and they overwrite each other's files. Until Cycle 0046 the name held the mode alone, so one check running in two checkouts at once closed the other run's browser, and that run ended as a failure for no defect.",
   )
   assert.deepEqual(
-    { study: namedCheckOf(studyCheck), wiki: namedCheckOf(wikiCheck) },
-    { study: 'bootstrap', wiki: 'wiki-reader' },
+    {
+      study: namedCheckOf(studyCheck),
+      wiki: namedCheckOf(wikiCheck),
+      readingPose: namedCheckOf(readingPoseCheck),
+      understanding: namedCheckOf(understandingCheck),
+      repositoryPane: namedCheckOf(repositoryPaneCheck),
+    },
+    {
+      study: 'bootstrap',
+      wiki: 'wiki-reader',
+      readingPose: 'reading-pose',
+      understanding: 'understanding',
+      repositoryPane: 'repository-pane',
+    },
   )
 })
 
