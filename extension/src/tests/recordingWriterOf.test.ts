@@ -661,6 +661,35 @@ test('this window’s recording under a changed host name is still its own while
   })
 })
 
+// Value: protects=the plain refusal for a live writer of this machine whose record names its start, while that start cannot be read here (a PowerShell or ps query that times out); fails_when=AD21's gate is skipped for a process of this user, so an unreadable start makes such a writer 'unconfirmed-here' and the learner is offered "Move to Trash Anyway" for a recording a live window still writes (TT35); why_new=Cycle 0046 third testing review TT35: the AD21 test used a process of another user only; seam=the header and the record, which name a live child process of the test (this user's) with its own start, and the list's starts, in which that start cannot be read
+test('a live writer of this user whose recorded start cannot be read here may still run', async (context) => {
+  // Arrange: another window of this user, a live child process, whose start the record keeps; its start reads as unknown in this list.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const otherWindow = await idleChild(context)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: otherWindow.pid!,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  await rewriteWriterRecord(storage.directory, recording.studyId, {
+    pid: otherWindow.pid!,
+    processStart: await readProcessStart(otherWindow.pid!),
+  })
+
+  // Act
+  const writer = await writerOf(
+    recording.folder,
+    'ignored',
+    new Map([[otherWindow.pid!, Promise.resolve(undefined)]]),
+  )
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'may-run' })
+})
+
 // Value: protects=the recording another computer with this host name is writing into a shared storage folder, seen by this window in the instant after its header appeared and before its writer's record did; fails_when=the judgement by the header alone ('gone': no process of that id runs here) is remembered for the window's lifetime, so the record that names the other machine is never read and a Delete removes the live recording; why_new=Cycle 0046 Codex review CX11: P1 remembered every 'gone'; seam=the record of the writer, removed and then put back naming another machine, between two judgements of one window
 test('a writer judged gone by its header alone is judged again by its record once the record appears', async (context) => {
   // Arrange: the header names this host and a process id of no process; the record that names the other machine comes after it.
