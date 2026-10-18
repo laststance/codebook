@@ -268,7 +268,7 @@ async function folderLookOf(stage) {
   }, () => false);
 }
 
-/** Makes a folder of the stage, then holds the output's path ({@link holdOfPath}) and the folder itself ({@link folderLookOf}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page, of each kept manual file, and for the stage before its manifest, its record and the moves, and by {@link writeFilesHeld} for each file of a new candidate. @returns The folders this mkdir made, deepest first. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld, isFolderWhereItWas) // => ['/repo/.codebook/next/pages'] */
+/** Makes a folder of the stage, then holds the output's path ({@link holdOfPath}) and the folder itself ({@link folderLookOf}) before anything is written into it; a refusal removes the folders this mkdir made ({@link removeMadeFolders}). Called by {@link publishWiki} for the folder of each page and of each kept manual file, before and after its write, and for the stage before its manifest, its record and the moves, and by {@link writeFilesHeld} for each file of a new candidate, before and after its write. @returns The folders this mkdir made, deepest first. @example await makeFolderHeld('/repo/.codebook/next/pages', requirePathHeld, isFolderWhereItWas) // => ['/repo/.codebook/next/pages'] */
 async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
   const madeFolders = madeFoldersOf(await mkdir(folder, { recursive: true }), folder);
   try {
@@ -384,6 +384,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const writeHeld = async (path, content, flag) => {
     made.unshift(...(await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas)));
     written.push(await writeOwnFile(path, content, flag));
+    // Held after the write too, as the preparation's writes are: a swap during the last page write is seen before a preview returns, and one of a page's own folder before the publish goes on.
+    await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas);
   };
   try { for (const [path, html] of rendered) await writeHeld(join(stage, path), html, 'w'); }
   catch (error) { await removeWritten(written, made); throw error; }

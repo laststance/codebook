@@ -3426,6 +3426,99 @@ test('a publish refused for a learner’s file that conflicts with a new page le
   }
 })
 
+// Value: protects=the folder outside the project that `.codebook` leads to once it was swapped for a link while a preview wrote its last rendered page; fails_when=the publish holds the path only before each page write, so the preview answers that it rendered its pages and leaves that page behind the link; why_new=P2OCR2-3; seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the last page is written (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between the last hold and the write that lands no later hold (the race the publisher names)
+test('a preview whose .codebook is swapped for a link while it writes its last page is refused and leaves no page behind the link', async () => {
+  // Arrange: a candidate with one page; `.codebook` is swapped out just before the preview writes it.
+  const { publishWiki: previewWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'index.html'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act
+    const preview = await previewWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+      renderOnly: true,
+    }).then(
+      ({ renderedPages }) => ({ renderedPages }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        preview,
+        pageBehindTheLink: await access(join(movedOut, 'next/index.html')).then(
+          () => 'a page',
+          () => 'no page',
+        ),
+      },
+      {
+        preview: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        pageBehindTheLink: 'no page',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the published Wiki after a publish whose candidate's `pages` folder was swapped for a link to a folder outside the project while it wrote its last page; fails_when=the publish holds the page's folder only before the write and then checks the candidate's own folder alone, so it moves a candidate whose `pages` is a link into the Wiki's place; why_new=P2OCR2-3; seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate's `pages` folder just before its page is written (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between the last hold and the write that lands no later hold (the race the publisher names)
+test('a publish whose candidate’s pages folder is swapped for a link while it writes the last page is refused before it moves anything', async () => {
+  // Arrange: a candidate whose second and last page lies in its `pages` folder; that folder is moved out of the project and a link to it stands in its place just before the page is written.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate('notes.html')
+  const pagesFolder = join(wiki.next, 'pages'),
+    movedOut = join(wiki.directory, 'pages-moved-out')
+  try {
+    swapBeforeWriting(
+      (path) => path === join(pagesFolder, 'notes.html'),
+      () => swapFolderForLink(pagesFolder, movedOut, movedOut),
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: the Wiki is the one published before, with no `pages` link in it.
+    assert.deepEqual(
+      {
+        refusal,
+        publishedWikiFiles: (await readdir(wiki.output)).sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki stage ${pagesFolder} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        publishedWikiFiles: [
+          'codebook-publication.json',
+          'codebook-wiki.json',
+          'index.html',
+        ],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 /**
  * Leaves a published Wiki as a publish stopped after it moved the prior Wiki aside: the Wiki folder missing, the prior Wiki kept at `wiki.previous-test`, a candidate beside it and the journal of a process that is gone.
  * @param {string} root - The project, or the folder that holds the output for an output outside the project.
