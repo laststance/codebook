@@ -641,6 +641,112 @@ test('an end tag still closes an svg element after an inner one of the same name
   )
 })
 
+// Value: protects=the learner against an editor link after an end tag written in svg content with the name of an svg element that svg writes in mixed case, while an HTML element of that name in lower case is open below the svg; fails_when=the reader hands the end to the HTML rules under its lower-case name, so it closes the HTML element with the svg inside it, a later plaintext ends the reading, and the link after it is served live while Chrome, which first writes the end's name in svg case and so matches no HTML element, keeps the svg open and shows the link; why_new=Cycle 0046 second /ship pass 2 testing review P2T1 (one row for each of the 36 names of the svg case table); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('an end tag in svg content with a name svg writes in mixed case leaves an HTML element of the lower-case name open, so the link after a plaintext in the svg loses its link', () => {
+  // Arrange: an HTML element of each name, an svg in it, the name's end, and a plaintext in the svg that a browser reads as an svg element.
+  const pages = [
+    '<article><altglyph><svg></altglyph><plaintext></plaintext></svg></altglyph><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><altglyphdef><svg></altglyphdef><plaintext></plaintext></svg></altglyphdef><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><altglyphitem><svg></altglyphitem><plaintext></plaintext></svg></altglyphitem><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><animatecolor><svg></animatecolor><plaintext></plaintext></svg></animatecolor><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><animatemotion><svg></animatemotion><plaintext></plaintext></svg></animatemotion><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><animatetransform><svg></animatetransform><plaintext></plaintext></svg></animatetransform><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><clippath><svg></clippath><plaintext></plaintext></svg></clippath><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feblend><svg></feblend><plaintext></plaintext></svg></feblend><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fecolormatrix><svg></fecolormatrix><plaintext></plaintext></svg></fecolormatrix><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fecomponenttransfer><svg></fecomponenttransfer><plaintext></plaintext></svg></fecomponenttransfer><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fecomposite><svg></fecomposite><plaintext></plaintext></svg></fecomposite><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feconvolvematrix><svg></feconvolvematrix><plaintext></plaintext></svg></feconvolvematrix><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fediffuselighting><svg></fediffuselighting><plaintext></plaintext></svg></fediffuselighting><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fedisplacementmap><svg></fedisplacementmap><plaintext></plaintext></svg></fedisplacementmap><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fedistantlight><svg></fedistantlight><plaintext></plaintext></svg></fedistantlight><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feflood><svg></feflood><plaintext></plaintext></svg></feflood><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefunca><svg></fefunca><plaintext></plaintext></svg></fefunca><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefuncb><svg></fefuncb><plaintext></plaintext></svg></fefuncb><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefuncg><svg></fefuncg><plaintext></plaintext></svg></fefuncg><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefuncr><svg></fefuncr><plaintext></plaintext></svg></fefuncr><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fegaussianblur><svg></fegaussianblur><plaintext></plaintext></svg></fegaussianblur><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feimage><svg></feimage><plaintext></plaintext></svg></feimage><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><femerge><svg></femerge><plaintext></plaintext></svg></femerge><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><femergenode><svg></femergenode><plaintext></plaintext></svg></femergenode><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><femorphology><svg></femorphology><plaintext></plaintext></svg></femorphology><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feoffset><svg></feoffset><plaintext></plaintext></svg></feoffset><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fepointlight><svg></fepointlight><plaintext></plaintext></svg></fepointlight><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fespecularlighting><svg></fespecularlighting><plaintext></plaintext></svg></fespecularlighting><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fespotlight><svg></fespotlight><plaintext></plaintext></svg></fespotlight><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fetile><svg></fetile><plaintext></plaintext></svg></fetile><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feturbulence><svg></feturbulence><plaintext></plaintext></svg></feturbulence><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><foreignobject><svg></foreignobject><plaintext></plaintext></svg></foreignobject><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><glyphref><svg></glyphref><plaintext></plaintext></svg></glyphref><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><lineargradient><svg></lineargradient><plaintext></plaintext></svg></lineargradient><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><radialgradient><svg></radialgradient><plaintext></plaintext></svg></radialgradient><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><textpath><svg></textpath><plaintext></plaintext></svg></textpath><a href="vscode://file/etc/hosts">Open the source</a></article>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<article><altglyph><svg></altglyph><plaintext></plaintext></svg></altglyph><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><altglyphdef><svg></altglyphdef><plaintext></plaintext></svg></altglyphdef><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><altglyphitem><svg></altglyphitem><plaintext></plaintext></svg></altglyphitem><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><animatecolor><svg></animatecolor><plaintext></plaintext></svg></animatecolor><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><animatemotion><svg></animatemotion><plaintext></plaintext></svg></animatemotion><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><animatetransform><svg></animatetransform><plaintext></plaintext></svg></animatetransform><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><clippath><svg></clippath><plaintext></plaintext></svg></clippath><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feblend><svg></feblend><plaintext></plaintext></svg></feblend><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fecolormatrix><svg></fecolormatrix><plaintext></plaintext></svg></fecolormatrix><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fecomponenttransfer><svg></fecomponenttransfer><plaintext></plaintext></svg></fecomponenttransfer><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fecomposite><svg></fecomposite><plaintext></plaintext></svg></fecomposite><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feconvolvematrix><svg></feconvolvematrix><plaintext></plaintext></svg></feconvolvematrix><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fediffuselighting><svg></fediffuselighting><plaintext></plaintext></svg></fediffuselighting><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fedisplacementmap><svg></fedisplacementmap><plaintext></plaintext></svg></fedisplacementmap><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fedistantlight><svg></fedistantlight><plaintext></plaintext></svg></fedistantlight><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feflood><svg></feflood><plaintext></plaintext></svg></feflood><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefunca><svg></fefunca><plaintext></plaintext></svg></fefunca><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefuncb><svg></fefuncb><plaintext></plaintext></svg></fefuncb><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefuncg><svg></fefuncg><plaintext></plaintext></svg></fefuncg><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fefuncr><svg></fefuncr><plaintext></plaintext></svg></fefuncr><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fegaussianblur><svg></fegaussianblur><plaintext></plaintext></svg></fegaussianblur><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feimage><svg></feimage><plaintext></plaintext></svg></feimage><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><femerge><svg></femerge><plaintext></plaintext></svg></femerge><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><femergenode><svg></femergenode><plaintext></plaintext></svg></femergenode><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><femorphology><svg></femorphology><plaintext></plaintext></svg></femorphology><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feoffset><svg></feoffset><plaintext></plaintext></svg></feoffset><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fepointlight><svg></fepointlight><plaintext></plaintext></svg></fepointlight><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fespecularlighting><svg></fespecularlighting><plaintext></plaintext></svg></fespecularlighting><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fespotlight><svg></fespotlight><plaintext></plaintext></svg></fespotlight><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><fetile><svg></fetile><plaintext></plaintext></svg></fetile><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><feturbulence><svg></feturbulence><plaintext></plaintext></svg></feturbulence><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><foreignobject><svg></foreignobject><plaintext></plaintext></svg></foreignobject><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><glyphref><svg></glyphref><plaintext></plaintext></svg></glyphref><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><lineargradient><svg></lineargradient><plaintext></plaintext></svg></lineargradient><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><radialgradient><svg></radialgradient><plaintext></plaintext></svg></radialgradient><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><textpath><svg></textpath><plaintext></plaintext></svg></textpath><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
+  ])
+})
+
+// Value: protects=a served page's text after an end tag written in MathML content with the lower-case name of an svg element that svg writes in mixed case and that is open further down; fails_when=the reader compares the end's name with the element's name lowered, so it closes the svg element and the MathML above it, and a plaintext or xmp that a browser reads as raw text inside the MathML text is read as an svg element, so the text after it is read as tags and renamed; why_new=Cycle 0046 second /ship pass 2 testing review P2T1 (Chrome compares the element's own name with the end's, which only svg content writes in svg case); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('an end tag in MathML content leaves open an svg element whose name svg writes in mixed case, so a plaintext or xmp after it holds text as a browser reads it', () => {
+  // Arrange: an svg clipPath, foreignObject or linearGradient, MathML text inside it, and the svg element's end in lower case.
+  const pages = [
+    '<svg><clipPath><foreignObject><math><mtext></clippath><plaintext><a href="vscode://file/etc/hosts">hosts</a>',
+    '<svg><foreignObject><math><mi></foreignobject><plaintext><a href="vscode://file/etc/hosts">hosts</a>',
+    '<svg><linearGradient><foreignObject><math><mtext></lineargradient><xmp><a href="vscode://file/etc/hosts">hosts</a></xmp>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<svg><clipPath><foreignObject><math><mtext></clippath><plaintext><a href="vscode://file/etc/hosts">hosts</a>',
+    '<svg><foreignObject><math><mi></foreignobject><plaintext><a href="vscode://file/etc/hosts">hosts</a>',
+    '<svg><linearGradient><foreignObject><math><mtext></lineargradient><xmp><a href="vscode://file/etc/hosts">hosts</a></xmp>',
+  ])
+})
+
 // Value: protects=the learner against an editor link after an end tag that names an svg element with a letter outside ASCII, which a browser matches by lowering A to Z only; fails_when=the foreign end rule lowers every letter of the element's name as the pinned parser does, so `</gÀ>` misses an open `gÀ` and the style after it is read as text while a browser serves its live `vscode://file` link, or `</gk>` closes a `gK` written with a Kelvin sign that a browser leaves open; why_new=found by the Chrome comparison of Cycle 0046 second /ship PERF1's differential; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
 test('an end tag closes an svg element whose name holds a letter outside ASCII only when the names match with A to Z lowered, so the link after it is judged where a browser reads it', () => {
   // Arrange: the first two ends close gÀ and gK (Kelvin sign) with the title in them, so the style is svg markup; the last two ends match no element, so the title and the svg stay open.
