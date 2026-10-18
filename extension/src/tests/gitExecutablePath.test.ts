@@ -79,14 +79,19 @@ test('on Windows Git is found in a folder of a network share, and without PATHEX
   )
 })
 
-// Value: protects=the same rule on macOS and Linux, which do not look up a bare name in the current folder, so every Git command starts one absolute path: an empty PATH entry (the current folder) and a relative one are skipped (SX2, Cycle 0046 repeat security review); fails_when=an empty or relative entry is looked in, so a `git` in the project runs; why_new=Git was started by its bare name; seam=the platform, the environment and the program check the lookup is given
+// Value: protects=the same rule on macOS and Linux, which do not look up a bare name in the current folder, so every Git command starts one absolute path: an empty PATH entry (the current folder) and a relative one are skipped, and PATH is read by its exact name, as these systems name variables (SX2, Cycle 0046 repeat security review; TT18, the third testing review); fails_when=an empty or relative entry is looked in, so a `git` in the project runs, or another variable whose name differs only in case (`path`) is read in PATH's place; why_new=Git was started by its bare name; seam=the platform, the environment and the program check the lookup is given
 test('on macOS and Linux Git is found by an absolute path from PATH, and an empty or relative entry is skipped', async () => {
-  // Arrange
-  const files = programFiles(['git', 'bin/git', '/usr/bin/git'])
+  // Arrange: a variable `path` beside PATH names a folder that holds a git, which is another variable on these systems.
+  const files = programFiles([
+    'git',
+    'bin/git',
+    '/elsewhere/git',
+    '/usr/bin/git',
+  ])
   // Act
   const found = await gitExecutablePath({
     platform: 'linux',
-    environment: { PATH: ':bin:/usr/local/bin:/usr/bin' },
+    environment: { path: '/elsewhere', PATH: ':bin:/usr/local/bin:/usr/bin' },
     isProgramFile: files.isProgramFile,
   })
   // Assert
