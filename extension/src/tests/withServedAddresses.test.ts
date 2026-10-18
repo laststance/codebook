@@ -13,6 +13,8 @@ import { withServedAddresses } from '../utils/withServedAddresses'
 const CRAFTED_PAGE_BOUND_RATIO = 4
 /** How many times as long as its first half the whole {@link ORDINARY_PAGE} may take in the growth test: time that grows with the page gives about two, time that grows with its square about four. On the development host (16 CPUs, Node 24) the ratio was 1.97 to 2.29 plain and 2.01 to 2.03 under c8. */
 const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
+/** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting, where the parser's own time grows with the square of the nesting. The reader keeps the mode a select was pushed in, where the parser alone walks the stack at each select end: on the development host the reader took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). */
+const SELECT_PAIRS_PARSER_BOUND_RATIO = 1.5
 /** How long the timing test waits for its worker before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
 /** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
@@ -302,6 +304,60 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
     ),
     [],
     `the ordinary page took ${ordinary} ms`,
+  )
+})
+
+// Value: protects=the extension host against the reader's own cost on select pairs after deep nesting, which the HTML parser makes as long as the nesting is deep for each pair; fails_when=a select start or end sets the mode by the pinned reset, which walks the stack, so the reader takes twice as long as the parser alone or more (8.3 s against 3.2 s for 1 MB); why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief; seam=a worker thread that times the reader and the parser alone on the same page, the shorter of two runs each after a warm-up; no_claim=the parser's own time, which only the Wiki reader's deadline bounds
+test('the reader reads select pairs after deep nesting within one and a half times the time the HTML parser alone takes for them', async () => {
+  // Arrange: 5,000 open elements, then 15,000 select pairs.
+  const page = '<x>'.repeat(5_000) + '<select></select>'.repeat(15_000)
+
+  // Act: in a worker, the reader's time and the parser's time for the page.
+  const worker = new Worker(
+    `const { parentPort, workerData } = require('node:worker_threads')
+const { readHtmlStartTags } = require(workerData.reader)
+const { parse } = require(workerData.parser)
+const timeOf = (run) => {
+  const started = performance.now()
+  run()
+  return performance.now() - started
+}
+const parseAlone = (html) => parse(html, { sourceCodeLocationInfo: true, scriptingEnabled: true })
+timeOf(() => readHtmlStartTags(workerData.warmUp))
+timeOf(() => parseAlone(workerData.warmUp))
+parentPort.postMessage({
+  reader: Math.min(timeOf(() => readHtmlStartTags(workerData.page)), timeOf(() => readHtmlStartTags(workerData.page))),
+  parser: Math.min(timeOf(() => parseAlone(workerData.page)), timeOf(() => parseAlone(workerData.page))),
+})`,
+    {
+      eval: true,
+      workerData: {
+        reader: join(__dirname, '..', 'utils', 'readHtmlStartTags.js'),
+        parser: require.resolve('parse5'),
+        warmUp: WARM_UP_PAGE,
+        page,
+      },
+    },
+  )
+  const times = await new Promise<
+    { reader: number; parser: number } | 'unfinished'
+  >((resolve) => {
+    const deadline = setTimeout(() => {
+      void worker.terminate().then(() => resolve('unfinished'))
+    }, FILTER_DEADLINE_MS)
+    worker.once('message', (message: { reader: number; parser: number }) => {
+      clearTimeout(deadline)
+      void worker.terminate()
+      resolve(message)
+    })
+  })
+
+  // Assert
+  if (times === 'unfinished')
+    assert.fail('the page was not read before the deadline')
+  assert.ok(
+    times.reader <= SELECT_PAIRS_PARSER_BOUND_RATIO * times.parser,
+    `the reader took ${times.reader} ms and the parser alone ${times.parser} ms`,
   )
 })
 
@@ -756,6 +812,28 @@ test('a hidden input closes an open select in a table caption but not in the tab
     servedInCaption,
     '<table><caption><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
   )
+})
+
+// Value: protects=a served page's text after a select inside svg markup whose elements bear table or frameset names (an svg colgroup or frameset), which a browser reads as svg elements; fails_when=the reader sets the mode after a select starts, ends or a table in it closes by the pinned reset, which reads an svg colgroup as a column group and an svg frameset as a frameset, so a later style is dropped and its text read as tags and renamed; why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief (the select reset also walked the stack); found by the differential of that change, where 58 of 59 differing pages agreed with Chrome only after it; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a select inside svg markup with a column group or frameset keeps the mode it came in, open, closed or after a table in it, so a later style holds text as a browser reads it', () => {
+  // Arrange: in each page the select keeps the body rules, so the style is raw text.
+  const pages = [
+    '<svg><colgroup><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><frameset><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><colgroup><foreignObject><select></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><colgroup><foreignObject><select><table></table><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<svg><colgroup><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><frameset><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><colgroup><foreignObject><select></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><colgroup><foreignObject><select><table></table><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ])
 })
 
 // Value: protects=a served page's text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is renamed; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)

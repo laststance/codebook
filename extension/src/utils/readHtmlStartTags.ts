@@ -205,6 +205,13 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private readonly openNames = new Map<string, number>()
   /** How many HTML select elements are open, so that a start tag finds no open select without a scan of the stack. */
   private openHtmlSelectCount = 0
+  /** The insertion mode each open HTML select was pushed in: current rules give a select no mode of its own, so the mode stays while it is open and comes back when it closes. */
+  private readonly selectPushModes = new WeakMap<
+    Parse5.DefaultTreeAdapterMap['element'],
+    number
+  >()
+  /** The HTML select that left the stack last, whose push mode {@link HtmlPageReader.closeSelect} restores. */
+  private lastPoppedSelect: Parse5.DefaultTreeAdapterMap['element'] | undefined
   /** The element names of the list of active formatting elements, each with how many entries of that name it holds, markers aside. */
   private readonly formattingEntryNames = new Map<string, number>()
 
@@ -277,14 +284,27 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    * @example reader._resetInsertionModeForSelect(3) // IN_CELL for a select in a table cell
    */
   override _resetInsertionModeForSelect(selectIndex: number): void {
+    // An HTML select keeps the mode it was pushed in; the pinned reset would read the elements below it, an svg colgroup or td as a table's.
+    const select = this.openElements.items[selectIndex]
+    const pushMode =
+      select && this.treeAdapter.isElementNode(select)
+        ? this.selectPushModes.get(select)
+        : undefined
+    if (pushMode !== undefined) {
+      this.insertionMode = pushMode
+      return
+    }
     // parse5 8.0.1 internals: the pinned _resetInsertionMode calls this protected hook, and this pass rewrites the @internal openElements.tagIDs for one reset; parse5 is pinned, so recheck both, with the hooks _startTagOutsideForeignContent and _endTagOutsideForeignContent, before an upgrade.
     const { tagIDs } = this.openElements
     const hiddenSelects: number[] = []
-    // The pinned reset skips an unknown element, so each select below the one it met is read as one for this pass.
-    for (let index = selectIndex; index >= 0; index -= 1) {
+    // The reset met the topmost select, so the open selects all stand here or below; one it meets again, if the count missed it, comes back to this hook.
+    let selectsLeft = Math.max(this.openNames.get('select') ?? 0, 1)
+    // The pinned reset skips an unknown element, so each select below the one it met is read as one for this pass; the walk ends at the last open select.
+    for (let index = selectIndex; index >= 0 && selectsLeft > 0; index -= 1) {
       if (tagIDs[index] !== htmlTree.TAG_ID.SELECT) continue
       hiddenSelects.push(index)
       tagIDs[index] = htmlTree.TAG_ID.UNKNOWN
+      selectsLeft -= 1
     }
     try {
       super._resetInsertionMode()
@@ -341,26 +361,39 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Ends the current HTML select and restores its parent's parsing mode.
+   * Ends the current HTML select and restores the mode it was pushed in, which current rules kept while it was open.
    * @returns Nothing; the select and its children leave the stack.
    * @example reader.closeSelect() // called only after hasOpenSelect returned true
    */
   private closeSelect(): void {
     this.openElements.popUntilTagNamePopped(htmlTree.TAG_ID.SELECT)
-    this._resetInsertionMode()
+    const pushMode =
+      this.lastPoppedSelect && this.selectPushModes.get(this.lastPoppedSelect)
+    // A select without a recorded push takes the mode the elements below it give.
+    if (pushMode === undefined) this._resetInsertionMode()
+    else this.insertionMode = pushMode
   }
 
   /**
-   * Replaces the old select mode the pinned parser enters at a select start with the mode the elements below the select give; raw text and other modes keep their meaning.
+   * Replaces the old select mode the pinned parser enters at a select start with the mode the select was pushed in, which current rules keep, or else with the mode the elements below the select give; raw text and other modes keep their meaning.
+   * The pushed mode needs no walk of the stack, which deep nesting would make as long as the page for every select.
    * @returns Nothing; a select in a table cell leaves the cell mode, in body the body mode.
    * @example reader.useCurrentSelectMode() // leaves TEXT unchanged
    */
   private useCurrentSelectMode(): void {
     if (
-      this.insertionMode === HTML_PARSER_IN_SELECT_MODE ||
-      this.insertionMode === HTML_PARSER_IN_SELECT_IN_TABLE_MODE
+      this.insertionMode !== HTML_PARSER_IN_SELECT_MODE &&
+      this.insertionMode !== HTML_PARSER_IN_SELECT_IN_TABLE_MODE
     )
-      this._resetInsertionMode()
+      return
+    // The select the parser just pushed is the current node; its push recorded the mode it came in.
+    const { current } = this.openElements
+    const pushMode =
+      current && this.treeAdapter.isElementNode(current)
+        ? this.selectPushModes.get(current)
+        : undefined
+    if (pushMode === undefined) this._resetInsertionMode()
+    else this.insertionMode = pushMode
   }
 
   /**
@@ -376,8 +409,10 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     tagId: number,
     isTop: boolean,
   ): void {
-    if (isTop) this.addOpenName(node)
-    else this.rebuildOpenNames()
+    if (isTop) {
+      this.addOpenName(node)
+      this.recordSelectPush(node)
+    } else this.rebuildOpenNames()
     super.onItemPush(node, tagId, isTop)
   }
 
@@ -397,7 +432,10 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       const count = this.openNames.get(name) ?? 0
       if (count > 1) this.openNames.set(name, count - 1)
       else this.openNames.delete(name)
-      if (this.isHtmlSelect(node)) this.openHtmlSelectCount -= 1
+      if (this.isHtmlSelect(node)) {
+        this.openHtmlSelectCount -= 1
+        this.lastPoppedSelect = node
+      }
     }
     super.onItemPop(node, isTop)
   }
@@ -413,6 +451,19 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     const name = asciiLowerCase(this.treeAdapter.getTagName(node))
     this.openNames.set(name, (this.openNames.get(name) ?? 0) + 1)
     if (this.isHtmlSelect(node)) this.openHtmlSelectCount += 1
+  }
+
+  /**
+   * Records the insertion mode an HTML select is pushed in, before the pinned parser leaves it for its old select mode; called by {@link HtmlPageReader.onItemPush} for a push on top.
+   * @param node - The element pushed.
+   * @returns Nothing; another element changes no record.
+   * @example reader.recordSelectPush(select) // in a table cell, records IN_CELL
+   */
+  private recordSelectPush(
+    node: Parse5.DefaultTreeAdapterMap['parentNode'],
+  ): void {
+    if (this.treeAdapter.isElementNode(node) && this.isHtmlSelect(node))
+      this.selectPushModes.set(node, this.insertionMode)
   }
 
   /**
