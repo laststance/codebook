@@ -1957,7 +1957,7 @@ test('a removal judges the writers of the study’s recordings before it takes t
   >(resolve(__dirname, '../utils/withStorageLock.js'), {}, { Error })
   const whileJudging: { isLockHeld: boolean; writeOfTheOtherWindow: string }[] =
     []
-  // Each judgement first notes whether the lock is held and lets the other window write.
+  // The judgement (one for the study's one recording) first notes whether the lock is held and lets the other window write.
   const noteTheLockAndWriteMeanwhile = async (): Promise<void> => {
     whileJudging.push({
       isLockHeld: await lstat(join(storage.directory, 'writer.lock')).then(
@@ -2004,10 +2004,7 @@ test('a removal judges the writers of the study’s recordings before it takes t
         cause:
           'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
       },
-      whileJudging: [
-        { isLockHeld: false, writeOfTheOtherWindow: 'written' },
-        { isLockHeld: false, writeOfTheOtherWindow: 'written' },
-      ],
+      whileJudging: [{ isLockHeld: false, writeOfTheOtherWindow: 'written' }],
       moved: [],
     },
   )

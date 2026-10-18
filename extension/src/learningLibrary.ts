@@ -104,7 +104,7 @@ export type StudyRemoval =
 type RecordingJudge = (recording: string) => Promise<boolean>
 
 /**
- * Judges whether a run of this machine, this window's own included, may still write one recording directory ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the one predicate of the list ({@link LearningLibrary.entryWithoutArchive}) and of the removal's judgement before its lock ({@link LearningLibrary.writerVerdictsOf}).
+ * Judges whether a run of this machine, this window's own included, may still write one recording directory ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the predicate of the list ({@link LearningLibrary.entryWithoutArchive}); the removal derives the same answer from its one judgement ({@link LearningLibrary.writerVerdictsOf}).
  * @param recording - The recording directory.
  * @param starts - The process starts of the caller's list or removal ({@link ProcessStartsOfList}).
  * @returns `true` while such a run may still write it; `false` for a sealed recording, a writer that is gone, and one this computer cannot confirm.
@@ -541,7 +541,8 @@ export class LearningLibrary {
 
   /**
    * Judges the writers of a study's recordings before its removal takes the storage lock; called by {@link removeStudy}.
-   * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}). Each verdict keeps the look it was judged from, which the removal compares under its lock ({@link verdictUnderLock}).
+   * Why before: a judgement can ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows), and while this window holds the lock, another window's write (a recording's start, an archive's save, a playback position) is refused at once, not queued ({@link withStorageLock}). Each recording is looked at once and judged once from that look, which its verdict keeps and the removal compares under its lock ({@link verdictUnderLock}).
+   * The one judgement leaves this window's own recording to it (`ignored`); whether a run of this machine may still write a recording follows from it, since `counts` differs only there (`may-run` where `ignored` answers `left-to-caller`).
    * @param identity - The validated study id.
    * @returns For each recording directory of the study: the look, whether a run of this machine, this window's own included, may still write it, and the writer of another window that may still write it ({@link recordingWriterOf} with `ignored`).
    * @example await this.writerVerdictsOf(study.id) // => Map { '/…/recordings.v2/<id>' => { look, isReservedHere: true, ofAnotherWindow: { kind: 'may-run', createdAt } } } while another window records that run
@@ -551,12 +552,23 @@ export class LearningLibrary {
   ): Promise<RemovalWriterVerdicts> {
     const starts: ProcessStartsOfList = new Map()
     const verdicts: RemovalWriterVerdicts = new Map()
-    for (const recording of await this.recordingPaths(identity))
+    for (const recording of await this.recordingPaths(identity)) {
+      const look = await lookAtRecording(recording)
+      const ofAnotherWindow = await recordingWriterOf(
+        recording,
+        'ignored',
+        starts,
+        look,
+      )
       verdicts.set(recording, {
-        look: await lookAtRecording(recording),
-        isReservedHere: await isReservedByRunHere(recording, starts),
-        ofAnotherWindow: await recordingWriterOf(recording, 'ignored', starts),
+        look,
+        // This window's own recording is a run's reservation as well as another window's.
+        isReservedHere:
+          ofAnotherWindow.kind === 'may-run' ||
+          ofAnotherWindow.kind === 'left-to-caller',
+        ofAnotherWindow,
       })
+    }
     return verdicts
   }
 
