@@ -898,7 +898,7 @@ test('every page the reader serves lets only script files of its own origin and 
 const SERVED_PAGE_POLICY =
   "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'"
 
-// Value: protects=the editor's extension host, where every extension of the window stops while the Wiki reader prepares a page on the host's own thread, against a page in the Wiki folder built to make the HTML parser slow (nothing limits a page's size); fails_when=the reader prepares a page in its request handler again, so the host's event loop stands still for seconds to minutes, or it serves a page whose preparation passed the deadline, or its answer then lacks the status, the sentence or the page policy; why_new=Cycle 0046 second /ship PERF1 residual: pages on which parse5 itself takes time that grows with the square of the page took 13 s to over a minute for 1 MB; seam=the reader loaded with loadModule and a constants module whose WIKI_PAGE_SERVE_DEADLINE_MS is 2,000 ms; no_claim=the native editor (the test process's event loop stands for the host's)
+// Value: protects=the editor's extension host, where every extension of the window stops while the Wiki reader prepares a page on the host's own thread, against a page in the Wiki folder built to make the HTML parser slow (nothing limits a page's size); fails_when=the reader prepares a page in its request handler again, so the host's event loop stands still for seconds to minutes, or it serves a page whose preparation passed the deadline, or its answer then lacks the status, the sentence, the link to this reader's overview or the page policy; why_new=Cycle 0046 second /ship PERF1 residual: pages on which parse5 itself takes time that grows with the square of the page took 13 s to over a minute for 1 MB; P2D2 the link to the overview; seam=the reader loaded with loadModule and a constants module whose WIKI_PAGE_SERVE_DEADLINE_MS is 2,000 ms; no_claim=the native editor (the test process's event loop stands for the host's)
 test('a page built to make the HTML parser slow is answered within about the deadline with status 503 and a sentence for the learner under the page policy, while the event loop of the host runs on', async (context) => {
   // Arrange: an overview of 10,000 open elements and 100,000 paragraph ends, which the parser takes about 6 s for on the development host, and a reader whose deadline is 2 s.
   const projectRoot = await realpath(
@@ -937,7 +937,11 @@ test('a page built to make the HTML parser slow is answered within about the dea
     status: response.status,
     type: response.headers.get('content-type'),
     policy: response.headers.get('content-security-policy'),
-    body: await response.text(),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
   }
   const elapsedMs = performance.now() - started
   clearInterval(ticker)
@@ -947,13 +951,13 @@ test('a page built to make the HTML parser slow is answered within about the dea
     status: 503,
     type: 'text/html; charset=utf-8',
     policy: SERVED_PAGE_POLICY,
-    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 2 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p></body></html>',
+    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 2 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
   })
   assert.ok(elapsedMs < 4_000, `the refusal took ${elapsedMs} ms`)
   assert.ok(ticks >= 80, `the timer ticked ${ticks} times`)
 })
 
-// Value: protects=the reader's origin and the learner against a page the reader could not prepare: it must never be served as the Wiki folder holds it, with its refused addresses live; fails_when=a worker that throws or exits without the page leaves the request unanswered, answers it with the page as written, or with a JSON error instead of the sentence for the learner; why_new=Cycle 0046 second /ship PERF1 residual (pages are prepared on a worker thread); seam=the reader loaded with loadModule, with the page-worker module loaded so that its folder (__dirname) holds a worker script that throws
+// Value: protects=the reader's origin and the learner against a page the reader could not prepare: it must never be served as the Wiki folder holds it, with its refused addresses live; fails_when=a worker that throws or exits without the page leaves the request unanswered, answers it with the page as written, or with a JSON error instead of the sentence for the learner and the link to this reader's overview; why_new=Cycle 0046 second /ship PERF1 residual (pages are prepared on a worker thread); P2D2 the sentence that does not blame the page and the link to the overview; seam=the reader loaded with loadModule, with the page-worker module loaded so that its folder (__dirname) holds a worker script that throws
 test('a page whose worker fails is answered with status 503 and a sentence for the learner under the page policy, never with the page as the folder holds it', async (context) => {
   // Arrange: an overview with a refused link, and a reader whose page worker throws when it starts.
   const projectRoot = await realpath(
@@ -997,7 +1001,11 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
     status: response.status,
     type: response.headers.get('content-type'),
     policy: response.headers.get('content-security-policy'),
-    body: await response.text(),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
   }
 
   // Assert
@@ -1005,7 +1013,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
     status: 503,
     type: 'text/html; charset=utf-8',
     policy: SERVED_PAGE_POLICY,
-    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Generate the Wiki again to replace the page.</p></body></html>',
+    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Reload the page; if it is still not shown, generate the Wiki again.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
   })
 })
 
