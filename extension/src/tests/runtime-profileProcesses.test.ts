@@ -234,7 +234,7 @@ test('on Windows a profile named in another case, with forward slashes or with a
   )
 })
 
-// Value: protects=a live profile whose Chrome was given several profile switches: Chrome takes the last one (base::CommandLine replaces a switch's value by a later one), so the last switch decides, on macOS and Linux as on Windows: an earlier switch of a folder that only shares a prefix does not hide the live profile, and an earlier switch of the folder does not claim it when a later one names another (AD30, /ship adversarial review Step 11); fails_when=only the first switch in the text is checked, so `--user-data-dir=<folder>b --user-data-dir=<folder>` leaves the live profile out and the sweep takes it for unused, or any switch is taken although Chrome uses another; why_new=every test named one switch; seam=the system the command lines are read for and a listing of the test's own, matched against a real profile folder
+// Value: protects=a live profile whose Chrome was given several profile switches: Chrome takes the last one (base::CommandLine replaces a switch's value by a later one), so the last switch decides, on macOS and Linux as on Windows: an earlier switch of a folder that only shares a prefix does not hide the live profile, and an earlier switch of the folder does not claim it when a later one names another (AD30, /ship adversarial review Step 11); fails_when=only the first switch in the text is checked, so `--user-data-dir=<folder>b --user-data-dir=<folder>` leaves the live profile out and the sweep takes it for unused, or any switch is taken although Chrome uses another, or the last switch is sought per prefix, so `-user-data-dir=<folder>b --user-data-dir=<folder>` hides the live profile, or a Windows path that ends with a separator is not the folder (TT17, the third testing review); why_new=every test named one switch; seam=the system the command lines are read for and a listing of the test's own, matched against a real profile folder
 test('of several profile switches the last one decides, on Linux and on Windows', async (context) => {
   // Arrange
   const parent = await realpath(
@@ -253,6 +253,12 @@ test('of several profile switches the last one decides, on Linux and on Windows'
       command: `chrome --user-data-dir=${profile} --user-data-dir=${parent}/other`,
     },
     { pid: 43, command: `chrome -user-data-dir=${profile}` },
+    // The last switch decides across Chrome's two prefixes, and a Windows path may end with a separator.
+    {
+      pid: 44,
+      command: `chrome -user-data-dir=${profile}b --user-data-dir=${profile}`,
+    },
+    { pid: 45, command: `chrome.exe --user-data-dir=${profile}\\` },
   ]
   // Act
   const observed = {
@@ -265,7 +271,7 @@ test('of several profile switches the last one decides, on Linux and on Windows'
       linux: observed.linux.map((listed) => listed.pid),
       windows: observed.windows.map((listed) => listed.pid),
     },
-    { linux: [41, 43], windows: [41, 43] },
+    { linux: [41, 43, 44], windows: [41, 43, 44, 45] },
   )
 })
 
