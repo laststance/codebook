@@ -811,6 +811,30 @@ test('an absent table section cannot hide a foreign link while a matching sectio
   )
 })
 
+// Value: protects=the learner against an editor link after a table-section end in a row that a browser ignores: the section is open nowhere, or only in an outer table, out of table scope; fails_when=a section name is missing from HTML_PARSER_TABLE_SECTION_NAMES, so the pinned parser closes the inner row because a tr is in scope, or an absent section end is no longer skipped as one that changes nothing, and the svg closes with it, so a live `vscode://file` link in svg's style is served as written; why_new=Cycle 0046 second /ship testing review TEST2 (only thead was pinned) and PERF1, after which an absent section end in a row is skipped before the guard; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a tbody, tfoot or thead end in a row whose section is absent, or open only in an outer table, cannot close the row, so a link in a later svg style loses its link', () => {
+  // Arrange: in the first two pages the section is open nowhere; in the last three only the outer table has it, outside the inner table's scope.
+  const pages = [
+    '<table><thead><tr><svg><g></tbody><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><svg><g></tfoot><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tbody><tr><td><table><thead><tr><svg><g></tbody><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tfoot><tr><td><table><tr><svg><g></tfoot><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><thead><tr><td><table><tr><svg><g></thead><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<table><thead><tr><svg><g></tbody><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><svg><g></tfoot><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tbody><tr><td><table><thead><tr><svg><g></tbody><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tfoot><tr><td><table><tr><svg><g></tfoot><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><thead><tr><td><table><tr><svg><g></thead><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+  ])
+})
+
 // Value: protects=the browser from promoting a duplicate href after the first is renamed; fails_when=only parse5's first normalized attribute is kept; why_new=row1058 original-offset contract; seam=none
 test('all original duplicate URL attributes lose their effects', () => {
   // Arrange
