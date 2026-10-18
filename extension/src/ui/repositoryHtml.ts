@@ -7,7 +7,10 @@ import {
   REPOSITORY_VISITED_CITATIONS_LIMIT,
 } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
-import type { RepositoryViewMessage } from '../repositoryView'
+import type {
+  RepositoryReadyRequest,
+  RepositoryViewMessage,
+} from '../repositoryView'
 import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
 
 import { STUDY_STYLES } from './constants'
@@ -290,6 +293,12 @@ function repositoryClient(
   window.addEventListener('resize', () => restore(false))
   window.addEventListener('pagehide', persist)
   window.addEventListener('message', (event) => {
+    const request: RepositoryReadyRequest | undefined = event.data
+    // The reader asks again for a ready that reached it while the pane still counted as hidden (CR5-6).
+    if (request?.type === 'announce-ready') {
+      api.postMessage({ type: 'ready' })
+      return
+    }
     const message: RepositoryViewMessage = event.data
     if (message?.type !== 'repository') return
     // Status labels can reflow a settled article; capture the actual pose before changing them, including recent unsaved scrolling.

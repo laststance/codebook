@@ -883,6 +883,23 @@ async function check(page, options, collected) {
     },
     { beforeTheError, afterTheError: await errorRegion() },
   )
+
+  // CR5-6. Arrange: an open article whose document said it was ready at load.
+  await openPane(undefined)
+  await publish(options.message)
+  const sentBeforeTheRequest = await page.evaluate(() => window.sent.length)
+  // Act: the reader asks again for a ready that reached it while the pane still counted as hidden.
+  await publish({ type: 'announce-ready' })
+  // Assert: the document answers with one ready; a reading place it saves meanwhile is no answer and is left out.
+  addCase(
+    'the Repository Wiki pane answers the reader’s request for its ready with one ready',
+    [{ type: 'ready' }],
+    await page.evaluate(
+      (start) =>
+        window.sent.slice(start).filter((message) => message.type === 'ready'),
+      sentBeforeTheRequest,
+    ),
+  )
 }
 
 const report = {

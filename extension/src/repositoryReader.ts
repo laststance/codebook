@@ -29,6 +29,7 @@ import { RepositorySourceService } from './repositorySource'
 import {
   repositoryMessageSchema,
   type repositoryActionSchema,
+  type RepositoryReadyRequest,
   type RepositoryViewMessage,
 } from './repositoryView'
 import { sha256 } from './runtimeSupport/utils/sha256'
@@ -178,6 +179,8 @@ export class RepositoryReader {
   private sourcePreviewRequest = 0
   /** Only the current visible document may acknowledge the model that {@link revealReadyPanel} will activate. */
   private documentReady = false
+  /** A `ready` reached {@link receiveDocument} while the pane counted as hidden: the editor orders a document's messages and the pane's view-state notifications in no way, so it may be the document the editor shows next, or the hidden document's last one. It never counts; {@link askShownDocumentReady} asks the shown document to say it again. */
+  private readyHeardWhileHidden = false
   private rendered?: {
     revision: number
     selection?: RepositorySelection
@@ -2133,10 +2136,12 @@ export class RepositoryReader {
       { enableScripts: true, localResourceRoots: [] },
     )
     this.panel = panel
+    this.readyHeardWhileHidden = false
     panel.onDidChangeViewState(() => {
       if (this.panel !== panel) return
       // A hidden panel loses its document; its last receipt cannot certify the next iframe.
       this.retireHiddenDocument(panel)
+      this.askShownDocumentReady(panel)
       // Selecting the Wiki is the learner's explicit permission to replace the primary file with its cited source.
       if (!panel.active || !panel.visible) return
       const generation = this.generation
@@ -2201,6 +2206,19 @@ export class RepositoryReader {
     if (!panel.visible) this.retireRenderedDocument()
   }
 
+  /**
+   * Asks the document of a pane that is shown again to post `ready` again, when a `ready` reached {@link receiveDocument} while the pane still counted as hidden; called by {@link ensurePanel}'s view-state listener.
+   * The editor orders a document's messages and the pane's view-state notifications in no way, so the shown document's `ready` can come first and be dropped, and every receipt after it would be dropped as not ready. The held `ready` is not taken instead: it may be the hidden document's last one, whose late receipts must not certify the shown document. Only the document now shown can answer the request.
+   * @param panel - The current panel, whose view state changed.
+   * @example this.askShownDocumentReady(panel) // posts { type: 'announce-ready' } once the pane is visible
+   */
+  private askShownDocumentReady(panel: vscode.WebviewPanel): void {
+    if (!panel.visible || !this.readyHeardWhileHidden) return
+    this.readyHeardWhileHidden = false
+    const request: RepositoryReadyRequest = { type: 'announce-ready' }
+    void panel.webview.postMessage(request)
+  }
+
   /** Accepts passive readiness only for the current visible Wiki document for {@link receive}. @param panel - The already validated current panel. @param message - A ready signal or current-revision model acknowledgement. @example this.receiveDocument(panel, { type: 'ready' }) */
   private receiveDocument(
     panel: vscode.WebviewPanel,
@@ -2209,11 +2227,16 @@ export class RepositoryReader {
       { type: 'ready' | 'rendered' }
     >,
   ): void {
-    if (!panel.visible) return
+    if (!panel.visible) {
+      // A hidden document's ready does not count; the document shown next is asked for its own (CR5-6).
+      if (message.type === 'ready') this.readyHeardWhileHidden = true
+      return
+    }
     if (message.type === 'ready') {
       // A new visible document must render the current model before it receives native input.
       this.rendered = undefined
       this.documentReady = true
+      this.readyHeardWhileHidden = false
       this.publish()
       return
     }

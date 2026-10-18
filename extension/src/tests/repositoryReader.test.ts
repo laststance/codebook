@@ -7,7 +7,10 @@ import type { RepositorySelection } from '../learnerSchemas'
 import { LearningLibrary } from '../learningLibrary'
 import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookDocument, BookObservationBinding } from '../repositorySchemas'
-import type { RepositoryViewMessage } from '../repositoryView'
+import type {
+  RepositoryReadyRequest,
+  RepositoryViewMessage,
+} from '../repositoryView'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -174,6 +177,7 @@ async function readerHarness(context: TestContext) {
   let clickWikiTab = (): void => {}
   let clickWikiTabReportingGroupFirst = (): void => {}
   let hideWikiPanel = (): void => {}
+  let showWikiPanelReportingReadyFirst = (): void => {}
   let nativeWikiSelection = false
   let retireWikiTextEditor = false
   let requiresSourceFocus = false,
@@ -574,7 +578,15 @@ async function readerHarness(context: TestContext) {
               },
               webview: {
                 html: '',
-                postMessage: async (message: RepositoryViewMessage) => {
+                postMessage: async (
+                  message: RepositoryViewMessage | RepositoryReadyRequest,
+                ) => {
+                  // The document's script answers the reader's request for its ready once it has loaded in a shown pane.
+                  if (message.type === 'announce-ready') {
+                    if (panel.visible && documentReady)
+                      receivePanelMessage({ type: 'ready' })
+                    return panel.visible && documentReady
+                  }
                   publishedMessages.push(message)
                   // Default editor-effect fixtures acknowledge actual published models; a held renderer cannot certify a new document.
                   const held = rendererGate
@@ -667,6 +679,13 @@ async function readerHarness(context: TestContext) {
               panel.active = false
               panel.visible = false
               documentReady = false
+              viewStateChanged()
+            }
+            showWikiPanelReportingReadyFirst = (): void => {
+              // The editor recreates the document when it shows the pane again; the document's ready reaches the extension while the pane still counts as hidden there, and the view-state notification that shows it comes after (the editor orders the two messages in no way, CR5-6).
+              documentReady = true
+              receivePanelMessage({ type: 'ready' })
+              panel.visible = true
               viewStateChanged()
             }
             blurWikiPanel = (): void => {
@@ -1078,6 +1097,10 @@ async function readerHarness(context: TestContext) {
     },
     hideWiki(): void {
       hideWikiPanel()
+    },
+    /** Shows the hidden Wiki again with its new document's `ready` delivered before the view-state notification that shows the pane. @example harness.hideWiki(); harness.showWikiReportingReadyFirst() */
+    showWikiReportingReadyFirst(): void {
+      showWikiPanelReportingReadyFirst()
     },
     focusUnrelatedDraft(filename = 'unrelated-draft.txt'): NativeEditor {
       const document = {
@@ -4448,6 +4471,30 @@ test('late hidden-document receipts cannot certify a visible Wiki before its new
   } finally {
     renderer.release()
   }
+})
+
+// Value: protects=the Repository Wiki's document after the pane is shown again: its article renders and its receipt counts, so a reveal or a Return waiting for it goes on; fails_when=the reader drops a ready that reaches it before the view-state notification that shows the pane (the editor orders the two in no way) and has nothing that asks for it again, so every later receipt of that document is dropped as not ready and the pane stays without its document; why_new=CR5-6; seam=readerHarness with hideWiki and showWikiReportingReadyFirst (the document's ready, then the view-state notification), the fake document's answers and inspect().rendered; no_claim=the editor's real message order, which no test can choose
+test('a Wiki pane shown again whose new document says it is ready before the editor reports the pane shown renders its article and its receipt counts', async (context) => {
+  // Arrange: an open article whose pane was hidden, so its document is gone.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.hideWiki()
+
+  // Act
+  harness.showWikiReportingReadyFirst()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  // Assert: the shown document rendered the current article and its receipt is the reader's.
+  assert.deepEqual(
+    {
+      renderedRevision: harness.reader.inspect().rendered?.revision,
+      renderedWidth: harness.reader.inspect().rendered?.width,
+    },
+    {
+      renderedRevision: harness.reader.inspect().view.revision,
+      renderedWidth: 1024,
+    },
+  )
 })
 
 test('a visible Wiki waits for its updated article without selecting its tab or taking keyboard', async (context) => {
