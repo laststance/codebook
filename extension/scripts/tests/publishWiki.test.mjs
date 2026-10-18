@@ -1489,7 +1489,7 @@ test('a renamed content id is followed the way a browser reads the page: through
       '<p><a href="a&amp;b.html#qa-form">One</a> <a href="it&#39;s.html#qa-form">Two</a> ' +
       '<a href="pages/details.html#qa%2Dform">Three</a> <a href="pages/details.html?from=overview#qa-form">Four</a> ' +
       '<a href="/index.html#qa-form">Five</a> <a href="#theme-toggle">Six</a></p>' +
-      '<button popovertarget="qa-form" commandfor="qa-form" form="qa-form" itemref="qa-form flow" anchor="qa-form">Open</button>' +
+      '<p aria-controls="qa-form" aria-labelledby="qa-form flow" aria-describedby="qa-form">Open</p>' +
       '<h3 id="flow">Flow</h3>'
     manifest.pages[0].outline = [
       { id: 'qa-form', label: 'The form' },
@@ -1523,7 +1523,7 @@ test('a renamed content id is followed the way a browser reads the page: through
         '<p><a href="a&amp;b.html#page-qa-form">One</a> <a href="it&#39;s.html#page-qa-form">Two</a> ' +
         '<a href="pages/details.html#page-qa-form">Three</a> <a href="pages/details.html?from=overview#page-qa-form">Four</a> ' +
         '<a href="/index.html#qa-form">Five</a> <a href="#theme-toggle">Six</a></p>' +
-        '<button popovertarget="page-qa-form" commandfor="page-qa-form" form="page-qa-form" itemref="page-qa-form flow" anchor="page-qa-form">Open</button>' +
+        '<p aria-controls="page-qa-form" aria-labelledby="page-qa-form flow" aria-describedby="page-qa-form">Open</p>' +
         '<h3 id="flow">Flow</h3>',
     )
     assert.ok(
@@ -3074,7 +3074,7 @@ test('the bundled skill tells the agent the publisher’s refusals of event attr
   assert.deepEqual(
     [
       skill.includes(
-        'Do not put an event attribute (`onclick`, `onerror` or any other attribute whose name starts with `on`) on an element of `contentHtml`, and let every `href`, `src`, `srcset`, `action`, `formaction` and `xlink:href` name a relative path, a `#fragment`, an `http`, `https` or `mailto` address, or Codebook’s own `vscode://laststance.codebook/…` or `cursor://laststance.codebook/…` address; the publisher refuses anything else.',
+        'Give the elements of `contentHtml` only the attributes an article needs: `id`, `class`, `href`, `alt`, `title`, `width`, `height`, `colspan`, `rowspan`, `scope`, `headers`, `lang`, `dir`, `role`, `aria-*`, `open`, `start`, `reversed`, `datetime`, `cite`, `data-codebook-diagram`, and `src` on an image; the publisher refuses any other (`style`, `srcset`, `target` …). Do not put an event attribute (`onclick`, `onerror` or any other attribute whose name starts with `on`) on an element of `contentHtml`, and let every `href`, `src` and `cite` name a relative path, a `#fragment`, an `http`, `https` or `mailto` address, or Codebook’s own `vscode://laststance.codebook/…` or `cursor://laststance.codebook/…` address; the publisher refuses anything else.',
       ),
       skill.includes(
         'The output folder and every folder on its path inside the project must be real folders. The publisher refuses a link there (a cloned repository may carry `.codebook` as one) and writes nothing; report the path it names and let the learner replace the link with a folder or choose an output outside the project. Do not work around the refusal.',
@@ -3981,6 +3981,109 @@ for (const [form, content, sentence] of [
     }
   })
 
+/** The refusal of an attribute an article does not need, for the element and the attribute it names. */
+const refusalOfAttribute = (tag, name) =>
+  `Wiki page index.html must give its elements only the attributes an article needs (id, class, href, alt, title, width, height, colspan, rowspan, scope, headers, lang, dir, role, aria-*, open, start, reversed, datetime, cite and data-codebook-diagram, and src on an image): its <${tag}> holds ${name}.`
+
+// Value: protects=the learner who opens a published page from disk, where no reader sends a policy, against an attribute of the content that fetches or runs something the address rule does not read: a style's `url(//host/…)`, which Windows fetches by SMB, a poster, a background, a ping, the candidates of a srcset, or `src` outside an image; fails_when=the publisher judges only the attributes it knows as addresses and lets every other one through; why_new=Cycle 0046 /ship third review W4 (Codex R3A1, the adversarial step); seam=none (the shipped publisher)
+for (const [form, content, tag, name] of [
+  [
+    'a style that fetches a network path',
+    '<h2 id="flow">Source flow</h2><p style="background:url(//host/x.png)">a</p>',
+    'p',
+    'style',
+  ],
+  [
+    'a poster of another host',
+    '<h2 id="flow">Source flow</h2><video poster="//host/p.png"></video>',
+    'video',
+    'poster',
+  ],
+  [
+    'a background of a table cell',
+    '<h2 id="flow">Source flow</h2><table><tr><td background="//host/x.png">c</td></tr></table>',
+    'td',
+    'background',
+  ],
+  [
+    'a ping on a link',
+    '<h2 id="flow">Source flow</h2><p><a href="#flow" ping="https://host/p">up</a></p>',
+    'a',
+    'ping',
+  ],
+  [
+    'image candidates of a srcset',
+    '<h2 id="flow">Source flow</h2><p><img src="a.png" srcset="b.png 2x" alt=""></p>',
+    'img',
+    'srcset',
+  ],
+  [
+    'a src outside an image',
+    '<h2 id="flow">Source flow</h2><div src="a.png">d</div>',
+    'div',
+    'src',
+  ],
+])
+  test(`a page with ${form} is refused with the sentence that names the element, the attribute and the attributes an article may carry`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-attribute-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act
+      const refusal = await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(refusal, refusalOfAttribute(tag, name))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the articles agents write, which the list of attributes an article needs must not refuse; fails_when=the allowlist leaves out an attribute of a table, a list, a quote, a time, an open detail or accessibility, or `src` on an image, so a real article is refused; why_new=Cycle 0046 /ship third review W4 (the allowlist was checked against the 46 pages real chats wrote on the development host); seam=none (the shipped publisher)
+test('a page whose elements carry every attribute an article may carry is published as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-allowed-attributes-')),
+  )
+  const content =
+    '<h2 id="flow" class="lead" lang="en" dir="ltr" title="Flow" role="note" aria-label="The flow">Source flow</h2>' +
+    '<p><img src="flow.png" alt="Flow" width="10" height="10"></p>' +
+    '<table><tr><th scope="col" id="head">h</th></tr><tr><td colspan="1" rowspan="1" headers="head">d</td></tr></table>' +
+    '<details open><summary>More</summary><p>m</p></details>' +
+    '<ol start="3" reversed><li>three</li></ol>' +
+    '<p><time datetime="2026-10-18">today</time></p>' +
+    '<blockquote cite="https://example.com/quote"><p>q</p></blockquote>'
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml = content
+
+    // Act: the article as published, or the refusal.
+    const published = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      (pages) =>
+        /<\/details>(.*)<\/article>/.exec(pages.get('index.html'))?.[1],
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(published, content)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the learner who opens a published page from disk, where no reader sends a Content-Security-Policy; fails_when=the page carries no policy of its own, so an event attribute or a javascript: address its content holds (a page published before the publisher refused them, or edited by hand) runs, or the policy does not name the hash of the shell's own script, so the theme button and the offline question note stop working; why_new=Cycle 0046 /ship follow-up N5 (finding F2's offline side); seam=none
 test('a published page carries a Content-Security-Policy that lets only the shell’s own script run, by its hash, before anything of its content', async () => {
   // Arrange
@@ -4072,7 +4175,7 @@ test('a page that links to a relative path, a fragment, a web, mail or editor ad
     '<a href="https://example.com/?a=1&amp;b=2#c">Web</a> <a href="mailto:team@example.com">Mail</a> ' +
     '<a href="vscode://laststance.codebook/source?root=%2Frepo">VS Code</a> <a href="cursor://laststance.codebook/source?root=%2Frepo">Cursor</a> ' +
     '<a href="VSCode://LastStance.Codebook/source?path=a.ts">VS Code in another case</a> ' +
-    '<img src="flow.png" srcset="flow.png 1x, flow@2x.png 2x" alt="Flow"></p>' +
+    '<img src="flow.png" alt="Flow"></p>' +
     '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
     '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
   try {
@@ -4526,8 +4629,8 @@ test('a page that leaves out the end tags HTML lets an author leave out is publi
       '<table><caption>Calls<colgroup><col><col><thead><tr><th>from<th>to<tbody><tr><td>a<td>b<tr><td>c<td><p>d<table><tr><td>inner</table></table>' +
       '<div><p>with <a href="#flow"><strong>a link</strong> and <code>code</code></a><br><img src="assets/a.png" alt="A"><image src="assets/b.png" alt="B"><hr></div>' +
       '<blockquote><p>quoted</blockquote><details><summary>More</summary><p>detail</details>' +
-      '<ruby>漢<rp>(<rt>kan<rp>)</ruby><button type="button">Go</button>' +
-      '<datalist id="names"><option value="a"><option value="b"></datalist>' +
+      '<ruby>漢<rp>(<rt>kan<rp>)</ruby><button>Go</button>' +
+      '<datalist id="names"><option>a<option>b</datalist>' +
       '<constructor>an element of a name JavaScript objects have</constructor>' +
       '<math><mrow><mi>x</mi><mo>+</mo><mspace width="1em"/><mn>1</mn></mrow></math>' +
       '<p>the last paragraph'
@@ -4586,8 +4689,8 @@ test('a page whose every < is text, a comment that ends, an end tag or a plainly
     const manifest = await readerInput(root)
     const authored =
       '<h2 class="title"id="flow">Source flow</h2><p>When a < b and 1 <2, see <!-- a note --> the list.</p>' +
-      '<p data-level=2 title=\'it says "a > b"\'>A line<br/>and <img src=pages/a.png alt="A figure" /> a figure.</p>' +
-      '<p id="read&amp;write"><a href="pages/details.html?from=overview&part=2#more">More</a> <code-sample language=ts>let a</code-sample></p>' +
+      '<p lang=en title=\'it says "a > b"\'>A line<br/>and <img src=pages/a.png alt="A figure" /> a figure.</p>' +
+      '<p id="read&amp;write"><a href="pages/details.html?from=overview&part=2#more">More</a> <code-sample class=ts>let a</code-sample></p>' +
       '<math><mi id="qa-form">x</mi></math><p>The end <'
     manifest.pages[0].contentHtml = authored
     manifest.pages.push({

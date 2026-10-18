@@ -387,8 +387,24 @@ const ADDRESS_SCHEMES = new Set(['http', 'https', 'mailto']);
 const CODEBOOK_ADDRESS_STARTS = ['vscode://laststance.codebook/', 'cursor://laststance.codebook/'];
 /** Whether an address, as {@link isAcceptedAddress} reads it, is one of Codebook's own ({@link CODEBOOK_ADDRESS_STARTS}); the scheme and the authority compare without case, as a browser compares them. Called by {@link isAcceptedAddress}. @example isCodebookAddress('cursor://laststance.codebook/source?path=a.ts') // => true; isCodebookAddress('vscode://file/etc/hosts') // => false */
 const isCodebookAddress = read => CODEBOOK_ADDRESS_STARTS.some(start => read.toLowerCase().startsWith(start));
-/** The attributes whose value a browser follows, loads or submits to as an address, SVG's `xlink:href` among them; `srcset` holds a list of them. */
-const ADDRESS_ATTRIBUTES = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'srcset']);
+/** The attributes whose value a browser follows, loads or submits to as an address, SVG's `xlink:href` among them; `srcset` holds a list of them, and `cite` names the source of a quote. */
+const ADDRESS_ATTRIBUTES = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'srcset', 'cite']);
+/** The attributes a page's content may give its elements: those an article needs, as the 46 pages real chats wrote on the development host show (they use id, href and data-codebook-diagram alone), with the ones of tables, lists, quotes, times, open details and accessibility (`aria-*`); `src` is allowed on an image alone ({@link isAllowedAttribute}). Every other attribute (`style`, `poster`, `background`, `ping`, `srcset`, `target` …) may carry an address or a script of its own and is refused. */
+const CONTENT_ATTRIBUTES = new Set(['id', 'class', 'href', 'alt', 'title', 'width', 'height', 'colspan', 'rowspan', 'scope', 'headers', 'lang', 'dir', 'role', 'open', 'start', 'reversed', 'datetime', 'cite', 'data-codebook-diagram']);
+/** The attributes {@link CONTENT_ATTRIBUTES} allows, as the refusal of another one names them. */
+const CONTENT_ATTRIBUTE_LIST = 'id, class, href, alt, title, width, height, colspan, rowspan, scope, headers, lang, dir, role, aria-*, open, start, reversed, datetime, cite and data-codebook-diagram, and src on an image';
+/** Whether a page's content may give an element an attribute: one of {@link CONTENT_ATTRIBUTES}, an `aria-` attribute, or `src` on an image (`<img>`, or `<image>`, which a browser reads as `<img>`). Called by {@link allowlistClauseOf}. @example isAllowedAttribute('img', 'src') // => true; isAllowedAttribute('p', 'style') // => false */
+const isAllowedAttribute = (tag, name) => CONTENT_ATTRIBUTES.has(name) || name.startsWith('aria-') || (name === 'src' && ['img', 'image'].includes(tag));
+/** The clause a refusal of an attribute an article does not need ends with ({@link isAllowedAttribute}); called by {@link tagScriptingClauseOf}. @returns The clause, or undefined for an attribute a page may carry. @example allowlistClauseOf('p', ['style', 'color:red']) // => 'must give its elements only the attributes an article needs (…): its <p> holds style.' */
+const allowlistClauseOf = (tag, [name]) => isAllowedAttribute(tag, name) ? undefined : `must give its elements only the attributes an article needs (${CONTENT_ATTRIBUTE_LIST}): its <${tag}> holds ${name}.`;
+/** The first clause `clauseOf` gives an attribute of a tag, in the order the tag writes them; called by {@link tagScriptingClauseOf}. @example firstClauseOf([['style', '']], ([name]) => name) // => 'style' */
+const firstClauseOf = (attributes, clauseOf) => {
+  for (const attribute of attributes) {
+    const clause = clauseOf(attribute);
+    if (clause !== undefined) return clause;
+  }
+  return undefined;
+};
 /** What no address may hold, whatever it names: a number reference after the publisher read the ones it reads (`&#58` without its semicolon, which a browser reads as a colon wherever it stands), or two slashes or backslashes in any mix at its start (`//host/x`, `\\\\host\\share\\x`, `/\\host/x`), which a page opened from disk on Windows reads as a network path (`file://host/…`): an image there fetches it over SMB without a click and may send the learner's NTLM credentials. Called by {@link isAcceptedAddress}. */
 const REFUSED_IN_ANY_ADDRESS = /&#|^[/\\]{2}/;
 /** Whether {@link attributeScriptingClauseOf} accepts one address, its character references read by {@link attributeText}, as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Without a colon before its first slash, question mark or number sign it is a relative path or a fragment, unless a reference this publisher does not read stands there, which a browser may read as a colon or a tab: a named one with its semicolon (`&colon;`, `&Tab;`). A number without its semicolon (`&#58`) a browser reads too, wherever it stands, and its `#` would end the part the colon is looked for in, so an address that holds `&#` after its references were read is refused. A name without a semicolon a browser reads only from its short table of old names, none of which is a colon, a letter or a space, so `a&b.html` is a path. @example isAcceptedAddress('pages/flow.html#start') // => true; isAcceptedAddress('a&b.html') // => true; isAcceptedAddress('java\tscript:run()') // => false; isAcceptedAddress('javascript&colon;run()') // => false; isAcceptedAddress('javascript&#58run()') // => false; isAcceptedAddress('\\\\host\\share\\x.png') // => false */
@@ -400,21 +416,20 @@ const isAcceptedAddress = address => {
 };
 /** The addresses one attribute value holds: for `srcset` the address of each candidate, split at every comma, so a comma inside an address can only add a refusal; the whole value otherwise. Called by {@link attributeScriptingClauseOf}. @example addressesOf('srcset', 'small.png 1x, large.png 2x') // => ['small.png', 'large.png'] */
 const addressesOf = (name, text) => name === 'srcset' ? text.split(',').map(candidate => candidate.trim().split(/[\t\n\f\r ]/)[0]) : [text];
-/** The clause a refusal of one attribute of a start tag ends with: an event attribute, or an address of another scheme than {@link ADDRESS_SCHEMES} that is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}); called by {@link tagScriptingClauseOf}. @returns The clause, or undefined for an attribute that runs no script and leads nowhere else. @example attributeScriptingClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
+/** The clause a refusal of an address attribute ends with when one of its addresses names another scheme than {@link ADDRESS_SCHEMES} and is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}); called by {@link attributeScriptingClauseOf}. @returns The clause, or undefined for an attribute that is no address or leads nowhere else. @example addressClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
+const addressClauseOf = (tag, name, written) => ADDRESS_ATTRIBUTES.has(name) && !addressesOf(name, attributeText(written)).every(isAcceptedAddress)
+  ? `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`
+  : undefined;
+/** The clause a refusal of one attribute of a start tag ends with: an event attribute, or an address of another scheme ({@link addressClauseOf}); called by {@link tagScriptingClauseOf}. @returns The clause, or undefined for an attribute that runs no script and leads nowhere else. @example attributeScriptingClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
 const attributeScriptingClauseOf = (tag, name, written) => {
   if (name.startsWith('on')) return `must contain article sections, not a document, form or script: its <${tag}> holds the event attribute ${name}.`;
-  if (ADDRESS_ATTRIBUTES.has(name) && !addressesOf(name, attributeText(written)).every(isAcceptedAddress))
-    return `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`;
-  return undefined;
+  return addressClauseOf(tag, name, written);
 };
 /** The clause a refusal of one start tag ends with, for its first attribute that {@link attributeScriptingClauseOf} refuses; called by {@link scriptingClauseOf}. @example tagScriptingClauseOf('<img src="flow.png" onerror="run()">') // => 'must contain article sections, not a document, form or script: its <img> holds the event attribute onerror.' */
 const tagScriptingClauseOf = markup => {
-  const tag = markup.slice(1, markup.search(/[\t\n\f\r />]/)).toLowerCase();
-  for (const [name, written] of attributesOf(markup)) {
-    const clause = attributeScriptingClauseOf(tag, name, written);
-    if (clause !== undefined) return clause;
-  }
-  return undefined;
+  const tag = markup.slice(1, markup.search(/[\t\n\f\r />]/)).toLowerCase(), attributes = attributesOf(markup);
+  // A script or a foreign address of any attribute is named first; an attribute an article does not need after.
+  return firstClauseOf(attributes, ([name, written]) => attributeScriptingClauseOf(tag, name, written)) ?? firstClauseOf(attributes, attribute => allowlistClauseOf(tag, attribute));
 };
 /** Says where a page's content would run script of its own or lead elsewhere than a page, the web, mail or Codebook in the editor: an attribute whose name starts with `on` (an event attribute, with or without a value), and an address in {@link ADDRESS_ATTRIBUTES} that names another scheme than {@link ADDRESS_SCHEMES} and is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}). Without this, markup an agent writes when a repository's text steers it would run script on the reader's origin, which may ask the editor's model. Start tags alone are read, with their character references, as {@link withAttributeValues} reads them; a comment and the text, an escaped code example included, are passed over. Called by the page renderer after {@link unbalancedClauseOf} let the content through. @returns The clause the refusal ends with, naming the element and its attribute, or undefined for content that runs no script. @example scriptingClauseOf('<img src="flow.png" onerror="run()">') // => 'must contain article sections, not a document, form or script: its <img> holds the event attribute onerror.' */
 export const scriptingClauseOf = html => {
