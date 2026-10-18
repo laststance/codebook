@@ -126,7 +126,7 @@ export class HostBrowser {
   private sweepOutlivedClose = false
 
   /**
-   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own. Left out, a managed run uses this user's directory ({@link managedProfileRoot}: the shared `/tmp` on macOS and Linux, the user's own temp folder on Windows).
+   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own. Left out, a managed run uses this user's directory ({@link managedProfileRoot}: the shared `/tmp` on macOS and Linux, the user's own local application data folder on Windows).
    */
   constructor(
     private readonly host: HostConfiguration,
@@ -758,7 +758,7 @@ export class HostBrowser {
   /**
    * Removes this run's own profile folder once its browser is verified gone, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list.
    * A folder that cannot be removed is journaled as `browser.managed-profile-left` and kept for {@link profileLeft}; it is never a failed release, so the run's outcome and the next start are not affected. A removed folder is remembered, which makes a repeated close a no-op here.
-   * Why the recursive `rm` of Node.js stays safe here, while the sweep of abandoned folders uses {@link removeWithoutFollowing}: the run made this folder itself with `mkdtemp` (mode 0700 on macOS and Linux) under this user's root ({@link managedProfileRoot}: the user's own temp folder on Windows), so only this user and its own Chrome write into it, and no other user can put a link there. That `rm` follows a link only on Windows, after the system refused to unlink it, and Chrome makes no link in its profile there; on macOS and Linux it unlinks Chrome's own links (`SingletonLock` and its kin) as names. The `rm` keeps its retries for files Windows still holds a moment after the browser ended. The sweep removes folders it did not make, so it follows no link at all.
+   * Why the recursive `rm` of Node.js stays safe here, while the sweep of abandoned folders uses {@link removeWithoutFollowing}: the run made this folder itself with `mkdtemp` (mode 0700 on macOS and Linux) under this user's root ({@link managedProfileRoot}: the user's own local application data folder on Windows), so only this user and its own Chrome write into it, and no other user can put a link there. That `rm` follows a link only on Windows, after the system refused to unlink it, and Chrome makes no link in its profile there; on macOS and Linux it unlinks Chrome's own links (`SingletonLock` and its kin) as names. The `rm` keeps its retries for files Windows still holds a moment after the browser ended. The sweep removes folders it did not make, so it follows no link at all.
    * @example
    * await this.removeManagedProfile() // journal: browser.managed-profile-removed { profile: '/tmp/codebook-browser-a1b2c3' }
    */
