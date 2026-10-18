@@ -40,6 +40,14 @@ import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 const FIRST_ADAPTER_BREAKPOINT_ID = 12
 /** How far the id of a breakpoint the adapter rebound at its pause lies from the acknowledged one. */
 const REBOUND_ID_OFFSET = 1_000
+/** The script and frame id of the page's stub of the server module, in which js-debug pauses the page at a server stop's breakpoint. */
+const SERVER_MODULE_STUB_ID = 'server-module-stub'
+/** Where the runtime first pauses in that stub: its first position, hit by the debugger's own breakpoint there. */
+const SERVER_MODULE_STUB_START = {
+  lineNumber: 0,
+  columnNumber: 0,
+  hitBreakpoints: ['2:0:0:mode'],
+}
 
 /** The source of a participant's fixture that gives none: the one statement of {@link createCrossRuntimeStudy} on line 1 and an empty line 2, declared with `var` so that the participant's stop on line 1, which requires the binding it declares, stays on its declared line. */
 const FIXTURE_SOURCES: Record<Participant, string> = {
@@ -997,6 +1005,35 @@ export async function nativeParticipantsHarness(
     assertWorkspace() {},
     revealSource: async () => {},
   })
+  // The browser events of a page pause in its stub of the server module, shared by the three helpers that report one, so their payloads stay alike.
+  const emitStubScriptParsed = (): void => {
+    listeners.browser.get('Debugger.scriptParsed')?.({
+      scriptId: SERVER_MODULE_STUB_ID,
+      url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
+      executionContextId: 1,
+    })
+  }
+  const emitStubPaused = (place: {
+    lineNumber: number
+    columnNumber: number
+    hitBreakpoints: string[]
+  }): void => {
+    listeners.browser.get('Debugger.paused')?.(
+      debuggerPausedEvent({
+        callFrameId: SERVER_MODULE_STUB_ID,
+        scriptId: SERVER_MODULE_STUB_ID,
+        ...place,
+      }),
+    )
+  }
+  const emitStubStopped = (hitBreakpointIds: number[]): void => {
+    run.onEvent(sessions.browser, {
+      type: 'event',
+      seq: ++sequence,
+      event: 'stopped',
+      body: { reason: 'breakpoint', threadId: 1, hitBreakpointIds },
+    })
+  }
   return {
     ...repository,
     run,
@@ -1152,30 +1189,9 @@ export async function nativeParticipantsHarness(
       otherHitIds: readonly number[] = [],
     ): void {
       stubPausesAwaitingResume++
-      listeners.browser.get('Debugger.scriptParsed')?.({
-        scriptId: 'server-module-stub',
-        url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
-        executionContextId: 1,
-      })
-      listeners.browser.get('Debugger.paused')?.(
-        debuggerPausedEvent({
-          callFrameId: 'server-module-stub',
-          scriptId: 'server-module-stub',
-          lineNumber: 0,
-          columnNumber: 0,
-          hitBreakpoints: ['2:0:0:mode'],
-        }),
-      )
-      run.onEvent(sessions.browser, {
-        type: 'event',
-        seq: ++sequence,
-        event: 'stopped',
-        body: {
-          reason: 'breakpoint',
-          threadId: 1,
-          hitBreakpointIds: [adapterId(serverBreakpoint), ...otherHitIds],
-        },
-      })
+      emitStubScriptParsed()
+      emitStubPaused(SERVER_MODULE_STUB_START)
+      emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
     },
     /**
      * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
@@ -1185,32 +1201,11 @@ export async function nativeParticipantsHarness(
       stopped(): void
     } {
       stubPausesAwaitingResume++
-      listeners.browser.get('Debugger.scriptParsed')?.({
-        scriptId: 'server-module-stub',
-        url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
-        executionContextId: 1,
-      })
-      listeners.browser.get('Debugger.paused')?.(
-        debuggerPausedEvent({
-          callFrameId: 'server-module-stub',
-          scriptId: 'server-module-stub',
-          lineNumber: 0,
-          columnNumber: 0,
-          hitBreakpoints: ['2:0:0:mode'],
-        }),
-      )
+      emitStubScriptParsed()
+      emitStubPaused(SERVER_MODULE_STUB_START)
       return {
         stopped: (): void => {
-          run.onEvent(sessions.browser, {
-            type: 'event',
-            seq: ++sequence,
-            event: 'stopped',
-            body: {
-              reason: 'breakpoint',
-              threadId: 1,
-              hitBreakpointIds: [adapterId(serverBreakpoint)],
-            },
-          })
+          emitStubStopped([adapterId(serverBreakpoint)])
         },
       }
     },
@@ -1223,47 +1218,22 @@ export async function nativeParticipantsHarness(
       pausedAtBreakpoint(lineNumber: number, columnNumber: number): void
     } {
       stubPausesAwaitingResume++
-      listeners.browser.get('Debugger.scriptParsed')?.({
-        scriptId: 'server-module-stub',
-        url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
-        executionContextId: 1,
-      })
-      run.onEvent(sessions.browser, {
-        type: 'event',
-        seq: ++sequence,
-        event: 'stopped',
-        body: {
-          reason: 'breakpoint',
-          threadId: 1,
-          hitBreakpointIds: [adapterId(serverBreakpoint)],
-        },
-      })
+      emitStubScriptParsed()
+      emitStubStopped([adapterId(serverBreakpoint)])
       return {
         paused: (): void => {
-          listeners.browser.get('Debugger.paused')?.(
-            debuggerPausedEvent({
-              callFrameId: 'server-module-stub',
-              scriptId: 'server-module-stub',
-              lineNumber: 0,
-              columnNumber: 0,
-              hitBreakpoints: ['2:0:0:mode'],
-            }),
-          )
+          emitStubPaused(SERVER_MODULE_STUB_START)
         },
         /** Sends the runtime's pause at the breakpoint itself, at this zero-based generated place of the stub, as the native journal shows it after the debugger's own pause at the module's first position (`paused`, which the debugger resumes itself): the breakpoint the debugger set in that script by its id. */
         pausedAtBreakpoint: (
           lineNumber: number,
           columnNumber: number,
         ): void => {
-          listeners.browser.get('Debugger.paused')?.(
-            debuggerPausedEvent({
-              callFrameId: 'server-module-stub',
-              scriptId: 'server-module-stub',
-              lineNumber,
-              columnNumber,
-              hitBreakpoints: [`4:${lineNumber}:0:server-module-stub`],
-            }),
-          )
+          emitStubPaused({
+            lineNumber,
+            columnNumber,
+            hitBreakpoints: [`4:${lineNumber}:0:${SERVER_MODULE_STUB_ID}`],
+          })
         },
       }
     },
