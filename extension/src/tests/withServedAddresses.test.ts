@@ -208,8 +208,8 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
       '<g>'.repeat(20_000) +
       '</code>'.repeat(20_000)
     ).padEnd(1_000_001, ' '),
-    formattingEndsAfterAClosedEntry: (
-      '<p><b></p><svg>' +
+    formattingEndsAfterTheirEntryLeft: (
+      '<svg><foreignObject><div><b></div></b><svg>' +
       '<g>'.repeat(20_000) +
       '</b>'.repeat(20_000)
     ).padEnd(1_000_001, ' '),
@@ -705,6 +705,76 @@ test('a heading-family end from a foreign child restores HTML style text', () =>
     served,
     '<svg><foreignObject><h1><svg><g></h2><style><a href="vscode://file/example">marker</a></style>',
   )
+})
+
+// Value: protects=the learner against an editor link after a `</p>` or `</br>` that leaves svg, and a served page's text after a heading end that closes an open heading of another level, though no element of the end's name is open; fails_when=the reader skips such an end as one that changes nothing (p or br missing from HTML_PARSER_ABSENT_END_BODY_NAMES, a level missing from HTML_PARSER_HEADING_NAMES), so a CDATA section hides a live `vscode://file` link or style text is renamed; why_new=Cycle 0046 second /ship testing review TEST1, after PERF1 skips absent ends in every mode; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a </p> or </br> leaves svg and a heading end closes an open heading of any other level, so what follows is judged where a browser reads it', () => {
+  // Arrange: after </p> or </br> the CDATA start is a bogus comment that ends at its first >, so the link is a tag; each heading end closes the open heading and the svg in it, so the style holds text.
+  const pages = [
+    '<svg><g></p><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><g></br><![CDATA[ x ><a href="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><foreignObject><h2><svg><g></h1><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h3><svg><g></h2><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h4><svg><g></h3><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h5><svg><g></h4><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h6><svg><g></h5><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h1><svg><g></h6><style><a href="vscode://file/example">marker</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<svg><g></p><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><g></br><![CDATA[ x ><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a> ]]>',
+    '<svg><foreignObject><h2><svg><g></h1><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h3><svg><g></h2><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h4><svg><g></h3><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h5><svg><g></h4><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h6><svg><g></h5><style><a href="vscode://file/example">marker</a></style>',
+    '<svg><foreignObject><h1><svg><g></h6><style><a href="vscode://file/example">marker</a></style>',
+  ])
+})
+
+// Value: protects=the learner against an editor link after a `</table>` in a template's content, where no table is open but the end still closes the open caption, table section or row; fails_when=the reader skips `</table>` there as an absent end ('table' missing from a mode's set in HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES), so the later section or row end closes the svg and a live `vscode://file` link in svg's style is served as written; why_new=Cycle 0046 second /ship PERF1 skips absent ends in the table modes; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages, reading the template's content)
+test('a </table> in a template closes the open caption, table section or row though no table is open, so a link in a later svg style loses its link', () => {
+  // Arrange: </table> closes the caption, tbody or tr with its svg; the next svg is fostered into the template, and the caption, tbody or tr end is then ignored.
+  const pages = [
+    '<template><caption><svg><g></table><svg></caption><style><a href="vscode://file/etc/hosts">hosts</a></style></template>',
+    '<template><tbody><svg><g></table><svg></tbody><style><a href="vscode://file/etc/hosts">hosts</a></style></template>',
+    '<template><tr><svg><g></table><svg></tr><style><a href="vscode://file/etc/hosts">hosts</a></style></template>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<template><caption><svg><g></table><svg></caption><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style></template>',
+    '<template><tbody><svg><g></table><svg></tbody><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style></template>',
+    '<template><tr><svg><g></table><svg></tr><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style></template>',
+  ])
+})
+
+// Value: protects=the learner against an editor link after a formatting end that removes the entry of a formatting element closed earlier, or a form end that forgets a form left in a table, though no element of the end's name is open; fails_when=the reader's count of the active formatting list's names misses an entry (a pushed one, or one the adoption agency inserts after its bookmark), or the form end is skipped while the form pointer is set, so a later end closes the svg and a live `vscode://file` link in svg's style is served as written; why_new=Cycle 0046 second /ship testing review TEST1 and PERF1's list index; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a formatting end removes the entry of a formatting element closed earlier and a form end forgets a form left in a table, so a link in a later svg style loses its link', () => {
+  // Arrange: in the first two pages the second </b> removes the entry of a b that </div> closed, so the next svg is not put in a b again and the last </b> leaves it open; in the last page </form> clears the pointer, so the later form is inserted and stops </x> before the svg.
+  const pages = [
+    '<svg><foreignObject><div><b><svg><g></div></b><svg><g></b><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><foreignObject><div><b><address><address><address><address><address><address><address><address><address>x</b><svg><g></div></b><svg><g></b><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><form></table></form><x><form><svg><g></x><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+  ]
+
+  // Act
+  const served = pages.map((page) => withServedAddresses(page, 'vscode'))
+
+  // Assert
+  assert.deepEqual(served, [
+    '<svg><foreignObject><div><b><svg><g></div></b><svg><g></b><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><foreignObject><div><b><address><address><address><address><address><address><address><address><address>x</b><svg><g></div></b><svg><g></b><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><form></table></form><x><form><svg><g></x><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+  ])
 })
 
 // Value: protects=active Wiki links after an unmatched table-section end; fails_when=the parser closes a row because tr alone is in scope, or the row's guard also refuses a matching section that has no row; why_new=row1058 inert Chromium captures055/056; the section without a row came from the /ship coverage audit, where the reader stayed green with the guard in every insertion mode; seam=none; no_claim=native editor or visual acceptance
