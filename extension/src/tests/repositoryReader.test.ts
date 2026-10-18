@@ -2746,6 +2746,55 @@ for (const move of [
     )
   })
 
+// Value: protects=the rule for an agent's read of the open Wiki that the learner's newer input refused while it loaded: the read had deferred its cited source's preview because the learner typed in a file of the first group, the article it read stays shown with the refusal's line, and the learner's later selection of the Wiki shows that article's cited source, as the deferred preview of an answered read does (RepositoryReader.expireDeferredReturn ends only a palette Return's preview: an agent's deferred citation keeps its own); fails_when=the refused open's catch also ends an agent's deferred preview, so the learner's selection of the Wiki shows the article without its cited source; why_new=Cycle 0046 TT4 (the third testing review: the guard of expireDeferredReturn that 4ef4ba7f moved there had no test); seam=readerHarness with focusUnrelatedDraft and switchTabGroup(true) (the learner types in notes.ts), holdRenderer(true) (the article loads), open with preserveNativeInput and forAgent but no Return, focusUnrelatedDraft('other.ts') (the learner's newer input during the load), focusWiki, shown; no_claim=the cited source's group and keyboard at that later selection, which the deferred preview's own tests cover
+test('an agent’s read refused for the learner’s newer input during its load keeps the deferred preview of the article it shows, so the learner’s later selection of the Wiki shows that cited source', async (context) => {
+  // Arrange: the Wiki is open; the learner types in notes.ts in the first group, so an agent's read defers its cited source's preview; the read's article loads.
+  const harness = await readerHarness(context)
+  await harness.reader.open(harness.selection)
+  harness.focusUnrelatedDraft('notes.ts')
+  harness.switchTabGroup(true)
+  const renderer = harness.holdRenderer(true)
+  const shownBefore = harness.shown.length
+  const opening = harness.reader
+    .open(
+      {
+        ...harness.selection,
+        nodeId: 'order',
+        location: { sectionIndex: 0, fraction: 0.5, focusId: 'anchor-0' },
+      },
+      undefined,
+      false,
+      true,
+      true,
+    )
+    .then(
+      () => 'answered',
+      () => 'refused',
+    )
+  await renderer.started
+
+  // Act: the learner clicks into other.ts while the article loads, which refuses the read; later the learner selects the Wiki.
+  harness.focusUnrelatedDraft('other.ts')
+  harness.switchTabGroup(true)
+  renderer.release()
+  const outcome = await opening
+  harness.focusWiki()
+  await harness.deliverTabEvents()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  // Assert: the read was refused, and the Wiki's selection showed the cited source of the article it reads.
+  assert.deepEqual(
+    {
+      outcome,
+      nodeId: harness.reader.inspect().view.selection?.nodeId,
+      shown: harness.shown
+        .slice(shownBefore)
+        .map((value) => basename(value.uri.path)),
+    },
+    { outcome: 'refused', nodeId: 'order', shown: ['order.ts'] },
+  )
+})
+
 test('a newer article retires an unvisited Return so later Wiki focus cannot restore its old layout', async (context) => {
   // Arrange
   const harness = await readerHarness(context)
