@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { Worker } from 'node:worker_threads'
 
-import { withoutRefusedAddresses } from '../utils/withoutRefusedAddresses'
+import { withServedAddresses } from '../utils/withServedAddresses'
 
 /** The longest the reader may take to filter one page of the timing test, in milliseconds. Its slowest page took 75 ms on the development host (16 CPUs, Node 22); the bound leaves about five times that for a two-core CI runner under load, while a reading from every `<` took 20 to 28 s for a page of 48 to 74 KB. */
 const FILTER_BOUND_MS = 400
@@ -11,13 +11,17 @@ const FILTER_BOUND_MS = 400
 const FILTER_DEADLINE_MS = 10_000
 
 /**
- * Filters pages in a worker thread with the compiled filter and answers how long each took, or `unfinished` for the pages left when the deadline passed; the filter runs synchronously, so only a worker can be stopped while it runs. Called by the timing test.
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * @param moduleName - The compiled module under `dist/utils`, without `.js`.
+ * @param exportName - The function it exports.
  * @param pages - The pages, by name.
  * @returns Each page's time in milliseconds, or `unfinished`.
  * @example
- * await filterTimes({ small: '<a href="x">x</a>' }) // => { small: 0.1 }
+ * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { small: 0.1 }
  */
-async function filterTimes(
+async function servingTimes(
+  moduleName: string,
+  exportName: string,
   pages: Record<string, string>,
 ): Promise<Record<string, number | 'unfinished'>> {
   const times: Record<string, number | 'unfinished'> = Object.fromEntries(
@@ -25,16 +29,17 @@ async function filterTimes(
   )
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
-const { withoutRefusedAddresses } = require(workerData.module)
+const serve = require(workerData.module)[workerData.exportName]
 for (const [name, page] of Object.entries(workerData.pages)) {
   const started = performance.now()
-  withoutRefusedAddresses(page)
+  serve(page, 'cursor')
   parentPort.postMessage([name, performance.now() - started])
 }`,
     {
       eval: true,
       workerData: {
-        module: join(__dirname, '..', 'utils', 'withoutRefusedAddresses.js'),
+        module: join(__dirname, '..', 'utils', `${moduleName}.js`),
+        exportName,
         pages,
       },
     },
@@ -65,12 +70,51 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
   }
 
   // Act
-  const times = await filterTimes(pages)
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+  )
 
   // Assert: every page is over 1 MB, and each was filtered within the bound.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [true, true, true, true],
+  )
+  assert.deepEqual(
+    Object.entries(times).filter(
+      ([, milliseconds]) =>
+        milliseconds === 'unfinished' || milliseconds >= FILTER_BOUND_MS,
+    ),
+    [],
+  )
+})
+
+// Value: protects=the editor's extension host, which rewrites every page the Wiki reader serves synchronously, Codebook's addresses and the rail's entry included; fails_when=the rebinding of Codebook's addresses reads the page by a pattern that backtracks over quotes and slashes, or the entry's description id is looked for once per number in the whole page, so a page of 1 MB stalls the host for minutes; why_new=Cycle 0046 /ship third review W1 and W5 (the rebinding joins the filter's single pass); seam=a worker thread, so the deadline can stop a rewrite that does not end
+test('the reader serves a page of more than 1 MB built to make a pattern of its tags or its ids slow, Codebook’s addresses and the rail’s entry included, in under 400 ms', async () => {
+  // Arrange: values that run into slashes, quotes that open values, and a page whose headings carry the numbered ids of the entry's description, with an entry of 0.2.29.0 that needs one.
+  const pages = {
+    slashValues: '<x/href=<x/href='.repeat(70_000),
+    openingQuotes: `<a b="'${'<a b=\'"'.repeat(150_000)}`,
+    numberedIds:
+      '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Fr&amp;path=a.ts&amp;line=1">Open in VS Code</a></p>' +
+      Array.from(
+        { length: 40_000 },
+        (_unused, index) => `<h2 id="codebook-open-target-${index + 2}">h</h2>`,
+      ).join(''),
+  }
+
+  // Act
+  const times = await servingTimes(
+    'rebindDeepWikiEditorLinks',
+    'rebindDeepWikiEditorLinks',
+    pages,
+  )
+
+  // Assert: every page is over 1 MB, and each was served within the bound.
+  assert.deepEqual(
+    Object.values(pages).map((page) => page.length > 1_000_000),
+    [true, true, true],
   )
   assert.deepEqual(
     Object.entries(times).filter(
@@ -93,7 +137,7 @@ test('markup a browser reads as a comment, as a style’s or a script’s text o
     '<a href="javascript:f">f</a>'
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert
   assert.equal(
@@ -117,7 +161,7 @@ test('a link inside svg’s style or script, inside MathML’s text after it, an
     '<a href="javascript:e">e</a>'
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert: inside MathML's mi a style holds text again; the script's text ends at its second end tag.
   assert.equal(
@@ -140,7 +184,7 @@ test('a link right after a quoted value, after an end tag whose value holds >, a
     '<!--!> <a href="javascript:e">e</a> -->'
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert: `<!--!>` does not end its comment, so the last link is text.
   assert.equal(
@@ -165,7 +209,7 @@ test('a refresh written with references with or without their semicolon, or in c
     '<meta http-equiv=REFRESH content="0;url=c.html">'
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert
   assert.equal(
@@ -187,7 +231,7 @@ test('a frame’s srcdoc loses its effect, whatever it holds and in any case of 
     "<iframe SRCDOC='<p>plain</p>'></iframe>"
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert
   assert.equal(
@@ -207,7 +251,7 @@ test('an svg animation of href or xlink:href loses its attributeName, written pl
     '<rect><animate attributeName="opacity" to="0"/></rect></svg>'
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert
   assert.equal(
@@ -230,7 +274,7 @@ test('an address that a browser reads as a network path or another scheme once i
     '<a href="pages/a&amp;b.html">e</a>'
 
   // Act
-  const served = withoutRefusedAddresses(page)
+  const served = withServedAddresses(page, 'vscode')
 
   // Assert
   assert.equal(

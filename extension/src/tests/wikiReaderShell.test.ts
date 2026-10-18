@@ -644,6 +644,48 @@ test('every attribute a browser follows and every way it reads an editor address
   )
 })
 
+// Value: protects=the learner in Cursor whose Wiki page writes a Codebook address in a form the publisher accepts and a browser reads as that address: a scheme with references, a leading space or control character, a tab in the scheme, or `href` right after a closing quote; fails_when=the reader rebinds only the address as written, so Cursor's reader serves a vscode:// link that opens VS Code; why_new=Cycle 0046 /ship third review W5 (Codex R3A7, CodeRabbit CR4, security); seam=none, the served page is compared as text
+test('a Codebook address a browser reads through references, a leading space or control character or a tab in its scheme gets the serving editor’s scheme, written anew, and one right after a closing quote gets it in place', () => {
+  // Arrange
+  const page =
+    '<a href="vs&#99;ode://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a</a>' +
+    '<a href="&#118;scode://laststance.codebook/update?root=%2Frepo">b</a>' +
+    '<a href=" vscode://laststance.codebook/settings?root=%2Frepo">c</a>' +
+    '<a href="\u0001vscode://laststance.codebook/settings?root=%2Frepo">d</a>' +
+    '<a href="vs\tcode://laststance.codebook/source?path=e.ts">e</a>' +
+    '<a title="t"href="vscode://laststance.codebook/source?path=f.ts">f</a>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a</a>' +
+      '<a href="cursor://laststance.codebook/update?root=%2Frepo">b</a>' +
+      '<a href="cursor://laststance.codebook/settings?root=%2Frepo">c</a>' +
+      '<a href="cursor://laststance.codebook/settings?root=%2Frepo">d</a>' +
+      '<a href="cursor://laststance.codebook/source?path=e.ts">e</a>' +
+      '<a title="t"href="cursor://laststance.codebook/source?path=f.ts">f</a>',
+  )
+})
+
+// Value: protects=the rail entry of a page of 0.2.29.0 whose link writes its address in a form a browser reads (an `HREF` in capitals, a bare value, a scheme with references); fails_when=the reader reads the entry's file and line by a pattern of a quoted lower-case `href`, so the entry gets no target, or reads them from another value than the one it rebinds; why_new=Cycle 0046 /ship third review W5 (`publishedQueryOf`); seam=none, the served page is compared as text
+test('the entry of a page of 0.2.29.0 whose link writes HREF in capitals with a bare value gets its file and line beside it, read from the address a browser opens', () => {
+  // Arrange
+  const page =
+    '<p class="open-in-editor"><a HREF=vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12>Open in VS Code</a></p>'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<p class="open-in-editor"><a HREF=cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12 aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">src/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/a.ts:12</span></p>',
+  )
+})
+
 // Value: protects=the learner in Cursor whose Wiki page links to Codebook with an address the publisher accepts in another case or form than it prints itself; fails_when=the reader rebinds only the lower-case, quoted form of the three routes, so `VSCode://LastStance.Codebook/…`, a bare value, an `HREF` or spaces around its `=` keep the scheme of VS Code, and a click in Cursor opens VS Code; why_new=Cycle 0046 /ship finding AF5 (the publisher compares Codebook's scheme and authority without case since TC7); seam=none, the served page is compared as text
 test('a Codebook address written in another case, with a bare value, an HREF in capitals or spaces around its =, gets the scheme of the editor that serves the page, its authority and route as written', () => {
   // Arrange

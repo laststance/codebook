@@ -515,7 +515,7 @@ function readMarkupAt(reading: Reading, at: number): number {
  * Why: the Wiki reader judges the addresses of every page it serves and rewrites some, and it must read the tags a browser reads, no more and no less, in a time that grows with the page's size alone (a page that a reading from every `<` took 20 s for is read here in one pass).
  * How: the browser's tree decides whether an element holds markup: inside svg and MathML, `<style>` and `<script>` hold markup. The reading follows the open svg and MathML elements, their breakout tags and the points where HTML is read again; it follows no other part of the tree.
  * Limit: an HTML element left open inside such a point (`<svg><foreignObject><div>`) is not followed, so an end tag the browser ignores there closes the point for the reading. A page built on that can make the browser read a tag inside what the reading takes for text.
- * Called by {@link withoutRefusedAddresses} for every page the reader serves.
+ * Called by {@link withServedAddresses} for every page the reader serves, and by {@link rebindDeepWikiEditorLinks} for the rail entry's link and the ids of a page.
  *
  * @param html - The page.
  * @returns Its start tags in page order, a tag the page's end cuts off left out, as a browser leaves it out.

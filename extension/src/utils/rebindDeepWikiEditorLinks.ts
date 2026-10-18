@@ -1,8 +1,10 @@
 import { WIKI_OPEN_TARGET_ELEMENT_ID } from '../constants'
 
+import { addressAsBrowserReads } from './addressAsBrowserReads'
+import { browserAttributeText } from './browserAttributeText'
 import { escapeHtml } from './escapeHtml'
-import { unescapeHtml } from './unescapeHtml'
-import { withoutRefusedAddresses } from './withoutRefusedAddresses'
+import { readHtmlStartTags } from './readHtmlStartTags'
+import { withServedAddresses } from './withServedAddresses'
 
 /** The label of the rail's entry inside its link, the pattern of 0.2.29.0: every page since carries "Open in VS Code" as the link's whole text, so each reader can name its own editor there. */
 const OPEN_ENTRY_LABEL =
@@ -17,52 +19,18 @@ const OPEN_ENTRY_DESCRIBED_BY_ITS_SHOWN_TARGET =
 /** The file and the line number a rail entry opens, as its address names them. */
 type OpenTarget = { path: string; line: string }
 
-/** A comment or a start tag of a page: what {@link withEditorSchemeInLinks} tells apart from the page's text. A comment is passed over whole, up to what a browser takes for its end (`-->`, `--!>`, or at once for `<!-->` and `<!--->`); a start tag is where the address of a link stands, read up to the `>` that ends it as a browser reads it: a quoted attribute value in it may hold a `>`, and a `<` inside the tag is a character of it (a bare attribute value `<!--` starts no comment). An escaped code example holds no `<` before a letter, so it is text. */
-const COMMENT_OR_START_TAG =
-  /<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g
-/** The start of a Codebook address in the `href` of a start tag, with the scheme of either editor, by the publisher's rule of a Codebook address (`isCodebookAddress` of `render-wiki-diagrams.mjs`): the scheme and the authority compare without case, as a browser compares them, and any route follows. The name `href` in any case, the white space a browser allows around its `=`, and a quoted or bare value are read; the second group is all of that up to the scheme, the third the authority, both kept as written. The attribute stands after one of the five characters a browser separates attributes at (tab, line feed, form feed, carriage return, space): another white space of JavaScript, a no-break space for example, is a letter of the tag for a browser. */
-const CODEBOOK_ADDRESS_START =
-  /([\t\n\f\r ])(href[\t\n\f\r ]*=[\t\n\f\r ]*["']?)(?:vscode|cursor)(:\/\/laststance\.codebook\/)/gi
-
 /**
- * Gives every Codebook address a link of the page opens the scheme of the editor that serves the page; called by {@link rebindDeepWikiEditorLinks} first.
- *
- * Only the start tags of the page are read. The page's text is served as published: an escaped code example that shows a Codebook address keeps the scheme its author wrote. (The reader of 0.2.29.0 rewrote the whole page, text included.)
- *
- * @param html - The published page.
- * @param editorScheme - The scheme registered by the editor serving this request.
- * @returns The page with the scheme rewritten in the `href` of its start tags, whatever case the address's scheme and authority are written in, and its text and comments unchanged.
- * @example
- * withEditorSchemeInLinks('<a href="vscode://laststance.codebook/update?root=%2Frepo">Update</a><code>&lt;a href="vscode://laststance.codebook/update?root=%2Frepo"&gt;</code>', 'cursor')
- * // => '<a href="cursor://laststance.codebook/update?root=%2Frepo">Update</a><code>&lt;a href="vscode://laststance.codebook/update?root=%2Frepo"&gt;</code>'
- */
-function withEditorSchemeInLinks(
-  html: string,
-  editorScheme: 'vscode' | 'cursor',
-): string {
-  return html.replace(COMMENT_OR_START_TAG, (markup) =>
-    // A comment opens nothing, so it is served as published.
-    markup.startsWith('<!--')
-      ? markup
-      : markup.replace(
-          CODEBOOK_ADDRESS_START,
-          (_match, whitespace: string, attribute: string, authority: string) =>
-            `${whitespace}${attribute}${editorScheme}${authority}`,
-        ),
-  )
-}
-
-/**
- * Reads the query of the address a published link opens, out of the link's attributes; called by {@link openTargetOf}.
+ * Reads the query of the address a published link opens, out of the link's attributes, as a browser reads its first `href` ({@link readHtmlStartTags}, {@link addressAsBrowserReads}): in any case of the name, quoted or bare, with its references read; called by {@link openTargetOf}.
  * @param linkAttributes - The attributes of the link as the page carries them, with the escaped `href`.
  * @returns The address's query; empty when the attributes hold no `href` or the address has no query.
  * @example
- * publishedQueryOf('href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12"').get('path') // => 'src/a.ts'
+ * publishedQueryOf('HREF=vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12').get('path') // => 'src/a.ts'
  */
 function publishedQueryOf(linkAttributes: string): URLSearchParams {
-  const address = unescapeHtml(
-    /(?:^|[\t\n\f\r ])href=(["'])(.*?)\1/.exec(linkAttributes)?.[2] ?? '',
+  const href = readHtmlStartTags(`<a ${linkAttributes}>`)[0]?.attributes.find(
+    (attribute) => attribute.name === 'href',
   )
+  const address = addressAsBrowserReads(href?.written ?? '')
   const queryStart = address.indexOf('?')
   // What follows the first question mark is the query; an address without one names no parameter this entry reads.
   return new URLSearchParams(
@@ -108,9 +76,9 @@ function openTargetHtml(target: OpenTarget, targetId: string): string {
 }
 
 /**
- * Chooses the id of the description the reader adds to a rail entry: the publisher's id, or that id with a number when an element of the page already carries it; called by {@link rebindDeepWikiEditorLinks}.
+ * Chooses the id of the description the reader adds to a rail entry: the publisher's id, or that id with a number when an element of the page already carries it; called by {@link rebindDeepWikiEditorLinks} once for the page.
  *
- * A page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article. The entry's link names its description by id, and an id that stands twice names the first element, which would be that heading.
+ * A page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article. The entry's link names its description by id, and an id that stands twice names the first element, which would be that heading. The page's ids are read once, as a browser reads them ({@link readHtmlStartTags}), so a page that carries many numbered ids takes no more than one reading.
  *
  * @param html - The page as the reader serves it, its entries without the target the reader adds.
  * @returns
@@ -120,12 +88,16 @@ function openTargetHtml(target: OpenTarget, targetId: string): string {
  * freeOpenTargetIdIn('<h2 id="codebook-open-target">Targets</h2>') // => 'codebook-open-target-2'
  */
 function freeOpenTargetIdIn(html: string): string {
-  /** Whether a start tag of the page carries the id, quoted or bare. */
-  const isCarried = (id: string): boolean =>
-    new RegExp(`\\s[iI][dD]\\s*=\\s*["']?${id}(?=["'\\s>])`).test(html)
+  const carried = new Set(
+    readHtmlStartTags(html).flatMap(({ attributes }) =>
+      attributes
+        .filter((attribute) => attribute.name === 'id')
+        .map((attribute) => browserAttributeText(attribute.written ?? '')),
+    ),
+  )
   let id = WIKI_OPEN_TARGET_ELEMENT_ID
   // The publisher's id first, then the same with 2, 3, …
-  for (let count = 2; isCarried(id); count += 1)
+  for (let count = 2; carried.has(id); count += 1)
     id = `${WIKI_OPEN_TARGET_ELEMENT_ID}-${count}`
   return id
 }
@@ -133,7 +105,7 @@ function freeOpenTargetIdIn(html: string): string {
 /**
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
  *
- * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. First, every address the publisher refuses today loses its link, and a refresh its effect ({@link withoutRefusedAddresses}). The scheme is rewritten in the addresses of the page's links, never in its text ({@link withEditorSchemeInLinks}). The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
+ * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. First, in one pass over the page, every address the publisher refuses today loses its link, a refresh its effect, and every Codebook address gets the serving editor's scheme, in the addresses of the page's tags and never in its text ({@link withServedAddresses}). The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
  *
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
@@ -150,10 +122,7 @@ export function rebindDeepWikiEditorLinks(
 ): string {
   // The published page says VS Code, its fallback; the served one names the editor that opens the source.
   const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}`
-  const servedPage = withEditorSchemeInLinks(
-    withoutRefusedAddresses(html),
-    editorScheme,
-  )
+  const servedPage = withServedAddresses(html, editorScheme)
     .replace(
       OPEN_ENTRY_LABEL,
       (_match, opening: string, closing: string) =>
@@ -165,6 +134,8 @@ export function rebindDeepWikiEditorLinks(
       (_entry, opening: string, linkEnd: string, closing: string) =>
         `${opening}${linkEnd}${closing}`,
     )
+  // The id of the added description is chosen once for the page, the first time an entry needs it.
+  let targetId: string | undefined
   // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
   return servedPage.replace(
     OPEN_ENTRY_WITHOUT_TARGET,
@@ -177,7 +148,7 @@ export function rebindDeepWikiEditorLinks(
     ) => {
       const target = openTargetOf(linkAttributes)
       if (target === undefined) return entry
-      const targetId = freeOpenTargetIdIn(servedPage)
+      targetId ??= freeOpenTargetIdIn(servedPage)
       return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
     },
   )

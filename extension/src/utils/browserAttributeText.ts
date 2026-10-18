@@ -130,7 +130,7 @@ function namedCharacters(
  * Reads an attribute value as a browser's tokenizer reads it: a numeric reference with or without its semicolon ({@link numericCharacter}), and a named reference a browser reads there ({@link namedCharacters}), become their characters.
  *
  * Why: the Wiki reader judges a served page's attributes by the text a browser acts on. `&#114efresh` is `refresh`, and `/&sol;host/x` is `//host/x`, for a browser; a reading that knows fewer references would let them through.
- * Called by the reader's filter ({@link withoutRefusedAddresses}) for every attribute it judges.
+ * Called by the reader's filter ({@link withServedAddresses}) for every attribute it judges, by {@link addressAsBrowserReads}, and by {@link rebindDeepWikiEditorLinks} for the ids of a page.
  *
  * @param written - The value as the page writes it, without its quotes.
  * @returns The value's text, each reference read once.
