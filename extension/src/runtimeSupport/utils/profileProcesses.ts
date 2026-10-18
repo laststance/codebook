@@ -187,10 +187,10 @@ function trimmedAsChrome(argument: string): string {
 /**
  * Reads the profile folder an argument gives Chrome on Windows, as `base::CommandLine` reads a switch there: after one of its prefixes ({@link WINDOWS_SWITCH_PREFIXES}), by a name it compares in lower case, and the value after the first `=`; called by {@link namesProfileOnWindows} for each argument.
  * @param argument - One argument of the command line.
- * @returns The value of a `user-data-dir` switch, also one written `--User-Data-Dir=` or `/user-data-dir=`; `undefined` for any other argument and for the switch without a value.
+ * @returns The value of a `user-data-dir` switch, also one written `--User-Data-Dir=` or `/user-data-dir=`; `''` for the switch without a value, which clears an earlier value; `undefined` for any other argument.
  * @example
  * profileSwitchValueOnWindows('--USER-DATA-DIR=C:\\x') // => 'C:\\x'
- * profileSwitchValueOnWindows('--user-data-dir')        // => undefined
+ * profileSwitchValueOnWindows('--user-data-dir')        // => ''
  */
 function profileSwitchValueOnWindows(argument: string): string | undefined {
   const prefix = WINDOWS_SWITCH_PREFIXES.find((candidate) =>
@@ -199,11 +199,11 @@ function profileSwitchValueOnWindows(argument: string): string | undefined {
   if (prefix === undefined) return undefined
   const switchText = argument.slice(prefix.length)
   const equals = switchText.indexOf('=')
+  const switchName = equals === -1 ? switchText : switchText.slice(0, equals)
   // Chrome lowercases every switch name on Windows before it looks one up.
-  return equals > 0 &&
-    switchText.slice(0, equals).toLowerCase() === PROFILE_FLAG.slice(2, -1)
-    ? switchText.slice(equals + 1)
-    : undefined
+  if (switchName.toLowerCase() !== PROFILE_FLAG.slice(2, -1)) return undefined
+  // A later switch without `=` replaces the earlier value with an empty one.
+  return equals === -1 ? '' : switchText.slice(equals + 1)
 }
 
 /** The switch after which Chrome on Windows takes the rest of its command line as one loose argument (`kSingleArgument` of `base::CommandLine`), when it reads the line from its text, as its own process does (`ParseFromString` of `GetCommandLineW`). Chrome on macOS and Linux gives it no such meaning. */

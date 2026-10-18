@@ -196,6 +196,46 @@ test('on Windows a profile switch written in another case or with another of Chr
   )
 })
 
+// Value: protects=on Windows the last profile switch decides even without `=`, which clears an earlier folder; fails_when=a valueless switch is skipped and the old folder is kept as used (BB5); why_new=the valueless switch was tested only without an earlier value; seam=Windows command lines and a real profile folder.
+test('on Windows a later profile switch without a value clears an earlier folder, unless it follows the switch terminator', async (context) => {
+  // Arrange
+  const profile = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-empty-')),
+  )
+  context.after(() => rm(profile, { recursive: true, force: true }))
+  const listing = [
+    {
+      pid: 41,
+      command: `chrome.exe "--user-data-dir=${profile}" --user-data-dir`,
+    },
+    {
+      pid: 42,
+      command: `chrome.exe "--user-data-dir=${profile}" -User-Data-Dir`,
+    },
+    {
+      pid: 43,
+      command: `chrome.exe "--user-data-dir=${profile}" /USER-DATA-DIR`,
+    },
+    {
+      pid: 44,
+      command: `chrome.exe --user-data-dir "--user-data-dir=${profile}"`,
+    },
+    {
+      pid: 45,
+      command: `chrome.exe "--user-data-dir=${profile}" -- --user-data-dir`,
+    },
+  ]
+  // Act
+  const observed = await profileProcesses(profile, listing, {
+    platform: 'win32',
+  })
+  // Assert
+  assert.deepEqual(
+    observed.map((listed) => listed.pid),
+    [44, 45],
+  )
+})
+
 // Value: protects=a live profile on Windows whose Chrome names the folder in another way than the folder's resolved path: in another case, with `/` separators, or with `..` in it, which Windows reads as the same folder, so the owned Chrome is still found and a sweep never takes its folder for unused, while another folder whose path only starts with it is not matched (CX9, /ship Codex adversarial review); fails_when=the profile is compared by exact text on Windows, so a variant of the same path is left out and the live profile looks unused; why_new=every Windows profile test wrote the path as `realpath` gives it; seam=the system the command lines are read for (`win32`) and a listing of the test's own, matched against a real profile folder
 test('on Windows a profile named in another case, with forward slashes or with a parent step is still matched, and another folder is not', async (context) => {
   // Arrange: a real profile folder, and the command lines of Chrome processes that name it in the ways Windows reads as the same folder.
