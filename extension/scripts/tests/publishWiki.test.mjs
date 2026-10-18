@@ -3043,6 +3043,61 @@ test('a publish whose .codebook is swapped for a link while it copies the learne
   }
 })
 
+// Value: protects=the learner told "Nothing was written" after a publish whose `.codebook` was swapped for a link while it copied the learner's own file, and the publish run once the link is undone; fails_when=the publish leaves the copy it wrote behind the link when a later hold refuses, so the candidate holds a file its manifest does not list and the next publish is refused for that stray file; why_new=Cycle 0046 second /ship MAINT1 (the preparation's and the recovery's held writes remove what they wrote, the publish's did not); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the learner's file is copied (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose .codebook is swapped for a link while it copies the learner’s own file leaves no copy of it behind the link, and the candidate publishes once the link is undone', async () => {
+  // Arrange: the published Wiki holds a file of the learner's, which the publish copies into the candidate; `.codebook` is swapped out just before that copy.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'manual.txt'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act: the refused publish, then the link undone and the candidate published again.
+    await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).catch(() => undefined)
+    const copyBehindTheLink = await readFile(
+      join(movedOut, 'next/manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    await rm(join(wiki.root, '.codebook'))
+    await rename(movedOut, join(wiki.root, '.codebook'))
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        copyBehindTheLink,
+        nextPublish,
+        manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+      },
+      {
+        copyBehindTheLink: 'no copy',
+        nextPublish: { preservedManualFiles: 1 },
+        manualFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 /**
  * Leaves a published Wiki as a publish stopped after it moved the prior Wiki aside: the Wiki folder missing, the prior Wiki kept at `wiki.previous-test`, a candidate beside it and the journal of a process that is gone.
  * @param {string} root - The project, or the folder that holds the output for an output outside the project.

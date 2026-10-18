@@ -277,7 +277,7 @@ async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
   return madeFolders;
 }
 
-/** Removes the files a refused step wrote that are still its own, by their SHA-256 digests, last written first, then the folders it made, each empty ({@link removeMadeFolders}); a file whose bytes are no longer the step's, or that is gone, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses. @example await removeWritten([['/repo/.codebook/next/codebook-publication.json', digest(receiptText)]], ['/repo/.codebook/next']) */
+/** Removes the files a refused step wrote that are still its own, by their SHA-256 digests, last written first, then the folders it made, each empty ({@link removeMadeFolders}); a file whose bytes are no longer the step's, or that is gone, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld}, {@link restoreManifestHeld} and {@link publishWiki} when a hold refuses. @example await removeWritten([['/repo/.codebook/next/codebook-publication.json', digest(receiptText)]], ['/repo/.codebook/next']) */
 async function removeWritten(written, folders) {
   for (const [path, hash] of [...written].reverse()) {
     const current = await regularBytes(path, true).catch(() => undefined);
@@ -373,10 +373,15 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const inspectPrior = () => inspectOutput(output, root, { allowLegacy: receipt.baseline?.legacy === true });
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
-  for (const [path, html] of rendered) {
-    await makeFolderHeld(dirname(join(stage, path)), requirePathHeld, isFolderWhereItWas);
-    await writeFile(join(stage, path), html);
-  }
+  // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: a refused hold removes what is still its own ({@link removeWritten}), as the preparation's held writes do.
+  const written = [], made = [];
+  const writeHeld = async (path, content, flag) => {
+    made.unshift(...(await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas)));
+    await writeFile(path, content, { flag });
+    written.push([path, digest(content)]);
+  };
+  try { for (const [path, html] of rendered) await writeHeld(join(stage, path), html, 'w'); }
+  catch (error) { if (error.isHoldRefusal) await removeWritten(written, made); throw error; }
   if (renderOnly) return { stage, renderedPages: rendered.size };
   const ownedFiles = Object.create(null);
   for (const path of owned) ownedFiles[path] = digest(await regularBytes(join(stage, path)));
@@ -398,8 +403,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
         throw new Error('A manual Wiki file conflicts with the update: ' + path);
       const content = await regularBytes(join(output, path));
       manualHashes[path] = digest(content);
-      await makeFolderHeld(dirname(join(stage, path)), requirePathHeld, isFolderWhereItWas);
-      await writeFile(join(stage, path), content, { flag: 'wx' });
+      await writeHeld(join(stage, path), content, 'wx');
     }
     await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
     await writeFile(join(stage, MANIFEST), manifestText);
@@ -418,6 +422,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length };
   } catch (error) {
     if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
+    // A hold refuses before anything is moved, so what this publish wrote still stands where it wrote it.
+    if (error.isHoldRefusal) await removeWritten(written, made);
     if (movedOld) {
       try { await rename(backup, output); }
       catch (cause) { throw new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause }); }
