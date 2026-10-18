@@ -59,7 +59,7 @@ export class ReplayDebugger {
     label: string
     sourceUri?: string
   }
-  /** The selection ({@link selected}) whose native model {@link selectNativeInspectionModel} has settled: it ran {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for it, or the host registers no such command. A later frame of the same stop does not select it again; a new selection is a new object and is selected once. */
+  /** The selection ({@link selected}) whose native model needs no more selecting: {@link runNativeInspectionModelSelection} settles it once the host accepted {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for it while it was still the shown selection, and {@link selectNativeInspectionModel} settles it when the host registers no such command. A refusal of the host leaves it unsettled, so the stop's next frame asks again (Cycle 0046 AD25). A later frame of a settled selection does not select it again ({@link hasSettledModelSelection}, asked at the frame's entry and again right before the command, Q1); a new selection is a new object and is selected once. */
   private modelSelectionSettledFor?: ReplayDebugger['selected']
   /** The model selection the host still answers ({@link runNativeInspectionModelSelection}): the selection it is for, and whether the host selected the model. A newer frame of the same stop waits for this answer instead of asking again, also when the presentation that asked was superseded or abandoned (Cycle 0046 AD25). */
   private modelSelectionInFlight?: {

@@ -3183,8 +3183,8 @@ export class StudyWorkspace {
   /**
    * Says whether the group the editor names shows another editor part's tab in front, Cursor's chat (its composer tab has no input, 3.23.12 `workbench.desktop.main.js` 17269:27859), rather than an editor of the main editor; asked by {@link isCapturedSourceUnderAnotherPartsName} (row 711) and {@link isFirstGroupEditorUnderAnotherPartsName} (row 723).
    * A terminal in the editor area, a notebook, a notebook diff, a custom editor or a diff in front of the named group is the learner's own newer choice, and so is a group without an active tab: only a tab without an editor's input is the chat's ({@link holdsEditorTab} with {@link editorTabInputKinds}, as row 714 tells the chat's tab in {@link RepositoryReader.isOwnQuietCopyShowPlace}; Cycle 0046 row 727).
-   * @param active - The group the editor names as active now.
    * A tab without an editor's input is no proof alone: the API types no input for VS Code's Settings editor and merge editor either. The chat's group holds chat tabs only, as row 689's proof reads every group beyond the measured columns (`holdsOnlyChatsBeyond`), so a group that holds any editor's tab is the main editor's, whatever stands in front of it (Cycle 0046 AD29). What the evidence does not tell apart: such an editor alone in a group of its own reads as the chat's.
+   * @param active - The group the editor names as active now.
    * @returns `true` while that group has an active tab and holds no editor's tab; `false` for a group with an editor's tab, also behind a front tab without input, and for a group without an active tab.
    * @example this.namesAnotherEditorPartsTab(vscode.window.tabGroups.activeTabGroup) // => true while Cursor names its chat part's group, false while it names the group of a terminal the learner opened in the editor area
    */
@@ -18987,10 +18987,10 @@ export class StudyWorkspace {
   }
 
   /**
-   * Runs layout work that Codebook places itself counted as one of its own placements ({@link beginPlacing}), and counts it out when the work ends; called inside the {@link withLayout} queue by {@link restoreRepositoryLayout}, so that a Return to Wiki queued behind another reads the flag only after the earlier one set it back (Cycle 0046 R4: read at the Return's entry, outside the queue, the second of two quick presses read the first one's `true` and set it back to `true` after the first one's end, which left the learner's moves and the replay's visibility unfollowed).
+   * Runs layout work that Codebook places itself counted as one of its own placements ({@link beginPlacing}), and counts it out when the work ends; called inside the {@link withLayout} queue by {@link restoreRepositoryLayout}, so that a Return to Wiki counts its placement only while its own layout work runs. Cycle 0046 R4: a flag read at the Return's entry, outside the queue, let the second of two quick presses read the first one's `true` and set it back to `true` after the first one's end, which left the learner's moves and the replay's visibility unfollowed. AD27 made the flag a count of the placements under way, so a Return that ends during another owner's placement leaves that placement counted.
    * @param work - The layout work, run at once.
    * @returns What the work answers.
-   * @throws What the work throws; the flag is set back first.
+   * @throws What the work throws; its placement is counted out first.
    * @example await this.withLayout(signal, () => this.whilePlacing(async () => this.settleArticleReturn(…)))
    */
   private async whilePlacing<Result>(
