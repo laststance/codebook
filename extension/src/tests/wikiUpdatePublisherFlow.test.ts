@@ -222,7 +222,7 @@ test('after a VS Code watch ended on a learner’s file while the chat still wor
     assert.equal(pressed.state, 'failed')
     assert.match(
       wiki.errors[1] ?? '',
-      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki-next, written \d{1,2}:\d{2}[^)]*\)\. Codebook waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\. Nothing had been replaced by then\.$/,
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: The VS Code chat this window asked at \d{1,2}:\d{2}[^;(]* may still be updating this Wiki \(candidate wiki-next, written \d{1,2}:\d{2}[^)]*\); Codebook stopped watching it at \d{1,2}:\d{2}[^.]* and waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\. Nothing had been replaced by then\.$/,
     )
     assert.deepEqual(offeredAtThePress, ['Update anyway', 'Open LLM Wiki'])
     assert.notEqual(publishedPage, 'mine')
@@ -407,7 +407,7 @@ test('after a VS Code watch ended on a learner’s file, Update anyway on the on
     assert.match(
       refusals[0] ?? '',
       new RegExp(
-        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(stage)}, written `,
+        `The VS Code chat this window asked at \\d{1,2}:\\d{2}[^;(]* may still be updating this Wiki \\(candidate ${basename(stage)}, written `,
       ),
     )
     assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
@@ -640,7 +640,7 @@ test('Update anyway on each refusal of a start that another window’s stopped w
     assert.match(
       refusals[1] ?? '',
       new RegExp(
-        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(candidate)}, written `,
+        `The VS Code chat this window asked at \\d{1,2}:\\d{2}[^;(]* may still be updating this Wiki \\(candidate ${basename(candidate)}, written `,
       ),
     )
     assert.equal(started.state, 'running')
@@ -715,13 +715,13 @@ test('Update anyway pressed late on the refusal that named this window’s stopp
     assert.match(
       refusals[0] ?? '',
       new RegExp(
-        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(newerStage)}, written `,
+        `The VS Code chat this window asked at \\d{1,2}:\\d{2}[^;(]* may still be updating this Wiki \\(candidate ${basename(newerStage)}, written `,
       ),
     )
     assert.match(
       refusals[1] ?? '',
       new RegExp(
-        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(olderStage)}, written `,
+        `The VS Code chat this window asked at \\d{1,2}:\\d{2}[^;(]* may still be updating this Wiki \\(candidate ${basename(olderStage)}, written `,
       ),
     )
     assert.equal(wiki.chatRequests.length, requestsBefore)
@@ -758,7 +758,7 @@ test('a candidate the earlier chat keeps writing after this window stopped watch
     assert.equal(retry.state, 'failed')
     assert.match(
       retry.state === 'failed' ? retry.reason : '',
-      /^An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
+      /^The VS Code chat this window asked at \d{1,2}:\d{2}[^;(]* may still be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
     )
     assert.equal(wiki.chatRequests.length, 1)
   } finally {

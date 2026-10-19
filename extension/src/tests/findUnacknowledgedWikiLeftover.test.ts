@@ -28,8 +28,8 @@ async function makeUnpublishedWiki(): Promise<{
   return { parent, outputDirectory: join(parent, 'wiki') }
 }
 
-// Value: protects=the learner who waits until the time the refusal for this window's own stopped chat names, then presses Update again; fails_when=the one refusal that names the candidate the stopped watch saw names the end of the candidate's wait only, while the wait for the watch's chat lasts until the watch's end plus the bound, so a press at the named time is refused again; or the sentence names the watch's end although the candidate was written again after it; why_new=Cycle 0047 row 21 (P3M1 = P3OCR1-1); seam=the clock and the listing of the candidates, handed over; no_claim=the wording of the sentence besides its times
-test('the refusal for a candidate this window’s stopped watch saw names the later end of the wait: the watch’s end plus the bound, or the candidate’s when it was written again after the watch’s end', async () => {
+// Value: protects=the learner whose start this window's own stopped chat refuses with the candidate its watch saw: the sentence must name that chat, and the time a press goes on; fails_when=the sentence calls this window's own chat "an earlier chat or another editor window", or names the end of the candidate's wait only while the wait for the watch's chat lasts until the watch's end plus the bound, so a press at the named time is refused again, or names the watch's end although the candidate was written again after it; why_new=Cycle 0047 row 21 (P3M1 = P3OCR1-1: the time and the wording); seam=the clock and the listing of the candidates, handed over; no_claim=the sentence of a candidate the watch never saw
+test('the refusal for a candidate this window’s stopped watch saw names this window’s own chat, not an earlier chat or another window, and the later end of the wait: the watch’s end plus the bound, or the candidate’s when it was written again after the watch’s end', async () => {
   // Arrange: the watch started at 11:58, saw wiki.stage-1 and stopped at 12:05; the chat may still work.
   const wiki = await makeUnpublishedWiki()
   const lastRun = {
@@ -76,14 +76,14 @@ test('the refusal for a candidate this window’s stopped watch saw names the la
         { kind: 'candidate', name: 'wiki.stage-1' },
         { kind: 'last-run', endedAtMs: at(12, 5) },
       ],
-      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 0)}). Codebook waits for it until ${clockTime(12, 20)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+      reason: `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 0)}); Codebook stopped watching it at ${clockTime(12, 5)} and waits for it until ${clockTime(12, 20)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     })
     assert.deepEqual(writtenAgainAfterIt, {
       named: [
         { kind: 'candidate', name: 'wiki.stage-1' },
         { kind: 'last-run', endedAtMs: at(12, 5) },
       ],
-      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 8)}). Codebook waits for it until ${clockTime(12, 23)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+      reason: `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 8)}); Codebook stopped watching it at ${clockTime(12, 5)} and waits for it until ${clockTime(12, 23)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     })
   } finally {
     await rm(wiki.parent, { recursive: true, force: true })
@@ -201,7 +201,7 @@ test('a refusal that names this window’s stopped chat with a candidate its wat
         { kind: 'candidate', name: 'wiki.stage-1' },
         { kind: 'last-run', endedAtMs: at(12, 5) },
       ],
-      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 8)}). Codebook waits for it until ${clockTime(12, 23)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+      reason: `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 8)}); Codebook stopped watching it at ${clockTime(12, 5)} and waits for it until ${clockTime(12, 23)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     })
   } finally {
     await rm(wiki.parent, { recursive: true, force: true })

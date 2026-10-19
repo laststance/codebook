@@ -86,15 +86,38 @@ async function awaitedOwnRunOf(
 }
 
 /**
+ * Words the refusal for this window's own stopped watch, whose chat may still publish; called by {@link ownChatRefusals} for the watch alone and for the watch with the candidate it saw.
+ * Why: the chat is this window's own, so the sentence names it as such, with the folder it is still writing when the watch saw one, and not as "an earlier chat or another editor window".
+ * @param awaitedOwnRun - This window's own stopped watch while its chat is waited for.
+ * @param waitEndsAtMs - The moment the start waits until: the watch's end plus the bound, or a later end the caller worked out.
+ * @param seenCandidate - The candidate that watch saw and that is still in the way; `undefined` when none is.
+ * @returns The sentence that names this window's chat, the candidate if any, the watch's end and the end of the wait.
+ * @example
+ * ownChatReason({ outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: [] }, 902_000, undefined)
+ * // => 'The VS Code chat this window asked at … may still be updating this Wiki; Codebook stopped watching it at … and waits for it until …. If that chat was stopped, choose Update anyway in the editor’s notification.'
+ */
+function ownChatReason(
+  awaitedOwnRun: WikiLastRun,
+  waitEndsAtMs: number,
+  seenCandidate: WikiCandidate | undefined,
+): string {
+  // The candidate the watch saw is named, so the learner knows which folder that chat may still be writing.
+  const staged = seenCandidate
+    ? ` (candidate ${seenCandidate.name}, written ${formatClockTime(seenCandidate.writtenAtMs, {})})`
+    : ''
+  return `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be updating this Wiki${staged}; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatClockTime(waitEndsAtMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`
+}
+
+/**
  * Words the refusals for the latest active candidate and for this window's own stopped watch; called by {@link findUnacknowledgedWikiLeftover}.
- * Why: a candidate this window's stopped watch saw is that watch's chat's, so one refusal names both and its "Update anyway" passes both; a candidate the watch never saw is named in a refusal of its own, before the refusal for the watch.
+ * Why: a candidate this window's stopped watch saw is that watch's chat's, so one refusal names both, in the sentence for this window's own chat ({@link ownChatReason}), and its "Update anyway" passes both; a candidate the watch never saw is named in a refusal of its own, before the refusal for the watch.
  * @param activeCandidate - The candidate that shows someone is still updating this Wiki ({@link selectActiveWikiCandidate}); `undefined` when there is none.
  * @param awaitedOwnRun - This window's own stopped watch while its chat is waited for; `undefined` otherwise.
  * @param watchTimeoutMs - The watch bound, which each sentence's "waits for it until" adds.
  * @returns The candidate's refusal first, then the watch's; one refusal that names both when the watch saw the candidate, and the later end of the two waits: the candidate's (its writing plus the bound) or the watch's (its end plus the bound), so a press at the named time is not refused again for the same chat.
  * @example
  * ownChatRefusals({ name: 'wiki.stage-1', writtenAtMs: 1_500, ownedPaths: [] }, { outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: ['wiki.stage-1'] }, 900_000)
- * // => [{ named: [{ kind: 'candidate', name: 'wiki.stage-1' }, { kind: 'last-run', endedAtMs: 2_000 }], reason: 'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, …). Codebook waits for it until <the clock time of 902_000>. …' }]
+ * // => [{ named: [{ kind: 'candidate', name: 'wiki.stage-1' }, { kind: 'last-run', endedAtMs: 2_000 }], reason: 'The VS Code chat this window asked at … may still be updating this Wiki (candidate wiki.stage-1, written …); Codebook stopped watching it at … and waits for it until <the clock time of 902_000>. …' }]
  */
 function ownChatRefusals(
   activeCandidate: WikiCandidate | undefined,
@@ -110,7 +133,11 @@ function ownChatRefusals(
       ? [
           {
             named: [ownRunLeftover],
-            reason: `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatClockTime(awaitedOwnRun.endedAtMs + watchTimeoutMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+            reason: ownChatReason(
+              awaitedOwnRun,
+              awaitedOwnRun.endedAtMs + watchTimeoutMs,
+              undefined,
+            ),
           },
         ]
       : []
@@ -120,10 +147,7 @@ function ownChatRefusals(
     kind: 'candidate',
     name: activeCandidate.name,
   }
-  /** Words the candidate's refusal with the moment the start waits until. */
-  const candidateReason = (waitEndsAtMs: number): string =>
-    `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(waitEndsAtMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`
-  // A candidate the stopped watch saw is that watch's chat's: its refusal names the watch too, which then needs no refusal of its own. The start waits for both, so the sentence names the later end: the candidate's, or the watch's.
+  // A candidate the stopped watch saw is that watch's chat's: one refusal names this window's chat with that candidate, and the watch needs no refusal of its own. The start waits for both, so the sentence names the later end: the candidate's, or the watch's.
   if (
     awaitedOwnRun &&
     ownRunLeftover &&
@@ -132,16 +156,18 @@ function ownChatRefusals(
     return [
       {
         named: [candidateLeftover, ownRunLeftover],
-        reason: candidateReason(
+        reason: ownChatReason(
+          awaitedOwnRun,
           Math.max(activeCandidate.writtenAtMs, awaitedOwnRun.endedAtMs) +
             watchTimeoutMs,
+          activeCandidate,
         ),
       },
     ]
   return [
     {
       named: [candidateLeftover],
-      reason: candidateReason(activeCandidate.writtenAtMs + watchTimeoutMs),
+      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + watchTimeoutMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     },
     ...ownRunRefusal,
   ]
