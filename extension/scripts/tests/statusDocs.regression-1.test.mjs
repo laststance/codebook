@@ -74,18 +74,19 @@ test('Cycle 0046 resumes from totals that include every task and its current clo
 // Regression: Cycle 0046 task481 — the current replay action still asks to fix closed465 and verify closed26.
 // Found by /qa on 2026-10-11.
 // Report: docs/cycles/0046-carried-defects-of-cycle-0045.md#cursor-retained-motion-reentry-after-context-restoration-2026-10-11
-// Cycle 0047 row 202 (S2OCR3-1): since the state moved into the active cycle record, the state is read with that cycle's own table, not Cycle 0046's, so a "Fix N" is judged against the rows it names.
+// Cycle 0047 row 202 (S2OCR3-1): since the state moved into the active cycle record, the state is read with that cycle's own table, not Cycle 0046's, so a "Fix N" is judged against the rows it names. Row 243 (P2CR-1): the table is the one the state links, and a failed read fails the test instead of passing it on an empty table.
 // Value: protects=actionable current replay gaps; fails_when=the next action asks to fix a defect the active cycle's table has closed; why_new=count checks do not inspect gap actions; seam=none; no_claim=native replay completion.
 test("the current replay action never asks to repair a defect the active cycle's table has closed", async () => {
-  // Arrange: the current state is a section of the active cycle record (no state file since 2026-10-19), and its "Fix N" names that cycle's rows.
-  const { cycle, state } = await readCurrentState()
-  const table = await readFile(
-    new URL(
-      `../../../docs/cycles/${cycle}-carried-defects.md`,
-      import.meta.url,
-    ),
-    'utf8',
-  ).catch(() => '')
+  // Arrange: the current state is a section of the active cycle record (no state file since 2026-10-19), and its "Fix N" names the rows of the table it links.
+  const { state } = await readCurrentState()
+  const tableName = /\d{4}-carried-defects\.md/.exec(state)?.[0]
+  // A state that links no table names no row to repair; a linked table must be read, never taken for an empty one (Cycle 0047 row 243).
+  const table = tableName
+    ? await readFile(
+        new URL(`../../../docs/cycles/${tableName}`, import.meta.url),
+        'utf8',
+      )
+    : ''
 
   // Act: the final cell owns current closure, and the gap row's final cell owns its next action.
   const taskRows = table.split('\n').filter((line) => /^\| \d+ \|/.test(line))
@@ -105,6 +106,12 @@ test("the current replay action never asks to repair a defect the active cycle's
     ?.split(/(?<!\\)\|/)
     .at(-2)
   assert.ok(nextAction, 'the current replay gap must keep its next action')
+  // A "Fix N" can be judged only against a table the state links.
+  assert.equal(
+    /\bFix\s*\d+/.test(nextAction) && tableName === undefined,
+    false,
+    'a replay action that names a row to fix needs the table the state links',
+  )
   const requestedRepairs = [...nextAction.matchAll(/\bFix\s*(\d+)(?:'s|\b)/g)]
     .map((match) => match[1])
     .filter((taskId) => closedTaskIds.includes(taskId))

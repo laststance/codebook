@@ -1632,16 +1632,25 @@ test('a coverage upload that fails leaves a warning in the Test job', async () =
   )
 })
 
-// Value: protects=pnpm's one-day wait before it installs a newly published version, for every package of the extension's workspace (pnpm 11 and later wait 1440 minutes unless told otherwise); fails_when=pnpm-workspace.yaml exempts a package or a version from the wait (the fallow 3.34.1 upgrade left ten such entries) or shortens the wait below a day; why_new=Cycle 0047 row 1 (row 1066 of Cycle 0046); seam=none; no_claim=that the lockfile installs (CI's frozen install shows it)
+// Value: protects=pnpm's one-day wait before it installs a newly published version, for every package of the extension's workspace (pnpm 11 and later wait 1440 minutes unless told otherwise); fails_when=pnpm-workspace.yaml exempts a package or a version from the wait (the fallow 3.34.1 upgrade left ten such entries) or shortens the wait below a day, also by a value that is no plain number; why_new=Cycle 0047 row 1 (row 1066 of Cycle 0046), row 243 (P2CR-2); seam=none; no_claim=that the lockfile installs (CI's frozen install shows it)
 test('the extension workspace exempts no package from pnpm’s one-day wait for newly published versions and does not shorten that wait', async () => {
   // Arrange
   const workspace = await repositoryText('extension/pnpm-workspace.yaml')
 
   // Act
   const hasExemptions = /^minimumReleaseAgeExclude:/m.test(workspace)
-  const waitMinutes = /^minimumReleaseAge:\s*(\d+)/m.exec(workspace)?.[1]
+  const waitText = /^minimumReleaseAge:(.*)$/m.exec(workspace)?.[1]
+  // A present key holds a plain number of minutes, a comment allowed after it; quotes or other text do not count (Cycle 0047 row 243).
+  const waitMinutes =
+    waitText === undefined
+      ? undefined
+      : /^\s*(\d+)\s*(?:#.*)?$/.exec(waitText)?.[1]
 
   // Assert
   assert.equal(hasExemptions, false)
-  assert.equal(waitMinutes === undefined || Number(waitMinutes) >= 1440, true)
+  assert.equal(
+    waitText === undefined ||
+      (waitMinutes !== undefined && Number(waitMinutes) >= 1440),
+    true,
+  )
 })
