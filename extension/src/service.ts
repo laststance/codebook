@@ -3010,6 +3010,18 @@ export class StudyService {
       : fullLibraryMessage('run', limit, this.removalAvailability)
   }
 
+  /**
+   * Says whether the run's stop has ended after it sealed the run's recording, whether that stop stopped the run or failed after the seal ({@link stopRecord}); asked by {@link StudyWorkspace.checkpoint} as it takes a checkpoint of the run, which then holds the run's state after the seal.
+   * Why: the save of such a checkpoint releases the record of the recording's writer ({@link removeWriterRecordsOfSealedRecordings}). A run whose release failed after the seal is never marked stopped, and nothing retries its stop by itself, so a release that waited for an archive that says `stopped` kept the recording held while the window lived, and Delete in another window was refused (Cycle 0047 row 140). A checkpoint taken before the seal, or while a stop runs, holds no state after the seal.
+   * @param record - The run a checkpoint is taken of.
+   * @returns `true` once the run's recording is sealed and no stop of the run is running; `false` while a stop runs, and for a run whose recording is not sealed or that has none.
+   * @example
+   * service.hasStopEndedAfterSeal(record) // => true after `await service.stop(identity)` rejected with 'owned browser close: timed out' once the recording was sealed
+   */
+  hasStopEndedAfterSeal(record: StudyRecord): boolean {
+    return !record.stopping && record.recording?.isSealed === true
+  }
+
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */
   private async stopRecord(record: StudyRecord): Promise<void> {
     if (record.stopped) return

@@ -1088,8 +1088,20 @@ export class LearningLibrary {
     )
   }
 
-  /** Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, and only when its checkpoint was taken after its run had stopped, the record of the writer of the study's sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save. @example await library.saveStudy(study) */
-  saveStudy(input: RetainedStudy): Promise<void> {
+  /**
+   * Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, and only when its checkpoint was taken after the seal of the study's recording, the record of the writer of that sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save.
+   * A checkpoint was taken after the seal when its archive says its run had stopped, or when its caller says the run's stop had ended after the seal as it was taken, also a stop that failed after the seal (Cycle 0047 row 140); {@link StudyWorkspace} says so for every checkpoint it saves.
+   * @param input - The archive to save.
+   * @param checkpoint - What the caller knows of the checkpoint the archive was captured at: `isTakenAfterSealedStop` once the run's stop had ended after it sealed the recording ({@link StudyService.hasStopEndedAfterSeal}); left out, only an archive that says `stopped` releases the recording.
+   * @throws When the library is full, when the archive does not advance the study's kept checkpoint ({@link assertStudyCheckpoint}), or when the write fails; a writer record that cannot be removed fails nothing.
+   * @example
+   * await library.saveStudy(study)
+   * await library.saveStudy(archiveAfterAFailedStop, { isTakenAfterSealedStop: true }) // the sealed recording's writer record goes
+   */
+  saveStudy(
+    input: RetainedStudy,
+    checkpoint: { isTakenAfterSealedStop?: boolean } = {},
+  ): Promise<void> {
     const study = decodeRetainedStudy(input, this.workspaceKey)
     return this.locked(async () => {
       const existing = await this.entries()
@@ -1119,9 +1131,11 @@ export class LearningLibrary {
       )
       await this.writeMetadata(study)
       // The study's sealed recording no longer waits once an archive taken after the seal is saved; a record that cannot be removed only keeps the recording from other windows while its writer runs.
-      await removeWriterRecordsOfSealedRecordings(this.directory, study).catch(
-        () => undefined,
-      )
+      await removeWriterRecordsOfSealedRecordings(
+        this.directory,
+        study,
+        checkpoint.isTakenAfterSealedStop === true,
+      ).catch(() => undefined)
     })
   }
 

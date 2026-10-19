@@ -598,6 +598,8 @@ export interface UnsavedStudyArchive {
   record: StudyRecord
   signature: string
   checkpointRevision: number
+  /** Whether the checkpoint was taken once the run's stop had ended after it sealed the run's recording, also a stop that failed after the seal ({@link StudyService.hasStopEndedAfterSeal}): its save releases the recording's writer record ({@link LearningLibrary.saveStudy}, Cycle 0047 row 140). */
+  isTakenAfterSealedStop: boolean
 }
 
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
@@ -10410,6 +10412,8 @@ export class StudyWorkspace {
     if (force && !isAwaitedByRemoval && this.movingStudyId() === id)
       await this.studyMove
     const signature = service.state(record).materialSignature
+    // Read in the same turn as the signature, before the capture: a stop that seals the recording while the capture runs does not make this a checkpoint taken after the seal (Cycle 0047 row 140).
+    const isTakenAfterSealedStop = service.hasStopEndedAfterSeal(record)
     // A study on its way to the Trash is not captured again; saved material is not captured twice.
     if (this.skipsCheckpoint(id, signature, force)) return
     const checkpointRevision = service.beginHistory(record, signature)
@@ -10444,6 +10448,7 @@ export class StudyWorkspace {
         record,
         signature,
         checkpointRevision,
+        isTakenAfterSealedStop,
       })
       const write = this.persistArchive(id)
       // Current evidence is inspectable before disk completes; terminal retirement still waits for durability.
@@ -10479,8 +10484,14 @@ export class StudyWorkspace {
         let checkpoint = this.pendingArchives.get(id)
         // Retry storage reaches this writer without a checkpoint; a study on its way to the Trash keeps its pending entry unwritten.
         while (checkpoint && this.movingStudyId() !== id) {
-          const { archive, service, record, signature, checkpointRevision } =
-            checkpoint
+          const {
+            archive,
+            service,
+            record,
+            signature,
+            checkpointRevision,
+            isTakenAfterSealedStop,
+          } = checkpoint
           this.reportCheckpoint(
             service,
             record,
@@ -10489,7 +10500,7 @@ export class StudyWorkspace {
             'pending',
           )
           try {
-            await this.library!.saveStudy(archive)
+            await this.library!.saveStudy(archive, { isTakenAfterSealedStop })
             this.historyReads.set(id, (this.historyReads.get(id) ?? 0) + 1)
             this.loadedHistory.set(id, { signature, status: 'saved' })
             this.catalog = await this.library!.list()

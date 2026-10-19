@@ -24,6 +24,7 @@ import { RecordingStore } from '../recordingStore'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { lookAtRecording } from '../utils/lookAtRecording'
 import { readProcessStart } from '../utils/readProcessStart'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
@@ -8872,6 +8873,130 @@ test('a saved study with a recording a live window of this machine still writes 
           studyId: study.id,
           text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.`,
         },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the study of a recorded run whose release failed after it sealed the recording (a browser that did not close): the save of the checkpoint taken once that stop had ended gives up the record of the recording's writer, which is what tells another window that a run still holds the recording, so Delete there removes the study instead of refusing it with "Save its learning replay in that window", advice that could not help; a checkpoint taken before the seal and written after it still gives up nothing; fails_when=only an archive that says the run stopped gives the record up, so a run whose stop failed after the seal holds its recording for as long as its window lives (Cycle 0047 row 140), or the release is judged when the archive is written instead of when its checkpoint was taken, so the write of a checkpoint from before the seal gives the record up and another window may remove the study before the run's state after the seal is saved (row 124's race back); why_new=Cycle 0047 row 140 (P3OCR2-1 = P3CLA-7); seam=the reader's own refresh timer, stopped so that the test's refreshes are the only checkpoints, the runtime's release, which rejects, and the library's study save, whose first call the test holds while a second checkpoint waits behind it and the run stops; no_claim=a second editor window's Delete, which judges the record by the same look (studyRemoval tests)
+test('a recorded run whose release fails after the seal gives up its recording’s writer record with the save of the checkpoint taken after that stop, and not with the save of one taken before the seal', async (context) => {
+  // Arrange: a recorded run of this window, paused at its stop and saved; the save of its next checkpoint is held, a later checkpoint taken before the seal waits behind it, and the run's release then fails.
+  const harness = await workspaceHarness(true, true)
+  try {
+    readerSeams(harness).stopOwnTimer()
+    // A run records only for a build whose source is identified.
+    harness.service.environment.build.sourceHash = sha256('recorded-build')
+    harness.acknowledgeContext()
+    const { receipt, record } = await startRun(harness)
+    record.recording!.frame({
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(100)
+    await harness.reader.action('click')
+    await waitUntil(
+      () => harness.service.state(record).historyOutcome.status === 'saved',
+      'the save of the paused run',
+      2_000,
+    )
+    const studyId = `${harness.service.instanceId}_${record.id}`,
+      recordingDirectory = join(
+        harness.reader.inspect().libraryDirectory!,
+        'recordings.v2',
+        studyId,
+      )
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    const isWriterRecordLeftAfterEachSave: boolean[] = []
+    let studySaves = 0
+    let releaseFirstSave!: () => void
+    const firstSaveHeld = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve
+    })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...saved: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        studySaves++
+        if (studySaves === 1) await firstSaveHeld
+        await saveStudy.apply(this, saved)
+        isWriterRecordLeftAfterEachSave.push(
+          (await lookAtRecording(recordingDirectory)).hasWriterRecord,
+        )
+      },
+    )
+    const explainBeforeTheStop = (key: string, interpretation: string) =>
+      harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        key,
+        snapshotUri:
+          harness.service.state(record).participants.browser.snapshotUri!,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+    await explainBeforeTheStop('held-save', 'The theme was dark.')
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => studySaves === 1,
+      'the held save of a checkpoint taken before the seal',
+      2_000,
+    )
+    await explainBeforeTheStop(
+      'waiting-checkpoint',
+      'The theme was still dark.',
+    )
+    await readerSeams(harness).refresh()
+    const runtime = harness.runtimes[0]!,
+      stopRuntime = runtime.stop.bind(runtime)
+    runtime.stop = async (): Promise<void> => {
+      throw new Error('owned browser close: timed out')
+    }
+    harness.clock(200)
+
+    // Act: the run's stop fails after the seal; the held save ends and the checkpoint that waited behind it is written; then a checkpoint is taken after the stop.
+    const stop = await harness.service.stop(receipt).then(
+      () => 'stopped',
+      (error: unknown) => String(error),
+    )
+    // The harness's own shutdown releases the run once the test has read it.
+    runtime.stop = stopRuntime
+    releaseFirstSave()
+    await waitUntil(
+      () => isWriterRecordLeftAfterEachSave.length === 2,
+      'the writes of the two checkpoints taken before the seal',
+      2_000,
+    )
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => isWriterRecordLeftAfterEachSave.length === 3,
+      'the save of the checkpoint taken after the stop',
+      2_000,
+    )
+    const library = await harness.reader.learningStorage()
+
+    // Assert
+    assert.deepEqual(
+      {
+        stop,
+        isRecordingSealed: (await lookAtRecording(recordingDirectory)).isSealed,
+        savedState: (await library.readStudy(studyId)).state,
+        isWriterRecordLeftAfterEachSave,
+      },
+      {
+        stop: 'Error: owned browser close: timed out',
+        isRecordingSealed: true,
+        savedState: 'paused-browser',
+        isWriterRecordLeftAfterEachSave: [true, true, false],
       },
     )
   } finally {
