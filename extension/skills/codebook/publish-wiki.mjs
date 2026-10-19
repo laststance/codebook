@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
 import { hostname, uptime } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -309,7 +309,7 @@ async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
 /** Whether the entry at a written file's path, looked at without following it, is a regular file with the device and file id the record names ({@link writeOwnFile}). Called by {@link isStillWritten}, {@link removeUnwrittenFile} and {@link replaceOwnFileThrough}. @example await isSameFileAt({ path: '/repo/.codebook/next/index.html', dev: 2049n, ino: 131074n }) // => false once a link stands at the path */
 const isSameFileAt = file => lstat(file.path, { bigint: true }).then(status => status.isFile() && isSameFile(status, file), () => false);
 
-/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing, and neither does a close that fails, since the bytes it handed on may be lost (a full disk or a quota met at the close on a network or synced file system); the file the open made holds part of the bytes at most then, and is removed ({@link removeUnwrittenFile}) before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). A status read that fails leaves nothing that tells the file the open made from a file another process put at its name since, so the path is kept, and the refusal names it for the learner to judge ({@link unreadStatusRefusalOf}). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough} and {@link restoreManifestHeld}, and by {@link heldWriterOf} for each copy of a learner's file, which {@link copyLearnerFiles} hands it. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open, the write or the close rejects with, the first of them; `EEXIST` while an entry stands at the name; for a status read that fails, the refusal that names the kept file, with that failure as its cause. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
+/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing, and neither does a close that fails, since the bytes it handed on may be lost (a full disk or a quota met at the close on a network or synced file system); the file the open made holds part of the bytes at most then, and is removed ({@link removeUnwrittenFile}) before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). A status read that fails leaves nothing that tells the file the open made from a file another process put at its name since, so the path is kept, and the refusal names it for the learner to judge ({@link unreadStatusRefusalOf}). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough}, {@link restoreManifestHeld} and {@link writeWholeRecord}, and by {@link heldWriterOf} for each copy of a learner's file, which {@link copyLearnerFiles} hands it. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open, the write or the close rejects with, the first of them; `EEXIST` while an entry stands at the name; for a status read that fails, the refusal that names the kept file, with that failure as its cause. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
 async function writeOwnFile(path, bytes) {
   const handle = await open(path, 'wx');
   let file, failure, hasFailed = false;
@@ -431,6 +431,27 @@ export async function prepareWikiStage({ projectRoot, outputDirectory, stageDire
     throw error;
   }
   return { stage, manifest: join(stage, MANIFEST), output, legacyAdopted: Boolean(prior && !prior.receipt) };
+}
+
+/** Writes a journal or a recovery claim whole under its name, and only while no entry stands there: the bytes go into a new file beside it first ({@link writeOwnFile}), which a hard link then gives the name, so a stop at any point leaves the name with no file or with the whole record, never with an empty or a partial one that no recovery can read; the link refuses an entry at the name (`EEXIST`), as the exclusive create did before, so the journal still keeps a second publish or recovery out. A move would not: it puts the record in place of a journal that another step wrote meanwhile. A file system that cannot link (FAT and exFAT volumes, some network shares) gets the record by an exclusive create at its name ({@link writeOwnFile}), as the extension's own storage lock does there; a stop between that create and its write leaves a journal without a byte, which a later recovery ends ({@link endUnwrittenJournal}). The file beside the name is removed in every case; a stop before that leaves it, a file that nothing reads. Called by {@link publishWiki} and {@link startManifestRecovery} for their journal, and by {@link claimRecovery} for its claim. @throws `EEXIST` while an entry stands at the name, and what the write rejects with. @example await writeWholeRecord('/repo/.codebook/wiki.publish-journal.json', journalText) */
+async function writeWholeRecord(path, bytes) {
+  const pending = path + '.pending-' + randomUUID();
+  try {
+    await writeOwnFile(pending, bytes);
+    await link(pending, path).catch(error => {
+      if (error.code === 'EEXIST') throw error;
+      // A file system without hard links cannot give a written file a second name: the record is created in place there.
+      return writeOwnFile(path, bytes);
+    });
+  } finally { await unlink(pending).catch(() => undefined); }
+}
+
+/** Parses a journal or a recovery claim that a stopped step left, which a cloned repository may carry: text that is no JSON, or JSON that is no object, is refused with the fixed sentence given, the parser's error as its cause, so no text of the record reaches the agent (the parser's message quotes the record's start). Called by {@link resumeJournal} and {@link stoppedClaimAt}. @returns The record. @throws The refusal. @example parseRecordOf(Buffer.from('null'), 'The Wiki recovery claim is invalid; it was preserved.') // throws: The Wiki recovery claim is invalid; it was preserved. */
+function parseRecordOf(bytes, refusal) {
+  let record;
+  try { record = JSON.parse(bytes); } catch (cause) { throw new Error(refusal, { cause }); }
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new Error(refusal);
+  return record;
 }
 
 /** Removes only the journal/claim bytes owned by the completing operation. @example await removeOwnedRecord(path, bytes) */
@@ -580,7 +601,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const manifestText = await finalizedManifestTextOf(manifest, owned, stage);
   const { record, backup, finalizedReceiptText } = await publishJournalOf(paths, prior, receipt, manifestText, bytes, receiptBytes, system);
   const journalNow = journalOfCopiesOf(record, journal, stage, requirePathHeld, isFolderWhereItWas);
-  await writeFile(journal, journalNow.bytes, { flag: 'wx' });
+  await writeWholeRecord(journal, journalNow.bytes);
   const finalized = [], finalize = finalizerOf(stage, record.id, finalized);
   let movedOld = false, swapped = false;
   try {
@@ -911,12 +932,15 @@ async function requireGoneOwnersOf(record, journal, bytes, goneOwners = []) {
   if (unnamed !== undefined) throw new Error(goneOwnerRefusalOf(unnamed, record.owner, claimOwners));
 }
 
-/** Reads a stopped recovery claim, the exclusive record of an earlier recovery of a journal ({@link claimRecovery}), which must name the id its successor's claim is named by. Called by {@link claimRecovery} and {@link claimOwnersOf}. @param optional - Whether a missing claim is answered with undefined instead of refused. @returns The claim's bytes and its record; undefined for a missing claim when `optional`. @throws The refusal of a claim without a valid id, and of one that is no regular file; it is preserved. @example await stoppedClaimAt(journal + '.recovery-' + digest(bytes), true) // => { bytes: <Buffer …>, record: { pid: 4242, owner: { host: 'devbox', … }, id: '11111111-1111-4111-8111-111111111111' } } */
+/** The refusal of a recovery claim that is no record the publisher writes: no JSON object, or one without a valid id. Read by {@link stoppedClaimAt}. */
+const INVALID_CLAIM_REFUSAL = 'The Wiki recovery claim is invalid; it was preserved.';
+
+/** Reads a stopped recovery claim, the exclusive record of an earlier recovery of a journal ({@link claimRecovery}), which must name the id its successor's claim is named by. Called by {@link claimRecovery} and {@link claimOwnersOf}. @param optional - Whether a missing claim is answered with undefined instead of refused. @returns The claim's bytes and its record; undefined for a missing claim when `optional`. @throws The refusal of a claim that is no JSON object or has no valid id ({@link INVALID_CLAIM_REFUSAL}), and of one that is no regular file; it is preserved. @example await stoppedClaimAt(journal + '.recovery-' + digest(bytes), true) // => { bytes: <Buffer …>, record: { pid: 4242, owner: { host: 'devbox', … }, id: '11111111-1111-4111-8111-111111111111' } } */
 async function stoppedClaimAt(path, optional) {
   const bytes = await regularBytes(path, optional);
   if (bytes === undefined) return undefined;
-  const record = JSON.parse(bytes);
-  if (typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id)) throw new Error('The Wiki recovery claim is invalid; it was preserved.');
+  const record = parseRecordOf(bytes, INVALID_CLAIM_REFUSAL);
+  if (typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id)) throw new Error(INVALID_CLAIM_REFUSAL);
   return { bytes, record };
 }
 
@@ -943,7 +967,7 @@ async function claimRecovery(journal, bytes, ownerJudgement) {
   while (!visited.has(parent)) {
     visited.add(parent);
     const path = journal + '.recovery-' + parent, claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(ownerJudgement.system), id: randomUUID() });
-    try { await writeFile(path, claimBytes, { flag: 'wx' }); claims.push({ path, bytes: claimBytes }); return claims; }
+    try { await writeWholeRecord(path, claimBytes); claims.push({ path, bytes: claimBytes }); return claims; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     const previous = await stoppedClaimAt(path, false);
     await requireExited(previous.record, ownerJudgement);
@@ -1031,7 +1055,7 @@ async function restoreManifestHeld(record, paths, requirePathHeld, isResumed) {
   catch (error) { if (error.isHoldRefusal) await removeWritten(written, []); throw error; }
 }
 
-/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.goneOwners - The places, each the host name and the space of process ids (`{ host, space }`), that the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place): places that cannot come back, such as a rebuilt container or a machine that is gone, where no publisher or recovery runs; each accepted only when it is the place of the journal's owner or of an owner a stopped recovery claim of its chain records ({@link requireGoneOwnersOf}), never taken without the learner. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. A journal without a byte, which names no step, is ended alone ({@link endUnwrittenJournal}). @param options.goneOwners - The places, each the host name and the space of process ids (`{ host, space }`), that the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place): places that cannot come back, such as a rebuilt container or a machine that is gone, where no publisher or recovery runs; each accepted only when it is the place of the journal's owner or of an owner a stopped recovery claim of its chain records ({@link requireGoneOwnersOf}), never taken without the learner. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, goneOwners = [], system = SYSTEM_HERE }) {
   // The read of this recovery's owner, which judges a journal's or a claim's owner and names its own, starts now and runs beside the steps before them.
   ownerHere(system);
@@ -1039,6 +1063,8 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   // Every write and move below is held to the look the paths were resolved with.
   const requirePathHeld = await holdOfPath(paths, []);
   const found = await regularBytes(journal, true);
+  // A journal without a byte names no step and no owner: its writer stopped between creating and writing it, or is writing it now.
+  if (found?.length === 0) return endUnwrittenJournal(paths, requirePathHeld, goneOwners);
   // A journal found here is one a stopped publish or recovery left; this recovery writes its own below.
   const isResumed = found !== undefined;
   // A place confirmed gone names the owner of a journal or of its claims; without a journal it names none.
@@ -1062,9 +1088,24 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, each place the learner confirmed gone must be its owner's or that of a stopped recovery claim of its chain ({@link requireGoneOwnersOf}), its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of a place confirmed gone that is not its owner's, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
+/** How long a journal without a byte must have stood unchanged before a recovery takes it for one whose writer stopped between the exclusive create and the write ({@link endUnwrittenJournal}): a step that runs is between the two for an instant only. The grace the extension gives a storage lock left empty. Read by {@link endUnwrittenJournal}. */
+const UNWRITTEN_JOURNAL_GRACE_MS = 10_000;
+
+/** The refusal of a journal without a byte changed within {@link UNWRITTEN_JOURNAL_GRACE_MS}, whose step may be writing it now. Read by {@link endUnwrittenJournal}. */
+const UNWRITTEN_JOURNAL_REFUSAL = 'The Wiki publication journal is empty, and the step that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.';
+
+/** Ends a journal without a byte: one an earlier version leaves when it stops between the exclusive create of its journal and the write of it, which it does before a publish copies, finalizes or moves anything and before a recovery writes anything, and one this version leaves so on a file system that cannot link ({@link writeWholeRecord}). It names no owner and no step, and nothing it guards was changed yet, so it is removed once it has stood unchanged for {@link UNWRITTEN_JOURNAL_GRACE_MS}, past which no step that runs is still between the two; without that, every preparation and publish would stay refused for it while the skill forbids deleting a journal. Places confirmed gone are refused, as such a journal names no owner. Called by {@link recoverWikiPublication}. @returns `unwritten-journal-removed`. @throws The refusal of places confirmed gone, that of a journal changed within the grace ({@link UNWRITTEN_JOURNAL_REFUSAL}), and that of a changed path. @example await endUnwrittenJournal(paths, requirePathHeld, []) // => { status: 'unwritten-journal-removed', output: '/repo/.codebook/wiki' } */
+async function endUnwrittenJournal({ output, journal }, requirePathHeld, goneOwners) {
+  if (goneOwners.length > 0) throw new Error(goneOwnerRefusalOf(goneOwners[0], undefined, []));
+  if (Date.now() - (await lstat(journal)).mtimeMs <= UNWRITTEN_JOURNAL_GRACE_MS) throw new Error(UNWRITTEN_JOURNAL_REFUSAL);
+  await requirePathHeld();
+  await removeOwnedRecord(journal, Buffer.alloc(0));
+  return { status: 'unwritten-journal-removed', output };
+}
+
+/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, each place the learner confirmed gone must be its owner's or that of a stopped recovery claim of its chain ({@link requireGoneOwnersOf}), its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal that is no JSON object ({@link parseRecordOf}), of a journal of another output, of a place confirmed gone that is not its owner's, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
 async function resumeJournal(bytes, { root, output, journal }, requirePathHeld, ownerJudgement) {
-  const record = JSON.parse(bytes);
+  const record = parseRecordOf(bytes, 'The Wiki publication journal is invalid; it was preserved.');
   if (record?.projectRoot !== root || record.output !== output || !['publish', 'restore-manifest', undefined].includes(record.operation))
     throw new Error('The Wiki publication journal does not identify this output; inspect it without moving files.');
   await requireGoneOwnersOf(record, journal, bytes, ownerJudgement.goneOwners);
@@ -1081,7 +1122,7 @@ async function startManifestRecovery(paths, requirePathHeld, system) {
   if (state.actual && state.actual.equals(state.bytes)) return { result: { status: 'published-current', output } };
   const record = await manifestJournalOf(state, paths, system), bytes = Buffer.from(JSON.stringify(record));
   await requirePathHeld();
-  await writeFile(journal, bytes, { flag: 'wx' });
+  await writeWholeRecord(journal, bytes);
   await requirePathHeld().catch(async error => { await removeOwnedRecord(journal, bytes); throw error; });
   return { record, bytes, claims: [] };
 }

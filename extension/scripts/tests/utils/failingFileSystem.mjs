@@ -6,8 +6,8 @@ export * from 'node:fs/promises'
 let pendingWriteFailure
 
 /**
- * Asks the next write through a handle of a file that `isAwaited` names to write the first half of its bytes and then fail with a system error, once: as a write that runs into a full disk (`ENOSPC`) or a file size limit (`EFBIG` under `ulimit -f`) after its `open` made the file. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
- * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose write fails.
+ * Asks the next write of a file that `isAwaited` names, through a handle of its `open` or by `writeFile`, to write the first half of its bytes and then fail with a system error, once: as a write that runs into a full disk (`ENOSPC`) or a file size limit (`EFBIG` under `ulimit -f`) after it made the file. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` or `writeFile` is asked for is the one whose write fails.
  * @param {'EFBIG' | 'ENOSPC'} code - The system error.
  * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, once the first half is written and before the write fails, while the handle is still open: as another process that puts a file of its own at the name meanwhile.
  * @returns {void}
@@ -211,4 +211,65 @@ export async function rename(from, to) {
 export async function unlink(path) {
   removalObserver?.(String(path))
   return fileSystem.unlink(path)
+}
+
+/**
+ * Writes a file as `writeFile` does, except for the file {@link failWriteOf} waits for: that write puts the first half of the bytes into the file, with the caller's flags, and then fails with the system error, once.
+ * @param {string} path - The file to write.
+ * @param {string | Buffer} data - Its bytes.
+ * @param {...unknown} rest - The caller's options, handed on unchanged.
+ * @returns {Promise<void>} What `writeFile` answers.
+ * @example
+ * await writeFile('/repo/.codebook/wiki.publish-journal.json', journalText, { flag: 'wx' }) // rejects with code ENOSPC after writing half of it, after failWriteOf named this file
+ */
+export async function writeFile(path, data, ...rest) {
+  const failure = pendingWriteFailure
+  // Only the awaited file's write fails, once.
+  if (!failure?.isAwaited(String(path)))
+    return fileSystem.writeFile(path, data, ...rest)
+  pendingWriteFailure = undefined
+  const bytes = Buffer.from(data)
+  await fileSystem.writeFile(
+    path,
+    bytes.subarray(0, Math.floor(bytes.length / 2)),
+    ...rest,
+  )
+  throw Object.assign(new Error(`${failure.code}: the write stopped partway`), {
+    code: failure.code,
+  })
+}
+
+/** The hard link a test asked to fail: the new name it waits for and the system error it fails with; gone once it failed. */
+let pendingLinkFailure
+
+/**
+ * Asks the next hard link that gives a file a name `isAwaited` names to fail with a system error, once, and make no name: as a file system that cannot link does (`EPERM` on FAT and exFAT volumes, `ENOTSUP` on some network shares). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * @param {(path: string) => boolean} isAwaited - Whether the new name of a link is the one whose link fails.
+ * @param {'ENOTSUP' | 'EPERM'} code - The system error.
+ * @returns {void}
+ * @example
+ * failLinkOf((path) => path.endsWith('/wiki.publish-journal.json'), 'EPERM')
+ */
+export function failLinkOf(isAwaited, code) {
+  pendingLinkFailure = { isAwaited, code }
+}
+
+/**
+ * Gives a file a second name as `link` does, except for the name {@link failLinkOf} waits for: that link fails with the system error, once, and makes no name.
+ * @param {string} existingPath - The file.
+ * @param {string} newPath - Its new name.
+ * @returns {Promise<void>} What `link` answers.
+ * @example
+ * await link('/repo/.codebook/wiki.publish-journal.json.pending-1', '/repo/.codebook/wiki.publish-journal.json') // rejects with code EPERM after failLinkOf named the journal
+ */
+export async function link(existingPath, newPath) {
+  const failure = pendingLinkFailure
+  // Only the awaited name's link fails, once.
+  if (!failure?.isAwaited(String(newPath)))
+    return fileSystem.link(existingPath, newPath)
+  pendingLinkFailure = undefined
+  throw Object.assign(
+    new Error(`${failure.code}: link '${existingPath}' -> '${newPath}'`),
+    { code: failure.code },
+  )
 }
