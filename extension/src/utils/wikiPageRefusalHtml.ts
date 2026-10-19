@@ -6,20 +6,23 @@ import { escapeHtml } from './escapeHtml'
 export type WikiPageRefusalReason = 'deadline' | 'failed' | 'too-large'
 
 /**
- * Prints the page the Wiki reader answers instead of a page it could not prepare, with one plain sentence for the learner: what happened and how to get the page back, and a link to the Wiki's overview, so reading goes on as it does after a page the Wiki no longer has. It names no path and no error, so it shows nothing of the project.
+ * Prints the page the Wiki reader answers instead of a page it could not prepare, with one plain sentence for the learner: what happened and how to get the page back, and a link to the Wiki's overview, so reading goes on as it does after a page the Wiki no longer has. The overview's own refusal page has no such link, which would only open the same refusal again; its sentence names the next step. It names no path and no error, so it shows nothing of the project.
  * A worker fails also for a cause outside the page (its file did not load, it exited), so the sentence for `failed` does not blame the page: it advises a reload first, and Update LLM Wiki only when the page is still not shown. A page that passed the deadline is one built to make the parser slow, and a page file too large to prepare is far larger than any generated page, so its file may have been changed by hand; the update refuses to replace a page changed by hand, so these two sentences advise restoring the page or moving the change aside before Update LLM Wiki. Every next step names Update LLM Wiki, as the editor's other Wiki messages do.
  * Called by the Wiki reader when {@link servedWikiPageOffThread} answers without a page, and for a page file larger than {@link WIKI_PAGE_FILE_LIMIT_BYTES}; the reader serves it with status 503 and the policy of every served page, which it needs no exception from (no script, no style).
  * @param reason - Why the page is not served.
  * @param deadlineMs - The deadline the preparation had, written in the sentence in seconds.
  * @param readerPrefix - The path under which the reader serves this Wiki (`/w/<token>/`), where its overview is; printed escaped ({@link escapeHtml}).
+ * @param pagePath - The refused page's path in the Wiki folder; for the overview ({@link WIKI_ENTRY_FILE}) the link to the overview is left out.
  * @returns A whole HTML document.
  * @example
- * wikiPageRefusalHtml('deadline', 10_000, '/w/0f/') // => '<!doctype html>…<p>Codebook stopped preparing this page after 10 seconds. …</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p>…'
+ * wikiPageRefusalHtml('deadline', 10_000, '/w/0f/', 'guide.html') // => '<!doctype html>…<p>Codebook stopped preparing this page after 10 seconds. …</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p>…'
+ * wikiPageRefusalHtml('deadline', 10_000, '/w/0f/', 'index.html') // => '<!doctype html>…<p>Codebook stopped preparing this page after 10 seconds. …</p></body></html>'
  */
 export function wikiPageRefusalHtml(
   reason: WikiPageRefusalReason,
   deadlineMs: number,
   readerPrefix: string,
+  pagePath: string,
 ): string {
   const sentence =
     reason === 'deadline'
@@ -27,5 +30,10 @@ export function wikiPageRefusalHtml(
       : reason === 'too-large'
         ? 'This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.'
         : 'Codebook could not prepare this page for reading. Reload the page; if it is still not shown, press Update LLM Wiki.'
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>${sentence}</p><p><a href="${escapeHtml(readerPrefix)}${WIKI_ENTRY_FILE}">Open the Wiki’s overview</a></p></body></html>`
+  // The overview's own refusal page would link to itself.
+  const overviewLink =
+    pagePath === WIKI_ENTRY_FILE
+      ? ''
+      : `<p><a href="${escapeHtml(readerPrefix)}${WIKI_ENTRY_FILE}">Open the Wiki’s overview</a></p>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>${sentence}</p>${overviewLink}</body></html>`
 }

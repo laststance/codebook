@@ -901,17 +901,27 @@ test('every page the reader serves lets only script files of its own origin and 
 const SERVED_PAGE_POLICY =
   "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'"
 
-// Value: protects=the editor's extension host, where every extension of the window stops while the Wiki reader prepares a page on the host's own thread, against a page in the Wiki folder built to make the HTML parser slow (nothing limits a page's size); fails_when=the reader prepares a page in its request handler again, so the host's event loop stands still for seconds to minutes, or it serves a page whose preparation passed the deadline, or its answer then lacks the status, the sentence, the link to this reader's overview or the page policy; why_new=Cycle 0046 second /ship PERF1 residual: pages on which parse5 itself takes time that grows with the square of the page took 13 s to over a minute for 1 MB; P2D2 the link to the overview; seam=the reader loaded with loadModule and a constants module whose WIKI_PAGE_SERVE_DEADLINE_MS is 2,000 ms; no_claim=the native editor (the test process's event loop stands for the host's)
+// Value: protects=the editor's extension host, where every extension of the window stops while the Wiki reader prepares a page on the host's own thread, against a page in the Wiki folder built to make the HTML parser slow (nothing limits a page's size); fails_when=the reader prepares a page in its request handler again, so the host's event loop stands still for seconds to minutes, or it serves a page whose preparation passed the deadline, or its answer then lacks the status, the sentence, the link to this reader's overview or the page policy; why_new=Cycle 0046 second /ship PERF1 residual: pages on which parse5 itself takes time that grows with the square of the page took 13 s to over a minute for 1 MB; P2D2 the link to the overview; Cycle 0047 row 15 (P3D1): the refused page is one other than the overview, whose own refusal page has no link to itself; seam=the reader loaded with loadModule and a constants module whose WIKI_PAGE_SERVE_DEADLINE_MS is 2,000 ms; no_claim=the native editor (the test process's event loop stands for the host's)
 test('a page built to make the HTML parser slow is answered within about the deadline with status 503 and a sentence for the learner under the page policy, while the event loop of the host runs on', async (context) => {
-  // Arrange: an overview of 10,000 open elements and 100,000 paragraph ends, which the parser takes about 6 s for on the development host, and a reader whose deadline is 2 s.
+  // Arrange: a page of the Wiki of 10,000 open elements and 100,000 paragraph ends, which the parser takes about 6 s for on the development host, and a reader whose deadline is 2 s.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-page-')),
   )
   context.after(() => rm(projectRoot, { recursive: true, force: true }))
-  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
-    join(outputDirectory, 'index.html'),
+    join(outputDirectory, 'slow.html'),
     `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(100_000)}</body>`,
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'slow.html' }],
+      assets: [],
+      includedSources: [],
+    }),
   )
   const { startDeepWikiReader: startReaderWithShortDeadline } =
     await loadModule<typeof deepWikiReaderModule>(
@@ -935,7 +945,7 @@ test('a page built to make the HTML parser slow is answered within about the dea
 
   // Act: the page, and how long it took while a timer ticked every 10 ms.
   const started = performance.now()
-  const response = await fetch(reader.url)
+  const response = await fetch(new URL('slow.html', reader.url))
   const answer = {
     status: response.status,
     type: response.headers.get('content-type'),
@@ -960,17 +970,27 @@ test('a page built to make the HTML parser slow is answered within about the dea
   assert.ok(ticks >= 80, `the timer ticked ${ticks} times`)
 })
 
-// Value: protects=the reader's origin and the learner against a page the reader could not prepare: it must never be served as the Wiki folder holds it, with its refused addresses live; fails_when=a worker that throws or exits without the page leaves the request unanswered, answers it with the page as written, or with a JSON error instead of the sentence for the learner and the link to this reader's overview; why_new=Cycle 0046 second /ship PERF1 residual (pages are prepared on a worker thread); P2D2 the sentence that does not blame the page and the link to the overview; seam=the reader loaded with loadModule, with the page-worker module loaded so that its folder (__dirname) holds a worker script that throws
+// Value: protects=the reader's origin and the learner against a page the reader could not prepare: it must never be served as the Wiki folder holds it, with its refused addresses live; fails_when=a worker that throws or exits without the page leaves the request unanswered, answers it with the page as written, or with a JSON error instead of the sentence for the learner and the link to this reader's overview; why_new=Cycle 0046 second /ship PERF1 residual (pages are prepared on a worker thread); P2D2 the sentence that does not blame the page and the link to the overview; Cycle 0047 row 15 (P3D1): the refused page is one other than the overview, whose own refusal page has no link to itself; seam=the reader loaded with loadModule, with the page-worker module loaded so that its folder (__dirname) holds a worker script that throws
 test('a page whose worker fails is answered with status 503 and a sentence for the learner under the page policy, never with the page as the folder holds it', async (context) => {
-  // Arrange: an overview with a refused link, and a reader whose page worker throws when it starts.
+  // Arrange: a page of the Wiki with a refused link, and a reader whose page worker throws when it starts.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-failed-worker-')),
   )
   context.after(() => rm(projectRoot, { recursive: true, force: true }))
-  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
   await writeFile(
-    join(outputDirectory, 'index.html'),
+    join(outputDirectory, 'hosts.html'),
     '<!doctype html><body><a href="vscode://file/etc/hosts">hosts</a></body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'hosts.html' }],
+      assets: [],
+      includedSources: [],
+    }),
   )
   const workerFolder = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-page-worker-'),
@@ -999,7 +1019,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   context.after(() => reader.close())
 
   // Act
-  const response = await fetch(reader.url)
+  const response = await fetch(new URL('hosts.html', reader.url))
   const answer = {
     status: response.status,
     type: response.headers.get('content-type'),
@@ -1020,7 +1040,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   })
 })
 
-// Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
+// Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
 test('a page file larger than the reader prepares is answered with 503 and a sentence that says so, without the file being opened, while a page within the limit is read and served', async (context) => {
   // Arrange: an overview of 2,021 bytes and a page of 33 bytes, a reader that prepares pages of 1,000 bytes at most, a file system that notes the files the reader opens or reads, and a page worker that counts its pages.
   const projectRoot = await realpath(
@@ -1108,7 +1128,7 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
         status: 503,
         type: 'text/html; charset=utf-8',
         policy: SERVED_PAGE_POLICY,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p></body></html>',
       },
       small: { status: 200, body: '<p>Prepared page</p>' },
       filesTheReaderRead: ['small.html'],
@@ -1117,7 +1137,7 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
   )
 })
 
-// Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
+// Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
 test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
   // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.
   const projectRoot = await realpath(
@@ -1176,7 +1196,7 @@ test('a page file that grows past the limit after the reader looked at its size 
     {
       answer: {
         status: 503,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p></body></html>',
       },
       preparedPageCount: 0,
     },

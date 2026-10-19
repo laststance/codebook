@@ -9,7 +9,12 @@ test('a page the reader stopped preparing at its deadline says so, advises resto
   const readerPrefix = '/w/0f/'
 
   // Act
-  const page = wikiPageRefusalHtml('deadline', 10_000, readerPrefix)
+  const page = wikiPageRefusalHtml(
+    'deadline',
+    10_000,
+    readerPrefix,
+    'guide.html',
+  )
 
   // Assert
   assert.equal(
@@ -24,7 +29,7 @@ test('a page the reader’s worker failed to prepare advises a reload before pre
   const readerPrefix = '/w/0f/'
 
   // Act
-  const page = wikiPageRefusalHtml('failed', 10_000, readerPrefix)
+  const page = wikiPageRefusalHtml('failed', 10_000, readerPrefix, 'guide.html')
 
   // Assert
   assert.equal(
@@ -39,7 +44,12 @@ test('a page whose file is too large to prepare says so, advises restoring the p
   const readerPrefix = '/w/0f/'
 
   // Act
-  const page = wikiPageRefusalHtml('too-large', 10_000, readerPrefix)
+  const page = wikiPageRefusalHtml(
+    'too-large',
+    10_000,
+    readerPrefix,
+    'guide.html',
+  )
 
   // Assert
   assert.equal(
@@ -54,11 +64,31 @@ test('the overview link of a refusal page carries the reader’s prefix as writt
   const readerPrefix = '/w/t"x&/'
 
   // Act
-  const page = wikiPageRefusalHtml('failed', 10_000, readerPrefix)
+  const page = wikiPageRefusalHtml('failed', 10_000, readerPrefix, 'guide.html')
 
   // Assert
   assert.equal(
     page,
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Reload the page; if it is still not shown, press Update LLM Wiki.</p><p><a href="/w/t&quot;x&amp;/index.html">Open the Wiki’s overview</a></p></body></html>',
+  )
+})
+
+// Value: protects=a learner whose Wiki overview itself could not be prepared; fails_when=the overview's refusal page links to the overview, so the link only opens the same refusal again, a loop with no way on; why_new=Cycle 0047 row 15 (P3D1); seam=none; no_claim=the overview's address under another prefix (the reader serves its overview as index.html)
+test('the refusal page of the Wiki’s overview itself has no link to the overview, which would open the same refusal again', () => {
+  // Arrange
+  const readerPrefix = '/w/0f/'
+
+  // Act
+  const page = wikiPageRefusalHtml(
+    'deadline',
+    10_000,
+    readerPrefix,
+    'index.html',
+  )
+
+  // Assert: the sentence alone, with its next step.
+  assert.equal(
+    page,
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 10 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p></body></html>',
   )
 })

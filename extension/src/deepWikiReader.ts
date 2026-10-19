@@ -526,7 +526,12 @@ export async function startDeepWikiReader(
       if (!content) {
         response.statusCode = 503
         response.end(
-          wikiPageRefusalHtml('too-large', WIKI_PAGE_SERVE_DEADLINE_MS, prefix),
+          wikiPageRefusalHtml(
+            'too-large',
+            WIKI_PAGE_SERVE_DEADLINE_MS,
+            prefix,
+            relativePath,
+          ),
         )
         return
       }
@@ -557,7 +562,12 @@ export async function startDeepWikiReader(
       // A page the worker did not prepare is never served as the folder holds it.
       response.statusCode = 503
       response.end(
-        wikiPageRefusalHtml(served.state, WIKI_PAGE_SERVE_DEADLINE_MS, prefix),
+        wikiPageRefusalHtml(
+          served.state,
+          WIKI_PAGE_SERVE_DEADLINE_MS,
+          prefix,
+          relativePath,
+        ),
       )
       return
     }
