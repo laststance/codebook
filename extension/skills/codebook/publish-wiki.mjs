@@ -1458,7 +1458,7 @@ async function recoverAt(paths, requirePathHeld, { projectRoot, outputDirectory,
   return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** Opens a recovery at the paths {@link recoverWikiPublication} resolved: a journal without a byte is ended alone ({@link endUnwrittenJournal}), a journal a stopped step left is taken up ({@link resumeJournal}), a publish lock without a journal is ended under the gate of its owner ({@link endStoppedLock}), places confirmed gone without either are refused unless each is that of a writer a file a stopped run left beside them names ({@link requireOrphanWritersAt}), and otherwise an edited manifest's recovery starts ({@link startManifestRecovery}). Called by {@link recoverAt}. @param ownerJudgement - The system and the places the learner confirmed gone. @returns `{ result }` for a recovery that ended here; otherwise the journal's record and bytes, the claims taken and whether the journal was one a stopped step left (`isResumed`). @throws The refusals of the steps it takes. @example await openRecovery(paths, requirePathHeld, { system: SYSTEM_HERE, goneOwners: [] }) // => { result: { status: 'published-current', output: '/repo/.codebook/wiki' } } */
+/** Opens a recovery at the paths {@link recoverWikiPublication} resolved: a journal without a byte is ended alone ({@link endUnwrittenJournal}), a journal a stopped step left is taken up ({@link resumeJournal}), a publish lock without a journal is ended under the gate of its owner ({@link endStoppedLock}), or, where the journal of its run stands once its recovery is claimed, that journal is opened instead, places confirmed gone without either are refused unless each is that of a writer a file a stopped run left beside them names ({@link requireOrphanWritersAt}), and otherwise an edited manifest's recovery starts ({@link startManifestRecovery}). Called by {@link recoverAt}. @param ownerJudgement - The system and the places the learner confirmed gone. @returns `{ result }` for a recovery that ended here; otherwise the journal's record and bytes, the claims taken and whether the journal was one a stopped step left (`isResumed`). @throws The refusals of the steps it takes. @example await openRecovery(paths, requirePathHeld, { system: SYSTEM_HERE, goneOwners: [] }) // => { result: { status: 'published-current', output: '/repo/.codebook/wiki' } } */
 async function openRecovery(paths, requirePathHeld, ownerJudgement) {
   const found = await regularBytes(paths.journal, true), { goneOwners } = ownerJudgement;
   // A journal without a byte names no step and no owner: its writer stopped between creating and writing it, or is writing it now.
@@ -1467,7 +1467,11 @@ async function openRecovery(paths, requirePathHeld, ownerJudgement) {
   if (found !== undefined) return { ...await resumeJournal(found, paths, requirePathHeld, ownerJudgement), isResumed: true };
   // Without a journal, a publish lock that a stopped publish or preview left is ended under the gate of its owner.
   const lockBytes = await regularBytes(paths.lock, true);
-  if (lockBytes !== undefined) return { result: await endStoppedLock(lockBytes, paths, requirePathHeld, ownerJudgement) };
+  if (lockBytes !== undefined) {
+    const result = await endStoppedLock(lockBytes, paths, requirePathHeld, ownerJudgement);
+    // A journal that came once the lock's recovery was claimed is opened as one a stopped step left.
+    return result === undefined ? openRecovery(paths, requirePathHeld, ownerJudgement) : { result };
+  }
   // A place confirmed gone names the owner of a journal, of a lock or of their claims; without either it may name only the writer of a file a stopped run left beside them, which the sweep after this recovery ends.
   if (goneOwners.length > 0) await requireOrphanWritersAt(paths, goneOwners);
   return { ...await startManifestRecovery(paths, requirePathHeld, ownerJudgement.system), isResumed: false };
@@ -1562,7 +1566,7 @@ const INVALID_LOCK_REFUSAL = 'The Wiki publish lock is invalid; it was preserved
 /** The refusal of a publish lock without a byte changed within {@link UNWRITTEN_RECORD_GRACE_MS}, whose publish may be writing it now. Read by {@link endStoppedLock}. */
 const UNWRITTEN_LOCK_REFUSAL = 'The Wiki publish lock is empty, and the publish that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.';
 
-/** Ends the publish lock that a stopped publish or preview left without a journal ({@link takePublishLock}): stopped before its journal, or after the journal was removed, while it wrote the candidate's pages, or a preview. The lock is judged by the gate of a journal: it must be a record the publisher writes ({@link INVALID_LOCK_REFUSAL}, none of its text repeated), each place the learner confirmed gone must be its owner's or that of a stopped recovery claim of it ({@link requireGoneOwnersOf}), its owner must have exited ({@link requireExited}), and the recovery claims it as it claims a journal ({@link claimRecovery}), so two recoveries never end one lock. A lock without a byte, which a publish leaves where links fail when it stops between the lock's create and its write, names no owner and is ended once it has stood for the grace ({@link endUnwrittenRecord}). Nothing in the candidate is changed: a publish writes no copy and finalizes nothing before its journal, and the pages it wrote are written again by the next one; the side file of a journal, whole or cut short, and the files beside the lock and the journal through which they were to get their names, which a publish stopped before or while writing the journal left, go with the lock, by its id ({@link removeLeftoversOfRun}). Called by {@link openRecovery} where no journal stands. @param bytes - The lock's bytes. @returns `publish-lock-removed`. @throws The refusals of an invalid lock, of a place confirmed gone that is not its owner's, of an owner that may still run, of a young lock without a byte and of a changed path; the lock is kept then. @example await endStoppedLock(bytes, paths, requirePathHeld, { system: SYSTEM_HERE, goneOwners: [] }) // => { status: 'publish-lock-removed', output: '/repo/.codebook/wiki' } */
+/** Ends the publish lock that a stopped publish or preview left without a journal ({@link takePublishLock}): stopped before its journal, or after the journal was removed, while it wrote the candidate's pages, or a preview. The lock is judged by the gate of a journal: it must be a record the publisher writes ({@link INVALID_LOCK_REFUSAL}, none of its text repeated), each place the learner confirmed gone must be its owner's or that of a stopped recovery claim of it ({@link requireGoneOwnersOf}), its owner must have exited ({@link requireExited}), and the recovery claims it as it claims a journal ({@link claimRecovery}), so two recoveries never end one lock. A lock without a byte, which a publish leaves where links fail when it stops between the lock's create and its write, names no owner and is ended once it has stood for the grace ({@link endUnwrittenRecord}). Nothing in the candidate is changed: a publish writes no copy and finalizes nothing before its journal, and the pages it wrote are written again by the next one; the side file of a journal, whole or cut short, and the files beside the lock and the journal through which they were to get their names, which a publish stopped before or while writing the journal left, go with the lock, by its id ({@link removeLeftoversOfRun}). A journal its publish wrote after the recovery first looked for one, before that publish stopped, names the files beside it that the journal's recovery needs, so the lock's recovery looks for a journal again once it claimed the lock, and leaves the lock and those files to the journal's recovery when one stands ({@link openRecovery}), which ends the lock after the journal ({@link endLockOfRun}). Called by {@link openRecovery} where no journal stood. @param bytes - The lock's bytes. @returns `publish-lock-removed`; undefined where a journal stands once the lock is claimed, whose claim this recovery released. @throws The refusals of an invalid lock, of a place confirmed gone that is not its owner's, of an owner that may still run, of a young lock without a byte and of a changed path; the lock is kept then. @example await endStoppedLock(bytes, paths, requirePathHeld, { system: SYSTEM_HERE, goneOwners: [] }) // => { status: 'publish-lock-removed', output: '/repo/.codebook/wiki' } */
 async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
   const { lock, output } = paths;
   // A lock without a byte names no owner: its publish stopped between creating and writing it, or is writing it now.
@@ -1577,16 +1581,20 @@ async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
   await requireExited(record, ownerJudgement);
   await requirePathHeld();
   const claims = await claimRecovery(lock, bytes, ownerJudgement);
-  let completed = false;
+  let completed = false, hasJournal = false;
   try {
     await requirePathHeld();
     if (!(await regularBytes(lock)).equals(bytes)) throw new Error('The Wiki publish lock changed during recovery.');
-    // What the stopped publish left beside its lock and its journal goes first, by its id; the lock keeps every other step out until the end.
-    await removeLeftoversOfRun(paths, record.id);
-    await removeOwnedRecord(lock, bytes);
-    completed = true;
+    // A journal the stopped publish wrote after the first look names the files beside it: its recovery goes first, and ends the lock.
+    hasJournal = await regularBytes(paths.journal, true) !== undefined;
+    if (!hasJournal) {
+      // What the stopped publish left beside its lock and its journal goes first, by its id; the lock keeps every other step out until the end.
+      await removeLeftoversOfRun(paths, record.id);
+      await removeOwnedRecord(lock, bytes);
+      completed = true;
+    }
   } finally { await releaseClaims(claims, completed); }
-  return { status: 'publish-lock-removed', output };
+  return hasJournal ? undefined : { status: 'publish-lock-removed', output };
 }
 
 /** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') */

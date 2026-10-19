@@ -17141,3 +17141,56 @@ test('a publish whose publish lock is removed after it took it and before its sw
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=a candidate whose publish was killed past finalize after it copied a learner's file, when its journal is written, as by a publisher still at work, between the --recover's look for a journal and its read of the publish lock; fails_when=the recovery ends the lock by its id without a second look for the journal, so it removes the journal's side file and list of copies while the journal stays, and the next recovery cannot put the candidate back or tell its copies, so the candidate never publishes again; why_new=Cycle 0047 row 219 (P2CXA-A4); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), whose journal the test moves aside, and a copy of the shipped publisher whose `node:fs/promises` puts it back just before the recovery reads the lock (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a publisher that runs while its journal is written, which the lock's owner gate refuses
+test('a --recover that finds the publish lock alone and the journal of its run once it reads the lock recovers that journal first, leaves nothing beside the Wiki folder, and the candidate then publishes with the learner’s file kept', async () => {
+  // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; its journal is moved aside, and comes back just before the recovery reads the lock.
+  const { recoverWikiPublication: recoverWhileTheJournalComes } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+  const journal = `${wiki.output}.publish-journal.json`,
+    aside = join(wiki.directory, 'journal-aside.json')
+  try {
+    await rename(journal, aside)
+    swapBeforeReading(
+      (path) => path === `${wiki.output}.publish-lock.json`,
+      () => rename(aside, journal),
+    )
+
+    // Act: the recovery, then the candidate published again.
+    const recovery = await recoverWhileTheJournalComes({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery, besideTheWiki, nextPublish },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        besideTheWiki: [],
+        nextPublish: { preservedManualFiles: 1 },
+      },
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
