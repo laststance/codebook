@@ -6919,6 +6919,31 @@ export async function workspaceHarness(
       groups.find((group) => group.viewColumn === column)!.tabs.unshift(tab)
       return tab
     },
+    /**
+     * Opens a page that is no text editor in a new group right of the main editor's last one without giving it the keyboard, as an extension's editor that opens beside with `preserveFocus` does: the editor names one group more, the group and the text editor that had the keyboard keep it, and the editor announces the new group and its tab (Cycle 0047 row 151).
+     * @param label - The page's title.
+     * @returns The page's tab, in front of the new group.
+     * @example const page = harness.openPageInNewGroup('Extension page') // in column 3 beside two groups
+     */
+    openPageInNewGroup(label: string): Tab {
+      const lastMainColumn = Math.max(
+        ...groups
+          .filter((group) => group !== separateEditorPart?.group)
+          .map((group) => group.viewColumn),
+      )
+      const group = nativeGroup(lastMainColumn + 1)
+      const tab: Tab = {
+        input: new TabInputUnknown(),
+        label,
+        isPreview: false,
+        isDirty: false,
+      }
+      group.tabs.push(tab)
+      group.activeTab = tab
+      for (const listener of tabChangeListeners)
+        listener({ opened: [tab], closed: [], changed: [] })
+      return tab
+    },
     addTextPreview(path: string, column: number, dirty = false) {
       const tab = {
         input: new TabInputText(Uri.file(path)),

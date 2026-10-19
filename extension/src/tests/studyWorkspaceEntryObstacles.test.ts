@@ -3355,6 +3355,181 @@ test('a cold Study open after a reload whose leftover group the editor refuses t
   }
 })
 
+// Value: protects=the learner's keyboard when a cold Study open after a reload proves the earlier window's leftover group, which stands empty, the learner opens a page that is no text editor in that group while the editor's answer to the group's close is pending, and the editor then refuses the close: the page keeps the keyboard; fails_when=a group that had no tab at the proof's start counts no tab in front of it now as the learner's move, so the page, which no active text editor reports and which stands in a group the proof named, is not seen and the second group's focus command takes the keyboard from it (Cycle 0047 row 151 (b)); why_new=Cycle 0047 row 151 (P3COV-3 = P3TEST-6): no test reached the empty front of the proof's group; seam=useNativeLayout, applicationGroupMarkers, leaveEmptyLockedGroup, focusMutableDraft, addOpaqueTab, focusOpaqueTab, holdNextGroupClose, refuseNextGroupClose, the reader's open, the command log and the active tab group; no_claim=a move to the terminal or a view, which the editor does not report
+test('a cold Study open after a reload whose empty leftover group the editor refuses to close leaves the keyboard on the page the learner opened in that group while the close was pending', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of two equal columns; after the reload that group stands empty and locked beside the learner's notes, which have the keyboard; the editor holds its answer to the group's close and then refuses it.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 2,
+      layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const groupClose = harness.holdNextGroupClose()
+    harness.refuseNextGroupClose()
+
+    // Act: the learner opens an extension page in the empty leftover group while the editor's answer to the close is pending.
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await groupClose.started
+    harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 1))
+    const commandsAfterLearnersClick = harness.commands.length
+    groupClose.release()
+    const answer = await opening
+
+    // Assert: the open reports the refused close, no focus command ran after the learner's click, and the leftover group with the page in front is still the active one.
+    const activeGroup = harness.editor.window.tabGroups.activeTabGroup
+    assert.deepEqual(
+      {
+        answer,
+        focusCommands: harness.commands
+          .slice(commandsAfterLearnersClick)
+          .filter((command) => command.startsWith('workbench.action.focus')),
+        activeGroup: {
+          column: activeGroup.viewColumn,
+          tab: activeGroup.activeTab?.label,
+        },
+      },
+      {
+        answer:
+          'Error: The editor refused to retire the empty Application group an earlier window left.',
+        focusCommands: [],
+        activeGroup: { column: 1, tab: 'Extension page' },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's keyboard when a cold Study open after a reload proves the earlier window's leftover group, which still shows the earlier session's restored captured source in front of its dead Application pane, that captured source closes while the editor's answer to the group's close is pending, and the editor then refuses the close: the learner's notes get the keyboard back, since the pane came to the front only because the tab before it closed; fails_when=any other tab in front of the proof's group counts as the learner's move, also one that came there because the tab in front left the group, so nothing is given back and the keyboard stays in the leftover group the editor did not close (Cycle 0047 row 151 (c)); why_new=Cycle 0047 row 151 (P3COV-3 = P3TEST-6): no test closed the tab in front of the proof's group; seam=useNativeLayout, applicationGroupMarkers, leaveEmptyLockedGroup, leaveDeadCodebookPane, restoreLeftoverCapturedSource, focusMutableDraft, closeTabByHand, holdNextGroupClose, refuseNextGroupClose, the reader's open, the command log and the active text editor; no_claim=what closes a restored tab in a real editor while a group close is pending (no native trace)
+test('a cold Study open after a reload whose leftover group loses its restored captured source while the close is pending, and is refused the close, gives the learner’s file its keyboard back', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of two equal columns; after the reload that group stands locked with the earlier session's dead Application pane and its restored captured source in front of it, beside the learner's notes, which have the keyboard; the editor holds its answer to the group's close and then refuses it.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 2,
+      layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1)
+    const restoredSource = harness.restoreLeftoverCapturedSource({ column: 1 })
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const groupClose = harness.holdNextGroupClose()
+    harness.refuseNextGroupClose()
+
+    // Act: while the close is pending, the restored captured source closes, and the dead pane behind it comes to the front of the leftover group.
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await groupClose.started
+    harness.closeTabByHand(restoredSource)
+    const frontAfterTheClose =
+      harness.editor.window.tabGroups.activeTabGroup.activeTab?.label
+    const commandsWhileTheCloseWasPending = harness.commands.length
+    groupClose.release()
+    const answer = await opening
+
+    // Assert: the pane came to the front, the open reports the refused close, the second group's focus command gave the notes their keyboard back after it, and the notes have it.
+    assert.deepEqual(
+      {
+        frontAfterTheClose,
+        answer,
+        focusCommands: harness.commands
+          .slice(commandsWhileTheCloseWasPending)
+          .filter((command) => command.startsWith('workbench.action.focus')),
+        keyboardEditor: {
+          name: harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+          column: harness.editor.window.activeTextEditor?.viewColumn,
+        },
+      },
+      {
+        frontAfterTheClose: 'codebook · Application',
+        answer:
+          'Error: The editor refused to retire the empty Application group an earlier window left.',
+        focusCommands: ['workbench.action.focusSecondEditorGroup'],
+        keyboardEditor: { name: 'learner-notes.ts', column: 2 },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's keyboard when a cold Study open after a reload proves the earlier window's leftover group, a page opens in a new group beside without taking the keyboard while the editor's answer to the group's close is pending, and the editor then refuses the close: the learner's notes get the keyboard back, since the keyboard is still where the proof left it; fails_when=a grid that gained or lost a group is taken for the learner's move, so nothing is given back and the keyboard stays in the leftover group the editor did not close (Cycle 0047 row 151 (a)); why_new=Cycle 0047 row 151 (P3COV-3 = P3TEST-6): no test changed the number of groups while the close was pending; seam=useNativeLayout, applicationGroupMarkers, leaveEmptyLockedGroup, restoreLeftoverCapturedSource, focusMutableDraft, openPageInNewGroup, holdNextGroupClose, refuseNextGroupClose, the reader's open, the command log and the active text editor; no_claim=which extension opens a page beside while a group close is pending, and a group that came or went left of the proof's column, which moves the proof's group to another column
+test('a cold Study open after a reload whose leftover group the editor refuses to close gives the learner’s file its keyboard back when a page opened in a new group beside while the close was pending', async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of two equal columns; after the reload that group stands locked with the earlier session's restored captured source in front, beside the learner's notes, which have the keyboard; the editor holds its answer to the group's close and then refuses it.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 2,
+      layout: { orientation: 0, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.restoreLeftoverCapturedSource({ column: 1 })
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const groupClose = harness.holdNextGroupClose()
+    harness.refuseNextGroupClose()
+
+    // Act: while the close is pending, an extension page opens in a new third group without taking the keyboard.
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await groupClose.started
+    harness.openPageInNewGroup('Extension page')
+    const groupsWhileTheCloseWasPending =
+      harness.editor.window.tabGroups.all.length
+    const commandsWhileTheCloseWasPending = harness.commands.length
+    groupClose.release()
+    const answer = await opening
+
+    // Assert: the editor named three groups, the open reports the refused close, the second group's focus command gave the notes their keyboard back after it, and the notes have it.
+    assert.deepEqual(
+      {
+        groupsWhileTheCloseWasPending,
+        answer,
+        focusCommands: harness.commands
+          .slice(commandsWhileTheCloseWasPending)
+          .filter((command) => command.startsWith('workbench.action.focus')),
+        keyboardEditor: {
+          name: harness.editor.window.activeTextEditor?.document.uri.path
+            .split('/')
+            .at(-1),
+          column: harness.editor.window.activeTextEditor?.viewColumn,
+        },
+      },
+      {
+        groupsWhileTheCloseWasPending: 3,
+        answer:
+          'Error: The editor refused to retire the empty Application group an earlier window left.',
+        focusCommands: ['workbench.action.focusSecondEditorGroup'],
+        keyboardEditor: { name: 'learner-notes.ts', column: 2 },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of whoever owns the window after a cold Study open is cancelled while the proof of the earlier window's leftover group runs its focus command: the cancelled entry gives the learner's file nothing back, since nothing was refused and a newer owner may hold the keyboard; fails_when=the text editor's give-back after a proof that threw runs for every rejection, also the entry's own cancellation, so the cancelled entry runs a group's focus command outside the layout queue it no longer owns (Cycle 0046 P2CR-1 with P2OCR1-1); why_new=Cycle 0046 P2CR-1; seam=useNativeLayout, applicationGroupMarkers, leaveEmptyLockedGroup, leaveEmptyGroup, focusMutableDraft, holdNextCommand('workbench.action.focusFirstEditorGroup'), the entry's AbortController, the reader's open and the command log
 test('a cold Study open that is cancelled while the leftover proof focuses the earlier window’s group gives the learner’s file nothing back', async () => {
   // Arrange: the earlier window recorded its Application group at column 1, which stands empty and locked beside the learner's notes, which have the keyboard; the editor holds the proof's focus command.
