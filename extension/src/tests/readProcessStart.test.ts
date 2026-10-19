@@ -616,6 +616,37 @@ test('a start kept for a sweep that differs from the recorded one is read again'
   assert.equal(reads, 2)
 })
 
+// Value: protects=a sweep that meets two records of one process id (the stale storage claims, the claims of a Wiki update marker, the abandoned browser profiles), whose first read of that process's start found none (a query that failed once, a process that was not readable yet), reads the start again at the second record; fails_when=the sweep's cache answers a kept read that found no start also to a caller without keepsUnreadable, so one failed read decides every later record of that id in the sweep and an owner that is gone by the start read now is kept until the next sweep; why_new=Cycle 0047 row 152 (P3COV-2): an always-keep cache passed every test of the files that use it; seam=the injected platform and file read; no_claim=the storage lock's takeover, which keeps an unreadable start on purpose (keepsUnreadable)
+test('a sweep without keepsUnreadable reads a start again after a read of it found none', async () => {
+  // Arrange: a sweep with its own cache and no keepsUnreadable; the first read of the process's stat fails, and the second finds the process begun at tick 200.
+  const stats: (() => string)[] = [
+    () => {
+      throw new Error('EIO: i/o error, read')
+    },
+    () => linuxStat(200),
+  ]
+  let reads = 0
+  const sweep: ProcessStartInputs = {
+    platform: 'linux',
+    readFile: async () => stats[reads++]!(),
+    readLink: inNamespace4026531836,
+    cache: new Map(),
+    expectedStart: 'linux@4026531836:200',
+  }
+  // Act
+  const atTheFirstRecord = await readProcessStart(ID_OF_NO_PROCESS, sweep),
+    atTheSecondRecord = await readProcessStart(ID_OF_NO_PROCESS, sweep)
+  // Assert
+  assert.deepEqual(
+    { atTheFirstRecord, atTheSecondRecord, reads },
+    {
+      atTheFirstRecord: undefined,
+      atTheSecondRecord: 'linux@4026531836:200',
+      reads: 2,
+    },
+  )
+})
+
 // Value: protects=the real read is stable and tells two processes apart; fails_when=the real answer changes between two reads, two processes share one, or the platform's answer is refused by its own check; why_new=only a real read shows it (decision D6); seam=none (two real child processes)
 test('names a running process by a start that stays the same and differs from another process’s', async (context) => {
   // Arrange: two processes started more than a second apart, which is the coarsest step a platform's answer has (`ps` prints whole seconds).
