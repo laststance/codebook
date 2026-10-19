@@ -1263,8 +1263,8 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
   ])
 })
 
-// Value: protects=a learner whose library holds the recording of a run that saved no study, reading that Saved studies lists it and Delete removes it; fails_when=the README still counts "a recording that has no study" among what deletion does not cover, although such a recording is listed and moved since AF2, or no longer says that a recording a run of this computer may still write is that run's and is not listed (AF11); why_new=Cycle 0046 review AF11: the claim was stale; seam=none
-test('the packaged README says that the recording of a run that saved no study is listed and deleted, unless a run of this computer may still write it, and no longer counts it as not covered', async () => {
+// Value: protects=a learner whose library holds the recording of a run that saved no study, reading that Saved studies lists it and Delete removes it; fails_when=the README still counts "a recording that has no study" among what deletion does not cover, although such a recording is listed and moved since AF2, or no longer says that a recording a run of this computer may still write is that run's and is not listed (AF11), or says again that such a recording is listed once no editor of this computer still writes it, although the finished recording of another open window's run is not listed before that run has saved its study (Cycle 0047 row 36); why_new=Cycle 0046 review AF11: the claim was stale; Cycle 0047 row 54: since row 36 a sealed recording stays its run's until the study is saved, and the sentence left that out; seam=none
+test('the packaged README says that the recording of a run that saved no study is listed and deleted, unless a run of this computer may still write it or another open window has finished it and not saved its study yet, and no longer counts it as not covered', async () => {
   // Arrange
   const readme = await readPackagedReadme()
   const section =
@@ -1273,12 +1273,13 @@ test('the packaged README says that the recording of a run that saved no study i
 
   // Act
   const delivered = heldSentences(section, [
-    '- The recording of a run that saved no study is listed in the same way, with `Archive missing; remaining files kept`, once no editor of this computer still writes it, and **Delete saved study…** moves it to the Trash. While a run of this computer may still write it, that run holds it and it is not listed.',
+    '- The recording of a run that saved no study is listed in the same way, with `Archive missing; remaining files kept`, once no editor of this computer still writes it and no other editor window of this computer may still save its study, and **Delete saved study…** moves it to the Trash. While a run of this computer may still write it, or a run of another editor window that is still open has finished it and has not saved its study yet, that run holds it and it is not listed.',
     '- Not covered yet: Node test histories, removing several studies at once, and a study whose run is still held by another window of the same workspace.',
   ])
-  const retired = ['a recording that has no study'].filter((sentence) =>
-    readme.includes(sentence),
-  )
+  const retired = [
+    'a recording that has no study',
+    'once no editor of this computer still writes it, and **Delete saved study…** moves it to the Trash',
+  ].filter((sentence) => readme.includes(sentence))
 
   // Assert
   assert.deepEqual(
