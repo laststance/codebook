@@ -6,6 +6,8 @@ import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbala
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
 const MAX_SOURCE_QUOTE_LINES = 40;
+/** The largest page file the Codebook reader opens, in bytes (2 MiB): the extension's `WIKI_PAGE_FILE_LIMIT_BYTES`, which a test holds equal to this number, since a skill script imports nothing of the extension. The reader refuses a larger page file for good, and an update would render the same page again, so {@link renderWikiPages} refuses such a page before anything is written. */
+const PAGE_FILE_LIMIT_BYTES = 2_097_152;
 /** The ids the reader's own page scripts give an element of a served page, beside the ids the shell's template carries: the description of the rail entry's link, its file and line as written (the publisher prints it; the reader adds it to a site published without one), the region of the update status, and the heading and the tooltip of the keyboard help. A page's own content must not carry one of them a second time, so {@link contentIdRenames} gives such a content id another name. */
 const READER_ELEMENT_IDS = ['codebook-open-target', 'codebook-update-status', 'shortcut-title', 'shortcut-tooltip'];
 /** The attributes of authored HTML whose value is an id or a list of ids of the same page: the element's own `id` and the attributes that refer to elements by id; {@link withRenamedContentIds} renames an id in each of them. */
@@ -104,7 +106,7 @@ const shellScriptHashOf = template => {
   return `'sha256-${createHash('sha256').update(scripts[0]).digest('base64')}'`;
 };
 
-/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
   if (!Array.isArray(manifest.includedSources)) throw new Error('The Wiki needs an included-source index.');
@@ -165,10 +167,14 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       OPEN_SOURCE: openSourceEntry(indexedSources.get(firstSource.path), firstSource.line),
       SHELL_SCRIPT_HASH: shellScriptHash,
     };
-    pages.set(page.path, template.replace(/\{\{([A-Z_]+)\}\}/g, (match, key) => {
+    const pageHtml = template.replace(/\{\{([A-Z_]+)\}\}/g, (match, key) => {
       if (!Object.hasOwn(values, key)) throw new Error(`Unknown reader template field: ${key}`);
       return values[key];
-    }));
+    });
+    // A page the reader would refuse is refused here, by its bytes as written (UTF-8), so the agent splits it instead of publishing a page nobody can read.
+    const pageBytes = Buffer.byteLength(pageHtml, 'utf8');
+    if (pageBytes > PAGE_FILE_LIMIT_BYTES) throw new Error(`Wiki page ${page.path} renders to ${pageBytes} bytes, more than the ${PAGE_FILE_LIMIT_BYTES} bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.`);
+    pages.set(page.path, pageHtml);
   }
   return pages;
 }
