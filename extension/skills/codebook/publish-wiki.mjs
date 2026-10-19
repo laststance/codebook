@@ -746,14 +746,25 @@ async function processSpaceHere(system) {
   return 'linux@' + (/^pid:\[(\d+)\]$/.exec(await readlink('/proc/self/ns/pid').catch(() => ''))?.[1] ?? '');
 }
 
+/** The form of the host name an owner records ({@link ownerHostOf}): letters, digits, dots, hyphens and underscores, from a letter or a digit on, at most 253 characters, as a machine's name is in DNS. A refusal names it and the learner passes it back on a command line (`--gone-host`), so no other text may stand in it. Read by {@link ownerHostOf} and {@link isOwnerForm}. */
+const OWNER_HOST_FORM = /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/;
+/** The form of the space of process ids an owner records ({@link processSpaceHere}): `linux@` and the number of a pid namespace, or none where it cannot be read, or the name of another platform. A refusal names it and the learner passes it back (`--gone-space`). Read by {@link isOwnerForm}. */
+const OWNER_SPACE_FORM = /^(?:linux@\d{0,20}|[a-z0-9]{1,16})$/;
+/** How many characters of a host name outside {@link OWNER_HOST_FORM} its stand-in keeps, and how many hexadecimal digits of the name's SHA-256 follow them. Read by {@link ownerHostOf}. */
+const OWNER_HOST_KEPT_CHARACTERS = 64, OWNER_HOST_DIGEST_DIGITS = 12;
+
+/** The host name an owner records for this machine: its name where it is in {@link OWNER_HOST_FORM}, and otherwise a stand-in of that form, made from the name alone, so every process of this machine records the same one. A computer's name may hold a space, an apostrophe or letters of another script, which a recovery refuses in a record. Called by {@link ownerHere}. @param name - The machine's host name, as `node:os` gives it. @returns The name, or `host-`, the name with each run of other characters as `_`, a hyphen and the start of the name's SHA-256. @example ownerHostOf("Ryota's PC") // => 'host-Ryota_s_PC-aabcbfb3906e' */
+const ownerHostOf = name => OWNER_HOST_FORM.test(name) ? name
+  : 'host-' + name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, OWNER_HOST_KEPT_CHARACTERS) + '-' + digest(name).slice(0, OWNER_HOST_DIGEST_DIGITS);
+
 /** The read of {@link ownerHere}, once per process and system. */
 const ownerReadings = new WeakMap();
 
-/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name, the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system: {@link publishWiki} and {@link recoverWikiPublication} start the read first, without waiting for it, so its queries run beside their other steps; {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} wait for it before a journal or a claim is written, and {@link requireExited} before it judges an owner. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
+/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name in the form a recovery accepts ({@link ownerHostOf}), the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system: {@link publishWiki} and {@link recoverWikiPublication} start the read first, without waiting for it, so its queries run beside their other steps; {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} wait for it before a journal or a claim is written, and {@link requireExited} before it judges an owner. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
 function ownerHere(system) {
   if (!ownerReadings.has(system)) {
     // The space, the boot and the start are read side by side: on macOS and Windows each may start a program.
-    const reading = Promise.all([processSpaceHere(system), bootHere(system), processStartOf(process.pid, system, undefined)]).then(([space, boot, start]) => ({ host: hostname(), space, boot, start }));
+    const reading = Promise.all([processSpaceHere(system), bootHere(system), processStartOf(process.pid, system, undefined)]).then(([space, boot, start]) => ({ host: ownerHostOf(hostname()), space, boot, start }));
     // A step refused before it waits for the read must not end the process with an unhandled rejection; a step that waits still gets the failure.
     reading.catch(() => undefined);
     ownerReadings.set(system, reading);
@@ -764,9 +775,9 @@ function ownerHere(system) {
 /** Whether a recorded boot is in the form {@link bootHere} gives: a boot id, or a boot time. Called by {@link isOwnerForm}. @example isBootForm({ atMs: 1790000000000 }) // => true */
 const isBootForm = boot => typeof boot?.id === 'string' || Number.isFinite(boot?.atMs);
 
-/** Whether a recorded owner is in the form {@link ownerHere} writes. Called by {@link requireExited}. @example isOwnerForm({ host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } }) // => true */
-const isOwnerForm = owner => owner !== null && typeof owner === 'object' && typeof owner.host === 'string' && typeof owner.space === 'string' &&
-  isBootForm(owner.boot) && (owner.start === undefined || typeof owner.start === 'string');
+/** Whether a recorded owner is in the form {@link ownerHere} writes: a host name of {@link OWNER_HOST_FORM} and a space of {@link OWNER_SPACE_FORM}, which a refusal may name, a boot ({@link isBootForm}) and, if any, a start. Called by {@link requireOwnerForm}. @example isOwnerForm({ host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } }) // => true */
+const isOwnerForm = owner => owner !== null && typeof owner === 'object' && typeof owner.host === 'string' && OWNER_HOST_FORM.test(owner.host) &&
+  typeof owner.space === 'string' && OWNER_SPACE_FORM.test(owner.space) && isBootForm(owner.boot) && (owner.start === undefined || typeof owner.start === 'string');
 
 /** Whether no process has an id here, probed with signal 0: `ESRCH` alone says so; a process of another user that runs answers `EPERM`, which says it exists. Called by {@link ownerStateOf} and {@link processStateOf}. @example isProcessIdFree(process.pid) // => false */
 function isProcessIdFree(pid) {
@@ -802,13 +813,19 @@ async function processStateOf(pid, owner, system) {
 
 /** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwner` the learner named with `--gone-host` and `--gone-space`, if any: an owner judged `elsewhere` at that host name and space counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
 async function requireExited(recorded, { system, goneOwner }) {
-  const { pid, owner } = recorded ?? {};
-  if (!Number.isSafeInteger(pid) || pid < 1 || owner !== undefined && !isOwnerForm(owner)) throw new Error('The Wiki recovery owner is invalid.');
+  requireOwnerForm(recorded);
+  const { pid, owner } = recorded;
   const state = await ownerStateOf({ pid, owner }, await ownerHere(system), system);
   // An owner in a place the learner confirmed gone counts as gone; the option never ends an owner that may still run here.
   if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwner)) return;
   if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.');
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
+}
+
+/** Refuses a journal or a recovery claim whose process id or owner is not in the form this publisher writes ({@link isOwnerForm}), before any refusal names its owner: a journal or a claim a cloned repository carries may name any text as its host name and space, which the agent would read and pass back on a command line. Called by {@link requireExited} and {@link requireGoneOwnerOf}. @param recorded - The parsed journal or claim. @throws The refusal of an invalid owner. @example requireOwnerForm({ pid: 4242, owner: { host: 'devbox$(touch owned)', space: 'linux@1', boot: { id: 'boot-1' } } }) // throws: The Wiki recovery owner is invalid. */
+function requireOwnerForm(recorded) {
+  const { pid, owner } = recorded ?? {};
+  if (!Number.isSafeInteger(pid) || pid < 1 || owner !== undefined && !isOwnerForm(owner)) throw new Error('The Wiki recovery owner is invalid.');
 }
 
 /** The host name and the space of process ids of an owner, as a refusal names them. Called by {@link requireExited} and {@link goneOwnerRefusalOf}. @example placeOf({ host: 'devbox', space: 'linux@4026531836' }) // => '"devbox" (linux@4026531836)' */
@@ -822,8 +839,10 @@ const goneOwnerRefusalOf = (goneOwner, owner) => '--gone-host and --gone-space n
   ? 'no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.'
   : 'the Wiki publication journal names ' + placeOf(owner) + '. Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.');
 
-/** Refuses the place the learner confirmed gone (`--gone-host`, `--gone-space`) unless it is the host name and the space of the owner the journal records, before the owner is judged, so the option never ends a publish it does not name; without the option nothing is refused here. Called by {@link resumeJournal}. @throws The refusal of {@link goneOwnerRefusalOf}. @example requireGoneOwnerOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, { host: 'devbox', space: 'linux@2' }) // throws */
+/** Refuses the place the learner confirmed gone (`--gone-host`, `--gone-space`) unless it is the host name and the space of the owner the journal records, before the owner is judged, so the option never ends a publish it does not name; the journal's owner is held to its form first ({@link requireOwnerForm}), so the refusal never names an owner of another form; without the option nothing is refused here. Called by {@link resumeJournal}. @throws The refusal of an invalid owner, and that of {@link goneOwnerRefusalOf}. @example requireGoneOwnerOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, { host: 'devbox', space: 'linux@2' }) // throws */
 function requireGoneOwnerOf(record, goneOwner) {
+  // The journal's owner is held to its form before the refusal below may name it.
+  if (goneOwner !== undefined) requireOwnerForm(record);
   if (goneOwner !== undefined && !isOwnerAt(record.owner, goneOwner)) throw new Error(goneOwnerRefusalOf(goneOwner, record.owner));
 }
 
