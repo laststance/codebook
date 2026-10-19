@@ -63,10 +63,13 @@ async function requireRasterAsset(stage, path) {
     throw new Error('Wiki asset ' + path + ' is not a PNG, JPEG, GIF, WebP or AVIF image by its name or its first bytes. Nothing was written. Convert it to one of these formats, or delete the file from the stage and its entry from assets, then publish again.');
 }
 
-/** Parses inventory for {@link publishWiki} and recovery before any owned file can be replaced. @example parseManifest(bytes, '/repo') */
+/** The refusal of a Wiki manifest that is no JSON object: one a cloned repository carries may hold any text, which the parser's error would quote. Read by {@link parseManifest}. */
+const INVALID_MANIFEST_REFUSAL = 'The Wiki manifest is not a JSON object; its text is not repeated here.';
+
+/** Parses inventory for {@link publishWiki} and recovery before any owned file can be replaced: the manifest of the Wiki, of the kept prior Wiki or of a candidate, and the one a record retains. A manifest that is no JSON, or JSON that is no object, is refused with {@link INVALID_MANIFEST_REFUSAL} ({@link parseRecordOf}), so none of its text reaches the agent. @throws That refusal, and the refusal of a manifest that names another project, no whole inventory or an unsafe path. @example parseManifest(bytes, '/repo') */
 function parseManifest(bytes, projectRoot) {
-  const manifest = JSON.parse(bytes.toString('utf8'));
-  if (manifest?.schemaVersion !== 1 || manifest.repositoryRoot !== projectRoot || !Array.isArray(manifest.pages) || !Array.isArray(manifest.assets))
+  const manifest = parseRecordOf(bytes, INVALID_MANIFEST_REFUSAL);
+  if (manifest.schemaVersion !== 1 || manifest.repositoryRoot !== projectRoot || !Array.isArray(manifest.pages) || !Array.isArray(manifest.assets))
     throw new Error('The Wiki manifest does not identify this project and a complete page inventory.');
   const owned = new Set(['index.html', ...manifest.pages.map(page => page?.path), ...manifest.assets]);
   if ([...owned].some(path => !safePath(path) || reserved(path))) throw new Error('The Wiki manifest contains an unsafe or reserved owned path.');
@@ -449,7 +452,7 @@ async function writeWholeRecord(path, bytes) {
   } finally { await unlink(pending).catch(() => undefined); }
 }
 
-/** Parses a journal or a recovery claim that a stopped step left, which a cloned repository may carry: text that is no JSON, or JSON that is no object, is refused with the fixed sentence given, the parser's error as its cause, so no text of the record reaches the agent (the parser's message quotes the record's start). Called by {@link resumeJournal} and {@link stoppedClaimAt}. @returns The record. @throws The refusal. @example parseRecordOf(Buffer.from('null'), 'The Wiki recovery claim is invalid; it was preserved.') // throws: The Wiki recovery claim is invalid; it was preserved. */
+/** Parses a journal or a recovery claim that a stopped step left, or a Wiki manifest, any of which a cloned repository may carry: text that is no JSON, or JSON that is no object, is refused with the fixed sentence given, the parser's error as its cause, so no text of the record reaches the agent (the parser's message quotes the record's start). Called by {@link resumeJournal}, {@link stoppedClaimAt} and {@link parseManifest}. @returns The record. @throws The refusal. @example parseRecordOf(Buffer.from('null'), 'The Wiki recovery claim is invalid; it was preserved.') // throws: The Wiki recovery claim is invalid; it was preserved. */
 function parseRecordOf(bytes, refusal) {
   let record;
   try { record = JSON.parse(bytes); } catch (cause) { throw new Error(refusal, { cause }); }
