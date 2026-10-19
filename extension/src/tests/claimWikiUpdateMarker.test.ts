@@ -1632,6 +1632,92 @@ test('a window that was suspended under its claim at the end of its run, while a
   }
 })
 
+// Value: protects=the update of a window on another computer that took a Wiki over while this window's extension host was suspended at the end of its own watch; fails_when=the resumed window turns "its" marker into a reservation under a claim it no longer holds (the other window cleared it by its age), and what it replaces is the other window's fresh marker, so a third window is offered Update anyway beside a running update; why_new=Cycle 0047 row 194 (S2SM-U25): the cell of reserve after the claim was lost had no test, only release's twin above; seam=the suspended window's read of its own marker under its claim, after which the other window's whole start runs
+test('a window that was suspended under its claim at the end of its watch, while a window of another machine cleared that claim by its age and started an update, writes no reservation over that window’s marker', async () => {
+  // Arrange: a run that outlasted its bound, whose window is suspended for two minutes right after it read its own marker under its claim.
+  const wiki = await createWikiFolder()
+  const claimDirectory = `${wiki.markerPath}.takeover`
+  const windowOfTheOtherMachine = {
+    pid: process.pid,
+    windowId: 'window-b',
+    host: 'vscode' as const,
+    startedAtMs: Date.now(),
+  }
+  let otherStart: Promise<string> | undefined
+  let readsOfItsMarker = 0
+  const { claimWikiUpdateMarker: claimAsSuspendedWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './readWikiRegularFile': {
+      readWikiRegularFile: async (path: string) => {
+        readsOfItsMarker += 1
+        const isFirstRead = readsOfItsMarker === 1
+        const markerFile = await readWikiRegularFile(path)
+        if (isFirstRead) {
+          // The suspension: the claim is two minutes old when the other machine's window meets it.
+          const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
+          for (const claimName of await readdir(claimDirectory))
+            await utimes(
+              join(claimDirectory, claimName),
+              twoMinutesAgo,
+              twoMinutesAgo,
+            )
+          otherStart = outcomeOf(
+            claimWikiUpdateMarker(
+              wiki.outputDirectory,
+              windowOfTheOtherMachine,
+              AS_WINDOW_OF_ANOTHER_MACHINE,
+            ),
+          )
+          await otherStart
+        }
+        return markerFile
+      },
+    },
+  })
+  try {
+    const outlasted = await claimAsSuspendedWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now() - 30 * 60_000,
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in outlasted)
+
+    // Act
+    const ended = await outlasted.reserve(Date.now())
+    const otherWindow = await otherStart
+
+    // Assert: the claim was lost, so the end says that its change was not made.
+    assert.deepEqual(
+      { ended, otherWindow },
+      { ended: false, otherWindow: 'holds the claim' },
+    )
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(wiki.markerPath, 'utf8').catch(() => '"no marker file"'),
+      ),
+      {
+        ...windowOfTheOtherMachine,
+        machineKey: '1fb1404a9738d5ed',
+        hostKey: '5f0c1a8d2e3b4a69',
+        boot: { id: 'boot-of-the-laptop' },
+        processStart: 'linux@4026531836:777',
+      },
+    )
+    assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
+      'wiki',
+      'wiki.update-run.json',
+    ])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the update of a window on another computer that took a stale marker over while this window's extension host was suspended in the middle of its own start; fails_when=the resumed window removes the marker it looked at before the suspension under a claim it no longer holds, and what it removes is the other window's fresh marker, so both update the Wiki (decision D9); why_new=Cycle 0046 row 2 (ER-4): a holder checks its claim before every change; seam=the suspended window's look under its claim, after which the other window's whole start runs
 test('a window that was suspended under its claim in the middle of its start, while a window of another machine cleared that claim by its age and started an update, leaves that window’s marker in place and is refused', async () => {
   // Arrange: a killed editor's marker, and a window that is suspended for two minutes right after its look under its claim.
@@ -2021,6 +2107,88 @@ test('the end of a run whose marker could not be read at that moment says that i
   }
 })
 
+// Value: protects=other editor windows after a stopped watch met its marker at a moment the file could not be read (on Windows a scanner or an indexer holds it open: EBUSY or EPERM); fails_when=a failed read of the marker counts as a marker that is no longer this window's, so the end of the watch answers that nothing of the run is left, is never asked again, and the run's marker stays on disk as a running update with no Update anyway until the run's bound has passed; why_new=Cycle 0047 row 194 (S2SM-U24): the cell of reserve with the marker unreadable had no test, only release's twin above; seam=the open of the marker file for the end's read, which fails once with EBUSY
+test('the end of a stopped watch whose marker could not be read at that moment says that the run’s marker stayed unchanged, and the same end asked again writes the reservation and says so', async () => {
+  // Arrange: a window whose next open of the marker file for a read fails once, as for a file another program holds open.
+  const wiki = await createWikiFolder()
+  let isNextMarkerOpenRefused = false
+  const readerWithOneRefusedOpen = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (isNextMarkerOpenRefused && openInputs[0] === wiki.markerPath) {
+            isNextMarkerOpenRefused = false
+            throw Object.assign(
+              new Error('EBUSY: resource busy or locked, open'),
+              { code: 'EBUSY' },
+            )
+          }
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { claimWikiUpdateMarker: claimInThatWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWithOneRefusedOpen,
+  })
+  try {
+    const claim = await claimInThatWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: 1_790_000_000_000,
+      },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_000_000 },
+    )
+    assert.ok('reserve' in claim)
+    isNextMarkerOpenRefused = true
+
+    // Act
+    const firstEnd = await claim.reserve(1_790_000_060_000)
+    const markerAfterTheFirstEnd = JSON.parse(
+      await readFile(wiki.markerPath, 'utf8'),
+    )
+    const secondEnd = await claim.reserve(1_790_000_060_000)
+
+    // Assert
+    assert.deepEqual(
+      { firstEnd, markerAfterTheFirstEnd, secondEnd },
+      {
+        firstEnd: false,
+        markerAfterTheFirstEnd: {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: 1_790_000_000_000,
+          ...OWNER_OF_THIS_WINDOW,
+        },
+        secondEnd: true,
+      },
+    )
+    assert.deepEqual(JSON.parse(await readFile(wiki.markerPath, 'utf8')), {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: 1_790_000_000_000,
+      ...OWNER_OF_THIS_WINDOW,
+      watchEndedAtMs: 1_790_000_060_000,
+    })
+    assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
+      'wiki',
+      'wiki.update-run.json',
+    ])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the end that must stop asking once its marker is gone (removed by hand, or by a window that judged it nobody's); fails_when=a missing marker file is taken for one that could not be read, so the window asks again and again for a change it can never make; why_new=Cycle 0046 second ship, red team P2RT2: since a failed read asks again, a missing file must be told from it; seam=none
 test('the end of a run whose marker file is gone says that nothing of this run is left, and leaves no marker', async () => {
   // Arrange: a run whose marker somebody removed while it ran.
@@ -2041,6 +2209,35 @@ test('the end of a run whose marker file is gone says that nothing of this run i
 
     // Act
     const ended = await claim.release()
+
+    // Assert
+    assert.equal(ended, true)
+    assert.deepEqual(await readdir(wiki.directory), ['wiki'])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=other editor windows after a stopped watch whose run's marker is gone (removed by hand, or by a window that judged it nobody's); fails_when=a gone marker goes on to the change, so the reservation is written where no marker was and other windows are refused beside a run that ended, or it is taken for one that could not be read, so the window asks again and again; why_new=Cycle 0047 row 194 (S2SM-U22): the cell of reserve with the marker gone had no test, only release's twin above; seam=none
+test('the end of a stopped watch whose marker file is gone says that nothing of this run is left, and writes no reservation', async () => {
+  // Arrange: a run whose marker somebody removed while it ran.
+  const wiki = await createWikiFolder()
+  try {
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in claim)
+    await unlink(wiki.markerPath)
+
+    // Act
+    const ended = await claim.reserve(1_790_000_060_000)
 
     // Assert
     assert.equal(ended, true)
@@ -2112,6 +2309,89 @@ test('the end of a run whose marker path came to hold a file larger than any mar
     assert.deepEqual(
       { ended, sizeAtTheMarkerPath: (await lstat(wiki.markerPath)).size },
       { ended: true, sizeAtTheMarkerPath: 67_108_865 },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the end of a stopped watch whose marker path came to hold a folder (put there by hand, or by a checkout); fails_when=an entry that cannot be this window's marker goes on to the change, so the move of the reservation over the folder fails and the end of the watch ends with the file system's error, or it counts as a marker that could not be read and the window asks again every 10 seconds; why_new=Cycle 0047 row 194 (S2SM-U23): the cell of reserve with a foreign entry had no test, only release's twins above; seam=none; no_claim=a link at the path, which the same look at the entry decides
+test('the end of a stopped watch whose marker path came to hold a folder says at once that nothing of this run is left, writes no reservation, and leaves the folder', async () => {
+  // Arrange: a run whose marker was replaced by a folder while it ran.
+  const wiki = await createWikiFolder()
+  try {
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in claim)
+    await unlink(wiki.markerPath)
+    await mkdir(wiki.markerPath)
+
+    // Act
+    const ended = await claim
+      .reserve(1_790_000_060_000)
+      .catch((error: { code?: string }) => `failed with ${error.code}`)
+
+    // Assert
+    assert.deepEqual(
+      {
+        ended,
+        isFolderAtTheMarkerPath: (await lstat(wiki.markerPath)).isDirectory(),
+        besideTheWiki: (await readdir(wiki.directory)).toSorted(),
+      },
+      {
+        ended: true,
+        isFolderAtTheMarkerPath: true,
+        besideTheWiki: ['wiki', 'wiki.update-run.json'],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the end of a stopped watch whose marker path came to hold a file larger than any marker (64 MiB and one byte); fails_when=an entry that cannot be this window's marker goes on to the change, so the reservation is moved over that file and replaces it, or it counts as a marker that could not be read and the window asks again every 10 seconds; why_new=Cycle 0047 row 194 (S2SM-U23): the cell of reserve with a foreign entry had no test, only release's twins above; seam=none (a sparse file, so no 64 MiB are written)
+test('the end of a stopped watch whose marker path came to hold a file larger than any marker says at once that nothing of this run is left, writes no reservation, and leaves the file', async () => {
+  // Arrange: a run whose marker was replaced by a file of 67_108_865 bytes while it ran.
+  const wiki = await createWikiFolder()
+  try {
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in claim)
+    await unlink(wiki.markerPath)
+    await writeFile(wiki.markerPath, '')
+    await truncate(wiki.markerPath, 67_108_865)
+
+    // Act
+    const ended = await claim.reserve(1_790_000_060_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        ended,
+        sizeAtTheMarkerPath: (await lstat(wiki.markerPath)).size,
+        besideTheWiki: (await readdir(wiki.directory)).toSorted(),
+      },
+      {
+        ended: true,
+        sizeAtTheMarkerPath: 67_108_865,
+        besideTheWiki: ['wiki', 'wiki.update-run.json'],
+      },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -2260,6 +2540,80 @@ test('the end of a run whose marker could neither be read nor looked at says tha
     assert.deepEqual(
       { firstEnd, markerAfterTheFirstEnd, secondEnd },
       { firstEnd: false, markerAfterTheFirstEnd: 'window-a', secondEnd: true },
+    )
+    assert.deepEqual(await readdir(wiki.directory), ['wiki'])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=other editor windows after a run's end met a system that refused the removal of its marker once (on Windows a scanner or an indexer holds it open: EPERM); fails_when=the refused removal is answered as done, so the window is never asked again and its marker stays on disk as a running update until the run's bound has passed, or the claim is kept after the failure, so every later change of the marker waits for it; why_new=Cycle 0047 row 194 (S2SM-U26): the cell of release with a refused removal had no test; seam=the claim loaded with loadModule, whose next removal of the marker's path fails with EPERM; no_claim=Windows' real error codes
+test('the end of a run whose marker the system refused to remove once reports the failure and leaves no claim, and the same end asked again removes the marker', async () => {
+  // Arrange: a window whose next removal of the marker file fails once, as for a file another program holds open.
+  const wiki = await createWikiFolder()
+  let isNextMarkerRemovalRefused = false
+  const { claimWikiUpdateMarker: claimInThatWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './removeWithoutFollowing': {
+      removeWithoutFollowing: async (
+        ...removalInputs: Parameters<typeof removeWithoutFollowing>
+      ) => {
+        if (
+          isNextMarkerRemovalRefused &&
+          removalInputs[0] === wiki.markerPath
+        ) {
+          isNextMarkerRemovalRefused = false
+          throw Object.assign(
+            new Error('EPERM: operation not permitted, unlink'),
+            { code: 'EPERM' },
+          )
+        }
+        return removeWithoutFollowing(...removalInputs)
+      },
+    },
+  })
+  try {
+    const claim = await claimInThatWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    isNextMarkerRemovalRefused = true
+
+    // Act
+    const firstEnd = await claim.release().then(
+      (answer) => `answered ${answer}`,
+      (error: { code?: string }) => `failed with ${error.code}`,
+    )
+    const markerAfterTheFirstEnd = JSON.parse(
+      await readFile(wiki.markerPath, 'utf8'),
+    ).windowId
+    const besideTheWikiAfterTheFirstEnd = (
+      await readdir(wiki.directory)
+    ).toSorted()
+    const secondEnd = await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      {
+        firstEnd,
+        markerAfterTheFirstEnd,
+        besideTheWikiAfterTheFirstEnd,
+        secondEnd,
+      },
+      {
+        firstEnd: 'failed with EPERM',
+        markerAfterTheFirstEnd: 'window-a',
+        besideTheWikiAfterTheFirstEnd: ['wiki', 'wiki.update-run.json'],
+        secondEnd: true,
+      },
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
