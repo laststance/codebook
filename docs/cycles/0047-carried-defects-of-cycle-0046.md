@@ -3,7 +3,7 @@
 Type: bug-fix cycle\
 Status: implementing\
 Result: pending\
-Delivery: not-applicable (no pull request yet)\
+Delivery: PR-open (draft [PR #91](https://github.com/laststance/codebook/pull/91), delivered through `/ship`)\
 Goal version: 10\
 Tracking issue: https://github.com/laststance/codebook/issues/90 \
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -18,7 +18,7 @@ Can every defect Cycle 0046 left be closed, with nothing carried again, in one p
 
 - Hypothesis: each task (53 at filing, and every defect found while the cycle runs) is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies, and the cycle's own reviews leave nothing open.
 - Smallest observable outcome: every row of [the task table](0047-carried-defects.md) closed, the pull request merged after its reviews, required CI and the exact-head gate, and Issue #90 closed with a comment that states nothing is carried.
-- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 102 rows on 2026-10-19).
+- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 132 rows on 2026-10-19).
 - Out of scope for this cycle (still retained in PRODUCT_GOAL.md): any increment, among them native use in an editor for Windows (a feature cycle of its own) and the natural `/codebook` request's first-run proof (the next feature cycle's frozen request).
 - Conditions that falsify the approach: a task that neither a fix nor evidence can close; a fix that regresses a delivered behavior its tests or the native round hold.
 
@@ -90,9 +90,15 @@ The first review pass read that candidate with the core checklist (115 of 115 el
 
 Seven fixers (A1 and A2 the publisher, B1 the address filter, B2 the reader's serving, workers and renderer, C1 the chat start and the marker sentences, C2 the watch and the start refusal, D the locks, processes, runs and the Study workspace) closed rows 58 to 99 from `b6f7375d`, each behavioral row with a test shown red on the unfixed code or on a mutant of the line it guards; the parent integrated their commits by cherry-pick (one conflict of two docstring lines in the publisher's tests, both kept) and ran each fixer's test files again after a build. Two rows were found while fixing and are fixed too: row 103 (a worker that is still ending, after row 79) and row 104 (the heap-limit sentence and the skill's page limits, the rest of row 78). Follow-ups after integration: one shared `formatWaitEnd` for rows 85 and 90, the old withdrawal wording in four more files, the test timings of the renamed test, the README's bound of six pages. Decisions (owner away, recommended option): row 61 removes a partial learner copy only when its bytes are the start of the learner file (a file of other bytes stays); row 62's option is `--gone-host` with `--gone-space`, accepted only with the journal's owner, and the refusal prints no ready command; row 64 passes the system to the owner judgement from the CLI instead of running the publisher's tests on Windows (no macOS runner, POSIX links); row 89 is held by a unit test, because the reviewers' flow sketch bound its candidate to an older site, which the candidate listing drops by design; row 98's fix moves the writer record's release from the seal to the save after it. The skill is 1.0.44 (rows 62 and 104). A hand-edited page that ends inside an open tag, a comment, a raw-text element or a plaintext still takes the reader's script tag into that text (row 72's cell).
 
+### The delivery's second review pass (2026-10-19)
+
+The full gate passed on `56d5629d` (product 5351 tests, 5348 pass and 3 skip; package 518, 516 pass and 2 skip; duplication, dead code and measured health) after two defects it found in the fixes were fixed (rows 105 and 106). The second pass read that candidate with the same reviewers as the first (the core checklist read all 143 eligible gate hunks, none a finding; security found nothing) and with the adversarial reviews on the same tree: the Claude review, the Codex structured review and, this time to its end, the Codex challenge on the fixing cycle's application code. The read-only coverage reassessment found every path the fixes changed tested (two missing branch tests are rows 118 and 119). The parent's functional smoke found row 108. Rows 107 to 132 are the pass's findings, merged where several sources named one defect; row 130 is the parent's.
+
+Row 107 is the weightiest: on plain Node 24.21.0 without pointer compression, the build a remote editor's extension host can run on, a 2,097,000-byte page of nested `<b>` stopped the whole process at row 4's heap limit of 256 MB ("Reached heap limit", exit 134) in 3 of 4 runs and ended as a refusal at 512 MB in 5 of 5; 29 crafted shapes end cleanly at 512 MB (refused, served or past the deadline). Decisions (owner away, recommended option): the heap limit returns to 512 MB with row 4's 2 MiB file limit kept, and a test holds it in a child process; repeatable `--gone-host` and `--gone-space` pairs, each naming the owner of the journal or of a claim in its chain (row 114); the Windows creation time read with its UTC offset (row 117); the journal records the learner files a publish copies, and the recovery removes only a recorded copy's part (row 118); the writer record goes only when the saved archive holds the recording sealed (row 124). This is the delivery's second fixing cycle; one review pass after it must find nothing, or the ship stops at its limit of three ([rule](../../DEVELOPMENT.md#standing-owner-direction)).
+
 ## Result and decision
 
-Result pending. Counts: 106 rows, 106 closed, 0 implementing; the second review pass of the delivery reads the fixed candidate.
+Result pending. Counts: 132 rows, 107 closed, 25 implementing (rows 107 to 129, 131 and 132, the findings of the delivery's second review pass).
 
 ## Handoff
 
