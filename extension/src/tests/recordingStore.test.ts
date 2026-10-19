@@ -555,23 +555,95 @@ test('a recording refused by a full library names no delete remedy after this ed
   })
 })
 
-test('interrupted reservations count against capacity and legacy learner bytes remain untouched', async (context) => {
-  // Arrange
+// Value: protects=the place of the saved study limit that a recording start takes only when it starts; fails_when=a start that fails after it made the recording's folder (its header or its empty journal cannot be written, a full disk) leaves the folder: a folder with this window's header is the reservation of a run of this machine, which no list shows and no removal deletes, and it takes a place of the limit until the editor ends (row 86's rule; row 95 fixed it for the Node test history only); why_new=Cycle 0047 row 35 (P3RT13); seam=the store's disk operations, whose header write and journal creation fail once each; no_claim=a crash between the folder and its header, which leaves an interrupted reservation (the next test)
+test('a recording start that fails after making its folder leaves no folder behind, and the next start under a limit of one is admitted', async (context) => {
+  // Arrange: the first start cannot write its header, the second cannot create its journal.
+  let failing: 'header' | 'journal' | undefined = 'header'
   const { directory, binding, store } = await recordingHarness(
     context,
     { slots: 1 },
     {
       ...recordingDiskIo,
-      async json() {
-        throw new Error('injected header failure')
+      async json(path, value, limit) {
+        if (failing === 'header' && path.endsWith('header.json'))
+          throw new Error('ENOSPC: no space left on device, write')
+        await recordingDiskIo.json(path, value, limit)
+      },
+      async binary(path, bytes) {
+        if (failing === 'journal' && path.endsWith('frames.jsonl'))
+          throw new Error('ENOSPC: no space left on device, open')
+        await recordingDiskIo.binary(path, bytes)
       },
     },
   )
+  const studyIdOf = (runId: string): string => `${binding.instanceId}_${runId}`
+  const journalRunId = randomUUID(),
+    admittedRunId = randomUUID()
+
+  // Act
+  const headerFailure = await store.start(binding, 0).then(
+    () => 'started',
+    (error: unknown) => String(error),
+  )
+  const leftAfterHeaderFailure = await readdir(store.directory)
+  failing = 'journal'
+  const journalFailure = await store
+    .start(
+      { ...binding, runId: journalRunId, studyId: studyIdOf(journalRunId) },
+      0,
+    )
+    .then(
+      () => 'started',
+      (error: unknown) => String(error),
+    )
+  const leftAfterJournalFailure = await readdir(store.directory)
+  failing = undefined
+  const admitted = await new RecordingStore(directory, workspaceKey, {
+    slots: 1,
+  })
+    .start(
+      { ...binding, runId: admittedRunId, studyId: studyIdOf(admittedRunId) },
+      0,
+    )
+    .then(
+      async (writer) => {
+        await writer.finish(1)
+        return 'started'
+      },
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      headerFailure,
+      leftAfterHeaderFailure,
+      journalFailure,
+      leftAfterJournalFailure,
+      admitted,
+      listed: (await store.list()).map((entry) => entry.studyId),
+    },
+    {
+      headerFailure: 'Error: ENOSPC: no space left on device, write',
+      leftAfterHeaderFailure: [],
+      journalFailure: 'Error: ENOSPC: no space left on device, open',
+      leftAfterJournalFailure: [],
+      admitted: 'started',
+      listed: [studyIdOf(admittedRunId)],
+    },
+  )
+})
+
+test('interrupted reservations count against capacity and legacy learner bytes remain untouched', async (context) => {
+  // Arrange: the folder a start made before its editor ended, without a header (since Cycle 0047 row 35 a start that fails while the editor runs removes its folder, so the crash's folder is made here).
+  const { directory, binding, store } = await recordingHarness(context, {
+    slots: 1,
+  })
   await writeFile(
     join(directory, 'progress.v2.json'),
     'existing learner choices',
   )
-  await assert.rejects(store.start(binding, 0), /header failure/)
+  await mkdir(store.path(binding.studyId), { recursive: true })
   const newRunId = randomUUID(),
     fresh = new RecordingStore(directory, workspaceKey, { slots: 1 })
   // Act / Assert

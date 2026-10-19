@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
-import { lstat, mkdir, open, opendir, readdir, unlink } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  open,
+  opendir,
+  readdir,
+  rm,
+  unlink,
+} from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -223,7 +231,7 @@ export class RecordingStore {
     ).savedStudyCount()
   }
 
-  /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
+  /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted, and a start that fails after making its folder removes it again ({@link createRecordingFolder}). @example await store.start(binding, runtime.evidence.elapsedMs()) */
   start(
     input: RecordingBinding,
     startedMs: number,
@@ -249,7 +257,7 @@ export class RecordingStore {
         if (identities.includes(binding.studyId))
           throw new Error('Recording already exists for this study.')
         const directory = this.path(binding.studyId, version)
-        await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE })
+        // The header is made before the folder, so a header the schema refuses leaves nothing behind.
         const header = retainedRecordingHeaderSchema.parse({
           ...binding,
           version,
@@ -263,15 +271,7 @@ export class RecordingStore {
           },
           sampleIntervalMs: RECORDING_SAMPLE_INTERVAL_MS,
         })
-        await this.io.json(
-          join(directory, RECORDING_HEADER_FILE),
-          header,
-          MAX_RECORDING_HEADER_BYTES,
-        )
-        await this.io.binary(
-          join(directory, RECORDING_JOURNAL_FILE),
-          Buffer.alloc(0),
-        )
+        await this.createRecordingFolder(directory, header)
         await this.recordWriterIdentity(directory, header)
         const writer: RecordingWriter = new RecordingWriter(
           directory,
@@ -287,6 +287,39 @@ export class RecordingStore {
     )
     this.writes = pending.catch(() => undefined)
     return pending
+  }
+
+  /**
+   * Makes the folder of a new recording with its first two files, the header and the empty journal, or leaves no folder: one whose files could not be written is removed again; called by {@link start} under the storage lock, once the recording is admitted.
+   * Why: a folder left by a failed start would take a place of the saved study limit until the editor ends, and no list would show it, nor any removal delete it: with this window's header it is the reservation of a live run of this machine ({@link recordingWriterOf}). A folder that an editor's crash leaves between these steps is an interrupted reservation: it is listed and counts, as before.
+   * @param directory - The recording's folder; it must not exist yet.
+   * @param header - The recording's validated header.
+   * @throws What making the folder throws, which leaves a folder that exists as it is; and what writing its files throws (a full disk, a header above its limit), after the folder was removed again.
+   * @example
+   * await this.createRecordingFolder('/…/recordings.v2/<study id>', header)
+   */
+  private async createRecordingFolder(
+    directory: string,
+    header: RecordingHeader,
+  ): Promise<void> {
+    await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE })
+    try {
+      await this.io.json(
+        join(directory, RECORDING_HEADER_FILE),
+        header,
+        MAX_RECORDING_HEADER_BYTES,
+      )
+      await this.io.binary(
+        join(directory, RECORDING_JOURNAL_FILE),
+        Buffer.alloc(0),
+      )
+    } catch (error) {
+      // The removal is tried once; its own failure does not replace the error of the start.
+      await rm(directory, { recursive: true, force: true }).catch(
+        () => undefined,
+      )
+      throw error
+    }
   }
 
   /**
