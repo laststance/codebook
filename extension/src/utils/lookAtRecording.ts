@@ -1,5 +1,5 @@
 import { lstat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { z } from 'zod'
 
@@ -12,6 +12,7 @@ import { recordingHeaderSchema } from '../recordingSchemas'
 
 import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 import { readWikiRegularFile } from './readWikiRegularFile'
+import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
 /** The owner a recording's header names and when the recording was created, read without the rest of the header, whose other fields depend on the recording's format. */
 const headerOwnerSchema = z.object({
@@ -24,11 +25,13 @@ const headerOwnerSchema = z.object({
  * - `isSealed`: the seal file is there; the run ended
  * - `header`: the writer the header names and the recording's creation time; absent while the header cannot be read (a start that has made the folder and not yet written its header, or a damaged header)
  * - `hasWriterRecord`: the record of the writer's full identity is there, beside the recordings ({@link recordingOwnerRecordPath}), and names this recording ({@link readRecordingWriterRecord}); `false` without a readable header, which gives the recording's creation time
+ * - `mayHaveFailedRead`: the header, or the writer record of a recording whose header was read, stands as a regular file within its bound and gave this look no header, or no record of this recording: a read that failed for a moment (a scanner on Windows holds the file), or a file that is no header or no record of this recording. Such a look proves neither absent, so it releases no sealed recording ({@link isSealedRecordingReleased}, Cycle 0047 row 239)
  */
 export type RecordingLook = {
   isSealed: boolean
   header?: z.infer<typeof headerOwnerSchema>
   hasWriterRecord: boolean
+  mayHaveFailedRead: boolean
 }
 
 /**
@@ -57,10 +60,25 @@ async function readHeaderOwner(
 }
 
 /**
- * Looks at one recording directory without asking the system about any process: its seal, its header's writer and creation time, and whether the record of its writer is there; called by {@link recordingWriterOf} before it judges the writer, by the removal of {@link LearningLibrary.removeStudy}, which looks before its storage lock ({@link LearningLibrary.writerVerdictsOf}) and again under it ({@link LearningLibrary.verdictUnderLock}), where no slow question may run, and by {@link removeWriterRecordsOfSealedRecordings}, which removes the record of a sealed recording at the save of a checkpoint its run took after the seal.
+ * Says whether a regular file of at most a bound stands at a path, looked at without following a link; called by {@link lookAtRecording} for a header or a writer record that gave the look nothing.
+ * @param path - The file's path.
+ * @param limitBytes - The largest size its reader accepts.
+ * @returns `true` for such a file; `false` for a path that holds nothing, a link, a pipe, a folder, a larger file, and a path that cannot be looked at.
+ * @example await isRegularFileWithin('/…/recordings.v2/<study id>/header.json', MAX_RECORDING_HEADER_BYTES) // => true for a header a scanner holds for a moment
+ */
+async function isRegularFileWithin(
+  path: string,
+  limitBytes: number,
+): Promise<boolean> {
+  const entry = await lstat(path).catch(() => undefined)
+  return entry !== undefined && entry.isFile() && entry.size <= limitBytes
+}
+
+/**
+ * Looks at one recording directory without asking the system about any process: its seal, its header's writer and creation time, whether the record of its writer is there, and whether a read may have failed instead; called by {@link recordingWriterOf} before it judges the writer, by the removal of {@link LearningLibrary.removeStudy}, which looks before its storage lock ({@link LearningLibrary.writerVerdictsOf}) and again under it ({@link LearningLibrary.verdictUnderLock}), where no slow question may run, and by {@link removeWriterRecordsOfSealedRecordings}, which removes the record of a sealed recording at the save of a checkpoint its run took after the seal.
  * @param directory - The directory of one recording, `<learning directory>/recordings.vN/<study id>`.
  * @returns What is there ({@link RecordingLook}).
- * @example await lookAtRecording('/…/recordings.v2/<study id>') // => { isSealed: false, header: { owner: { pid: 4242, hostname: 'workstation', sessionId }, createdAt }, hasWriterRecord: true }
+ * @example await lookAtRecording('/…/recordings.v2/<study id>') // => { isSealed: false, header: { owner: { pid: 4242, hostname: 'workstation', sessionId }, createdAt }, hasWriterRecord: true, mayHaveFailedRead: false }
  */
 export async function lookAtRecording(
   directory: string,
@@ -74,5 +92,25 @@ export async function lookAtRecording(
   const hasWriterRecord =
     header !== undefined &&
     (await readRecordingWriterRecord(directory, header.createdAt)) !== undefined
-  return { isSealed, ...(header && { header }), hasWriterRecord }
+  // A file that stands there and gave nothing may be a read that failed for a moment: the look proves no header, or no record, absent then.
+  const mayHaveFailedRead =
+    header === undefined
+      ? await isRegularFileWithin(
+          join(directory, RECORDING_HEADER_FILE),
+          MAX_RECORDING_HEADER_BYTES,
+        )
+      : !hasWriterRecord &&
+        (await isRegularFileWithin(
+          recordingOwnerRecordPath(
+            dirname(dirname(directory)),
+            basename(directory),
+          ),
+          MAX_RECORDING_HEADER_BYTES,
+        ))
+  return {
+    isSealed,
+    ...(header && { header }),
+    hasWriterRecord,
+    mayHaveFailedRead,
+  }
 }

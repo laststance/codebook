@@ -21,7 +21,10 @@ import { isDeepStrictEqual } from 'node:util'
 import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
+import type * as lookModule from '../utils/lookAtRecording'
 import { readProcessStart } from '../utils/readProcessStart'
+import type * as writerRecordModule from '../utils/readRecordingWriterRecord'
+import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { recordingWriterOf } from '../utils/recordingWriterOf'
 import { studyRemovalMessages } from '../utils/studyRemovalMessages'
@@ -1812,6 +1815,183 @@ test('the study of another window that its run saved before sealing the recordin
         `${study.id}.study.meta.v3.json`,
         `${study.id}.study.v3.json`,
       ],
+    },
+  )
+})
+
+/**
+ * Loads a study library whose looks at a recording read its files through a reader that fails once, under the storage lock, for one path: the read answers nothing, as a read of a file a scanner holds for a moment on Windows does.
+ * @param storage - The removal storage of the test.
+ * @param failingPath - The file whose first read under the lock fails.
+ * @returns A library on the test's learning directory, and whether the read failed.
+ * @example const observed = await libraryWhoseReadFailsOnceUnderTheLock(storage, headerPath)
+ */
+async function libraryWhoseReadFailsOnceUnderTheLock(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  failingPath: string,
+): Promise<{ library: LearningLibrary; hasReadFailed: () => boolean }> {
+  let isUnderTheLock = false,
+    hasReadFailed = false
+  const failingReader = {
+    readWikiRegularFile: async (
+      ...reading: Parameters<typeof readWikiRegularFile>
+    ): ReturnType<typeof readWikiRegularFile> => {
+      if (isUnderTheLock && !hasReadFailed && reading[0] === failingPath) {
+        hasReadFailed = true
+        return undefined
+      }
+      return readWikiRegularFile(...reading)
+    },
+  }
+  const writerRecordReader = await loadModule<typeof writerRecordModule>(
+    resolve(__dirname, '../utils/readRecordingWriterRecord.js'),
+    { './readWikiRegularFile': failingReader },
+    { Error },
+  )
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/lookAtRecording.js'),
+    {
+      './readWikiRegularFile': failingReader,
+      './readRecordingWriterRecord': writerRecordReader,
+    },
+    { Error },
+  )
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    {
+      './utils/lookAtRecording': look,
+      './utils/withStorageLock': {
+        withStorageLock: async (
+          ...[directory, operation]: Parameters<typeof withStorageLock>
+        ): ReturnType<typeof withStorageLock> =>
+          withStorageLock(directory, async () => {
+            isUnderTheLock = true
+            try {
+              return await operation()
+            } finally {
+              isUnderTheLock = false
+            }
+          }),
+      },
+    },
+    { Error },
+  )
+  return {
+    library: new ObservedLibrary(
+      storage.directory,
+      storage.workspaceKey,
+      () => 4,
+    ),
+    hasReadFailed: () => hasReadFailed,
+  }
+}
+
+/**
+ * Records and seals the recording of a study that another editor window saved while its run went on and has not saved after the seal, so that window still holds the recording: its header and the record of its writer name a live process of this machine, the other window.
+ * @param context - The test, at whose end the other window's process is killed.
+ * @param storage - The removal storage of the test.
+ * @returns The study's id.
+ * @example const studyId = await studySavedBeforeItsSealedRecording(context, storage)
+ */
+async function studySavedBeforeItsSealedRecording(
+  context: TestContext,
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+): Promise<string> {
+  const otherWindow = await idleChild(context)
+  const study = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of study.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      study.runId,
+      runId,
+    )
+  study.runId = runId
+  study.id = `${study.instanceId}_${runId}`
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, study.id, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  await storage.library.saveStudy(study)
+  await recording.finish(1)
+  return study.id
+}
+
+// Value: protects=the finished recording of another window's run that has not saved its study after the seal, while a read of its header or of its writer record fails for a moment under the removal's storage lock (a scanner on Windows holds the file); fails_when=the look under the lock takes the read that failed for a header or a record that is not there, counts the sealed recording as released and moves it to the Trash with the study, so that window's checkpoint after the seal is lost; why_new=Cycle 0047 row 239 (P2CLA-7): the look told no failed read from a missing file; seam=the file reader of the loaded library's looks, which answers nothing at its first read of the header, or of the writer record, under the lock, and the injected mover; no_claim=a real scanner on Windows
+test('a read of the header or of the writer record that fails once under the removal’s lock keeps another window’s finished recording, whose study it has not saved after the seal', async (context) => {
+  // Arrange: in two libraries, another window of this machine saved a study while its run went on and then sealed the recording; it has not saved the study after the seal.
+  const ofTheHeaderCase = await removalStorage(context, 4),
+    ofTheRecordCase = await removalStorage(context, 4)
+  const headerCaseStudy = await studySavedBeforeItsSealedRecording(
+      context,
+      ofTheHeaderCase,
+    ),
+    recordCaseStudy = await studySavedBeforeItsSealedRecording(
+      context,
+      ofTheRecordCase,
+    )
+  const headerReadFails = await libraryWhoseReadFailsOnceUnderTheLock(
+    ofTheHeaderCase,
+    join(
+      ofTheHeaderCase.directory,
+      'recordings.v2',
+      headerCaseStudy,
+      'header.json',
+    ),
+  )
+  const recordReadFails = await libraryWhoseReadFailsOnceUnderTheLock(
+    ofTheRecordCase,
+    recordingOwnerRecordPath(ofTheRecordCase.directory, recordCaseStudy),
+  )
+
+  // Act
+  const removalWhoseHeaderReadFails = await headerReadFails.library.removeStudy(
+    headerCaseStudy,
+    ofTheHeaderCase.moveToTrash,
+  )
+  const removalWhoseRecordReadFails = await recordReadFails.library.removeStudy(
+    recordCaseStudy,
+    ofTheRecordCase.moveToTrash,
+  )
+
+  // Assert
+  const refusal = {
+    outcome: 'nothing-moved',
+    cause:
+      'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+  }
+  assert.deepEqual(
+    {
+      removalWhoseHeaderReadFails: { ...removalWhoseHeaderReadFails },
+      removalWhoseRecordReadFails: { ...removalWhoseRecordReadFails },
+      readsFailed: [
+        headerReadFails.hasReadFailed(),
+        recordReadFails.hasReadFailed(),
+      ],
+      moved: [ofTheHeaderCase.moved, ofTheRecordCase.moved],
+    },
+    {
+      removalWhoseHeaderReadFails: refusal,
+      removalWhoseRecordReadFails: refusal,
+      readsFailed: [true, true],
+      moved: [[], []],
     },
   )
 })

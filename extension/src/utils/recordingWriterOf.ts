@@ -33,16 +33,12 @@ export async function recordingWriterOf(
   starts?: ProcessStartsOfList,
   look?: RecordingLook,
 ): Promise<RecordingWriterOfDirectory> {
-  const { isSealed, header, hasWriterRecord } =
-    look ?? (await lookAtRecording(directory))
+  const seen = look ?? (await lookAtRecording(directory))
+  const { isSealed, header } = seen
   if (!header) return { kind: 'finished' }
   if (isSealed) {
     // The look decides whether the record is there, so the answer is judged from that very look.
-    const holder = isSealedRecordingReleased({
-      isSealed,
-      header,
-      hasWriterRecord,
-    })
+    const holder = isSealedRecordingReleased(seen)
       ? undefined
       : await sealedRecordingWriterState(directory, header, starts)
     return holder
