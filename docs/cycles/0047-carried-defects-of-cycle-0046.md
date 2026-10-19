@@ -92,7 +92,7 @@ Seven fixers (A1 and A2 the publisher, B1 the address filter, B2 the reader's se
 
 ## Result and decision
 
-Result pending. Counts: 104 rows, 104 closed, 0 implementing; the second review pass of the delivery reads the fixed candidate.
+Result pending. Counts: 105 rows, 105 closed, 0 implementing; the second review pass of the delivery reads the fixed candidate.
 
 ## Handoff
 
