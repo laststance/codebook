@@ -435,8 +435,7 @@ export async function startDeepWikiReader(
         refusePage('busy')
         return
       }
-      // The place is held until the page's answer has left the host or its connection has closed: a browser that does not read its page keeps the page's bytes in the host until then, or until the send limit ends the answer. The answer has not closed yet, as nothing was awaited since the request came.
-      response.once('finish', givePlaceBack)
+      // The place is held until the page's answer has left the host or its connection has closed, both of which the answer's `close` says: a browser that does not read its page keeps the page's bytes in the host until then, or until the send limit ends the answer. The answer has not closed yet, as nothing was awaited since the request came.
       response.once('close', givePlaceBack)
     }
     // An agent may publish a new owned directory while this reader stays open.

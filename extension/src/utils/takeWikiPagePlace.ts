@@ -17,7 +17,7 @@ let placedPageCount = 0
  * @example
  * ```ts
  * const givePlaceBack = takeWikiPagePlace() // => a function, or undefined while six pages are in hand
- * response.once('finish', givePlaceBack); response.once('close', givePlaceBack)
+ * if (givePlaceBack) response.once('close', givePlaceBack) // the answer has left the host, or its connection closed
  * ```
  */
 export function takeWikiPagePlace(): (() => void) | undefined {
