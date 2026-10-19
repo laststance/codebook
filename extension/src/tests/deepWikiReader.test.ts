@@ -37,7 +37,11 @@ import { readWikiFileToOpen } from '../utils/readWikiFileToOpen'
 import type * as readWikiPublicationIdentityModule from '../utils/readWikiPublicationIdentity'
 import { readWikiPublicationIdentity } from '../utils/readWikiPublicationIdentity'
 import type * as takeWikiPagePlaceModule from '../utils/takeWikiPagePlace'
-import type { WikiPageRefusalReason } from '../utils/wikiPageRefusalHtml'
+import type * as wikiPageRefusalHtmlModule from '../utils/wikiPageRefusalHtml'
+import {
+  wikiPageRefusalHtml,
+  type WikiPageRefusalReason,
+} from '../utils/wikiPageRefusalHtml'
 import type * as wikiPageWorkerModule from '../wikiPageWorker'
 
 import {
@@ -2253,6 +2257,476 @@ test('a page whose browser stops reading is ended at the send limit and gives it
   )
 })
 
+/**
+ * Loads the reader with one place for pages in hand, whose give-backs the test can wait for, and with the modules the test hands it instead of the real ones, such as a page worker and a refusal page.
+ * Called by the tests of the places of pages answered with a refusal.
+ * @param dependencies - Modules the loaded reader requires instead of the real ones.
+ * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
+ * @returns The loaded reader's {@link startDeepWikiReader}, and each give-back of the one place, a promise that settles with `'given back'` at the n-th (from 0).
+ * @example
+ * const onePlace = await loadReaderWithOnePlace({ './wikiPageWorker': worker }, {})
+ * await onePlace.placeGivenBack(0) // => 'given back'
+ */
+async function loadReaderWithOnePlace(
+  dependencies: Record<string, unknown>,
+  constantOverrides: Partial<Record<keyof typeof constants, unknown>>,
+): Promise<{
+  startDeepWikiReader: typeof startDeepWikiReader
+  placeGivenBack: (index: number) => Promise<'given back'>
+}> {
+  const onePlace = await loadModule<typeof takeWikiPagePlaceModule>(
+    join(__dirname, '..', 'utils', 'takeWikiPagePlace.js'),
+    {
+      '../constants': {
+        ...constants,
+        WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+        WIKI_PAGE_WAITING_LIMIT: 0,
+      },
+    },
+  )
+  const giveBacks: {
+    givenBack: Promise<'given back'>
+    noteGivenBack: (givenBack: 'given back') => void
+  }[] = []
+  /** The n-th give-back, made when the test asks for it or when the place is taken, whichever comes first. */
+  const giveBackAt = (index: number): (typeof giveBacks)[number] => {
+    for (;;) {
+      const known = giveBacks[index]
+      if (known) return known
+      let noteGivenBack: (givenBack: 'given back') => void = () => undefined
+      const givenBack = new Promise<'given back'>((resolveGivenBack) => {
+        noteGivenBack = resolveGivenBack
+      })
+      giveBacks.push({ givenBack, noteGivenBack })
+    }
+  }
+  let placesTaken = 0
+  const placesNotingTheirGiveBack: typeof takeWikiPagePlaceModule = {
+    takeWikiPagePlace: () => {
+      const givePlaceBack = onePlace.takeWikiPagePlace()
+      if (!givePlaceBack) return undefined
+      const { noteGivenBack } = giveBackAt(placesTaken)
+      placesTaken += 1
+      return (): void => {
+        givePlaceBack()
+        noteGivenBack('given back')
+      }
+    },
+  }
+  const loaded = await loadModule<typeof deepWikiReaderModule>(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      ...dependencies,
+      './constants': { ...constants, ...constantOverrides },
+      './utils/takeWikiPagePlace': placesNotingTheirGiveBack,
+    },
+    { URL },
+  )
+  return {
+    startDeepWikiReader: loaded.startDeepWikiReader,
+    placeGivenBack: (index) => giveBackAt(index).givenBack,
+  }
+}
+
+/**
+ * Builds a refusal page module whose first refusal page is 16 MiB of text, far larger than the buffers of a connection, and whose later ones are the reader's own.
+ * Called by the tests of refusals that their browser does not receive.
+ * @returns The stand-in module, and a promise that settles with `'refused'` once the large refusal page was made.
+ * @example
+ * const refusals = refusalsWithALargeFirst()
+ * await refusals.largeRefusalMade // => 'refused'
+ */
+function refusalsWithALargeFirst(): {
+  module: typeof wikiPageRefusalHtmlModule
+  largeRefusalMade: Promise<'refused'>
+} {
+  let noteLargeRefusal: (refused: 'refused') => void = () => undefined
+  const largeRefusalMade = new Promise<'refused'>((resolveRefused) => {
+    noteLargeRefusal = resolveRefused
+  })
+  let refusalCount = 0
+  return {
+    module: {
+      wikiPageRefusalHtml: (...parameters) => {
+        refusalCount += 1
+        if (refusalCount > 1) return wikiPageRefusalHtml(...parameters)
+        noteLargeRefusal('refused')
+        return 'x'.repeat(16_777_216)
+      },
+    },
+    largeRefusalMade,
+  }
+}
+
+// Value: protects=the pages after a page whose tab goes while the reader prepares it: its preparation is stopped and it is refused, and its place must come back once the reader has stopped, or every later page is refused as busy until the editor reloads; fails_when=the place of a page refused after its tab went is not given back at the later of its answer's close and the reader's end of work, so a page asked for after it is refused; why_new=Cycle 0047 row 232 (state-machine cell: a refusal after the place × the connection closes first); seam=the reader loaded with loadModule, one place for pages in hand whose give-back the test waits for, and a stand-in page-worker module that answers the first page only when its request goes and serves every later one; no_claim=the shipped six places (one stands for them, counted the same way)
+test('a page whose tab goes while it is prepared gives its place back once the reader has stopped, so the page asked for after it is served', async (context) => {
+  // Arrange: a page besides the overview; one place for pages in hand; a page worker that answers the first page only when its request goes.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-refused-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let notePreparationStarted: (started: 'started') => void = () => undefined
+  const preparationStarted = new Promise<'started'>((resolveStarted) => {
+    notePreparationStarted = resolveStarted
+  })
+  let preparedPageCount = 0
+  const workerAnsweringTheFirstPageAtAbort: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: (_html, _options, limits) =>
+      new Promise((resolvePage) => {
+        preparedPageCount += 1
+        if (preparedPageCount > 1) {
+          resolvePage({ state: 'served', html: '<p>Prepared page</p>' })
+          return
+        }
+        limits.signal.addEventListener(
+          'abort',
+          () => resolvePage({ state: 'failed' }),
+          { once: true },
+        )
+        notePreparationStarted('started')
+      }),
+  }
+  const onePlace = await loadReaderWithOnePlace(
+    { './wikiPageWorker': workerAnsweringTheFirstPageAtAbort },
+    {},
+  )
+  const reader = await onePlace.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).catch(
+    () => 'request gone',
+  )
+  const firstPage = await within(preparationStarted, 2_000)
+
+  // Act: the tab goes while the page is prepared; then a page after it.
+  browserTab.abort()
+  await opening
+  const firstPlace = await within(onePlace.placeGivenBack(0), 2_000)
+  const afterResponse = await fetch(new URL('later.html', reader.url))
+  const after = {
+    status: afterResponse.status,
+    body: await afterResponse.text(),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { firstPage, firstPlace, after },
+    {
+      firstPage: 'started',
+      firstPlace: 'given back',
+      after: { status: 200, body: '<p>Prepared page</p>' },
+    },
+  )
+})
+
+// Value: protects=the pages after a page refused to a browser that stops reading its refusal page: the refusal holds its place until its answer is received or ended, and the send limit must end it and give the place back; fails_when=a refusal page whose browser takes nothing is not ended at WIKI_RESPONSE_SEND_LIMIT_MS, or its place is not given back once it is, so every later page is refused as busy; why_new=Cycle 0047 row 232 (state-machine cell: a refusal after the place × the send limit); seam=the reader loaded with loadModule, a send limit of 1 s, one place for pages in hand whose give-back the test waits for, a stand-in page-worker module that refuses the first page and serves every later one, a refusal page module whose first page is 16 MiB of text, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s and the shipped six places
+test('a refusal page whose browser stops reading is ended at the send limit and gives its place back, so the page asked for after it is served', async (context) => {
+  // Arrange: a page besides the overview; a send limit of 1 s and one place for pages in hand; a worker that refuses the first page, whose refusal page is 16 MiB, asked for by a connection that does not read it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-refusal-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let preparedPageCount = 0
+  const workerRefusingTheFirstPage: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return preparedPageCount > 1
+        ? { state: 'served', html: '<p>Prepared page</p>' }
+        : { state: 'failed' }
+    },
+  }
+  const refusals = refusalsWithALargeFirst()
+  const onePlace = await loadReaderWithOnePlace(
+    {
+      './wikiPageWorker': workerRefusingTheFirstPage,
+      './utils/wikiPageRefusalHtml': refusals.module,
+    },
+    { WIKI_RESPONSE_SEND_LIMIT_MS: 1_000 },
+  )
+  const reader = await onePlace.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browser = askWithoutReading(reader.url)
+  context.after(() => browser.connection.destroy())
+  const firstPage = await within(refusals.largeRefusalMade, 2_000)
+
+  // Act: the first page's place at the send limit, then a page after it; then the browser reads what its connection still holds.
+  const firstPlace = await within(onePlace.placeGivenBack(0), 5_000)
+  const afterResponse = await fetch(new URL('later.html', reader.url))
+  const after = {
+    status: afterResponse.status,
+    body: await afterResponse.text(),
+  }
+  browser.connection.resume()
+  const browserConnection = await within(browser.closed, 3_000)
+
+  // Assert: the browser received less than the 16 MiB of the refusal page before its connection closed.
+  assert.deepEqual(
+    {
+      firstPage,
+      firstPlace,
+      after,
+      browserConnection,
+      receivedLessThanTheRefusal: browser.receivedBytes() < 16_777_216,
+    },
+    {
+      firstPage: 'refused',
+      firstPlace: 'given back',
+      after: { status: 200, body: '<p>Prepared page</p>' },
+      browserConnection: 'closed',
+      receivedLessThanTheRefusal: true,
+    },
+  )
+})
+
+// Value: protects=the bound of the pages in hand against a page refused as busy whose connection closes before its refusal page is received: no place was taken for it, so none may come back, or each such refusal would let one more page in past the bound; and none may stay taken, or the pages after the ones in hand would be refused for good; fails_when=a busy refusal gives a place back when its connection closes, so a page asked for while the pages in hand still hold every place is served, or keeps one, so the page asked for after them is refused; why_new=Cycle 0047 row 232 (state-machine cell: a busy refusal × the connection closes first); seam=the reader loaded with loadModule, one place for pages in hand, a stand-in page-worker module that holds the first page until the test lets it go, a refusal page module whose first page is 16 MiB of text, a node:http whose server notes each close of an answer, and a connection of the test's that does not read; no_claim=the shipped six places
+test('a busy refusal whose connection closes before it is received gives no place back: a page asked for after it is still refused while the page in hand holds the place, and one asked for after that page is served', async (context) => {
+  // Arrange: a page besides the overview; one place for pages in hand, held by the overview, whose preparation waits until the test lets it go; the busy refusal page is 16 MiB.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-busy-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let notePageInHand: (inHand: 'in hand') => void = () => undefined
+  const pageInHand = new Promise<'in hand'>((resolveInHand) => {
+    notePageInHand = resolveInHand
+  })
+  let letPageGo = (): void => {}
+  const pageMayGo = new Promise<void>((resolveGo) => {
+    letPageGo = resolveGo
+  })
+  let preparedPageCount = 0
+  const workerHoldingTheFirstPage: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      if (preparedPageCount === 1) {
+        notePageInHand('in hand')
+        await pageMayGo
+      }
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const refusals = refusalsWithALargeFirst()
+  const server = httpNotingTheReadersRequests()
+  const onePlace = await loadReaderWithOnePlace(
+    {
+      'node:http': server.http,
+      './wikiPageWorker': workerHoldingTheFirstPage,
+      './utils/wikiPageRefusalHtml': refusals.module,
+    },
+    {},
+  )
+  const reader = await onePlace.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held page is let go also when the test fails, so its connection ends.
+  context.after(() => letPageGo())
+  const held = fetch(reader.url).then((response) => response.text())
+  const firstPage = await within(pageInHand, 2_000)
+  const browser = askWithoutReading(new URL('later.html', reader.url).href)
+  context.after(() => browser.connection.destroy())
+  const busyRefusal = await within(refusals.largeRefusalMade, 2_000)
+
+  // Act: the busy refusal's connection closes; then a page while the first one is in hand; then the first page is let go, and a page after it.
+  browser.connection.destroy()
+  const busyAnswer = await within(server.answersClosed(1), 2_000)
+  const meanwhileResponse = await fetch(new URL('later.html', reader.url))
+  const meanwhile = { status: meanwhileResponse.status }
+  await meanwhileResponse.text()
+  letPageGo()
+  const heldPage = await within(held, 2_000)
+  const firstPlace = await within(onePlace.placeGivenBack(0), 2_000)
+  const afterResponse = await fetch(new URL('later.html', reader.url))
+  const after = {
+    status: afterResponse.status,
+    body: await afterResponse.text(),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstPage,
+      busyRefusal,
+      busyAnswer,
+      meanwhile,
+      heldPage,
+      firstPlace,
+      after,
+    },
+    {
+      firstPage: 'in hand',
+      busyRefusal: 'refused',
+      busyAnswer: 'closed',
+      meanwhile: { status: 503 },
+      heldPage: '<p>Prepared page</p>',
+      firstPlace: 'given back',
+      after: { status: 200, body: '<p>Prepared page</p>' },
+    },
+  )
+})
+
+// Value: protects=the bound of the pages in hand against a page refused as busy to a browser that stops reading its refusal page: the send limit ends that refusal, and no place was taken for it, so none may come back, or each such refusal would let one more page in past the bound; and none may stay taken, or the pages after the ones in hand would be refused for good; fails_when=a busy refusal ended at the send limit gives a place back, so a page asked for while the pages in hand still hold every place is served, or keeps one, so the page asked for after them is refused, or the refusal is not ended at the send limit; why_new=Cycle 0047 row 232 (state-machine cell: a busy refusal × the send limit); seam=the reader loaded with loadModule, a send limit of 1 s, one place for pages in hand, a stand-in page-worker module that holds the first page until the test lets it go, a refusal page module whose first page is 16 MiB of text, a node:http whose server notes each close of an answer, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s and the shipped six places
+test('a busy refusal whose browser stops reading is ended at the send limit and gives no place back: a page asked for after it is still refused while the page in hand holds the place, and one asked for after that page is served', async (context) => {
+  // Arrange: a page besides the overview; a send limit of 1 s and one place for pages in hand, held by the overview, whose preparation waits until the test lets it go; the busy refusal page is 16 MiB, asked for by a connection that does not read it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-busy-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let notePageInHand: (inHand: 'in hand') => void = () => undefined
+  const pageInHand = new Promise<'in hand'>((resolveInHand) => {
+    notePageInHand = resolveInHand
+  })
+  let letPageGo = (): void => {}
+  const pageMayGo = new Promise<void>((resolveGo) => {
+    letPageGo = resolveGo
+  })
+  let preparedPageCount = 0
+  const workerHoldingTheFirstPage: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      if (preparedPageCount === 1) {
+        notePageInHand('in hand')
+        await pageMayGo
+      }
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const refusals = refusalsWithALargeFirst()
+  const server = httpNotingTheReadersRequests()
+  const onePlace = await loadReaderWithOnePlace(
+    {
+      'node:http': server.http,
+      './wikiPageWorker': workerHoldingTheFirstPage,
+      './utils/wikiPageRefusalHtml': refusals.module,
+    },
+    { WIKI_RESPONSE_SEND_LIMIT_MS: 1_000 },
+  )
+  const reader = await onePlace.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held page is let go also when the test fails, so its connection ends.
+  context.after(() => letPageGo())
+  const held = fetch(reader.url).then((response) => response.text())
+  const firstPage = await within(pageInHand, 2_000)
+  const browser = askWithoutReading(new URL('later.html', reader.url).href)
+  context.after(() => browser.connection.destroy())
+  const busyRefusal = await within(refusals.largeRefusalMade, 2_000)
+
+  // Act: the busy refusal at the send limit; then a page while the first one is in hand; then the first page is let go, and a page after it; then the browser reads what its connection still holds.
+  const busyAnswer = await within(server.answersClosed(1), 5_000)
+  const meanwhileResponse = await fetch(new URL('later.html', reader.url))
+  const meanwhile = { status: meanwhileResponse.status }
+  await meanwhileResponse.text()
+  letPageGo()
+  const heldPage = await within(held, 2_000)
+  const firstPlace = await within(onePlace.placeGivenBack(0), 2_000)
+  const afterResponse = await fetch(new URL('later.html', reader.url))
+  const after = {
+    status: afterResponse.status,
+    body: await afterResponse.text(),
+  }
+  browser.connection.resume()
+  const browserConnection = await within(browser.closed, 3_000)
+
+  // Assert: the browser received less than the 16 MiB of the busy refusal before its connection closed.
+  assert.deepEqual(
+    {
+      firstPage,
+      busyRefusal,
+      busyAnswer,
+      meanwhile,
+      heldPage,
+      firstPlace,
+      after,
+      browserConnection,
+      receivedLessThanTheRefusal: browser.receivedBytes() < 16_777_216,
+    },
+    {
+      firstPage: 'in hand',
+      busyRefusal: 'refused',
+      busyAnswer: 'closed',
+      meanwhile: { status: 503 },
+      heldPage: '<p>Prepared page</p>',
+      firstPlace: 'given back',
+      after: { status: 200, body: '<p>Prepared page</p>' },
+      browserConnection: 'closed',
+      receivedLessThanTheRefusal: true,
+    },
+  )
+})
+
 // Value: protects=the editor's extension host and its open files against a browser that stops reading a file of the Wiki: the reader sent such a file for as long as its connection lived; fails_when=an answer that sends a file of the Wiki is not ended once its connection has taken nothing for WIKI_RESPONSE_SEND_LIMIT_MS, so the connection stays, or the file is left open at the answer's end; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); Cycle 0047 row 230 (P2CLA-8): the reader opens the file for each part only, so its close no longer marks the limit, and the answer's close is waited for instead; seam=the reader loaded with loadModule, a send limit of 500 ms, an opener that counts the image's opens and closes, a node:http whose server notes each close of an answer, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s
 test('an image of the Wiki whose browser stops reading is ended at the send limit, and its file is closed', async (context) => {
   // Arrange: an image of 16 MiB that the manifest names, an opener that counts the image's opens and closes, a send limit of 500 ms, and a connection that asks for the image and does not read it.
@@ -2414,7 +2888,7 @@ test('a page that its browser reads slowly but steadily is received whole, thoug
  * @param fileName - The name of the watched file; every other file is opened as always.
  * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
  * @param dependencies - Further modules the loaded reader requires instead of the real ones, such as a `node:http` that notes its answers.
- * @returns The loaded reader's {@link startDeepWikiReader}; how many of the watched files are open now; and a promise that settles with `'opened'` once the watched file has been opened as many times as asked.
+ * @returns The loaded reader's {@link startDeepWikiReader}; how many of the watched files are open now; how many times the watched file was opened so far; and a promise that settles with `'opened'` once the watched file has been opened as many times as asked.
  * @example
  * const watched = await loadReaderWatchingOpensOf('diagram.png', {})
  * watched.openFiles() // => 0 while the reader holds no such file open
@@ -2426,6 +2900,7 @@ async function loadReaderWatchingOpensOf(
 ): Promise<{
   startDeepWikiReader: typeof startDeepWikiReader
   openFiles: () => number
+  openCount: () => number
   opened: (count: number) => Promise<'opened'>
 }> {
   let openCount = 0
@@ -2463,6 +2938,7 @@ async function loadReaderWatchingOpensOf(
   return {
     startDeepWikiReader: loaded.startDeepWikiReader,
     openFiles: () => openCount - closeCount,
+    openCount: () => openCount,
     opened: (count) =>
       new Promise((resolveOpened) => {
         if (count <= openCount) resolveOpened('opened')
@@ -2582,6 +3058,72 @@ test('an image of the Wiki that another file replaced while its browser waited i
       browserConnection: 'closed',
       receivedLessThanTheImage: true,
       receivedOfTheOtherFile: false,
+    },
+  )
+})
+
+// Value: protects=the publisher's swap of the Wiki folder on Windows and the editor's open files against a browser that goes while it receives an image of the Wiki: the reader must stop there, with no file of the Wiki open; fails_when=the reader goes on to read parts of a file for an answer whose connection has closed, or leaves a part's file open; why_new=Cycle 0047 row 232 (state-machine cell: a streamed file × the connection closes first); seam=the reader loaded with loadModule, an opener that counts the image's opens and closes, a node:http whose server notes each close of an answer and each end of the reader's handler, and a connection of the test's that does not read; no_claim=Windows itself (the open files are counted on any system)
+test('an image of the Wiki whose browser goes before it has received the image has no file of it open, and no part of it is read after the browser went', async (context) => {
+  // Arrange: an image of 16 MiB that the manifest names, an opener that counts the image's opens and closes, and a connection that asks for the image and does not read it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'diagram.png'),
+    Buffer.alloc(16_777_216, 'diagram '),
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const server = httpNotingTheReadersRequests()
+  const watched = await loadReaderWatchingOpensOf(
+    'diagram.png',
+    {},
+    { 'node:http': server.http },
+  )
+  const reader = await watched.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browser = askWithoutReading(new URL('diagram.png', reader.url).href, {
+    'Sec-Fetch-Dest': 'image',
+  })
+  context.after(() => browser.connection.destroy())
+  // The reader has sent parts of the image, and waits for the browser to take more.
+  const partsSent = await within(watched.opened(2), 2_000)
+
+  // Act: the browser goes; then the reader's answer closes and its handler ends.
+  browser.connection.destroy()
+  const imageAnswer = await within(server.answersClosed(1), 2_000)
+  const opensAtTheClose = watched.openCount()
+  const imageHandler = await within(server.handlersEnded(1), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      partsSent,
+      imageAnswer,
+      imageHandler,
+      opensAfterTheClose: watched.openCount() - opensAtTheClose,
+      openImageFiles: watched.openFiles(),
+    },
+    {
+      partsSent: 'opened',
+      imageAnswer: 'closed',
+      imageHandler: 'ended',
+      opensAfterTheClose: 0,
+      openImageFiles: 0,
     },
   )
 })
