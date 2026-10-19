@@ -370,7 +370,7 @@ async function holdOfPath(paths, entries) {
 /** Whether a status and another status or the record of a written file ({@link writeOwnFile}), all with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf}, {@link isSameFileAt} and {@link isSameFileId}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
 const isSameFile = (status, other) => status.dev === other.dev && status.ino === other.ino;
 
-/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, by {@link restoreStoppedCandidate} for the candidate of a stopped publish, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not, nor does any folder of a stage whose real path could not be named when the look was taken. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
+/** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the step first looked at it: a publish looks at the candidate itself before it takes its lock ({@link requireCandidateHere}), and at each folder in it when it first writes there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, by {@link restoreStoppedCandidate} for the candidate of a stopped publish, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not, nor does any folder of a stage whose real path could not be named when the look was taken. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
 async function folderLookOf(stage) {
   const realStage = await realpath(stage).catch(() => undefined), firstSeen = new Map();
   return folder => Promise.all([realpath(folder), stat(folder, { bigint: true })]).then(([real, status]) => {
@@ -722,8 +722,10 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   ownerHere(system);
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
   if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
-  // Every write below is held to the look the paths were resolved with.
-  const requirePathHeld = await holdOfPath(paths, [stage]), isFolderWhereItWas = await folderLookOf(stage);
+  // Every write below is held to the look the paths were resolved with; the lock and the files beside it lie in the Wiki folder's parent, whose look holds them.
+  const requirePathHeld = await holdOfPath(paths, [stage]), requireParentHeld = await holdOfPath(paths, []), isFolderWhereItWas = await folderLookOf(stage);
+  // The candidate's look is taken before it is read, so a candidate another publish moved into the Wiki, or one removed, while this one waited for the lock is told under it.
+  await isFolderWhereItWas(stage);
   await requireNoJournal(journal);
   const { bytes, manifest, owned } = await readCandidateManifest(stage, root);
   // Validate authored content without modifying either the stage or published output.
@@ -732,7 +734,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const inspectPrior = () => inspectOutput(output, root, { allowLegacy: receipt.baseline?.legacy === true });
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
-  return underPublishLock(paths, requirePathHeld, system, async lock => {
+  return underPublishLock(paths, requireParentHeld, system, async lock => {
+    await requireCandidateHere(stage, isFolderWhereItWas);
     // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: every refusal before the swap removes what is still its own ({@link removeWritten}), so no copy of a learner's file is left to refuse the next publish as a file outside the manifest.
     const written = [], made = [], writeHeld = heldWriterOf(requirePathHeld, isFolderWhereItWas, written, made);
     await writePagesHeld(rendered, stage, writeHeld, written, made);
@@ -772,6 +775,11 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       throw error;
     }
   });
+}
+
+/** Refuses a publish or a preview under its lock whose candidate is no longer the folder it read before the lock ({@link folderLookOf}): another publish of the same candidate moved it into the Wiki while this one waited for the lock (on macOS and Windows its owner read may take a while), or it was removed or put in place again. Without it, a path inside the project that names the candidate would be refused as a link on the Wiki's path, and a candidate outside the project would be made again and written into. Called by {@link publishWiki} first under the lock, before anything is written. @throws The refusal, which names the candidate. @example await requireCandidateHere('/repo/.codebook/next', isFolderWhereItWas) // throws once another publish moved the candidate into the Wiki */
+async function requireCandidateHere(stage, isFolderWhereItWas) {
+  if (!(await isFolderWhereItWas(stage))) throw new Error('The candidate ' + stage + ' was published or removed while this publish waited for the Wiki’s publish lock, so nothing was written. Prepare a new candidate if the Wiki still needs an update.');
 }
 
 /** The refusal of a publish or a preview while another run holds the Wiki's publish lock ({@link takePublishLock}): it names the lock by its path alone, never by its text, and sends a stopped run's lock to --recover, which ends it under the gate of its owner ({@link endStoppedLock}). Called by {@link takePublishLock}. @example publishLockRefusalOf('/repo/.codebook/wiki.publish-lock.json') // => 'Another publish of this Wiki holds its publish lock /repo/.codebook/wiki.publish-lock.json, so nothing was written. …' */

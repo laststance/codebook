@@ -17194,3 +17194,191 @@ test('a --recover that finds the publish lock alone and the journal of its run o
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+/**
+ * Publishes a first Wiki, inside the project (`.codebook/wiki`) or in a folder outside it, and prepares a candidate `next` beside it, with one PNG asset where asked.
+ * @param {{ isOutsideTheProject: boolean, hasAnAsset: boolean }} options - Where the Wiki lies, and whether the candidate lists an asset.
+ * @returns {Promise<{ directory: string, root: string, output: string, next: string }>} The temporary folder, the project, the Wiki folder and the candidate.
+ * @example
+ * const wiki = await candidateBesideAWikiAt({ isOutsideTheProject: true, hasAnAsset: false })
+ */
+async function candidateBesideAWikiAt({ isOutsideTheProject, hasAnAsset }) {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-published-meanwhile-')),
+  )
+  const root = join(directory, 'project')
+  const folder = isOutsideTheProject
+    ? join(directory, 'outside')
+    : join(root, '.codebook')
+  const output = join(folder, 'wiki'),
+    first = join(folder, 'first'),
+    next = join(folder, 'next')
+  await mkdir(root)
+  await mkdir(folder, { recursive: true })
+  await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+  await publishWiki({
+    projectRoot: root,
+    outputDirectory: output,
+    stageDirectory: first,
+  })
+  await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+  if (hasAnAsset) {
+    const manifest = JSON.parse(
+      await readFile(join(next, 'codebook-wiki.json'), 'utf8'),
+    )
+    manifest.assets = ['assets/flow.png']
+    await mkdir(join(next, 'assets'))
+    await writeFile(join(next, 'assets/flow.png'), PNG_ASSET_BYTES)
+    await writeFile(join(next, 'codebook-wiki.json'), JSON.stringify(manifest))
+  }
+  return { directory, root, output, next }
+}
+
+for (const { step, place, isOutsideTheProject, renderOnly, hasAnAsset } of [
+  {
+    step: 'a publish',
+    place: 'inside the project',
+    isOutsideTheProject: false,
+    renderOnly: false,
+    hasAnAsset: false,
+  },
+  {
+    step: 'a --render-only preview',
+    place: 'outside the project',
+    isOutsideTheProject: true,
+    renderOnly: true,
+    hasAnAsset: false,
+  },
+  {
+    step: 'a publish of a candidate with an asset',
+    place: 'outside the project',
+    isOutsideTheProject: true,
+    renderOnly: false,
+    hasAnAsset: true,
+  },
+]) {
+  // Value: protects=the agent and the learner's folders when two publishes of one candidate run at once (two agents, two editor windows) and the first moves the candidate into the Wiki while the second has read it and waits to take the publish lock, as it waits for its owner read on macOS and Windows; fails_when=the second takes the lock without a look at the candidate, so inside the project it refuses with the sentence of a link on the Wiki's path, which sends the agent to replace .codebook, and outside it makes the candidate's folder again and writes pages into it, answers a preview with success, or fails a publish with assets with the system's ENOENT and leaves that folder; why_new=Cycle 0047 row 221 (P2CLA-4); seam=a copy of the shipped publisher whose `node:fs/promises` runs the shipped publish of the same candidate just before the second writes the file through which its lock gets its name (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a real second agent, and the owner read itself, whose wait this stands in for
+  test(`${step} whose candidate another publish of the same candidate published while it waited to take the publish lock, with the Wiki ${place}, is refused as published or removed meanwhile and makes no candidate folder again`, async () => {
+    // Arrange: just before the second step writes the file that gives its lock its name, the first publish of the same candidate runs to its end.
+    const { publishWiki: publishAfterTheFirst } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?swapped-folder',
+    )
+    const wiki = await candidateBesideAWikiAt({
+      isOutsideTheProject,
+      hasAnAsset,
+    })
+    let firstPublish = 'not run'
+    swapBeforeWriting(
+      (path) => path.startsWith(`${wiki.output}.publish-lock.json.pending-`),
+      async () => {
+        firstPublish = await publishWiki({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        }).then(
+          ({ publishedFiles }) => ({ publishedFiles }),
+          (error) => error.message,
+        )
+      },
+    )
+    try {
+      // Act
+      const secondStep = await publishAfterTheFirst({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+        renderOnly,
+      }).then(
+        (result) => JSON.stringify(result),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          firstPublish,
+          secondStep,
+          candidateFolder: existsSync(wiki.next) ? 'made again' : 'gone',
+          besideTheWiki: await publisherFilesBeside(wiki.output),
+        },
+        {
+          firstPublish: { publishedFiles: hasAnAsset ? 2 : 1 },
+          secondStep: `The candidate ${wiki.next} was published or removed while this publish waited for the Wiki’s publish lock, so nothing was written. Prepare a new candidate if the Wiki still needs an update.`,
+          candidateFolder: 'gone',
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      swapBeforeWriting(
+        () => false,
+        async () => undefined,
+      )
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=a candidate the agent prepared again at the same path while a second publish of the earlier one waited to take the publish lock, after the first publish moved the earlier one into the Wiki; fails_when=the publish takes its look at the candidate only under the lock, so it takes the new candidate for the one it read, renders the earlier pages into it and, refused at its recheck, removes them with the new candidate's own page; why_new=Cycle 0047 row 221 (P2CLA-4: the candidate's look is taken before the lock); seam=a copy of the shipped publisher whose `node:fs/promises` runs the shipped publish of the same candidate and a new preparation at its path just before the second writes the file through which its lock gets its name (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a real second agent
+test('a publish whose candidate another publish published and the agent prepared again at the same path while it waited to take the publish lock is refused as published or removed meanwhile and leaves the new candidate as it was prepared', async () => {
+  // Arrange: just before the second publish writes the file that gives its lock its name, the first publish of the same candidate runs to its end and the agent prepares a new candidate at the same path.
+  const { publishWiki: publishAfterTheFirst } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await candidateBesideAWikiAt({
+    isOutsideTheProject: false,
+    hasAnAsset: false,
+  })
+  swapBeforeWriting(
+    (path) => path.startsWith(`${wiki.output}.publish-lock.json.pending-`),
+    async () => {
+      await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      })
+      await writeStage(
+        wiki.next,
+        wiki.root,
+        '<h1>Again</h1>',
+        undefined,
+        wiki.output,
+      )
+    },
+  )
+  try {
+    // Act
+    const secondPublish = await publishAfterTheFirst({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      (result) => JSON.stringify(result),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        secondPublish,
+        newCandidatePage: await readFile(
+          join(wiki.next, 'index.html'),
+          'utf8',
+        ).catch(() => 'removed'),
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        secondPublish: `The candidate ${wiki.next} was published or removed while this publish waited for the Wiki’s publish lock, so nothing was written. Prepare a new candidate if the Wiki still needs an update.`,
+        newCandidatePage: '<h1>Again</h1>',
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    swapBeforeWriting(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
