@@ -13396,3 +13396,297 @@ test(
     }
   },
 )
+
+// Value: protects=the learner's candidate after a publish killed once its journal stood and before it wrote anything of the publication into the candidate, which the agent prepared by a name of its own (`.codebook/next`), and a --recover run without --stage; fails_when=the recovery puts the candidate through the gate of a name it may not repeat although the stopped publish left nothing in it, so it refuses for good a candidate it would not change, or it changes the candidate; why_new=Cycle 0047 row 183 (S2SM-U17: an untouched candidate named by the journal alone); seam=a publisher process killed after it wrote its journal, at its second look at the Wiki (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a candidate that holds what the publish left, which the recovery puts back only with --stage
+test('a publish killed after its journal and before it wrote anything of the publication into a candidate of the agent’s own name is recovered without --stage, with the candidate byte for byte as it was', async () => {
+  // Arrange: a published Wiki and a candidate at .codebook/next; the publish of it is killed once its journal is written, as it looks at the Wiki again.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        {
+          call: 'writing',
+          folder: dirname(wiki.output),
+          name: '^wiki\\.publish-journal\\.json\\.pending-',
+        },
+        {
+          call: 'reading',
+          folder: wiki.output,
+          name: '^codebook-publication\\.json$',
+        },
+      ],
+    })
+    const candidateBefore = await filesAndTextsOf(wiki.next)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        candidate: await filesAndTextsOf(wiki.next),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+        journal: existsSync(journal) ? 'kept' : 'gone',
+      },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        candidate: candidateBefore,
+        wikiPage: wiki.wikiPage,
+        journal: 'gone',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki that stands beside the journal of a publish that names neither its generation nor the one it replaced (a journal of another Wiki, or one a cloned repository carries); fails_when=the recovery keeps whatever Wiki stands and ends the journal, so it takes a Wiki it cannot place for the outcome of that publish and removes what the candidate holds; why_new=Cycle 0047 row 183 (S2SM-U18: a Wiki of neither generation); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the digests of two other manifests; no_claim=a Wiki edited by hand into a third generation
+test('a recovery of a publish journal that names neither generation of the Wiki that stands is refused, moves nothing and keeps the journal', async () => {
+  // Arrange: the journal of a killed publish names, as the new and the prior manifest, two manifests the Wiki never had.
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.manifestSha256 = '1'.repeat(64)
+    record.priorManifestSha256 = '2'.repeat(64)
+  })
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const journalBefore = await readFile(journal, 'utf8')
+    const candidateBefore = await filesAndTextsOf(wiki.next)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+        candidate: await filesAndTextsOf(wiki.next),
+        journal: await readFile(journal, 'utf8').then(
+          (text) => (text === journalBefore ? 'kept' : 'changed'),
+          () => 'gone',
+        ),
+      },
+      {
+        killed: '',
+        recovery:
+          'The current Wiki does not match the interrupted publication.',
+        wikiPage: wiki.wikiPage,
+        candidate: candidateBefore,
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki after a publish that adopted a Wiki without a record was killed past its swap, when the new Wiki then lost its publication record (removed by hand, or by a sync client); fails_when=the recovery takes the new generation without its record for a published Wiki and ends the journal, so the Wiki stands with no record and the next publish adopts it again or is refused; why_new=Cycle 0047 row 183 (S2SM-U19: a new generation without its record); seam=a publisher process killed after its swap, just before it reads its journal to remove it (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a Wiki of this version's own record, whose missing record the inspection refuses before (the prior generation was not adopted)
+test('a recovery of a publish of an adopted Wiki killed after its swap, whose new Wiki lost its publication record, is refused and keeps the journal', async () => {
+  // Arrange: a Wiki without a record, adopted by a prepared candidate; the publish is killed after its swap, then the new Wiki's record is removed.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-new-without-record-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    next = join(root, '.codebook/next'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await mkdir(root)
+    await writeStage(output, root, '<h1>Legacy</h1>')
+    await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+      adoptExisting: true,
+    })
+    await writeStage(next, root, '<h1>Next</h1>')
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      },
+      killAt: [
+        {
+          call: 'reading',
+          folder: dirname(output),
+          name: '^wiki\\.publish-journal\\.json$',
+        },
+      ],
+    })
+    await rm(join(output, 'codebook-publication.json'))
+    const journalBefore = await readFile(journal, 'utf8')
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        wikiIsTheNewGeneration: (
+          await readFile(join(output, 'index.html'), 'utf8')
+        ).includes('<h2 id="intro">Next</h2>'),
+        journal: await readFile(journal, 'utf8').then(
+          (text) => (text === journalBefore ? 'kept' : 'changed'),
+          () => 'gone',
+        ),
+      },
+      {
+        killed: '',
+        recovery: 'The newly published Wiki is missing its publication record.',
+        wikiIsTheNewGeneration: true,
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the Wiki a publish kept beside the Wiki folder between its two moves, when the journal names another prior generation than the one kept there (a journal of another Wiki, or one a cloned repository carries); fails_when=the recovery moves any kept prior Wiki back into place, so it puts a Wiki the journal does not name where the learner's Wiki was; why_new=Cycle 0047 row 183 (S2SM-U20: a kept prior Wiki of another generation); seam=a publisher process killed just before it moves the candidate into the Wiki's place (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the digest of another prior manifest; no_claim=a kept prior Wiki that is no folder of its own, which the recovery refuses before
+test('a recovery of a publish stopped between its moves whose journal names another prior Wiki than the one kept beside the Wiki folder is refused, and moves nothing', async () => {
+  // Arrange: the publish is killed after the Wiki went to its backup name; its journal then names another prior manifest.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'renaming', folder: dirname(wiki.next), name: '^next$' },
+      ],
+    })
+    const record = JSON.parse(await readFile(journal, 'utf8'))
+    await writeFile(
+      journal,
+      JSON.stringify({ ...record, priorManifestSha256: '2'.repeat(64) }),
+    )
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        wikiFolder: existsSync(wiki.output) ? 'stands' : 'missing',
+        keptPriorPage: await readFile(
+          join(record.backup, 'index.html'),
+          'utf8',
+        ).catch(() => 'moved'),
+        journal: existsSync(journal) ? 'kept' : 'gone',
+      },
+      {
+        killed: '',
+        recovery: 'The prior Wiki does not match the publication journal.',
+        wikiFolder: 'missing',
+        keptPriorPage: wiki.wikiPage,
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const { names, rewrite } of [
+  {
+    names: 'another output',
+    rewrite: (record) => {
+      record.output = `${record.output}-other`
+    },
+  },
+  {
+    names: 'an operation the publisher does not write',
+    rewrite: (record) => {
+      record.operation = 'replace-everything'
+    },
+  },
+]) {
+  // Value: protects=a Wiki beside a journal that is not this output's (another output's, or one a cloned repository carries) or names a step the publisher never writes; fails_when=the recovery takes up a journal that does not identify this output and operation, so it moves or removes files for a step that is not this output's; why_new=Cycle 0047 row 183 (S2SM-U21: a journal of another output or operation); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then rewritten as the row says; no_claim=a journal of another project, which the same check refuses
+  test(`a recovery of a publish journal that names ${names} is refused as one that does not identify this output, and keeps the journal byte for byte`, async () => {
+    // Arrange
+    const { wiki, killed } = await publishKilledAfterItsJournal(rewrite)
+    const journal = `${wiki.output}.publish-journal.json`
+    try {
+      const journalBefore = await readFile(journal, 'utf8')
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery,
+          wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+          journal: await readFile(journal, 'utf8').then(
+            (text) => (text === journalBefore ? 'kept' : 'changed'),
+            () => 'gone',
+          ),
+        },
+        {
+          killed: '',
+          recovery:
+            'The Wiki publication journal does not identify this output; inspect it without moving files.',
+          wikiPage: wiki.wikiPage,
+          journal: 'kept',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
