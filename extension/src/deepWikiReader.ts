@@ -412,26 +412,7 @@ export async function startDeepWikiReader(
       decodeURIComponent(url.pathname.slice(prefix.length)) || WIKI_ENTRY_FILE
     // The update state needs no manifest, so it answers while a publish is replacing the site.
     if (relativePath === WIKI_UPDATE_STATUS_ROUTE) {
-      if (request.method !== 'GET') {
-        sendGetOnly(response)
-        return
-      }
-      const windowStatus = readUpdateStatus()
-      // The window holds one run state whatever folder that run is for; after the output setting changed, a reader of another folder has no run of its own.
-      const ownStatus: WikiUpdateStatus =
-        windowStatus.state === 'idle' ||
-        windowStatus.outputDirectory === outputDirectory
-          ? windowStatus
-          : { state: 'idle' }
-      // The publish time lets the page tell a publish after the run ended from a source that went back by itself.
-      sendJson(response, 200, {
-        ...ownStatus,
-        sitePublishedAt: await readWikiPublishedAt(outputDirectory),
-        // The page compares it with the publication it was served from: a difference means newer pages are on disk.
-        publication: await readWikiPublicationIdentity(outputDirectory),
-        // Cheap to answer at every look: the page asks for the costly freshness check only when it rose.
-        sourceChangeStamp,
-      } satisfies WikiUpdateStatusAnswer)
+      await answerUpdateStatus(request, response)
       return
     }
     if (relativePath === WIKI_FRESHNESS_ROUTE) {
@@ -465,6 +446,38 @@ export async function startDeepWikiReader(
     await answerWikiFile(response, relativePath, files)
   }
   /**
+   * Answers the update state of the Wiki: the window's Wiki update run when it is for this reader's folder, when the site on disk was published, its publication identity and the source-change stamp; nothing of the manifest is read, so it answers while a publish is replacing the site.
+   * Called by {@link handleRequest} for the update state route, which the page's script asks at every look.
+   * @param request - The request; only GET is answered.
+   * @param response - Its answer.
+   * @example await answerUpdateStatus(request, response)
+   */
+  async function answerUpdateStatus(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    if (request.method !== 'GET') {
+      sendGetOnly(response)
+      return
+    }
+    const windowStatus = readUpdateStatus()
+    // The window holds one run state whatever folder that run is for; after the output setting changed, a reader of another folder has no run of its own.
+    const ownStatus: WikiUpdateStatus =
+      windowStatus.state === 'idle' ||
+      windowStatus.outputDirectory === outputDirectory
+        ? windowStatus
+        : { state: 'idle' }
+    // The publish time lets the page tell a publish after the run ended from a source that went back by itself.
+    sendJson(response, 200, {
+      ...ownStatus,
+      sitePublishedAt: await readWikiPublishedAt(outputDirectory),
+      // The page compares it with the publication it was served from: a difference means newer pages are on disk.
+      publication: await readWikiPublicationIdentity(outputDirectory),
+      // Cheap to answer at every look: the page asks for the costly freshness check only when it rose.
+      sourceChangeStamp,
+    } satisfies WikiUpdateStatusAnswer)
+  }
+  /**
    * Answers a question of the reader's own page with the editor model's answer, from the included sources of the manifest; a request that is no such question is refused before the manifest is read.
    * Called by {@link handleRequest} for the question route.
    * @param request - The question's request.
@@ -475,16 +488,7 @@ export async function startDeepWikiReader(
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    const askedFrom = request.headers.origin
-    // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
-    const isOwnPage =
-      askedFrom !== undefined &&
-      (askedFrom === origin || askedFrom === forwardedOrigin)
-    if (
-      request.method !== 'POST' ||
-      !isOwnPage ||
-      request.headers['content-type']?.split(';')[0] !== 'application/json'
-    ) {
+    if (!isQuestionOfOwnPage(request)) {
       sendJson(response, 403, {
         error: 'This Wiki question must come from its reader.',
       })
@@ -498,15 +502,8 @@ export async function startDeepWikiReader(
         return
       }
     }
-    const payload: unknown = JSON.parse(rawBody)
-    if (
-      typeof payload !== 'object' ||
-      payload === null ||
-      !('question' in payload) ||
-      typeof payload.question !== 'string' ||
-      !payload.question.trim() ||
-      payload.question.length > WIKI_QUESTION_LIMIT_CHARS
-    ) {
+    const question = questionOf(rawBody)
+    if (question === undefined) {
       sendJson(response, 400, { error: 'Enter a shorter Wiki question.' })
       return
     }
@@ -520,12 +517,31 @@ export async function startDeepWikiReader(
       sendJson(
         response,
         200,
-        await answerQuestion(payload.question, sources, controller.signal),
+        await answerQuestion(question, sources, controller.signal),
       )
     } catch (error) {
       if (!response.writableEnded)
         sendJson(response, 503, { error: String(error) })
     }
+  }
+  /**
+   * Says whether a request to the question route is a question of this reader's own page: a POST of JSON from the reader's address, or from the one the editor forwards it to.
+   * Called by {@link answerQuestionRequest} before it reads the request's body.
+   * @param request - The request.
+   * @returns `true` for such a question; `false` for any other request, also one without an origin, which comes from no page of this reader.
+   * @example isQuestionOfOwnPage(request) // => false for a request from another origin
+   */
+  function isQuestionOfOwnPage(request: IncomingMessage): boolean {
+    const askedFrom = request.headers.origin
+    // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
+    const isOwnPage =
+      askedFrom !== undefined &&
+      (askedFrom === origin || askedFrom === forwardedOrigin)
+    return (
+      request.method === 'POST' &&
+      isOwnPage &&
+      request.headers['content-type']?.split(';')[0] === 'application/json'
+    )
   }
   /**
    * Answers a request for a page of the Wiki: a page opened as a page is read, prepared off the host's thread and served under its place among the pages in hand ({@link takeWikiPagePlace}); a page asked for as a part of a page is refused, before any file is read for it.
@@ -783,6 +799,30 @@ export async function startDeepWikiReader(
     if (server.listening) server.close()
     throw error
   }
+}
+
+/**
+ * Reads the question out of the body the reader's page sent to its question route.
+ * Called by the reader for every question of its own page, once the body was read within {@link WIKI_HTTP_BODY_LIMIT_BYTES}.
+ * @param rawBody - The request's body.
+ * @returns The question, when the body is JSON whose `question` is text that is not blank and has at most {@link WIKI_QUESTION_LIMIT_CHARS} characters; `undefined` for any other JSON.
+ * @throws What `JSON.parse` throws for a body that is no JSON; the reader answers it with status 500.
+ * @example
+ * questionOf('{"question":"Where is it?"}') // => 'Where is it?'
+ * questionOf('{"question":"  "}')           // => undefined
+ */
+function questionOf(rawBody: string): string | undefined {
+  const payload: unknown = JSON.parse(rawBody)
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    !('question' in payload) ||
+    typeof payload.question !== 'string' ||
+    !payload.question.trim() ||
+    payload.question.length > WIKI_QUESTION_LIMIT_CHARS
+  )
+    return undefined
+  return payload.question
 }
 
 /** A file of the Wiki by its device and its inode number, read exactly, so the reader tells it from another file that took its path. */
