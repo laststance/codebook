@@ -981,6 +981,20 @@ test('the packaged README quotes the refusals of a link or a file on the Wiki’
   )
 })
 
+// Value: protects=a learner who opens a cloned repository in an untrusted workspace, whose `.vscode/settings.json` names a Wiki folder, learning where the Wiki is read and written instead; fails_when=the README's sentence on the Wiki folder no longer says that an untrusted workspace's own value of codebook.wikiOutputDirectory is not used and that the user setting or the default applies (the manifest's restriction is held by deepWikiOutput.test.ts); why_new=Cycle 0047 row 52 (N1): the restriction stood in the change history only; seam=none
+test('the packaged README says, where it names the Wiki folder, that an untrusted workspace’s own value of codebook.wikiOutputDirectory is not used and the learner’s user setting or the default folder applies', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act: the folder's first sentence and the restriction after it, as one text.
+  const saysIt = readme.includes(
+    "The folder is `.codebook/wiki` in the project unless `codebook.wikiOutputDirectory` says otherwise; the status names it. In a workspace you have not trusted, the editor does not use the workspace's own value of `codebook.wikiOutputDirectory` (a cloned repository's `.vscode/settings.json` could name any folder): your user setting, or else `.codebook/wiki`, applies.",
+  )
+
+  // Assert
+  assert.equal(saysIt, true)
+})
+
 // Value: protects=a learner who finds an entry "Archive missing; remaining files kept" in Saved studies, or whose Node test is refused beside another window, reading what the entry is, how its rest is removed and why the test did not start; fails_when=the README no longer names what is left of a study whose archive was removed, how it is removed with and without a Trash, that it is neither selected nor counted, and that a run whose archive only waits to be saved is not such a loss, or no longer says that the start of a Node test takes the storage lock; why_new=Cycle 0046 rows 86, 181, 248 and 190: the entry, its place in the list and the lock at a Node test's start stood in no document; seam=none
 test('the packaged README says what is left of a study whose archive was removed, with its words in the list, how the rest is removed, that it is neither selected nor counted and that a waiting archive is written by Retry, and that the start of a Node test takes the storage lock', async () => {
   // Arrange
