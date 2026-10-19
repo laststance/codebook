@@ -207,15 +207,21 @@ async function readReceipt(directory, root, optional = false) {
 function parseReceipt(bytes, root) {
   let receipt;
   try { receipt = JSON.parse(bytes); } catch (cause) { throw new Error('The Wiki publication record is invalid; output was preserved.', { cause }); }
-  const baseline = receipt?.baseline;
-  if (receipt?.schemaVersion !== 1 || receipt.repositoryRoot !== root || !['candidate', 'published'].includes(receipt.kind) ||
-    typeof receipt.output !== 'string' || !isAbsolute(receipt.output) ||
-    baseline !== null && (!baseline || !HASH.test(baseline.manifestSha256) || typeof baseline.manifestText !== 'string' || digest(baseline.manifestText) !== baseline.manifestSha256 || !validHashes(baseline.ownedFiles) || typeof baseline.legacy !== 'boolean'))
-    throw new Error('The Wiki publication record is invalid; output was preserved.');
-  if (receipt.kind === 'published' && (typeof receipt.manifestText !== 'string' || !HASH.test(receipt.manifestSha256) || digest(receipt.manifestText) !== receipt.manifestSha256))
-    throw new Error('The retained Wiki manifest is invalid; output was preserved.');
+  if (!isReceiptOf(receipt, root) || !isValidBaseline(receipt.baseline)) throw new Error('The Wiki publication record is invalid; output was preserved.');
+  if (!retainsItsManifest(receipt)) throw new Error('The retained Wiki manifest is invalid; output was preserved.');
   return receipt;
 }
+
+/** Whether a parsed publication record names this project, a kind of record the publisher writes and an absolute output. Called by {@link parseReceipt}. @example isReceiptOf({ schemaVersion: 1, repositoryRoot: '/repo', kind: 'candidate', output: '/repo/.codebook/wiki' }, '/repo') // => true */
+const isReceiptOf = (receipt, root) => receipt?.schemaVersion === 1 && receipt.repositoryRoot === root && ['candidate', 'published'].includes(receipt.kind) &&
+  typeof receipt.output === 'string' && isAbsolute(receipt.output);
+
+/** Whether a publication record's baseline is none, for a new output, or a whole capture of the generation it replaces: the manifest's text with its SHA-256 digest, the digests of the owned files, and whether it was adopted as legacy. Called by {@link parseReceipt}. @example isValidBaseline(null) // => true */
+const isValidBaseline = baseline => baseline === null || Boolean(baseline) && HASH.test(baseline.manifestSha256) && typeof baseline.manifestText === 'string' &&
+  digest(baseline.manifestText) === baseline.manifestSha256 && validHashes(baseline.ownedFiles) && typeof baseline.legacy === 'boolean';
+
+/** Whether a published record retains its manifest's text with that text's SHA-256 digest; a candidate's record retains none. Called by {@link parseReceipt}. @example retainsItsManifest({ kind: 'candidate' }) // => true */
+const retainsItsManifest = receipt => receipt.kind !== 'published' || typeof receipt.manifestText === 'string' && HASH.test(receipt.manifestSha256) && digest(receipt.manifestText) === receipt.manifestSha256;
 
 /** Checks current output against its retained manifest before preview, replacement or recovery. @example await inspectOutput('/wiki', '/repo') */
 async function inspectOutput(output, root, { allowLegacy = false, allowManifestDrift = false } = {}) {
@@ -422,13 +428,8 @@ async function removeOwnedRecord(path, bytes) {
   await unlink(path);
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
-export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false }) {
-  const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
-  if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
-  // Every write below is held to the look the paths were resolved with.
-  const requirePathHeld = await holdOfPath(paths, [stage]), isFolderWhereItWas = await folderLookOf(stage);
-  await requireNoJournal(journal);
+/** Reads a candidate's manifest and refuses a candidate that holds a file its manifest does not list, named so the step that removes it is clear, or an asset that is no raster image, before anything is rendered or written. Called by {@link publishWiki}. @returns The manifest's bytes, the manifest and the paths it owns. @throws The refusal of the stray file or of the asset. @example await readCandidateManifest('/repo/.codebook/next', '/repo') // => { bytes, manifest, owned } */
+async function readCandidateManifest(stage, root) {
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
   // A file of the stage the manifest does not list is named, so the step that removes it is clear.
@@ -436,58 +437,119 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   if (stray !== undefined) throw new Error('The staged Wiki contains a file outside its published manifest: ' + stray + ". Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.");
   // An asset is a raster image or nothing; checked before anything is rendered or written.
   for (const path of manifest.assets) await requireRasterAsset(stage, path);
-  // Validate authored content without modifying either the stage or published output.
-  const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
+  return { bytes, manifest, owned };
+}
+
+/** Reads a candidate's record ({@link parseReceipt}) and refuses a candidate that was not prepared for this output, or a finalized one whose manifest changed. Called by {@link publishWiki} after the pages are rendered. @returns The record's bytes, kept to put them back after a refusal, and the record. @throws The refusal of an unprepared or changed candidate. @example await readCandidateRecord('/repo/.codebook/next', '/repo', '/repo/.codebook/wiki', manifestBytes) // => { receiptBytes, receipt } */
+async function readCandidateRecord(stage, root, output, bytes) {
   const receiptBytes = await regularBytes(join(stage, RECEIPT), true), receipt = receiptBytes === undefined ? undefined : parseReceipt(receiptBytes, root);
   if (!receipt || receipt.output !== output) throw new Error('Use --prepare before editing a Wiki candidate for this output.');
   if (receipt.kind === 'published' && digest(bytes) !== receipt.manifestSha256) throw new Error('A previously finalized candidate changed. Preserve it and use --prepare again.');
+  return { receiptBytes, receipt };
+}
+
+/** The held write of a publish into its candidate: the folder of the file is made and held before the write ({@link makeFolderHeld}), and held after it too, as the preparation's writes are, so a swap during the last page write is seen before a preview returns, and one of a page's own folder before the publish goes on. Each file is recorded in `written`, each folder made in `made`, for {@link removeWritten}. Called by {@link publishWiki}. @returns The write, given a path, its bytes, and the writer: {@link replaceOwnFile} for a page, which takes the place of the entry at its name, or {@link writeOwnFile} for a copy of a learner's file, which is new. @example await heldWriterOf(requirePathHeld, isFolderWhereItWas, written, made)('/repo/.codebook/next/index.html', html, replaceOwnFile) */
+function heldWriterOf(requirePathHeld, isFolderWhereItWas, written, made) {
+  return async (path, content, write) => {
+    made.unshift(...(await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas)));
+    written.push(await write(path, content));
+    await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas);
+  };
+}
+
+/** Writes the rendered pages into the candidate, each held ({@link heldWriterOf}); a refusal removes the pages written that are still the publish's own and the folders it made ({@link removeWritten}). Called by {@link publishWiki}, for a preview as for a publish. @example await writePagesHeld(rendered, '/repo/.codebook/next', writeHeld, written, made) */
+async function writePagesHeld(rendered, stage, writeHeld, written, made) {
+  try { for (const [path, html] of rendered) await writeHeld(join(stage, path), html, replaceOwnFile); }
+  catch (error) { await removeWritten(written, made); throw error; }
+}
+
+/** The text of a candidate's finalized manifest: the manifest with the SHA-256 digest of each owned file of the candidate, which the manifest takes as its `ownedFiles`. Called by {@link publishWiki}. @example await finalizedManifestTextOf(manifest, owned, '/repo/.codebook/next') // => '{\n  "schemaVersion": 1, …' */
+async function finalizedManifestTextOf(manifest, owned, stage) {
+  const ownedFiles = Object.create(null);
+  for (const path of owned) ownedFiles[path] = digest(await regularBytes(join(stage, path)));
+  manifest.ownedFiles = ownedFiles;
+  return JSON.stringify(manifest, null, 2) + '\n';
+}
+
+/** The journal of a publish, with the backup name of the prior Wiki and the text of the candidate's finalized record. The journal keeps the candidate's prepared manifest and record, so the recovery of a publish stopped after it finalized them puts them back ({@link restoreStoppedCandidate}). Called by {@link publishWiki} before it writes the journal. @returns The journal's record, the backup's path (none without a prior Wiki) and the finalized record's text. @example await publishJournalOf(paths, prior, receipt, manifestText, manifestBytes, receiptBytes) // => { record: { projectRoot: '/repo', …, operation: 'publish', … }, backup: '/repo/.codebook/wiki.previous-…', finalizedReceiptText: '{…}' } */
+async function publishJournalOf({ root, output, stage }, prior, receipt, manifestText, bytes, receiptBytes) {
+  const backup = prior ? output + '.previous-' + randomUUID() : undefined;
+  const manifestSha256 = digest(manifestText), finalizedReceiptText = JSON.stringify({ ...receipt, kind: 'published', manifestSha256, manifestText });
+  const record = { projectRoot: root, output, stage, backup, pid: process.pid, owner: await ownerHere(), id: randomUUID(), operation: 'publish', manifestSha256, priorManifestSha256: prior ? digest(prior.bytes) : undefined, priorLegacy: receipt.baseline?.legacy === true,
+    finalizedReceiptSha256: digest(finalizedReceiptText), prepared: { manifest: bytes.toString('base64'), receipt: receiptBytes.toString('base64') } };
+  return { record, backup, finalizedReceiptText };
+}
+
+/** The finalizing write of a candidate's manifest or record: each entry, the path with the file beside it ({@link finalizingPathOf}) and the bytes it had as prepared, is recorded in `finalized` before the write ({@link replaceOwnFileThrough}), so every refusal before the swap puts the prepared bytes back ({@link restoreFinalized}) and a refused publish leaves no finalized candidate that refuses the learner's next edit. Called by {@link publishWiki}. @returns The write, given the name, the finalized text and the prepared bytes. @example await finalizerOf('/repo/.codebook/next', journalId, finalized)('codebook-wiki.json', manifestText, manifestBytes) */
+function finalizerOf(stage, id, finalized) {
+  return async (name, text, prepared) => {
+    const entry = { path: join(stage, name), temporary: finalizingPathOf(stage, id, name), prepared };
+    finalized.push(entry);
+    entry.file = await replaceOwnFileThrough(entry.temporary, entry.path, text);
+  };
+}
+
+/** The learner's files of a Wiki: its files that its manifest does not list, other than its manifest and its record; none without a Wiki. Called by {@link publishWiki}, {@link requireLearnerFilesUnchanged} and {@link learnerCopiesIn}. @example learnerFilesOf(wiki) // => ['manual.txt'] */
+const learnerFilesOf = wiki => wiki ? wiki.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !wiki.owned.has(path)) : [];
+
+/** Copies the learner's files of the prior Wiki into the candidate, each held and new ({@link heldWriterOf}, {@link writeOwnFile}), after refusing one that stands where the update has an owned file or folder. Called by {@link publishWiki}. @returns The SHA-256 digest of each copy's bytes, by path, for {@link requireLearnerFilesUnchanged}. @throws The refusal of a conflicting file. @example await copyLearnerFiles(['manual.txt'], owned, '/repo/.codebook/wiki', '/repo/.codebook/next', writeHeld) // => { 'manual.txt': '…' } */
+async function copyLearnerFiles(manual, owned, output, stage, writeHeld) {
+  const manualHashes = Object.create(null);
+  for (const path of manual) {
+    if ([...owned].some(ownedPath => ownedPath === path || ownedPath.startsWith(path + '/') || path.startsWith(ownedPath + '/')))
+      throw new Error('A manual Wiki file conflicts with the update: ' + path);
+    const content = await regularBytes(join(output, path));
+    manualHashes[path] = digest(content);
+    await writeHeld(join(stage, path), content, writeOwnFile);
+  }
+  return manualHashes;
+}
+
+/** Refuses a publish whose learner's files changed while it copied them: another number of them, or one whose bytes differ from its copy. Called by {@link publishWiki} at its recheck before the swap. @throws The refusal of the change. @example await requireLearnerFilesUnchanged(current, ['manual.txt'], manualHashes, '/repo/.codebook/wiki') */
+async function requireLearnerFilesUnchanged(current, manual, manualHashes, output) {
+  const currentManual = learnerFilesOf(current);
+  if (currentManual.length !== manual.length) throw new Error('Manual Wiki files changed during publication; output was preserved.');
+  for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
+}
+
+/** Undoes a publish refused before its swap. The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate. The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it ({@link removeWritten}). The candidate's prepared manifest and record are put back ({@link restoreFinalized}) only while the path and the candidate hold; a failure leaves the finalized ones, which publish again unchanged, and the publish's own refusal is the one reported. Called by {@link publishWiki}. @returns The refusal of a move back that failed, which keeps the journal for --recover; undefined otherwise. @example await undoRefusedPublish({ output, stage, backup, movedOld: true, written, made, finalized, requirePathHeld, isFolderWhereItWas }) // => undefined */
+async function undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas }) {
+  const moveBackFailure = movedOld ? await renameRetried(backup, output).then(() => undefined, cause => new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause })) : undefined;
+  await removeWritten(written, made);
+  if (finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false))
+    for (const entry of finalized) await restoreFinalized(entry).catch(() => undefined);
+  return moveBackFailure;
+}
+
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false }) {
+  const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
+  if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
+  // Every write below is held to the look the paths were resolved with.
+  const requirePathHeld = await holdOfPath(paths, [stage]), isFolderWhereItWas = await folderLookOf(stage);
+  await requireNoJournal(journal);
+  const { bytes, manifest, owned } = await readCandidateManifest(stage, root);
+  // Validate authored content without modifying either the stage or published output.
+  const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
+  const { receiptBytes, receipt } = await readCandidateRecord(stage, root, output, bytes);
   const inspectPrior = () => inspectOutput(output, root, { allowLegacy: receipt.baseline?.legacy === true });
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
   // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: every refusal before the swap removes what is still its own ({@link removeWritten}), so no copy of a learner's file is left to refuse the next publish as a file outside the manifest.
-  const written = [], made = [];
-  // A page takes the place of the entry at its name ({@link replaceOwnFile}); a copy of a learner's file is new.
-  const writeHeld = async (path, content, write) => {
-    made.unshift(...(await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas)));
-    written.push(await write(path, content));
-    // Held after the write too, as the preparation's writes are: a swap during the last page write is seen before a preview returns, and one of a page's own folder before the publish goes on.
-    await makeFolderHeld(dirname(path), requirePathHeld, isFolderWhereItWas);
-  };
-  try { for (const [path, html] of rendered) await writeHeld(join(stage, path), html, replaceOwnFile); }
-  catch (error) { await removeWritten(written, made); throw error; }
+  const written = [], made = [], writeHeld = heldWriterOf(requirePathHeld, isFolderWhereItWas, written, made);
+  await writePagesHeld(rendered, stage, writeHeld, written, made);
   if (renderOnly) return { stage, renderedPages: rendered.size };
-  const ownedFiles = Object.create(null);
-  for (const path of owned) ownedFiles[path] = digest(await regularBytes(join(stage, path)));
-  manifest.ownedFiles = ownedFiles;
-  const manifestText = JSON.stringify(manifest, null, 2) + '\n';
-  const backup = prior ? output + '.previous-' + randomUUID() : undefined;
-  const manifestSha256 = digest(manifestText), finalizedReceiptText = JSON.stringify({ ...receipt, kind: 'published', manifestSha256, manifestText });
-  // The journal keeps the candidate's prepared manifest and record, so the recovery of a publish stopped after it finalized them puts them back ({@link restoreStoppedCandidate}).
-  const record = { projectRoot: root, output, stage, backup, pid: process.pid, owner: await ownerHere(), id: randomUUID(), operation: 'publish', manifestSha256, priorManifestSha256: prior ? digest(prior.bytes) : undefined, priorLegacy: receipt.baseline?.legacy === true,
-    finalizedReceiptSha256: digest(finalizedReceiptText), prepared: { manifest: bytes.toString('base64'), receipt: receiptBytes.toString('base64') } };
+  const manifestText = await finalizedManifestTextOf(manifest, owned, stage);
+  const { record, backup, finalizedReceiptText } = await publishJournalOf(paths, prior, receipt, manifestText, bytes, receiptBytes);
   const journalBytes = JSON.stringify(record);
   await writeFile(journal, journalBytes, { flag: 'wx' });
-  // The candidate's manifest and record as prepared, for each one the publish began to finalize: every refusal before the swap puts them back ({@link restoreFinalized}), so a refused publish leaves no finalized candidate that refuses the learner's next edit.
-  const finalized = [];
-  const finalize = async (name, text, prepared) => {
-    const entry = { path: join(stage, name), temporary: finalizingPathOf(stage, record.id, name), prepared };
-    finalized.push(entry);
-    entry.file = await replaceOwnFileThrough(entry.temporary, entry.path, text);
-  };
+  const finalized = [], finalize = finalizerOf(stage, record.id, finalized);
   let movedOld = false, swapped = false;
   try {
     await requirePathHeld();
     prior = await inspectPrior();
     assertBaseline(receipt.baseline, prior);
-    const manual = prior ? prior.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !prior.owned.has(path)) : [];
-    const manualHashes = Object.create(null);
-    for (const path of manual) {
-      if ([...owned].some(ownedPath => ownedPath === path || ownedPath.startsWith(path + '/') || path.startsWith(ownedPath + '/')))
-        throw new Error('A manual Wiki file conflicts with the update: ' + path);
-      const content = await regularBytes(join(output, path));
-      manualHashes[path] = digest(content);
-      await writeHeld(join(stage, path), content, writeOwnFile);
-    }
+    const manual = learnerFilesOf(prior), manualHashes = await copyLearnerFiles(manual, owned, output, stage, writeHeld);
     await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
     // The manifest and the record take the place of the entries at their names, which a link put there after they were read does not lead out of the candidate, and which a stop never leaves empty.
     await finalize(MANIFEST, manifestText, bytes);
@@ -495,9 +557,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
     const current = await inspectPrior();
     assertBaseline(receipt.baseline, current);
-    const currentManual = current ? current.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !current.owned.has(path)) : [];
-    if (currentManual.length !== manual.length) throw new Error('Manual Wiki files changed during publication; output was preserved.');
-    for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
+    await requireLearnerFilesUnchanged(current, manual, manualHashes, output);
     await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
     if (backup) { await renameRetried(output, backup); movedOld = true; }
     await renameRetried(stage, output);
@@ -506,13 +566,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length };
   } catch (error) {
     if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
-    // The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate; a move back that fails keeps the journal for --recover.
-    const moveBackFailure = movedOld ? await renameRetried(backup, output).then(() => undefined, cause => new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause })) : undefined;
-    // The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it.
-    await removeWritten(written, made);
-    // Put back only while the path and the candidate hold; a failure leaves the finalized manifest and record, which publish again unchanged, and the publish's own refusal is the one reported.
-    if (finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false))
-      for (const entry of finalized) await restoreFinalized(entry).catch(() => undefined);
+    const moveBackFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas });
     if (moveBackFailure !== undefined) throw moveBackFailure;
     await removeOwnedRecord(journal, journalBytes);
     throw error;
@@ -522,7 +576,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
 /** The paths of the copies of the learner's files that a stopped publish made in its candidate: each file of the candidate that the candidate's manifest does not list, that stands at the place of a learner's file in the Wiki (a file the Wiki's manifest does not list) and that holds the same bytes, by their SHA-256 digest. Called by {@link restoreStoppedCandidate}. @param wiki - The Wiki that stands in the Wiki folder now, as {@link inspectOutput} read it. @returns The paths, relative to the candidate. @throws What reading the candidate's manifest, listing the candidate or reading a file rejects with: a candidate that cannot be judged is left as it is. @example await learnerCopiesIn('/repo/.codebook/next', wiki, '/repo/.codebook/wiki', '/repo') // => ['manual.txt'] */
 async function learnerCopiesIn(stage, wiki, output, root) {
   const { owned } = parseManifest(await regularBytes(join(stage, MANIFEST)), root);
-  const learnerFiles = new Set(wiki.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !wiki.owned.has(path))), copies = [];
+  const learnerFiles = new Set(learnerFilesOf(wiki)), copies = [];
   for (const path of await listFiles(stage))
     if (!owned.has(path) && learnerFiles.has(path) && digest(await regularBytes(join(stage, path))) === digest(await regularBytes(join(output, path)))) copies.push(path);
   return copies;
