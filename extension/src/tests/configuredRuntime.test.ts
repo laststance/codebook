@@ -1281,6 +1281,62 @@ test('a late action cannot reset the original ten-minute run deadline', async (c
   assert.match(run.view().failures.join('\n'), /whole-run deadline/)
 })
 
+// Value: protects=the result of a run that completed while it waits for its release, when its own whole-run deadline passes in that time; fails_when=the run's whole-run timer is left running at completion and its failure turns the completed run into a failed one, so the history saves a demonstrated run as failed with "Repository whole-run deadline exceeded"; why_new=Cycle 0047 row 41 (P3RT19); seam=the harness's manual clock, moved past the ten-minute run deadline after completion; no_claim=the service's own deadline guard (configuredService tests)
+test('a completed run keeps its result when its whole-run deadline passes before its release', async (context) => {
+  // Arrange: a run that completed with its result.
+  const { run, advance } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'configured learning pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+
+  // Act: the ten-minute run deadline passes before the run is released.
+  advance(600_000)
+  await run.stop()
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: run.view().status,
+      finalOutcome: run.view().finalOutcome,
+      failures: [...run.view().failures],
+    },
+    { status: 'completed', finalOutcome: 'demonstrated', failures: [] },
+  )
+})
+
+// Value: protects=the result of a run that completed while it waits for its release, when a failure reaches it in that time (a debugger session that ends, a late check); fails_when=fail() does not look for a completed run, so the late failure turns the completed run into a failed one before its release; why_new=Cycle 0047 row 41 (P3RT19); seam=ConfiguredBrowserRun.fail, called as the run's own checks call it; no_claim=which late event reaches fail()
+test('a failure that reaches a completed run before its release leaves the run completed with its result', async (context) => {
+  // Arrange: a run that completed with its result.
+  const { run } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'configured learning pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+
+  // Act
+  run.fail('Owned debugger session ended')
+  await run.stop()
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: run.view().status,
+      finalOutcome: run.view().finalOutcome,
+      failures: [...run.view().failures],
+    },
+    { status: 'completed', finalOutcome: 'demonstrated', failures: [] },
+  )
+})
+
 test('the service cancellation signal retires an already held configured runtime without requiring another click or manual debugger action', async (context) => {
   // Arrange
   const cancellation = new AbortController(),

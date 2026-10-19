@@ -5290,7 +5290,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.operation!.afterVerified = true
     this.status = 'completed'
+    // A completed run has no deadline left: neither its phase's nor its whole-run deadline may fail it while it waits for its release.
     clearTimeout(this.progressTimer)
+    clearTimeout(this.runTimer)
     this.evidence.record('screen.observed', {
       snapshotId: this.snapshot!.id,
       pause: continuation.pause,
@@ -5693,9 +5695,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // No journal entry: a playing replay renews on every frame, and the bounded journal must keep its room for the run's own events.
     this.holdPauseDeadline()
   }
-  /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle. @example run.fail('source changed') */
+  /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle; a run that is cleaning, that failed already or that completed is left as it is, so a failure that arrives while a completed run waits for its release does not take its result. @example run.fail('source changed') */
   fail(reason: string): void {
-    if (this.cleaning || this.status === 'failed') return
+    // A completed run's result was verified; only its release is left, which reports its own failures.
+    if (
+      this.cleaning ||
+      this.status === 'failed' ||
+      this.status === 'completed'
+    )
+      return
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined
