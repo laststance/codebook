@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
@@ -1145,6 +1145,81 @@ test('a staged Cursor MCP config that a killed window left in ~/.cursor without 
         'mcp.json',
         'storage',
       ],
+    },
+  )
+})
+
+// Value: protects=a learner's ~/.cursor after a Cursor window was killed while it staged Codebook's first config: the file the refresh itself staged, under the name it gives such a file, is one the next refresh removes; fails_when=the name the refresh gives its staged config and the name the sweep of left staged configs removes drift apart (a rename of either), so such files stay in ~/.cursor for good while every test that writes its staged names by hand still passes (Cycle 0047 row 153); why_new=Cycle 0047 row 153 (P3MAINT-2): the two names were linked only by a docstring; seam=./atomicPrivateWrite of the loaded catalog, which refuses the creation record with ENOSPC, and its node:fs/promises, whose removals in Cursor's settings folder fail, so the refresh leaves its staged file as a window killed before its record does; the file is dated back two minutes; no_claim=a real kill of a window
+test('a staged Cursor MCP config that a refresh left under its own name is removed by the next refresh once it is older than a minute', async (context) => {
+  // Arrange: a refresh whose creation record cannot be written, and whose removal of its staged file then fails too, leaves that file in ~/.cursor; the file is dated back two minutes.
+  const folders = await catalogFolders(context)
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      './atomicPrivateWrite': {
+        atomicPrivateWrite: async (
+          path: string,
+          value: unknown,
+          limitBytes: number,
+        ) => {
+          if (basename(path) === 'pending-creation.json')
+            throw Object.assign(
+              new Error('ENOSPC: no space left on device, open'),
+              { code: 'ENOSPC' },
+            )
+          return atomicPrivateWrite(path, value, limitBytes)
+        },
+      },
+      'node:fs/promises': {
+        ...fileSystem,
+        unlink: async (path: string) => {
+          if (dirname(path) === folders.cursorDirectory)
+            throw Object.assign(
+              new Error('EPERM: operation not permitted, unlink'),
+              { code: 'EPERM' },
+            )
+          return fileSystem.unlink(path)
+        },
+      },
+    },
+    // The catalog tells a missing file by `instanceof Error`; the file system's errors belong to this realm.
+    { Error },
+  )
+  const refusal = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+  const leftByTheRefusal = (await readdir(folders.cursorDirectory)).filter(
+    (name) => name !== 'storage',
+  )
+  const twoMinutesAgo = new Date(Date.now() - 120_000)
+  for (const name of leftByTheRefusal)
+    await utimes(
+      join(folders.cursorDirectory, name),
+      twoMinutesAgo,
+      twoMinutesAgo,
+    )
+
+  // Act
+  const nextRefresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      filesLeftByTheRefusal: leftByTheRefusal.length,
+      nextRefreshGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(nextRefresh),
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+    },
+    {
+      refusal: 'refused with ENOSPC',
+      filesLeftByTheRefusal: 1,
+      nextRefreshGaveAGeneration: true,
+      entriesOfTheCursorFolder: ['mcp.json', 'storage'],
     },
   )
 })
