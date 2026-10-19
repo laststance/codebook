@@ -1208,7 +1208,7 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
         status: 503,
         type: 'text/html; charset=utf-8',
         policy: SERVED_PAGE_POLICY,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.</p></body></html>',
       },
       small: { status: 200, body: '<p>Prepared page</p>' },
       filesTheReaderRead: ['small.html'],
@@ -1280,7 +1280,7 @@ test('a page file of 3 MB, far larger than any generated page, is refused as too
     {
       answer: {
         status: 503,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
       },
       preparedPageCount: 0,
       pageBytes: 3_000_000,
@@ -1562,7 +1562,7 @@ test('a page file that grows past the limit after the reader looked at its size 
     {
       answer: {
         status: 503,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.</p></body></html>',
       },
       preparedPageCount: 0,
     },

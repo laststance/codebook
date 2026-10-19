@@ -38,8 +38,8 @@ test('a page the reader’s worker failed to prepare advises a reload before pre
   )
 })
 
-// Value: protects=a learner whose page file is far larger than any page of a Wiki: the page says so and gives the next step the update accepts; fails_when=the sentence advises generating the Wiki again, which the update refuses for a page changed by hand, instead of restoring the page and pressing Update LLM Wiki, or the refusal page loses its link to the overview; why_new=Cycle 0047 row 16 (P3D2): the sentence was pinned only through the reader; seam=none; no_claim=the size the reader refuses (deepWikiReader.test.ts)
-test('a page whose file is too large to prepare says so, advises restoring the page before pressing Update LLM Wiki, and links to the Wiki’s overview', () => {
+// Value: protects=a learner whose page file is larger than the reader prepares, either a page that the publisher of 0.2.29.0 or earlier wrote (it wrote a page of any size, and the reader then read up to 8 MB) or a file changed by hand: the page says so and gives each cause its next step; fails_when=the sentence advises generating the Wiki again, which the update refuses for a page changed by hand, instead of restoring the page and pressing Update LLM Wiki, or it claims a hand edit alone and leaves the learner whose earlier Codebook published the page without the step that helps, asking the editor chat to split it, or the refusal page loses its link to the overview; why_new=Cycle 0047 row 16 (P3D2): the sentence was pinned only through the reader; Cycle 0047 row 132 (RT2-2) both causes and the split; seam=none; no_claim=the size the reader refuses (deepWikiReader.test.ts)
+test('a page whose file is too large to prepare says an earlier Codebook may have published it or it was changed by hand, advises restoring a hand-changed page or else asking the editor chat to split it, and links to the Wiki’s overview', () => {
   // Arrange
   const readerPrefix = '/w/0f/'
 
@@ -54,7 +54,7 @@ test('a page whose file is too large to prepare says so, advises restoring the p
   // Assert
   assert.equal(
     page,
-    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p></body></html>',
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p></body></html>',
   )
 })
 
