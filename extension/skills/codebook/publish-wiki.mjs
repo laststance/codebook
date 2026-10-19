@@ -445,11 +445,12 @@ async function replaceOwnFileThrough(temporary, path, bytes) {
   return { ...file, path };
 }
 
-/** Whether a file a step wrote is still its own: its path names the file the step wrote, by its device and file id ({@link isSameFileAt}), and that file still holds the step's bytes, by their SHA-256 digest. Called by {@link removeWritten}, {@link restoreFinalized} and {@link removeCopiesStillWritten}. @example await isStillWritten(await writeOwnFile('/repo/.codebook/next/index.html', html)) // => true until the file is edited, removed or a link stands on its path */
+/** Whether a file a step wrote is still its own: its path names the file the step wrote, by its device and file id ({@link isSameFileAt}), before and after its bytes are read, and those bytes are the step's, by their SHA-256 digest. The look after the read is what proves the bytes the file's: an editor's save that put a new file at the path while the read went on leaves the read with the bytes it began with, the step's, while the path names the new file. Called by {@link removeWritten}, {@link restoreFinalized} and {@link removeCopiesStillWritten}. @example await isStillWritten(await writeOwnFile('/repo/.codebook/next/index.html', html)) // => true until the file is edited, removed or a link stands on its path */
 async function isStillWritten(file) {
   if (!(await isSameFileAt(file))) return false;
   const current = await regularBytes(file.path, true).catch(() => undefined);
-  return current !== undefined && digest(current) === file.hash;
+  // The path must still name the file the step wrote once its bytes are read: a file put there during the read is another one.
+  return current !== undefined && digest(current) === file.hash && await isSameFileAt(file);
 }
 
 /** Puts back the bytes a candidate's manifest or record had before a refused publish finalized it: the publish's own file at the path ({@link isStillWritten}) takes the prepared bytes again, through the file beside it ({@link replaceOwnFileThrough}), as does a name another writer emptied; an entry another writer put there stays. Called by {@link restoreFinalizedFiles} for every refusal of {@link publishWiki} before its swap, while the path and the candidate hold. @param finalized - The path, the file beside it, the bytes it had as prepared, and the record of the file the publish put there, absent while that did not end. @example await restoreFinalized({ path: '/repo/.codebook/next/codebook-wiki.json', temporary: '/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json', prepared: manifestBytes, file }) */

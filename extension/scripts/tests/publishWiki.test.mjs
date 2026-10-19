@@ -16934,3 +16934,55 @@ for (const { read, code, isRead } of [
     }
   })
 }
+
+// Value: protects=a learner's file of a stopped publish's candidate that the learner's editor saves again, by a new file put in its place, while --recover reads the copy for the last time before it removes it; fails_when=the recovery checks the copy's identity before that read and not after it, so it compares the bytes the read began with, which are the copy's, and removes the learner's new file at that path; why_new=Cycle 0047 row 217 (P2CXA-A1); seam=a publisher process killed past finalize after it copied the learner's file (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` tells the test each completed read (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`, observeFileReads), where the test puts the learner's save in place of the copy right after the recovery's second read of it returned the copy's bytes; no_claim=a save in the instant between the last check of a copy and its removal, which no file system call closes
+test('a recovery that puts a stopped publish’s candidate back keeps the learner’s save that replaced the copy of the learner’s file while the recovery read the copy, and says so', async () => {
+  // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; right after the recovery's second read of the copy, the learner's editor puts its save in the copy's place.
+  const { recoverWikiPublication: recoverWhileTheEditorSaves } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const { observeFileReads } =
+    await import('./utils/swappedFolderFileSystem.mjs')
+  const { renameSync, writeFileSync } = await import('node:fs')
+  const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+  const copy = join(wiki.next, 'manual.txt'),
+    save = join(wiki.directory, 'manual.txt.save')
+  let readsOfTheCopy = 0
+  const stopObserving = observeFileReads((path) => {
+    if (path !== copy || ++readsOfTheCopy !== 2) return
+    // An editor's save: a new file with the new bytes, moved into the copy's place.
+    writeFileSync(save, 'The learner kept these notes, and saved them again')
+    renameSync(save, copy)
+  })
+  try {
+    // Act
+    const recovery = await recoverWhileTheEditorSaves({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status, changedFilesKept }) => ({ status, changedFilesKept }),
+      (error) => error.message,
+    )
+    const fileInTheCandidate = await readFile(copy, 'utf8').catch(
+      () => 'removed',
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, readsOfTheCopy, recovery, fileInTheCandidate },
+      {
+        killed: '',
+        readsOfTheCopy: 2,
+        recovery: {
+          status: 'published-or-restored',
+          changedFilesKept: ['manual.txt'],
+        },
+        fileInTheCandidate:
+          'The learner kept these notes, and saved them again',
+      },
+    )
+  } finally {
+    stopObserving()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
