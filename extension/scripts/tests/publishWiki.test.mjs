@@ -3,6 +3,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   access,
+  link,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -3475,6 +3477,129 @@ test('a publish whose copy of the learner’s file stops partway leaves no part 
         copyInTheCandidate: 'no copy',
         nextPublish: { preservedManualFiles: 1 },
         manualFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const linkKind of ['symbolic link', 'hard link']) {
+  // Value: protects=a file outside the project when another process puts a link to it at the name of a candidate's page after the publisher listed the candidate; fails_when=the page write opens the page's own name to write ('w') and follows the link standing there, so a preview writes the rendered page into the file outside the project; why_new=Cycle 0047 row 25 (P3RT3, security); seam=a copy of the shipped publisher whose `node:fs/promises` puts the link in place just before the publisher reads the candidate's record, after its listing and its rendering (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a link put in place between the publisher's removal of the name and its exclusive open, which that open refuses
+  test(`a preview whose candidate page is replaced by a ${linkKind} to a file outside the project after the publisher listed the candidate writes the page into the candidate and leaves the file outside as it was`, async () => {
+    // Arrange: a candidate with one page; after the listing, a link to a file outside the project takes the page's name.
+    const { publishWiki: previewWhosePageIsLinked } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?swapped-folder',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const outsideFile = join(wiki.directory, 'outside.txt'),
+      page = join(wiki.next, 'index.html')
+    try {
+      await writeFile(outsideFile, 'A file outside the project')
+      swapBeforeReading(
+        (path) => path === join(wiki.next, 'codebook-publication.json'),
+        async () => {
+          await rm(page)
+          if (linkKind === 'symbolic link') await symlink(outsideFile, page)
+          else await link(outsideFile, page)
+        },
+      )
+
+      // Act
+      const preview = await previewWhosePageIsLinked({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+        renderOnly: true,
+      }).then(
+        ({ renderedPages }) => ({ renderedPages }),
+        (error) => error.message,
+      )
+
+      // Assert
+      const pageEntry = await lstat(page)
+      assert.deepEqual(
+        {
+          preview,
+          outsideFile: await readFile(outsideFile, 'utf8'),
+          pageIsARegularFileOfItsOwn:
+            pageEntry.isFile() && pageEntry.nlink === 1,
+          pageStart: (await readFile(page, 'utf8')).slice(0, 15),
+        },
+        {
+          preview: { renderedPages: 1 },
+          outsideFile: 'A file outside the project',
+          pageIsARegularFileOfItsOwn: true,
+          pageStart: '<!doctype html>',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=files outside the project when another process puts links to them at the names of a candidate's manifest and record after the publisher read them; fails_when=the publish rewrites the candidate's manifest and record with writeFile, which follows the link standing at each name, so the published manifest and record are written into the files outside the project and the published Wiki holds two links; why_new=Cycle 0047 row 25 (P3RT3, security); seam=a copy of the shipped publisher whose `node:fs/promises` puts the links in place just before the publisher reads the published Wiki's record, after it read the candidate's (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a link put in place between the publisher's removal of a name and its exclusive open, which that open refuses
+test('a publish whose candidate manifest and record are replaced by links to files outside the project after the publisher read them publishes its own manifest and record and leaves the files outside as they were', async () => {
+  // Arrange: after the publisher read the candidate's manifest and record, links to two files outside the project take their names.
+  const { publishWiki: publishWhoseRecordsAreLinked } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const outsideManifest = join(wiki.directory, 'outside-manifest.json'),
+    outsideRecord = join(wiki.directory, 'outside-record.json')
+  try {
+    await writeFile(outsideManifest, 'A file outside the project')
+    await writeFile(outsideRecord, 'Another file outside the project')
+    swapBeforeReading(
+      (path) => path === join(wiki.output, 'codebook-publication.json'),
+      async () => {
+        await rm(join(wiki.next, 'codebook-wiki.json'))
+        await symlink(outsideManifest, join(wiki.next, 'codebook-wiki.json'))
+        await rm(join(wiki.next, 'codebook-publication.json'))
+        await symlink(
+          outsideRecord,
+          join(wiki.next, 'codebook-publication.json'),
+        )
+      },
+    )
+
+    // Act
+    const publish = await publishWhoseRecordsAreLinked({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    const manifestEntry = await lstat(join(wiki.output, 'codebook-wiki.json')),
+      recordEntry = await lstat(join(wiki.output, 'codebook-publication.json'))
+    assert.deepEqual(
+      {
+        publish,
+        outsideManifest: await readFile(outsideManifest, 'utf8'),
+        outsideRecord: await readFile(outsideRecord, 'utf8'),
+        publishedManifestIsAFile: manifestEntry.isFile(),
+        publishedRecordKind: JSON.parse(
+          await readFile(
+            join(wiki.output, 'codebook-publication.json'),
+            'utf8',
+          ),
+        ).kind,
+        recordIsAFile: recordEntry.isFile(),
+      },
+      {
+        publish: { publishedFiles: 1 },
+        outsideManifest: 'A file outside the project',
+        outsideRecord: 'Another file outside the project',
+        publishedManifestIsAFile: true,
+        publishedRecordKind: 'published',
+        recordIsAFile: true,
       },
     )
   } finally {
