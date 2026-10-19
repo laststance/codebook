@@ -1295,8 +1295,8 @@ test('a page file of 3 MB, far larger than any generated page, is refused as too
   )
 })
 
-// Value: protects=the editor's extension host against many pages asked for at once: each page the reader holds keeps its file's bytes (up to 2 MiB, and a string of twice that) in the host until it is answered, and the reader read every page asked for, however many already waited; fails_when=the reader opens a page file while as many pages as the page workers prepare and let wait (six) are in hand, or answers such a page otherwise than at once with status 503 and the sentence to reload it in a moment; why_new=Cycle 0047 row 3 (S11-X1): the bound holds before a file is read; seam=the reader loaded with loadModule, its opener loaded with a file system that records the files it opens, and a stand-in page-worker module that holds every page until the test lets them go; no_claim=the line of the real page workers (wikiPageWorker.test.ts)
-test('while six pages are in hand, a further page is refused at once with 503 and a sentence to reload it in a moment, and its file is not opened', async (context) => {
+// Value: protects=the editor's extension host against many pages asked for at once: each page the reader holds keeps its file's bytes (up to 2 MiB, and a string of twice that) in the host until it is answered, and the reader read every page asked for, however many already waited; and every later page, once the six held pages were served; fails_when=the reader opens a page file while as many pages as the page workers prepare and let wait (six) are in hand, or answers such a page otherwise than at once with status 503 and the sentence to reload it in a moment, or a served page keeps its place after its answer, so the page asked for after six served ones is refused; why_new=Cycle 0047 row 3 (S11-X1): the bound holds before a file is read; Cycle 0047 row 192 (S2SM-U34): the page asked for after the six served ones; seam=the reader loaded with loadModule, its opener loaded with a file system that records the files it opens, and a stand-in page-worker module that holds every page until the test lets them go; no_claim=the line of the real page workers (wikiPageWorker.test.ts)
+test('while six pages are in hand, a further page is refused at once with 503 and a sentence to reload it in a moment, and its file is not opened, and once the six are served a page asked for after them is served', async (context) => {
   // Arrange: a page besides the overview, an opener that notes the files it opens, and a page worker that holds every page until the test lets them go.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pages-in-hand-')),
@@ -1370,7 +1370,7 @@ test('while six pages are in hand, a further page is refused at once with 503 an
   )
   await sixPagesInHand
 
-  // Act: a seventh page, then the six held pages are let go.
+  // Act: a seventh page, then the six held pages are let go, then a page after them.
   const further = await Promise.race([
     fetch(new URL('later.html', reader.url)).then(async (response) => ({
       status: response.status,
@@ -1386,10 +1386,15 @@ test('while six pages are in hand, a further page is refused at once with 503 an
   ])
   letPagesGo()
   const heldAnswers = await Promise.all(heldPages)
+  const afterResponse = await fetch(new URL('later.html', reader.url))
+  const after = {
+    status: afterResponse.status,
+    body: await afterResponse.text(),
+  }
 
   // Assert
   assert.deepEqual(
-    { further, heldAnswers, filesTheReaderOpened },
+    { further, heldAnswers, after, filesTheReaderOpened },
     {
       further: {
         status: 503,
@@ -1403,6 +1408,7 @@ test('while six pages are in hand, a further page is refused at once with 503 an
         '<p>Prepared page</p>',
         '<p>Prepared page</p>',
       ],
+      after: { status: 200, body: '<p>Prepared page</p>' },
       filesTheReaderOpened: [
         'index.html',
         'index.html',
@@ -1410,6 +1416,7 @@ test('while six pages are in hand, a further page is refused at once with 503 an
         'index.html',
         'index.html',
         'index.html',
+        'later.html',
       ],
     },
   )
@@ -1987,20 +1994,37 @@ test('an image of the Wiki whose browser stops reading is ended at the send limi
   )
 })
 
-// Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
-test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
-  // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.
+// Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at, and every later page; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared, or a page refused so keeps its place, so the page asked for after six of them is refused as busy; why_new=the P2P2 test's no_claim names this growth; Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; Cycle 0047 row 192 (S2SM-U36): the places of six grown pages; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat puts the overview back to 33 bytes before each look and lets it grow after it, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
+test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared, and six such pages give their places back, so the page asked for after them is served', async (context) => {
+  // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after each look of the reader at its size, a page besides it, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-growing-page-')),
   )
   context.after(() => rm(projectRoot, { recursive: true, force: true }))
-  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
   const growingFileSystem = {
     ...fileSystemPromises,
     lstat: async (...parameters: Parameters<typeof lstat>) => {
+      const isOverview = basename(String(parameters[0])) === 'index.html'
+      // Each look finds the overview of 33 bytes, which grows right after it.
+      if (isOverview)
+        await writeFile(parameters[0], '<!doctype html><body>Wiki</body>')
       const status = await lstat(...parameters)
-      if (basename(String(parameters[0])) === 'index.html')
-        await appendFile(parameters[0], 'x'.repeat(2_000))
+      if (isOverview) await appendFile(parameters[0], 'x'.repeat(2_000))
       return status
     },
   }
@@ -2029,7 +2053,7 @@ test('a page file that grows past the limit after the reader looked at its size 
   )
   context.after(() => reader.close())
 
-  // Act
+  // Act: the overview, five more times, each answered before the next is asked for, then the page besides it.
   const response = await fetch(reader.url)
   const answer = {
     status: response.status,
@@ -2039,16 +2063,38 @@ test('a page file that grows past the limit after the reader looked at its size 
       'OVERVIEW',
     ),
   }
+  const preparedForTheOverview = preparedPageCount
+  const laterAnswers: { status: number; sentence: string }[] = []
+  // Five more grown overviews, so six pages were refused as too large; each is noted by its status and the sentence of its refusal page.
+  for (let request = 0; request < 5; request += 1) {
+    const grownResponse = await fetch(reader.url)
+    const grownBody = await grownResponse.text()
+    laterAnswers.push({
+      status: grownResponse.status,
+      sentence: grownBody.slice(
+        grownBody.indexOf('<p>') + '<p>'.length,
+        grownBody.indexOf('</p>'),
+      ),
+    })
+  }
+  const nextResponse = await fetch(new URL('later.html', reader.url))
+  const next = { status: nextResponse.status, body: await nextResponse.text() }
 
   // Assert
   assert.deepEqual(
-    { answer, preparedPageCount },
+    { answer, preparedForTheOverview, laterAnswers, next },
     {
       answer: {
         status: 503,
         body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.</p></body></html>',
       },
-      preparedPageCount: 0,
+      preparedForTheOverview: 0,
+      laterAnswers: Array.from({ length: 5 }, () => ({
+        status: 503,
+        sentence:
+          'This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.',
+      })),
+      next: { status: 200, body: '<p>Prepared page</p>' },
     },
   )
 })
@@ -2607,6 +2653,101 @@ test(
           status: 403,
           body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
         },
+      },
+    )
+  },
+)
+
+// Value: protects=every page after pages whose path another entry took between the reader's look and its open: each is refused with 403 and must give its place among the pages in hand back; fails_when=a page refused so keeps its place, so the page asked for after six of them is refused as busy until the editor reloads; why_new=Cycle 0047 row 192 (S2SM-U35, the 403 after the open of deepWikiReader.ts); seam=the reader loaded with loadModule and a file system whose lstat puts a regular file back at the page's path before each look and lets a folder take it after the look; no_claim=the real race's timing (the folder takes the path at the look), and Windows, whose open looks at the path itself
+test(
+  'six pages whose path a folder takes after the reader’s look are each refused with 403 and give their places back, so the page asked for after them is served',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no O_NOFOLLOW: its open looks at the path itself and refuses the folder before the reader’s check after the open'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a page whose path a folder takes after each look, a page besides it, and a file system that puts the page back as a regular file before each look.
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-swaps-give-back-')),
+    )
+    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    const { outputDirectory, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    const swappedPage = join(outputDirectory, 'swapped.html')
+    await writeFile(swappedPage, '<!doctype html><body>Swapped</body>')
+    await writeFile(
+      join(outputDirectory, 'later.html'),
+      '<!doctype html><body>Later</body>',
+    )
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        repositoryRoot: projectRoot,
+        pages: [{ path: 'swapped.html' }, { path: 'later.html' }],
+        assets: [],
+        includedSources: [],
+      }),
+    )
+    const fileSystemWhosePageBecomesAFolderAfterEachLook = {
+      ...fileSystemPromises,
+      lstat: async (...parameters: Parameters<typeof lstat>) => {
+        const isSwapped = basename(String(parameters[0])) === 'swapped.html'
+        // Each look finds the page as a regular file, and a folder takes its path right after.
+        if (isSwapped) {
+          await rm(parameters[0], { recursive: true, force: true })
+          await writeFile(parameters[0], '<!doctype html><body>Swapped</body>')
+        }
+        const look = await lstat(...parameters)
+        if (isSwapped) {
+          await rm(parameters[0])
+          await mkdir(parameters[0])
+        }
+        return look
+      },
+    }
+    const { startDeepWikiReader: startReaderWhosePageIsTaken } =
+      await loadModule<typeof deepWikiReaderModule>(
+        join(__dirname, '..', 'deepWikiReader.js'),
+        { 'node:fs/promises': fileSystemWhosePageBecomesAFolderAfterEachLook },
+        { URL },
+      )
+    const reader = await startReaderWhosePageIsTaken(
+      outputDirectory,
+      projectRoot,
+      async () => ({ handoff: 'not asked' }),
+    )
+    context.after(() => reader.close())
+
+    // Act: six pages one after another, each answered before the next is asked for, then the page besides them.
+    const refusals: { status: number; body: string }[] = []
+    for (let request = 0; request < 6; request += 1) {
+      const response = await fetch(new URL('swapped.html', reader.url))
+      refusals.push({ status: response.status, body: await response.text() })
+    }
+    const nextResponse = await fetch(new URL('later.html', reader.url))
+    const next = {
+      status: nextResponse.status,
+      body: await nextResponse.text(),
+    }
+
+    // Assert: the page besides them is served with the reader's tag, so only its start is compared.
+    assert.deepEqual(
+      {
+        refusals,
+        next: {
+          status: next.status,
+          start: next.body.slice(0, '<!doctype html><body>Later'.length),
+        },
+      },
+      {
+        refusals: Array.from({ length: 6 }, () => ({
+          status: 403,
+          body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
+        })),
+        next: { status: 200, start: '<!doctype html><body>Later' },
       },
     )
   },
