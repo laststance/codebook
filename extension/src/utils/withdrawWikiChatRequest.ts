@@ -1,5 +1,5 @@
-/** What became of an unanswered Wiki update request at the bound of the first sign: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `replied` when it had already returned a reply, so the chat answered the request: a complete reply, with which the request ended by itself, or one that waits for a confirmation, with which the chat works on it; `left` when it is still pending, so the request may still be in the chat, where the learner stops or removes it. `withdrawn` names a request Codebook saw leave the chat after a command of the chat; {@link describeUnansweredWikiChat} still words it, but {@link withdrawWikiChatRequest} no longer returns it, because it runs none of the chat's commands. */
-export type WikiChatWithdrawal = 'not-sent' | 'replied' | 'withdrawn' | 'left'
+/** What became of an unanswered Wiki update request at the bound of the first sign: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `replied` when it had already returned a reply, so the chat answered the request: a complete reply, with which the request ended by itself, or one that waits for a confirmation, with which the chat works on it; `left` when it is still pending, so the request may still be in the chat, where the learner stops or removes it. No answer names a request taken back: {@link withdrawWikiChatRequest} runs none of the chat's commands. */
+export type WikiChatWithdrawal = 'not-sent' | 'replied' | 'left'
 
 /** The hand-over command as the withdrawal watches it: whether it has returned (resolved or thrown) and whether it resolved with a reply (a response was made). */
 type HandOverWatch = {
@@ -74,7 +74,7 @@ function hasReturnedReply(handOver: HandOverWatch): boolean {
  */
 export async function withdrawWikiChatRequest(options: {
   handOver: Promise<unknown>
-}): Promise<Exclude<WikiChatWithdrawal, 'withdrawn'>> {
+}): Promise<WikiChatWithdrawal> {
   const handOver = watchHandOver(options.handOver)
   // A hand-over command that returned before this call is seen one turn after the watch was set.
   await Promise.resolve()

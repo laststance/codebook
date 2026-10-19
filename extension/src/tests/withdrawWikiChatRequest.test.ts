@@ -27,7 +27,7 @@ test('a hand-over command that threw before the withdrawal is reported as a requ
   assert.equal(withdrawal, 'not-sent')
 })
 
-// Value: protects=the truth of the end's sentence when Codebook's request ended with a complete reply in the moment between the bound of the first answer and the withdrawal; fails_when=the request that ended by itself is reported as one that may still be in the chat, or as one Codebook took back (`withdrawn`); why_new=Cycle 0046 second ship, OCR batch 8 finding 2, and state-machine review P2SM3 (its own outcome); seam=none
+// Value: protects=the truth of the end's sentence when Codebook's request ended with a complete reply in the moment between the bound of the first answer and the withdrawal; fails_when=the request that ended by itself is reported as one that may still be in the chat (`left`) or that the chat never held (`not-sent`); why_new=Cycle 0046 second ship, OCR batch 8 finding 2, and state-machine review P2SM3 (its own outcome); seam=none
 test('a hand-over command that has already returned a complete reply is reported as a request that ended by itself with a reply', async () => {
   // Arrange: the chat's response is complete ({} is a reply that waits for nothing).
   const handOver = Promise.resolve({})
