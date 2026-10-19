@@ -788,6 +788,8 @@ export const WIKI_LOOPBACK_HOSTS: readonly string[] = [
 export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
 /** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */
 export const WIKI_PUBLISH_JOURNAL_SUFFIX = '.publish-journal.json'
+/** What the Wiki publisher appends to the output folder's path for the publish lock a publish or a preview (`--render-only`) holds while it writes, and that a stopped one leaves for `--recover`. */
+export const WIKI_PUBLISH_LOCK_SUFFIX = '.publish-lock.json'
 /** What the Wiki publisher puts between the output folder's name and a random id for the backup of the generation it replaced (`wiki.previous-<uuid>`); such a sibling is never a candidate and never added source. */
 export const WIKI_PUBLISH_BACKUP_INFIX = '.previous-'
 /** What the Wiki publisher puts between the output folder's name and a random id for a candidate it prepares by default (`wiki.stage-<uuid>`). */
@@ -827,7 +829,7 @@ export const WIKI_UPDATE_MARKER_CHANGE_RETRIES = 12
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** The coarsest step in which a file system that may hold a project folder stamps a file's modification time (FAT stores 2 s); a new file whose stamp lies less than this behind the wall clock is rounded, and only one further behind shows a clock of the file system that lags ({@link claimWikiUpdateMarker}). */
 export const WIKI_UPDATE_MARKER_STAMP_STEP_MS = 2_000
-/** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
+/** How recently the publisher's journal or publish lock must have been written for the start check to take it for a publish or a preview in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 /** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the first sign that the chat works on it (its reply or its wait for a confirmation, a step of the update the editor reports, a folder the publisher prepares) before the run ends as failed and the request is left in the chat. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
