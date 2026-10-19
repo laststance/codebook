@@ -117,8 +117,8 @@ function within<Value>(
   ])
 }
 
-// Value: protects=the editor's extension host, in whose process the page worker runs, against a page in the Wiki folder large enough that its preparation takes gigabytes of memory before the deadline (a 20 MB page peaked at 1.6 GB, a 60 MB page at 4.1 GB); fails_when=the page worker starts without a heap limit again, so a page that needs more memory than the limit is prepared and served, or a worker past its heap limit is answered as a failure, whose sentence advises a reload that only runs another worker to the same end; why_new=P2P2; Cycle 0047 row 22 (P3M2) the state too-large; seam=the page-worker module loaded with loadModule and a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 3 MB stands for one too large for the shipped 256 MB (which refuses a page of 8 MB, see WIKI_PAGE_WORKER_HEAP_LIMIT_MB); no_claim=the peak memory of the editor's process (measured by hand, see the cycle record)
-test('a page that needs more memory than a page worker may use is refused as too large, while a small page is still served under the same limit', async () => {
+// Value: protects=the editor's extension host, in whose process the page worker runs, against a page in the Wiki folder large enough that its preparation takes gigabytes of memory before the deadline (a 20 MB page peaked at 1.6 GB, a 60 MB page at 4.1 GB); fails_when=the page worker starts without a heap limit again, so a page that needs more memory than the limit is prepared and served, or a worker past its heap limit is answered as a failure, whose sentence advises a reload that only runs another worker to the same end, or as a page file too large, whose sentence blames a hand edit; why_new=P2P2; Cycle 0047 row 22 (P3M2) the state too-large; Cycle 0047 row 104 a state of its own, memory-limit; seam=the page-worker module loaded with loadModule and a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 3 MB stands for one too large for the shipped 256 MB (which refuses a page of 8 MB, see WIKI_PAGE_WORKER_HEAP_LIMIT_MB); no_claim=the peak memory of the editor's process (measured by hand, see the cycle record)
+test('a page that needs more memory than a page worker may use is refused at the memory limit, while a small page is still served under the same limit', async () => {
   // Arrange: a page worker that may use 32 MB of heap, a page of 3 MB of paragraphs and links, and a small page.
   const { servedWikiPageOffThread: servedUnderSmallHeap } = await loadModule<
     typeof wikiPageWorkerModule
@@ -143,7 +143,7 @@ test('a page that needs more memory than a page worker may use is refused as too
   assert.deepEqual(
     { large: large.state, small: { ...small } },
     {
-      large: 'too-large',
+      large: 'memory-limit',
       small: {
         state: 'served',
         html: '<body><p>Small page</p><script src="/w/t/codebook-qa.js"></script></body>',

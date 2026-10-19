@@ -58,6 +58,26 @@ test('a page whose file is too large to prepare says so, advises restoring the p
   )
 })
 
+// Value: protects=a learner whose page, within the page file limit and so maybe one the publisher wrote, needs more memory than Codebook gives one page: the page must say so and name the step that helps; fails_when=the sentence blames a hand edit or advises restoring the page or Update LLM Wiki alone, which renders the same page again, instead of asking the editor chat to split the page, or the refusal page loses its link to the overview; why_new=Cycle 0047 row 104 (the rest of RT-2); seam=none; no_claim=when a worker reaches its heap limit (wikiPageWorker.test.ts, deepWikiReader.test.ts)
+test('a page that needs more memory than Codebook gives one page says so, asks the editor chat to split it into smaller pages, and links to the Wiki’s overview', () => {
+  // Arrange
+  const readerPrefix = '/w/0f/'
+
+  // Act
+  const page = wikiPageRefusalHtml(
+    'memory-limit',
+    10_000,
+    readerPrefix,
+    'guide.html',
+  )
+
+  // Assert
+  assert.equal(
+    page,
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page needs more memory than Codebook gives one page to prepare it for reading. Ask the editor chat to split it into smaller pages and update the Wiki; Update LLM Wiki alone renders the same page again.</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p></body></html>',
+  )
+})
+
 // Value: protects=the refusal page's markup; fails_when=the reader's prefix is printed into the overview link unescaped, so a quote in it ends the link's address early; why_new=P2D2 (the page prints the prefix); seam=none; no_claim=the reader today serves a prefix of `/w/` and hex digits, which holds no such character
 test('the overview link of a refusal page carries the reader’s prefix as written, with a quote and an ampersand in it', () => {
   // Arrange

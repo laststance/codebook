@@ -1056,7 +1056,7 @@ test('the packaged README says, where it names the Wiki folder, that an untruste
   assert.equal(saysIt, true)
 })
 
-// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 10 seconds, 256 MB, 2 MiB), one of the four sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; seam=none
+// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 10 seconds, 256 MB, 2 MiB), one of the five sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; Cycle 0047 row 104 the sentence of a page that needs more memory; seam=none
 test('the packaged README says under LLM Wiki what the reader makes inert in a served page and which pages and files it refuses, with the refusal page’s sentences and the limits of its page workers', async () => {
   // Arrange
   const readme = await readPackagedReadme()
@@ -1066,6 +1066,8 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
   )
   const tooLarge =
       'This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.',
+    needsMoreMemory =
+      'This page needs more memory than Codebook gives one page to prepare it for reading. Ask the editor chat to split it into smaller pages and update the Wiki; Update LLM Wiki alone renders the same page again.',
     pastTheDeadline =
       'Codebook stopped preparing this page after 10 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.',
     failed =
@@ -1073,11 +1075,12 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
     busy =
       'Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.'
 
-  // Act: the section's three paragraphs and four items, each whole, and what the product prints and keeps for them.
+  // Act: the section's three paragraphs and five items, each whole, and what the product prints and keeps for them.
   const delivered = heldSentences(section, [
     "Before it serves a page, the reader reads the page's tags as a browser reads them and makes inert each address that is no relative path, `#fragment`, `http`, `https` or `mailto` address and not Codebook's own (an editor address that opens a file or calls another extension, `javascript:`, `data:`, `file:`): the attribute's name becomes `data-codebook-unlinked`, so the element and its text stay and a browser follows nothing. A refresh (`<meta http-equiv=\"refresh\">`), a frame's own page (`srcdoc`) and an svg animation of an address are made inert the same way. This holds for a page of any age, also one that a cloned repository carries or one written by hand into the Wiki folder. Codebook's own addresses get the scheme of the editor that serves the page.",
     "The reader prepares each page in a worker thread, so the editor goes on working while a page is read: at most two pages at a time, each within 10 seconds and 256 MB of heap, while up to four more pages wait for a worker. A page it does not prepare is answered with status 503 by a short page, `Page not shown`, with one sentence and a link to the Wiki's overview (the overview's own has no such link):",
-    `- \`${tooLarge}\` for a page file larger than 2 MiB, which is not read, and for a page whose preparation needs more heap.`,
+    `- \`${tooLarge}\` for a page file larger than 2 MiB, which is not read; the publisher writes no such page.`,
+    `- \`${needsMoreMemory}\` for a page whose preparation needs more than the 256 MB of heap.`,
     `- \`${pastTheDeadline}\` for a page whose preparation passes the 10 seconds.`,
     `- \`${failed}\` for a page whose worker failed.`,
     `- \`${busy}\` for a page asked for while two pages are prepared and four wait; its file is not read.`,
@@ -1085,6 +1088,7 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
   ])
   const reasons: WikiPageRefusalReason[] = [
     'too-large',
+    'memory-limit',
     'deadline',
     'failed',
     'busy',
@@ -1109,16 +1113,17 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
   )
 
   // Assert: every paragraph and item; the refusal page prints each quoted sentence, its title and the overview's link, which the overview's own lacks; an address is made inert under the quoted name; and the numbers are the product's.
-  assert.deepEqual(delivered, [true, true, true, true, true, true, true])
+  assert.deepEqual(delivered, [true, true, true, true, true, true, true, true])
   assert.deepEqual(
     printed.map((html) =>
-      [tooLarge, pastTheDeadline, failed, busy].findIndex((sentence) =>
-        html.includes(
-          `<title>Page not shown</title></head><body><p>${sentence}</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p>`,
-        ),
+      [tooLarge, needsMoreMemory, pastTheDeadline, failed, busy].findIndex(
+        (sentence) =>
+          html.includes(
+            `<title>Page not shown</title></head><body><p>${sentence}</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p>`,
+          ),
       ),
     ),
-    [0, 1, 2, 3],
+    [0, 1, 2, 3, 4],
   )
   assert.equal(overviewRefusal.includes('Open the Wiki’s overview'), false)
   assert.equal(

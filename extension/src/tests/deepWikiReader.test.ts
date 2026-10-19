@@ -1043,6 +1043,88 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   })
 })
 
+// Value: protects=a learner whose page, within the page file limit (WIKI_PAGE_FILE_LIMIT_BYTES) and so maybe one the publisher wrote, needs more memory than a page worker may use: its refusal said the file was too large and may have been changed by hand, and asked for Update LLM Wiki, which renders the same page again; fails_when=a worker that ends at its heap limit (ERR_WORKER_OUT_OF_MEMORY) is answered with the sentence of a page file over the limit or of a failure, or with no refusal page, or an ordinary page is no longer served under the same limit; why_new=Cycle 0047 row 104 (the rest of RT-2); seam=the reader loaded with loadModule and the real page-worker module loaded with a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 1.5 MB stands for one that needs more than the shipped 256 MB; no_claim=which pages need more than the shipped limit (the constants record measured ones)
+test('a page within the file limit that needs more memory than a page worker may use is answered with 503 and a sentence that asks the editor chat to split it, while a small page is served', async (context) => {
+  // Arrange: a dense page of 1,508,013 bytes and a small page, and a reader whose page workers may use 32 MB of heap.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-dense-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'dense.html'),
+    `<body>${'<p><a href="https://example.com/x">t</a><span>u</span></p>'.repeat(26_000)}</body>`,
+  )
+  await writeFile(
+    join(outputDirectory, 'small.html'),
+    '<body><p>Small page</p></body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'dense.html' }, { path: 'small.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const workerUnderSmallHeap = await loadModule<typeof wikiPageWorkerModule>(
+    join(__dirname, '..', 'wikiPageWorker.js'),
+    { './constants': { ...constants, WIKI_PAGE_WORKER_HEAP_LIMIT_MB: 32 } },
+  )
+  const { startDeepWikiReader: startReaderUnderSmallHeap } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    { './wikiPageWorker': workerUnderSmallHeap },
+    { URL },
+  )
+  const reader = await startReaderUnderSmallHeap(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const denseResponse = await fetch(new URL('dense.html', reader.url))
+  const dense = {
+    status: denseResponse.status,
+    policy: denseResponse.headers.get('content-security-policy'),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await denseResponse.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+  const smallResponse = await fetch(new URL('small.html', reader.url))
+  const small = {
+    status: smallResponse.status,
+    // This reader's random prefix, written as READER/.
+    body: (await smallResponse.text()).replaceAll(
+      new URL('.', reader.url).pathname,
+      'READER/',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { dense, small },
+    {
+      dense: {
+        status: 503,
+        policy: SERVED_PAGE_POLICY,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page needs more memory than Codebook gives one page to prepare it for reading. Ask the editor chat to split it into smaller pages and update the Wiki; Update LLM Wiki alone renders the same page again.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      small: {
+        status: 200,
+        body: '<body><p>Small page</p><script src="READER/codebook-qa.js"></script></body>',
+      },
+    },
+  )
+})
+
 // Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens (through its opener that follows no link, loaded with the same file system since Cycle 0047 row 12) or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
 test('a page file larger than the reader prepares is answered with 503 and a sentence that says so, without the file being opened, while a page within the limit is read and served', async (context) => {
   // Arrange: an overview of 2,021 bytes and a page of 33 bytes, a reader that prepares pages of 1,000 bytes at most, a file system that notes the files the reader opens or reads, and a page worker that counts its pages.
