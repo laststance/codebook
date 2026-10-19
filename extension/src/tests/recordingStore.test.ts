@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import {
+import fsPromises, {
   appendFile,
   mkdir,
   mkdtemp,
@@ -630,6 +630,82 @@ test('a recording start that fails after making its folder leaves no folder behi
       leftAfterJournalFailure: [],
       admitted: 'started',
       listed: [studyIdOf(admittedRunId)],
+    },
+  )
+})
+
+// Value: protects=a recording start whose write under the storage lock succeeded while the release of the lock fails at each of its attempts (a scanner or an indexer holds writer.lock on Windows): the run records, and the lock it left is taken back by this window's next write (row 199); fails_when=the release's failure fails the start, so the run goes on without its recording while the folder and the writer record it made stay this window's reservation, which no list shows and no removal deletes, and which takes a place of the saved study limit until the editor closes; why_new=Cycle 0047 row 240 (P2CLA-12): the release's failure failed every write that succeeded; seam=node:fs/promises unlink, which refuses to remove writer.lock while the test blocks it; no_claim=a real scanner on Windows
+test('a recording start whose storage lock cannot be released after it made the recording still starts, and the next start takes the lock back', async (context) => {
+  // Arrange: a library with room for two recordings; the removal of writer.lock is refused during the first start.
+  const { directory, binding, store } = await recordingHarness(context, {
+    slots: 2,
+  })
+  await mkdir(directory, { recursive: true })
+  const lockPath = join(directory, 'writer.lock')
+  const unlinkBefore = fsPromises.unlink
+  const blockedRelease = context.mock.method(
+    fsPromises,
+    'unlink',
+    async (...input: Parameters<typeof unlinkBefore>) => {
+      if (input[0] === lockPath)
+        throw Object.assign(
+          new Error(`EPERM: operation not permitted, unlink '${lockPath}'`),
+          { code: 'EPERM' },
+        )
+      return unlinkBefore(...input)
+    },
+  )
+  const secondRunId = randomUUID()
+  const secondStudyId = `${binding.instanceId}_${secondRunId}`
+
+  // Act
+  const firstStart = await store.start(binding, 10).then(
+    async (writer) => {
+      writer.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+      await writer.finish(120)
+      return 'started and sealed'
+    },
+    (error: unknown) => String(error),
+  )
+  const lockLeftByTheFirstStart = await readFile(lockPath).then(
+    () => true,
+    () => false,
+  )
+  blockedRelease.mock.restore()
+  const secondStart = await store
+    .start({ ...binding, runId: secondRunId, studyId: secondStudyId }, 10)
+    .then(
+      async (writer) => {
+        writer.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+        await writer.finish(120)
+        return 'started and sealed'
+      },
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstStart,
+      lockLeftByTheFirstStart,
+      secondStart,
+      lockLeftAtTheEnd: await readFile(lockPath).then(
+        () => true,
+        () => false,
+      ),
+      listed: (await store.list())
+        .map((entry) => ({ studyId: entry.studyId, status: entry.status }))
+        .sort((left, right) => left.studyId.localeCompare(right.studyId)),
+    },
+    {
+      firstStart: 'started and sealed',
+      lockLeftByTheFirstStart: true,
+      secondStart: 'started and sealed',
+      lockLeftAtTheEnd: false,
+      listed: [
+        { studyId: binding.studyId, status: 'finalized' },
+        { studyId: secondStudyId, status: 'finalized' },
+      ].sort((left, right) => left.studyId.localeCompare(right.studyId)),
     },
   )
 })
