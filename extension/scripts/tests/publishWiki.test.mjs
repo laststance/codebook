@@ -11113,6 +11113,7 @@ test('a recovery on a volume that answers a file id of 0 for every entry puts ba
     const recovery = await recoverWhereNoEntryHasAFileId({
       projectRoot: wiki.root,
       outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
     }).then(
       ({ status }) => status,
       (error) => error.message,
