@@ -66,7 +66,7 @@ export function swapHalfwayThroughWriting(isAwaited, swap) {
 }
 
 /**
- * Wraps an open handle so that its `writeFile` writes the first half of the bytes, runs `swap`, then writes the rest; every other member is the handle's own.
+ * Wraps an open handle so that its first `writeFile` writes the first half of the bytes, runs `swap`, then writes the rest; every later `writeFile` through it, as the lines appended to a list through one handle, goes to the handle's own with its options, and every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
  * @param {() => Promise<void>} swap - The swap of {@link swapHalfwayThroughWriting}.
  * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
@@ -74,10 +74,15 @@ export function swapHalfwayThroughWriting(isAwaited, swap) {
  * await handleThatSwapsHalfway(await fileSystem.open(path, 'wx'), swap).writeFile('abcd') // writes 'ab', runs the swap, then writes 'cd'
  */
 function handleThatSwapsHalfway(handle, swap) {
+  let hasSwapped = false
   return new Proxy(handle, {
     get(target, property) {
+      // Only the first write runs the swap; a later one is the handle's own write, with its options.
+      if (property === 'writeFile' && hasSwapped)
+        return (data, ...rest) => target.writeFile(data, ...rest)
       if (property === 'writeFile')
         return async (data) => {
+          hasSwapped = true
           const bytes = Buffer.from(data),
             half = Math.floor(bytes.length / 2)
           await target.write(bytes, 0, half)

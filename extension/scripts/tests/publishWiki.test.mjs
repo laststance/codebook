@@ -41,9 +41,11 @@ import {
   failWriteOf,
   observeRemovals,
   observeWrites,
+  open as openThroughFailingFileSystem,
 } from './utils/failingFileSystem.mjs'
 import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
+  open as openThroughSwappedFolderFileSystem,
   swapBeforeMaking,
   swapBeforeReading,
   swapBeforeRenaming,
@@ -15099,5 +15101,74 @@ test('a publish killed just before the link that gives its publish lock its name
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0047, second ship, fixing cycle 2: the tests of fixer PB (rows 222 to 227).
+
+// Value: protects=the tests that arm a kill or a failure halfway through a write of the publisher's list of copies, whose lines all go through one handle; fails_when=the stand-in runs its swap or its failure at every write through the wrapped handle, not once, so a second line reruns a swap that is no kill or rearms the next kill of a chain, and a later write loses its options; why_new=Cycle 0047 row 227 (P2OCR1a-1); seam=the `open` of the stand-ins themselves (scripts/tests/utils/swappedFolderFileSystem.mjs, scripts/tests/utils/failingFileSystem.mjs); no_claim=a write of the publisher's own, which the tests of the kills and of the failed writes cover
+test('a swap or a failure armed halfway through the write of a file runs at the first write through its handle alone, and a second write through that handle writes whole with its options', async () => {
+  // Arrange: a swap armed on one list and a failure on another, each opened to append as the publisher opens its list of copies.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-halfway-stand-ins-')),
+  )
+  const swappedList = join(directory, 'swapped.copies'),
+    failingList = join(directory, 'failing.copies')
+  let swaps = 0
+  swapHalfwayThroughWriting(
+    (path) => path === swappedList,
+    async () => {
+      swaps++
+    },
+  )
+  const stopFailure = failWriteOf((path) => path === failingList, 'ENOSPC')
+  try {
+    // Act: two lines through each handle, the second as hexadecimal text with its encoding.
+    const swappedHandle = await openThroughSwappedFolderFileSystem(
+      swappedList,
+      'ax',
+    )
+    await swappedHandle.writeFile('"first.txt"\n')
+    await swappedHandle.writeFile('227365636f6e642e747874220a', 'hex')
+    await swappedHandle.close()
+    const failingHandle = await openThroughFailingFileSystem(failingList, 'ax')
+    const firstFailingWrite = await failingHandle
+      .writeFile('"first.txt"\n')
+      .then(
+        () => 'written',
+        (error) => error.code,
+      )
+    const secondFailingWrite = await failingHandle
+      .writeFile('227365636f6e642e747874220a', 'hex')
+      .then(
+        () => 'written',
+        (error) => error.code,
+      )
+    await failingHandle.close()
+
+    // Assert
+    assert.deepEqual(
+      {
+        swaps,
+        swappedList: await readFile(swappedList, 'utf8'),
+        firstFailingWrite,
+        secondFailingWrite,
+        failingList: await readFile(failingList, 'utf8'),
+      },
+      {
+        swaps: 1,
+        swappedList: '"first.txt"\n"second.txt"\n',
+        firstFailingWrite: 'ENOSPC',
+        secondFailingWrite: 'written',
+        failingList: '"first"second.txt"\n',
+      },
+    )
+  } finally {
+    stopFailure()
+    swapHalfwayThroughWriting(
+      () => false,
+      async () => undefined,
+    )
+    await rm(directory, { recursive: true, force: true })
   }
 })

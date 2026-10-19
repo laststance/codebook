@@ -105,7 +105,7 @@ function handleWhoseCallFails(handle, call, code, swap) {
 }
 
 /**
- * Wraps an open handle so that its `writeFile` writes the first half of the bytes, runs `swap` and then fails with `code`; every other member is the handle's own.
+ * Wraps an open handle so that its first `writeFile` writes the first half of the bytes, runs `swap` and then fails with `code`; every later `writeFile` through it, as the lines appended to a list through one handle, goes to the handle's own with its options, and every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
  * @param {string} code - The system error.
  * @param {() => Promise<void>} [swap] - What runs after the first half is written and before the write fails.
@@ -114,10 +114,15 @@ function handleWhoseCallFails(handle, call, code, swap) {
  * await handleWhoseWriteFails(await fileSystem.open(path, 'wx'), 'EFBIG').writeFile('abcd') // rejects with code EFBIG after writing 'ab'
  */
 function handleWhoseWriteFails(handle, code, swap) {
+  let hasFailed = false
   return new Proxy(handle, {
     get(target, property) {
+      // Only the first write fails; a later one is the handle's own write, with its options.
+      if (property === 'writeFile' && hasFailed)
+        return (data, ...rest) => target.writeFile(data, ...rest)
       if (property === 'writeFile')
         return async (data) => {
+          hasFailed = true
           const bytes = Buffer.from(data)
           await target.write(bytes, 0, Math.floor(bytes.length / 2))
           await swap?.()
