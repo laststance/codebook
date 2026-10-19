@@ -3528,6 +3528,90 @@ test('a publish refused after it finalized the candidate puts the candidate’s 
   }
 })
 
+// Value: protects=the learner's next edit of a candidate after a publish refused once it had finalized the candidate, whose putting back of the candidate's prepared record then failed; fails_when=the refused publish passes over the failure of the record's restore and removes its journal, so the candidate pairs its prepared manifest with a record marked published for another manifest, the next publish is refused as "A previously finalized candidate changed" and --recover, without the journal, cannot put the record back; why_new=Cycle 0047 row 59 (CX-S2); seam=a copy of the shipped publisher whose `node:fs/promises` fails the move of the candidate into the Wiki's place with EXDEV and the second write of the file beside the candidate's record with ENOSPC partway (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a refused hold before the restore, which leaves the finalized manifest and record, a pair that publishes again unchanged
+test('a publish refused after it finalized the candidate whose prepared record cannot be put back says so and keeps its journal, and after --recover the candidate publishes the learner’s edit', async () => {
+  // Arrange: the move of the candidate into the Wiki's place fails; then the second write of the file beside the candidate's record, through which the refused publish puts the prepared record back, stops partway with ENOSPC.
+  const { publishWiki: publishWhoseRestoreFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`,
+    manifestPath = join(wiki.next, 'codebook-wiki.json')
+  let writesBesideTheRecord = 0
+  const stopFailing = failRenameOf((path) => path === wiki.next, ['EXDEV'])
+  failWriteOf(
+    (path) =>
+      dirname(path) === wiki.next &&
+      /^\.codebook-publish-.*-codebook-publication\.json$/.test(
+        basename(path),
+      ) &&
+      ++writesBesideTheRecord === 2,
+    'ENOSPC',
+  )
+  try {
+    // Act: the refused publish; the recovery, once the publisher's process has ended, which this test's process stands in for, so the journal is given a process id no process has; then the learner's edit of the candidate's page and the candidate published again.
+    const refusal = await publishWhoseRestoreFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const journalKept = existsSync(journal)
+    await readFile(journal, 'utf8').then(
+      (text) =>
+        writeFile(
+          journal,
+          text.replace(`"pid":${process.pid},`, '"pid":99999999,'),
+        ),
+      () => undefined,
+    )
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.pages[0].contentHtml = '<h2 id="intro">Edited</h2>'
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        journalKept,
+        recovery,
+        nextPublish,
+        publishesTheEdit: (
+          await readFile(join(wiki.output, 'index.html'), 'utf8')
+        ).includes('<h2 id="intro">Edited</h2>'),
+      },
+      {
+        refusal: `Publication failed; the candidate’s prepared manifest and record could not be put back in ${wiki.next}: ENOSPC: the write stopped partway. Run --recover.`,
+        journalKept: true,
+        recovery: 'published-or-restored',
+        nextPublish: { publishedFiles: 1 },
+        publishesTheEdit: true,
+      },
+    )
+  } finally {
+    stopFailing()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the next publish of a candidate after a publish refused because a learner's file stands where the candidate adds a page; fails_when=only a refused hold removes what the publish wrote, so its rendered pages and any copy of the learner's other files stay in the candidate and the next publish is refused for such a copy as a file outside its manifest; why_new=P2M1 (P2OCR2-2); seam=none; no_claim=which of the learner's files the publish copied before the conflict, which follows the order the file system lists them in
 test('a publish refused for a learner’s file that conflicts with a new page leaves none of the files it wrote in the candidate, and publishes once the conflict is gone', async () => {
   // Arrange: the published Wiki holds the learner's a.txt and pages/notes.html, and the candidate adds the page pages/notes.html.

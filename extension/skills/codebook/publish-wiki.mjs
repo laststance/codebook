@@ -350,7 +350,7 @@ async function isStillWritten(file) {
   return current !== undefined && digest(current) === file.hash;
 }
 
-/** Puts back the bytes a candidate's manifest or record had before a refused publish finalized it: the publish's own file at the path ({@link isStillWritten}) takes the prepared bytes again, through the file beside it ({@link replaceOwnFileThrough}), as does a name another writer emptied; an entry another writer put there stays. Called by {@link publishWiki} for every refusal before its swap, while the path and the candidate hold. @param finalized - The path, the file beside it, the bytes it had as prepared, and the record of the file the publish put there, absent while that did not end. @example await restoreFinalized({ path: '/repo/.codebook/next/codebook-wiki.json', temporary: '/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json', prepared: manifestBytes, file }) */
+/** Puts back the bytes a candidate's manifest or record had before a refused publish finalized it: the publish's own file at the path ({@link isStillWritten}) takes the prepared bytes again, through the file beside it ({@link replaceOwnFileThrough}), as does a name another writer emptied; an entry another writer put there stays. Called by {@link restoreFinalizedFiles} for every refusal of {@link publishWiki} before its swap, while the path and the candidate hold. @param finalized - The path, the file beside it, the bytes it had as prepared, and the record of the file the publish put there, absent while that did not end. @example await restoreFinalized({ path: '/repo/.codebook/next/codebook-wiki.json', temporary: '/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json', prepared: manifestBytes, file }) */
 async function restoreFinalized({ path, temporary, prepared, file }) {
   if (await lookAt(path) === undefined || file !== undefined && await isStillWritten(file)) await replaceOwnFileThrough(temporary, path, prepared);
 }
@@ -512,13 +512,19 @@ async function requireLearnerFilesUnchanged(current, manual, manualHashes, outpu
   for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
 }
 
-/** Undoes a publish refused before its swap. The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate. The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it ({@link removeWritten}). The candidate's prepared manifest and record are put back ({@link restoreFinalized}) only while the path and the candidate hold; a failure leaves the finalized ones, which publish again unchanged, and the publish's own refusal is the one reported. Called by {@link publishWiki}. @returns The refusal of a move back that failed, which keeps the journal for --recover; undefined otherwise. @example await undoRefusedPublish({ output, stage, backup, movedOld: true, written, made, finalized, requirePathHeld, isFolderWhereItWas }) // => undefined */
+/** Undoes a publish refused before its swap. The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate. The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it ({@link removeWritten}). The candidate's prepared manifest and record are put back ({@link restoreFinalizedFiles}) only while the path and the candidate hold; a refused hold leaves the finalized ones, which publish again unchanged, and the publish's own refusal is the one reported. Called by {@link publishWiki}. @returns The refusal of a move back that failed, or else of a restore that failed, either of which keeps the journal for --recover; undefined otherwise. @example await undoRefusedPublish({ output, stage, backup, movedOld: true, written, made, finalized, requirePathHeld, isFolderWhereItWas }) // => undefined */
 async function undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas }) {
   const moveBackFailure = movedOld ? await renameRetried(backup, output).then(() => undefined, cause => new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause })) : undefined;
   await removeWritten(written, made);
-  if (finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false))
-    for (const entry of finalized) await restoreFinalized(entry).catch(() => undefined);
-  return moveBackFailure;
+  const restoreFailure = finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false) ? await restoreFinalizedFiles(finalized, stage) : undefined;
+  return moveBackFailure ?? restoreFailure;
+}
+
+/** Puts the prepared bytes back in each candidate file a refused publish finalized ({@link restoreFinalized}), each tried whatever became of the one before. A restore that fails leaves the candidate's manifest and record a pair that may not publish again: the prepared manifest beside a record marked published for the finalized one, which the next publish refuses as a changed finalized candidate. So the failure is answered, and the publish keeps its journal, which still holds the prepared bytes, for --recover to put them back ({@link restoreStoppedCandidate}). Called by {@link undoRefusedPublish} while the path and the candidate hold. @returns The refusal that names the candidate and the first failure, with that failure as its cause; undefined when every file was put back. @example await restoreFinalizedFiles(finalized, '/repo/.codebook/next') // => undefined */
+async function restoreFinalizedFiles(finalized, stage) {
+  let failure;
+  for (const entry of finalized) await restoreFinalized(entry).catch(error => { failure ??= error; });
+  return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
 /** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
