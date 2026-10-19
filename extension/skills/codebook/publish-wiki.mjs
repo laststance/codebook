@@ -631,7 +631,7 @@ function preparedFilesOf(record) {
     { name: RECEIPT, finalizedSha256: record.finalizedReceiptSha256, prepared: Buffer.from(prepared.receipt, 'base64') }];
 }
 
-/** Puts the candidate of a stopped publish back as it was prepared and removes what that publish left there that no next publish accepts as a file of the candidate: the files through which it put the finalized manifest and record, or its journal, in place ({@link finalizingPathOf}), known by the journal's id; the manifest and the record it finalized, which take the prepared bytes the journal keeps again ({@link preparedFilesOf}) while they hold the finalized bytes, so the learner's next edit is not refused as a change of a finalized candidate; and what the copies of the learner's files that its journal names as begun left ({@link learnerCopiesIn}), which the Wiki still holds whole. A candidate that is gone, because it became the Wiki, or that is no folder of its own is left; so is any copy in a candidate whose manifest cannot be read or that holds a link, and the next publish names what it refuses. Each removal and write is held to the output's path ({@link holdOfPath}), to the candidate's folder it lies in ({@link folderLookOf}) and to a stage that is, as the folders stand then, neither the Wiki folder nor the kept prior Wiki under another name ({@link requireStageOfItsOwn}). Called by {@link recoverWikiPublication} for a publish journal, once the prior Wiki, the new one or none stands in the Wiki folder. @param wiki - The Wiki in the Wiki folder, as {@link inspectOutput} read it; null for none. @throws The refusal of a hold ({@link candidateHoldOf}), that of a stage that names the Wiki folder or the kept prior Wiki among them; the journal is kept then. @example await restoreStoppedCandidate(record, wiki, paths, requirePathHeld) */
+/** Puts the candidate of a stopped publish back as it was prepared and removes what that publish left there that no next publish accepts as a file of the candidate: the files through which it put the finalized manifest and record, or its journal, in place ({@link finalizingPathOf}), known by the journal's id; the manifest and the record it finalized, which take the prepared bytes the journal keeps again ({@link preparedFilesOf}) while they hold the finalized bytes, so the learner's next edit is not refused as a change of a finalized candidate; and what the copies of the learner's files that its journal names as begun left ({@link learnerCopiesIn}), which the Wiki still holds whole. A candidate that is gone, because it became the Wiki, or that is no folder of its own is left; so is any copy in a candidate whose manifest cannot be read or that holds a link, and the next publish names what it refuses. Each removal and write is held to the output's path ({@link holdOfPath}), to the candidate's folder it lies in ({@link folderLookOf}) and to a stage that is, as the folders stand then, neither the Wiki folder nor the kept prior Wiki under another name ({@link requireStageOfItsOwn}). Called by {@link restoreCandidateOfJournal} for a publish journal, once the prior Wiki, the new one or none stands in the Wiki folder. @param wiki - The Wiki in the Wiki folder, as {@link inspectOutput} read it; null for none. @throws The refusal of a hold ({@link candidateHoldOf}), that of a stage that names the Wiki folder or the kept prior Wiki among them; the journal is kept then. @example await restoreStoppedCandidate(record, wiki, paths, requirePathHeld) */
 async function restoreStoppedCandidate(record, wiki, paths, requirePathHeld) {
   const { root, output } = paths, stage = record.stage, entry = await lookAt(stage);
   // A candidate that became the Wiki is gone; one that is no folder of its own is not entered, and the next publish refuses it with its sentence.
@@ -1101,8 +1101,22 @@ const isSiblingPath = (path, output) => typeof path === 'string' && resolve(path
 /** Whether a publish journal's stage is a distinct sibling of the output in its normal form ({@link isSiblingPath}). Called by {@link requirePublishJournal}. @example isSiblingStage('/repo/.codebook/next', '/repo/.codebook/wiki') // => true */
 const isSiblingStage = (stage, output) => isSiblingPath(stage, output);
 
-/** Whether a publish journal names no backup, or a backup beside the output in its normal form ({@link isSiblingPath}) under the backup's name. Called by {@link requirePublishJournal}. @example isSiblingBackup('/repo/.codebook/wiki.previous-1', '/repo/.codebook/wiki') // => true */
-const isSiblingBackup = (backup, output) => backup === undefined || isSiblingPath(backup, output) && backup.startsWith(output + '.previous-');
+/** Whether a publish journal names no backup, or a backup beside the output in its normal form ({@link isSiblingPath}) under the name the publisher gives it ({@link isPublishersOwnName}): the backup is named in the recovery's answer and refusals, so a journal a cloned repository carries brings no text of its own into them. Called by {@link requirePublishJournal}. @example isSiblingBackup('/repo/.codebook/wiki.previous-6f1c2a7e-…', '/repo/.codebook/wiki') // => true */
+const isSiblingBackup = (backup, output) => backup === undefined || isSiblingPath(backup, output) && isPublishersOwnName(backup, output, '.previous-');
+
+/** Whether a path is a name the publisher gives an entry beside the output by itself: the output's path, the kind (`.previous-` for the kept prior Wiki, `.stage-` for the candidate --prepare names without --stage) and a random UUID ({@link isRecordId}), so it holds no text but the output's own and hex. Called by {@link isSiblingBackup} and {@link nameableStageOf}. @example isPublishersOwnName('/repo/.codebook/wiki.stage-6f1c2a7e-…', '/repo/.codebook/wiki', '.stage-') // => true */
+const isPublishersOwnName = (path, output, kind) => path.startsWith(output + kind) && isRecordId(path.slice((output + kind).length));
+
+/** The stage of a publish journal as the recovery may name it to the agent: the journal's stage when its name holds no text of the journal's own, the name --prepare gives a candidate ({@link isPublishersOwnName}) or the stage the caller gave with --stage; undefined otherwise, as an agent's own name is to a recovery not given it again. Called by {@link recoverPublishJournal} and {@link restoreCandidateOfJournal}. @example nameableStageOf({ stage: '/repo/.codebook/next $(touch x)' }, { output: '/repo/.codebook/wiki', stage: undefined }) // => undefined */
+const nameableStageOf = (record, paths) => record.stage === paths.stage || isPublishersOwnName(record.stage, paths.output, '.stage-') ? record.stage : undefined;
+
+/** The refusal of a recovery whose candidate could not be put back when the recovery may not name that candidate ({@link nameableStageOf}). Read by {@link restoreCandidateOfJournal}. */
+const UNREPEATED_STAGE_REFUSAL = 'The candidate the Wiki publication journal names could not be put back as prepared, and the journal was kept. Its name comes from the journal alone, so it is not repeated here. Run --recover with --stage set to the candidate you prepared to see why.';
+
+/** Puts back the candidate of a stopped publish ({@link restoreStoppedCandidate}) and answers its refusal without the candidate's name where the recovery may not name it ({@link nameableStageOf}) and the refusal holds that name, as a refusal of the file system does: the refusal is then {@link UNREPEATED_STAGE_REFUSAL}, with the one it replaces as its cause, so no text of the journal's reaches the agent. Called by {@link recoverPublishJournal}, {@link keepCurrentWiki} and {@link restorePriorWiki}. @throws The refusal, or the one that names no candidate. @example await restoreCandidateOfJournal(record, wiki, paths, requirePathHeld) */
+const restoreCandidateOfJournal = (record, wiki, paths, requirePathHeld) => restoreStoppedCandidate(record, wiki, paths, requirePathHeld).catch(error => {
+  throw nameableStageOf(record, paths) === undefined && String(error?.message).includes(basename(record.stage)) ? new Error(UNREPEATED_STAGE_REFUSAL, { cause: error }) : error;
+});
 
 /** Whether a publish journal names the generations it moves: the new manifest's digest, whether the prior Wiki was adopted as legacy and, with a backup, the prior manifest's digest. Called by {@link requirePublishJournal}. @example namesGenerations({ manifestSha256: '…', priorLegacy: false }) // => true for a journal without a backup */
 const namesGenerations = record => HASH.test(record.manifestSha256) && typeof record.priorLegacy === 'boolean' && (record.backup === undefined || HASH.test(record.priorManifestSha256));
@@ -1134,29 +1148,29 @@ async function requirePublishJournal(record, output) {
   if (record.operation === 'publish' && !namesGenerations(record)) throw new Error('The Wiki publication journal is missing generation identity; it was preserved.');
 }
 
-/** Recovers a stopped publish by its journal: the Wiki that stands is kept ({@link keepCurrentWiki}), else the kept prior Wiki is moved back ({@link restorePriorWiki}), else there was none and the candidate is reported. The record's retained manifest decides which generation stands; an edit of the published manifest since is left to the next recovery. Called by {@link recoverWikiPublication}. @returns `published-or-restored`, `previous-restored` or `no-prior-wiki`. @throws The refusal of an invalid journal, and what the steps refuse. @example await recoverPublishJournal(record, paths, requirePathHeld) // => { status: 'no-prior-wiki', stage: '/repo/.codebook/next' } */
+/** Recovers a stopped publish by its journal: the Wiki that stands is kept ({@link keepCurrentWiki}), else the kept prior Wiki is moved back ({@link restorePriorWiki}), else there was none and the candidate is reported where the recovery may name it ({@link nameableStageOf}). The record's retained manifest decides which generation stands; an edit of the published manifest since is left to the next recovery. Called by {@link recoverWikiPublication}. @returns `published-or-restored`, `previous-restored` or `no-prior-wiki`, the last with the stage only where the recovery may name it. @throws The refusal of an invalid journal, and what the steps refuse. @example await recoverPublishJournal(record, paths, requirePathHeld) // => { status: 'no-prior-wiki', stage: '/repo/.codebook/next' } */
 async function recoverPublishJournal(record, paths, requirePathHeld) {
   const { root, output } = paths;
   await requirePublishJournal(record, output);
   const current = await inspectOutput(output, root, { allowLegacy: record.operation === undefined || record.priorLegacy === true, allowManifestDrift: true });
   if (current) return keepCurrentWiki(record, current, paths, requirePathHeld);
   if (record.backup) return restorePriorWiki(record, paths, requirePathHeld);
-  await restoreStoppedCandidate(record, null, paths, requirePathHeld);
-  return { status: 'no-prior-wiki', stage: record.stage };
+  await restoreCandidateOfJournal(record, null, paths, requirePathHeld);
+  return { status: 'no-prior-wiki', stage: nameableStageOf(record, paths) };
 }
 
-/** Keeps the Wiki that stands after a stopped publish: for this version's publish it must be the prior or the new generation, and the new one must have its record. What the stopped publish left in its candidate goes ({@link restoreStoppedCandidate}) whichever generation stands: the manifest's digest cannot tell them apart for a candidate byte-identical to the Wiki (prepared and published without an edit), and a candidate that became the Wiki is gone, which that step leaves at once. Called by {@link recoverPublishJournal}. @returns `published-or-restored`, with the backup the journal names. @throws The refusal of a Wiki of neither generation, and of a new one without its record. @example await keepCurrentWiki(record, current, paths, requirePathHeld) // => { status: 'published-or-restored', output: '/repo/.codebook/wiki', previousOutput: undefined } */
+/** Keeps the Wiki that stands after a stopped publish: for this version's publish it must be the prior or the new generation, and the new one must have its record. What the stopped publish left in its candidate goes ({@link restoreCandidateOfJournal}) whichever generation stands: the manifest's digest cannot tell them apart for a candidate byte-identical to the Wiki (prepared and published without an edit), and a candidate that became the Wiki is gone, which that step leaves at once. Called by {@link recoverPublishJournal}. @returns `published-or-restored`, with the backup the journal names. @throws The refusal of a Wiki of neither generation, and of a new one without its record. @example await keepCurrentWiki(record, current, paths, requirePathHeld) // => { status: 'published-or-restored', output: '/repo/.codebook/wiki', previousOutput: undefined } */
 async function keepCurrentWiki(record, current, paths, requirePathHeld) {
   const isPublish = record.operation === 'publish', isNewGeneration = digest(current.bytes) === record.manifestSha256;
   if (isPublish && ![record.manifestSha256, record.priorManifestSha256].includes(digest(current.bytes)))
     throw new Error('The current Wiki does not match the interrupted publication.');
   if (isPublish && isNewGeneration && !current.receipt)
     throw new Error('The newly published Wiki is missing its publication record.');
-  await restoreStoppedCandidate(record, current, paths, requirePathHeld);
+  await restoreCandidateOfJournal(record, current, paths, requirePathHeld);
   return { status: 'published-or-restored', output: paths.output, previousOutput: record.backup };
 }
 
-/** Moves the prior Wiki a stopped publish kept beside the Wiki folder back into its place: it is read and moved there, so it is held to the rule of the output ({@link requireRegularFolder}) and must be the generation the journal names; then what the stopped publish left in its candidate goes ({@link restoreStoppedCandidate}). Called by {@link recoverPublishJournal}. @returns `previous-restored`. @throws The refusal of a kept Wiki that is no folder of its own or of another generation, and of a changed path. @example await restorePriorWiki(record, paths, requirePathHeld) // => { status: 'previous-restored', output: '/repo/.codebook/wiki' } */
+/** Moves the prior Wiki a stopped publish kept beside the Wiki folder back into its place: it is read and moved there, so it is held to the rule of the output ({@link requireRegularFolder}) and must be the generation the journal names; then what the stopped publish left in its candidate goes ({@link restoreCandidateOfJournal}). Called by {@link recoverPublishJournal}. @returns `previous-restored`. @throws The refusal of a kept Wiki that is no folder of its own or of another generation, and of a changed path. @example await restorePriorWiki(record, paths, requirePathHeld) // => { status: 'previous-restored', output: '/repo/.codebook/wiki' } */
 async function restorePriorWiki(record, paths, requirePathHeld) {
   const { root, output } = paths;
   await requireRegularFolder(record.backup, root, paths.isOutputInProject, backupRefusalOf);
@@ -1164,7 +1178,7 @@ async function restorePriorWiki(record, paths, requirePathHeld) {
   if (!prior || record.priorManifestSha256 && digest(prior.bytes) !== record.priorManifestSha256) throw new Error('The prior Wiki does not match the publication journal.');
   await requirePathHeld();
   await renameRetried(record.backup, output);
-  await restoreStoppedCandidate(record, prior, paths, requirePathHeld);
+  await restoreCandidateOfJournal(record, prior, paths, requirePathHeld);
   return { status: 'previous-restored', output };
 }
 
