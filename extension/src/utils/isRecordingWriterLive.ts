@@ -108,7 +108,7 @@ async function writerStateByRecord(
 
 /**
  * Says whether the live process that has a recorded writer's id belongs to another user ({@link isProcessOfAnotherUser}) and its start cannot be read here, so that the start the record keeps neither confirms it as the writer nor tells another process; called by {@link writerStateByRecord} for a record with a start that {@link isRecordedOwnerGone} did not call gone.
- * Windows refuses this user the start of another user's process (and of one run as administrator), which leaves such a record's writer judged running for as long as that process lives; the start reads of Linux and macOS read every user's process.
+ * Windows refuses PowerShell the start of another user's process (and of one run as administrator); the read then takes the creation time from the process table ({@link readProcessStart}), and a start stays unread only where that query fails too, or where Linux hides other users' processes (`hidepid`). Such a record's writer would otherwise be judged running for as long as that process lives.
  * @param pid - The writer's process id, which a live process has.
  * @param recordedStart - The start the record keeps, which the reader is given as `expectedStart`.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}); the start is read once per list.

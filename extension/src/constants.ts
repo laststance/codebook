@@ -25,6 +25,8 @@ export const LARGEST_PROCESS_ID = 2 ** 31 - 1
 export const PROCESS_START_QUERY_TIMEOUT_MS = 3_000
 /** The most bytes the query for one process's start may print; a longer answer is no start. */
 export const PROCESS_START_QUERY_MAX_BYTES = 1_024
+/** How far apart, in 100 ns ticks, a creation time the Windows process table names (Win32_Process CreationDate, to the microsecond) and a recorded start (to the 100 ns) may lie and still name one process: less than a microsecond ({@link readProcessStart}). */
+export const WINDOWS_PROCESS_TABLE_PRECISION_TICKS = 10
 /** How long a failed read of this process's own start is kept before the start is read again. */
 export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
 /** The longest text `ps -o lstart=` may answer and still be taken for a process's start ("Mon Oct  5 09:12:33 2026" has 24 characters). */

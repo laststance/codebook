@@ -231,7 +231,7 @@ test('gives no start when ps or PowerShell fails, answers nothing, times out or 
   })
 })
 
-// Value: protects=a Windows pid is told by its creation time, asked of the system's own PowerShell; fails_when=argv loses -NoProfile, -NonInteractive or the pid, the query opens a console window or loses its bounds, the ISO check is dropped, or the program is named without its path under the system root, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (Cycle 0046 row 107); why_new=new utility (ER-1); seam=the injected platform, environment and query runner. The real query runs in the Windows job.
+// Value: protects=a Windows pid is told by its creation time, asked of the system's own PowerShell, which falls back to the process table (Win32_Process CreationDate) where it may not read the process's start; fails_when=argv loses -NoProfile, -NonInteractive or the pid, the query opens a console window or loses its bounds, the ISO check is dropped, the fall-back is dropped or runs as a second query (Cycle 0047 row 33), or the program is named without its path under the system root, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (Cycle 0046 row 107); why_new=new utility (ER-1); seam=the injected platform, environment and query runner. The real query runs in the Windows job.
 test('reads a Windows start as UTC ISO text with a fixed command line, from the PowerShell under the system root', async () => {
   // Arrange
   const query = answeringQuery({ stdout: '2026-10-05T09:12:33.1234567Z\r\n' })
@@ -250,7 +250,7 @@ test('reads a Windows start as UTC ISO text with a fixed command line, from the 
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "(Get-Process -Id 4194305 -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')",
+        "$process = Get-Process -Id 4194305 -ErrorAction Stop; try { $start = $process.StartTime } catch { $start = $null }; if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { 'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=4194305' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o') }",
       ],
       options: {
         timeout: 3_000,
@@ -303,6 +303,78 @@ test('starts PowerShell from SystemRoot or windir only, and starts no program an
       started: ['D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'],
       start: 'win:2026-10-05T09:12:33.1234567Z',
     },
+  })
+})
+
+// Value: protects=a storage lock or a claim a killed editor left on Windows whose process id went to a process this user may not query (another user's, or one run as administrator); fails_when=the creation time the system's process table gives for such a process (Win32_Process CreationDate, to the microsecond) is no start, so the start stays unknown, the process may be the owner, and the dead editor's lock refuses every write for as long as that process runs; or that creation time is compared with a recorded start to the 100 ns, so a live owner run as administrator counts as gone; why_new=Cycle 0047 row 33 (P3RT11); seam=the injected platform, environment and query runner, which answers as PowerShell does after its fall-back to the process table; no_claim=the real PowerShell and its process table, which the Windows job runs
+test('a Windows process whose start PowerShell may not read is told by its creation time in the process table, which confirms a recorded start of the same microsecond and names another start as read', async () => {
+  // Arrange: PowerShell answers the creation time to the microsecond, marked as read from the process table.
+  const startOf = (expectedStart?: string): Promise<string | undefined> =>
+    readProcessStart(ID_OF_NO_PROCESS, {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answeringQuery({ stdout: 'cim:2026-10-05T09:12:33.1234560Z\r\n' })
+        .run,
+      ...(expectedStart !== undefined && { expectedStart }),
+    })
+
+  // Act
+  const starts = {
+    recordedInTheSameMicrosecond: await startOf(
+      'win:2026-10-05T09:12:33.1234567Z',
+    ),
+    recordedAMicrosecondLater: await startOf(
+      'win:2026-10-05T09:12:33.1234570Z',
+    ),
+    recordedAnHourEarlier: await startOf('win:2026-10-05T08:12:33.1234567Z'),
+    withoutARecordedStart: await startOf(),
+  }
+
+  // Assert
+  assert.deepEqual(starts, {
+    recordedInTheSameMicrosecond: 'win:2026-10-05T09:12:33.1234567Z',
+    recordedAMicrosecondLater: 'win:2026-10-05T09:12:33.1234560Z',
+    recordedAnHourEarlier: 'win:2026-10-05T09:12:33.1234560Z',
+    withoutARecordedStart: 'win:2026-10-05T09:12:33.1234560Z',
+  })
+})
+
+// Value: protects=the start of a process whose creation time the process table names to the microsecond is never confirmed by a recorded start that a text of another shape names; fails_when=the fall-back's answer is taken as it is, without the round-trip form, or a recorded start of another system or without a time confirms it; why_new=Cycle 0047 row 33 (P3RT11); seam=the injected platform, environment and query runner
+test('a creation time from the Windows process table that is no UTC time in round-trip form is no start, and a recorded start of another form is never confirmed by it', async () => {
+  // Arrange
+  const startOf = (
+    stdout: string,
+    expectedStart?: string,
+  ): Promise<string | undefined> =>
+    readProcessStart(ID_OF_NO_PROCESS, {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answeringQuery({ stdout }).run,
+      ...(expectedStart !== undefined && { expectedStart }),
+    })
+
+  // Act
+  const starts = {
+    localTime: await startOf('cim:05.10.2026 11:12:33\r\n'),
+    errorText: await startOf(
+      'cim:Sie können keine Methode für einen Ausdruck mit dem Wert NULL aufrufen.\r\n',
+    ),
+    recordedOnLinux: await startOf(
+      'cim:2026-10-05T09:12:33.1234560Z\r\n',
+      'linux@4026531836:16362446',
+    ),
+    recordedWithoutATime: await startOf(
+      'cim:2026-10-05T09:12:33.1234560Z\r\n',
+      'win:sometime',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(starts, {
+    localTime: undefined,
+    errorText: undefined,
+    recordedOnLinux: 'win:2026-10-05T09:12:33.1234560Z',
+    recordedWithoutATime: 'win:2026-10-05T09:12:33.1234560Z',
   })
 })
 

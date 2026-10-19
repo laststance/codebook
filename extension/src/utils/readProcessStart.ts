@@ -7,6 +7,7 @@ import {
   PROCESS_START_QUERY_MAX_BYTES,
   PROCESS_START_QUERY_TIMEOUT_MS,
   PROCESS_START_RETRY_AFTER_FAILURE_MS,
+  WINDOWS_PROCESS_TABLE_PRECISION_TICKS,
 } from '../constants'
 
 import {
@@ -56,8 +57,14 @@ export type ProcessStartReader = typeof readProcessStart
 const PS_START_LINE = new RegExp(
   `^[\\x20-\\x7e]{1,${PROCESS_START_PS_TEXT_MAX_LENGTH}}$`,
 )
-/** A UTC time in the round-trip form PowerShell's `ToString('o')` prints; an error text never has it. */
-const WINDOWS_UTC_START = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
+/** A UTC time in the round-trip form PowerShell's `ToString('o')` prints, with its whole seconds and its fraction as groups; an error text never has it. */
+const WINDOWS_UTC_START = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/
+/** What the Windows start query prints before a creation time it read from the process table (Win32_Process) because PowerShell may not read the process's start. */
+const PROCESS_TABLE_MARK = 'cim:'
+/** How many digits of a second a Windows start counts: 100 ns ticks. */
+const WINDOWS_TICK_DIGITS = 7
+/** How many 100 ns ticks a millisecond has. */
+const WINDOWS_TICKS_PER_MILLISECOND = 10_000n
 /** Only digits, as the kernel writes the start time of a process in clock ticks. */
 const CLOCK_TICKS = /^\d+$/
 
@@ -163,11 +170,79 @@ async function macStartOf(
 }
 
 /**
+ * Counts a UTC time in round-trip form in 100 ns ticks since the epoch, so two Windows times of different precision can be compared; called by {@link startOfProcessTableTime}.
+ * @param utcText - The time as PowerShell's `ToString('o')` prints it.
+ * @returns The ticks; `undefined` for a text that is no such time.
+ * @example
+ * windowsTicksOf('2026-10-05T09:12:33.1234567Z') // => 17911915531234567n
+ * windowsTicksOf('sometime')                     // => undefined
+ */
+function windowsTicksOf(utcText: string): bigint | undefined {
+  const parts = WINDOWS_UTC_START.exec(utcText)
+  const secondsMs = parts ? Date.parse(`${parts[1]}Z`) : Number.NaN
+  if (!parts || !Number.isFinite(secondsMs)) return undefined
+  const fraction = (parts[2] ?? '')
+    .padEnd(WINDOWS_TICK_DIGITS, '0')
+    .slice(0, WINDOWS_TICK_DIGITS)
+  return BigInt(secondsMs) * WINDOWS_TICKS_PER_MILLISECOND + BigInt(fraction)
+}
+
+/**
+ * Names a process by the creation time the Windows process table gave for it; called by {@link windowsStartOf} when PowerShell may not read the process's start (a process of another user, or one run as administrator) and fell back to Win32_Process.
+ * Why: the table names the time to the microsecond, while every start a record keeps was read to the 100 ns, by its own process. The table's time therefore confirms a recorded start that lies less than {@link WINDOWS_PROCESS_TABLE_PRECISION_TICKS} ticks from it, and is answered as that start, so the comparison of the caller finds it equal; any other start is answered as the table names it, which no recorded start equals.
+ * Limit: a caller that keeps one read for several records of one process id (a recordings list) compares the others with the start the first record expected.
+ * @param creation - The creation time in round-trip UTC form.
+ * @param expectedStart - The start a record names for this process id, when the caller has one.
+ * @returns `expectedStart` when it is a Windows start of the same microsecond; otherwise `win:<creation>`.
+ * @example
+ * startOfProcessTableTime('2026-10-05T09:12:33.1234560Z', 'win:2026-10-05T09:12:33.1234567Z') // => 'win:2026-10-05T09:12:33.1234567Z'
+ * startOfProcessTableTime('2026-10-05T09:12:33.1234560Z', undefined)                          // => 'win:2026-10-05T09:12:33.1234560Z'
+ */
+function startOfProcessTableTime(
+  creation: string,
+  expectedStart: string | undefined,
+): string {
+  const form = `${PROCESS_START_FORMS.win32}:`
+  const creationTicks = windowsTicksOf(creation)
+  const expectedTicks = expectedStart?.startsWith(form)
+    ? windowsTicksOf(expectedStart.slice(form.length))
+    : undefined
+  // Only a Windows start of the same microsecond is confirmed; a start of another form or without a time never is.
+  if (
+    expectedStart !== undefined &&
+    creationTicks !== undefined &&
+    expectedTicks !== undefined
+  ) {
+    const differenceTicks = expectedTicks - creationTicks
+    const precisionTicks = BigInt(WINDOWS_PROCESS_TABLE_PRECISION_TICKS)
+    if (differenceTicks > -precisionTicks && differenceTicks < precisionTicks)
+      return expectedStart
+  }
+  return `${form}${creation}`
+}
+
+/**
+ * Builds the PowerShell command that asks when a process was created: the process's start, and where this user may not read it (a process of another user, or one run as administrator), its creation time from the process table (Win32_Process through CIM), marked with {@link PROCESS_TABLE_MARK}; called by {@link windowsStartOf}.
+ * Why: one query answers both, within the bound of one start query; a process id that names no process ends the query with an error before the process table is asked.
+ * @param pid - A positive safe integer; it is the only part of the command that varies.
+ * @returns The text of `-Command`.
+ * @example
+ * windowsStartCommand(4242) // => "$process = Get-Process -Id 4242 -ErrorAction Stop; try { … } … 'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=4242' …)"
+ */
+function windowsStartCommand(pid: number): string {
+  return [
+    `$process = Get-Process -Id ${pid} -ErrorAction Stop`,
+    'try { $start = $process.StartTime } catch { $start = $null }',
+    `if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { '${PROCESS_TABLE_MARK}' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o') }`,
+  ].join('; ')
+}
+
+/**
  * Asks PowerShell when a process was created; the query of {@link START_QUERIES} on Windows.
- * PowerShell is started by its full path under the system root ({@link windowsPowerShellPath}); without a system root no program is started and the start is unknown.
+ * PowerShell is started by its full path under the system root ({@link windowsPowerShellPath}); without a system root no program is started and the start is unknown. Where this user may not read the process's start, the same query reads its creation time from the process table ({@link windowsStartCommand}), so a process id that went to a process of another user does not keep a dead editor's lock for as long as that process runs.
  * @param pid - A positive safe integer; it is the only part of the arguments that varies.
- * @param inputs - The runner, the time bound and the environment of {@link ProcessStartInputs}.
- * @returns `win:<text>` for a UTC time in round-trip form; `undefined` for any other answer, for example the localized error text PowerShell prints for a process id that names no process.
+ * @param inputs - The runner, the time bound, the environment and the expected start of {@link ProcessStartInputs}.
+ * @returns `win:<text>` for a UTC time in round-trip form; for a creation time of the process table what {@link startOfProcessTableTime} names; `undefined` for any other answer, for example the localized error text PowerShell prints for a process id that names no process.
  * @throws What the runner rejects with: PowerShell is missing or blocked, ended with an error, ran too long or printed too much; and the refusal when neither `SystemRoot` nor `windir` names the Windows folder.
  * @example
  * await windowsStartOf(4242, {}) // => 'win:2026-10-05T09:12:33.1234567Z'
@@ -184,17 +259,18 @@ async function windowsStartOf(
     )
   const { stdout } = await (inputs.run ?? runBoundedQuery)(
     powerShell,
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
-    ],
+    ['-NoProfile', '-NonInteractive', '-Command', windowsStartCommand(pid)],
     queryBoundsOf(inputs),
   )
   const text = stdout.trim()
-  return WINDOWS_UTC_START.test(text)
-    ? `${PROCESS_START_FORMS.win32}:${text}`
+  if (WINDOWS_UTC_START.test(text))
+    return `${PROCESS_START_FORMS.win32}:${text}`
+  // A creation time read from the process table names the process to the microsecond only.
+  const creation = text.startsWith(PROCESS_TABLE_MARK)
+    ? text.slice(PROCESS_TABLE_MARK.length)
+    : undefined
+  return creation !== undefined && WINDOWS_UTC_START.test(creation)
+    ? startOfProcessTableTime(creation, inputs.expectedStart)
     : undefined
 }
 
@@ -314,7 +390,7 @@ async function readThroughCache(
 /**
  * Reads when the process with an id began, as a text that is compared for equality only, so that a process id that is in use again is not taken for the process a storage lock, a takeover claim, a connection descriptor or a profile marker recorded; called by {@link currentStorageOwner} for this process, by {@link isRecordedOwnerGone} for a recorded owner and by {@link readLiveWikiUpdateMarker} for the owner of a marker it verifies; the sweeps and claims between them hand it on with their caches.
  *
- * Linux reads field 22 of `/proc/<pid>/stat` and names it with the pid namespace it was read in ({@link processStartFormHere}); macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell, started by its full path under the system root, for the creation time in UTC. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS}, or by the time its caller names, and by {@link PROCESS_START_QUERY_MAX_BYTES}.
+ * Linux reads field 22 of `/proc/<pid>/stat` and names it with the pid namespace it was read in ({@link processStartFormHere}); macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell, started by its full path under the system root, for the creation time in UTC, and, where this user may not read it, for the creation time the process table names, to the microsecond, which confirms a recorded start of the same microsecond. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS}, or by the time its caller names, and by {@link PROCESS_START_QUERY_MAX_BYTES}.
  * A read of `process.pid` answers this process's own start, which is kept once the system has answered it and is not asked for again; a read that failed is kept for {@link PROCESS_START_RETRY_AFTER_FAILURE_MS} and then made again, as often as it fails ({@link readOwnProcessStart}).
  * With a `cache`, a kept start may only confirm that the process is the recorded one: it is answered when it equals `expectedStart`. Every other start is read now, so a process id that was given to another process between two looks is never judged by the earlier process's start ({@link readThroughCache}).
  *
