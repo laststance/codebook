@@ -21,7 +21,11 @@ import {
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
 } from './constants'
-import { NewerStudyFormatError, StudyArchiveUnavailableError } from './errors'
+import {
+  NewerStudyFormatError,
+  StudyArchiveUnavailableError,
+  StudyRemovedWithItsRecordingError,
+} from './errors'
 import {
   learnerIntentSchema,
   repositorySelectionSchema,
@@ -77,7 +81,7 @@ import { withStorageLock } from './utils/withStorageLock'
 export type StudyMover = (path: string) => Promise<void>
 
 /**
- * Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write, or whose finished recording that run still holds because it has not saved the study yet ({@link recordingWriterOf}, {@link isSealedRecordingReleased}): moving it would make that window's next append fail, and its next save write the archive again, without the recording. The removal's outcome line puts it after "Nothing was deleted."
+ * Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write, or whose finished recording that run still holds because it has not saved the study yet ({@link recordingWriterOf}, {@link isSealedRecordingReleased}): moving it would make that window's next append fail, and would delete a study whose final state that run has not saved yet; its next save then finds the study gone and writes nothing ({@link StudyRemovedWithItsRecordingError}). The removal's outcome line puts it after "Nothing was deleted."
  * One sentence holds for both, also for a run that seals its recording between the removal's judgement and its lock: Save learning replay in that window ends the run if it still records, and saves its study in both cases.
  */
 const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
@@ -1091,20 +1095,36 @@ export class LearningLibrary {
   /**
    * Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, and only when its checkpoint was taken after the seal of the study's recording, the record of the writer of that sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save.
    * A checkpoint was taken after the seal when its archive says its run had stopped, or when its caller says the run's stop had ended after the seal as it was taken, also a stop that failed after the seal (Cycle 0047 row 140); {@link StudyWorkspace} says so for every checkpoint it saves.
+   * The run's later saves (an explanation or a learning summary after the stop, Retry storage, the final checkpoint) come after that release, when another window may have removed the study with its recording. A study whose archive and recording have both left the library is therefore never written again: the archive would come back without its recording (Cycle 0047 row 162). The look is made under the storage lock that a removal takes for its moves, so a removal ends either before it or after the write.
    * @param input - The archive to save.
-   * @param checkpoint - What the caller knows of the checkpoint the archive was captured at: `isTakenAfterSealedStop` once the run's stop had ended after it sealed the recording ({@link StudyService.hasStopEndedAfterSeal}); left out, only an archive that says `stopped` releases the recording.
-   * @throws When the library is full, when the archive does not advance the study's kept checkpoint ({@link assertStudyCheckpoint}), or when the write fails; a writer record that cannot be removed fails nothing.
+   * @param checkpoint - What the caller knows of the checkpoint the archive was captured at: `isTakenAfterSealedStop` once the run's stop had ended after it sealed the recording ({@link StudyService.hasStopEndedAfterSeal}), and `recordingDirectory`, the directory of the run's recording, for a run that records; left out, only an archive that says `stopped` releases the recording, and the archive is written whatever left the library.
+   * @throws A {@link StudyRemovedWithItsRecordingError} when the study's archive and the run's recording directory are both gone, before anything is written; otherwise when the library is full, when the archive does not advance the study's kept checkpoint ({@link assertStudyCheckpoint}), or when the write fails. A writer record that cannot be removed fails nothing.
    * @example
    * await library.saveStudy(study)
    * await library.saveStudy(archiveAfterAFailedStop, { isTakenAfterSealedStop: true }) // the sealed recording's writer record goes
+   * await library.saveStudy(archiveWithASummary, { recordingDirectory }) // throws StudyRemovedWithItsRecordingError after another window removed the study
    */
   saveStudy(
     input: RetainedStudy,
-    checkpoint: { isTakenAfterSealedStop?: boolean } = {},
+    checkpoint: {
+      isTakenAfterSealedStop?: boolean
+      recordingDirectory?: string
+    } = {},
   ): Promise<void> {
     const study = decodeRetainedStudy(input, this.workspaceKey)
     return this.locked(async () => {
       const existing = await this.entries()
+      const kept = existing.find((value) => value.id === study.id)
+      // An archive that left the library with the run's recording was removed with it: written again, the study would come back without its recording.
+      if (
+        !kept &&
+        checkpoint.recordingDirectory !== undefined &&
+        !(await lstat(checkpoint.recordingDirectory).then(
+          () => true,
+          () => false,
+        ))
+      )
+        throw new StudyRemovedWithItsRecordingError()
       if (!this.admits(existing, study.id))
         throw new Error(
           fullLibraryMessage(
@@ -1113,7 +1133,6 @@ export class LearningLibrary {
             this.removalAvailability(),
           ),
         )
-      const kept = existing.find((value) => value.id === study.id)
       // The study's own listing tells its newer format; the library directory is not listed again.
       if (kept)
         assertStudyCheckpoint(

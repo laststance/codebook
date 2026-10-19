@@ -101,6 +101,21 @@ export class StudyArchiveUnavailableError extends Error {
 }
 
 /**
+ * Marks the save of a run's study whose archive and recording have both left the library since the run's recording began: another window removed the study, or its files were removed by hand. Writing the archive again would bring the study back without its recording (Cycle 0047 row 162).
+ *
+ * {@link LearningLibrary.saveStudy} raises it under the storage lock, before it writes anything; {@link StudyWorkspace} then forgets the study as one that left the library, as Retry storage does for a study removed by hand.
+ *
+ * @example throw new StudyRemovedWithItsRecordingError()
+ */
+export class StudyRemovedWithItsRecordingError extends Error {
+  constructor() {
+    super(
+      "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+    )
+  }
+}
+
+/**
  * Marks a saved study that a newer Codebook wrote in a format this one cannot read; the study is kept as it is and never replaced by an older file.
  *
  * {@link assertReadableStudyFormat} raises it for an archive whose `version` is too high, and {@link LearningLibrary} for a study whose newest file has a format number it does not know.

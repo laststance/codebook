@@ -13,7 +13,7 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
@@ -8997,6 +8997,79 @@ test('a recorded run whose release fails after the seal gives up its recordingâ€
         isRecordingSealed: true,
         savedState: 'paused-browser',
         isWriterRecordLeftAfterEachSave: [true, true, false],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study whose run in this window has stopped and saved it, which another window then deletes with its recording: the run's next checkpoint (an explanation saved after the stop, as an agent's learning summary is) does not write the archive back without its recording, the run's history ends as removed, and the reader no longer lists the study; fails_when=the library writes the archive whenever the run's checkpoint asks, so the study the learner deleted comes back without its recording, the outcome the writer record was kept to prevent (Cycle 0047 row 162); why_new=Cycle 0047 row 162 (CORE3-2): row 124 releases the writer record at the first save that says the run stopped, and a run that stays in the window is saved again; seam=a second LearningLibrary over the same storage, which removes the study as another window's Delete does (its mover deletes what it is given), and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=a learning summary's own content (any explanation takes the same checkpoint), a second editor process
+test('a stopped and saved run whose study another window deletes with its recording does not write the study back at its next checkpoint, and its history ends as removed', async () => {
+  // Arrange: a recorded run of this window, stopped and saved; another window deletes its study, archive and recording.
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      library = await harness.reader.learningStorage()
+    const otherWindow = new LearningLibrary(directory, library.workspaceKey)
+    const movedByTheOtherWindow: string[] = []
+    const removal = await otherWindow.removeStudy(
+      harness.studyId,
+      async (path) => {
+        movedByTheOtherWindow.push(relative(directory, path))
+        await rm(path, { recursive: true })
+      },
+    )
+
+    // Act: an agent saves an explanation of the stopped run, and the reader takes its checkpoint.
+    await harness.service.explain({
+      instanceId: harness.service.instanceId,
+      runId: harness.record.id,
+      key: 'after-the-deletion',
+      snapshotUri: harness.service.state(harness.record).participants.browser
+        .snapshotUri!,
+      sourceHash: sha256('const nextTheme = "dark";\n'),
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The theme was dark when the run stopped.',
+    })
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(harness.record).historyOutcome.status !==
+        'pending',
+      'the end of the checkpoint after the deletion',
+      2_000,
+    )
+
+    // Assert
+    const history = harness.service.state(harness.record).historyOutcome
+    assert.deepEqual(
+      {
+        removal: { ...removal },
+        movedByTheOtherWindow,
+        filesOfTheStudy: (await readdir(directory)).filter((name) =>
+          name.startsWith(harness.studyId),
+        ),
+        recordings: await readdir(join(directory, 'recordings.v2')),
+        listed: (await library.list()).map((entry) => entry.id),
+        history: { status: history.status, reason: history.reason },
+      },
+      {
+        removal: { outcome: 'moved' },
+        movedByTheOtherWindow: [
+          join('recordings.v2', harness.studyId),
+          `${harness.studyId}.study.meta.v3.json`,
+          `${harness.studyId}.study.v3.json`,
+        ],
+        filesOfTheStudy: [],
+        recordings: [],
+        listed: [],
+        history: {
+          status: 'unavailable',
+          reason:
+            "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        },
       },
     )
   } finally {

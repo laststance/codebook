@@ -87,7 +87,7 @@ import {
   UNSAVED_UNDERSTANDING_WAITS_MESSAGE,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
-import { StudyError } from './errors'
+import { StudyError, StudyRemovedWithItsRecordingError } from './errors'
 import { learningItemSchema } from './identitySchemas'
 import {
   repositorySelectionSchema,
@@ -10500,7 +10500,10 @@ export class StudyWorkspace {
             'pending',
           )
           try {
-            await this.library!.saveStudy(archive, { isTakenAfterSealedStop })
+            await this.library!.saveStudy(archive, {
+              isTakenAfterSealedStop,
+              recordingDirectory: record.recording?.directory,
+            })
             this.historyReads.set(id, (this.historyReads.get(id) ?? 0) + 1)
             this.loadedHistory.set(id, { signature, status: 'saved' })
             this.catalog = await this.library!.list()
@@ -10531,6 +10534,13 @@ export class StudyWorkspace {
               this.errors.delete('archive')
             this.publish()
           } catch (error) {
+            // Another window removed the study with its recording, or its files were removed by hand: the study is forgotten like one removed by hand, and nothing is written back without its recording (Cycle 0047 row 162).
+            if (error instanceof StudyRemovedWithItsRecordingError) {
+              await this.forgetRemovedStudy(id, 'archive-removed')
+              this.leaveStudyThatLeftLibrary(id)
+              this.publish()
+              break
+            }
             this.reportCheckpoint(
               service,
               record,
@@ -21840,10 +21850,19 @@ export class StudyWorkspace {
       // A run of this window whose saved study is gone would otherwise be checkpointed into the library again.
       if (this.recordOfStudy(studyId))
         await this.forgetRemovedStudy(studyId, 'archive-removed')
-      this.activeArchive = withoutStudy(this.activeArchive, studyId)
-      this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
-      if (this.selection.studyId === studyId) this.selectNoStudy()
+      this.leaveStudyThatLeftLibrary(studyId)
     }
+  }
+
+  /**
+   * Drops what the reader shows of a study that left the library without a removal of this reader: its archives held for the live run and the selection, and the selection itself when it names the study; called by {@link forgetStudiesRemovedByHand} for every such study, and by {@link persistArchive} once the library refused to write again the archive of a study removed with its recording (Cycle 0047 row 162).
+   * @param studyId - The study that left the library.
+   * @example this.leaveStudyThatLeftLibrary(studyId) // the reader selects no study when it showed that one
+   */
+  private leaveStudyThatLeftLibrary(studyId: string): void {
+    this.activeArchive = withoutStudy(this.activeArchive, studyId)
+    this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
+    if (this.selection.studyId === studyId) this.selectNoStudy()
   }
 
   /**
