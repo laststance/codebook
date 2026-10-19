@@ -8,6 +8,7 @@ const pendingSwaps = {
   writeFile: undefined,
   readFile: undefined,
   rename: undefined,
+  link: undefined,
   halfwayWrite: undefined,
 }
 
@@ -114,8 +115,20 @@ export function swapBeforeRenaming(isAwaited, swap) {
 }
 
 /**
- * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open}, {@link readFile} and {@link rename}.
- * @param {'mkdir' | 'writeFile' | 'readFile' | 'rename'} kind - The call about to run.
+ * Asks the next hard `link` whose new name `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`: as a stop of the publisher between the write of the file beside a journal, a claim or a lock and the link that gives that file the record's name. Called by the probe that kills a publisher process (`killedPublisherProbe.mjs`).
+ * @param {(path: string) => boolean} isAwaited - Whether the new name of a link is the one before which the swap runs.
+ * @param {() => Promise<void>} swap - The swap.
+ * @returns {void}
+ * @example
+ * swapBeforeLinking((path) => path.endsWith('/wiki.publish-journal.json'), async () => process.kill(process.pid, 'SIGKILL'))
+ */
+export function swapBeforeLinking(isAwaited, swap) {
+  pendingSwaps.link = { isAwaited, swap }
+}
+
+/**
+ * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open}, {@link readFile}, {@link rename} and {@link link}.
+ * @param {'mkdir' | 'writeFile' | 'readFile' | 'rename' | 'link'} kind - The call about to run.
  * @param {string | URL} path - The call's path.
  * @returns {Promise<void>} Once the swap ran, or at once when none waits for this path.
  * @example
@@ -202,4 +215,17 @@ export async function readFile(path, ...options) {
 export async function rename(from, to) {
   await swapIfAwaited('rename', from)
   return fileSystem.rename(from, to)
+}
+
+/**
+ * Gives a file a second name as `link` does, after the swap of {@link swapBeforeLinking} when its new name is the one the swap waits for.
+ * @param {string} existingPath - The file.
+ * @param {string} newPath - Its new name.
+ * @returns {Promise<void>} What `link` answers.
+ * @example
+ * await link('/repo/.codebook/wiki.publish-journal.json.pending-6f1c…', '/repo/.codebook/wiki.publish-journal.json')
+ */
+export async function link(existingPath, newPath) {
+  await swapIfAwaited('link', newPath)
+  return fileSystem.link(existingPath, newPath)
 }
