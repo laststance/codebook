@@ -26,6 +26,12 @@ import {
   WIKI_CHAT_WATCH_STATUS_TEXT,
   WIKI_CHAT_WATCH_TOOLTIP,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_PAGE_FILE_LIMIT_BYTES,
+  WIKI_PAGE_NAVIGATION_DESTINATIONS,
+  WIKI_PAGE_SERVE_DEADLINE_MS,
+  WIKI_PAGE_WAITING_LIMIT,
+  WIKI_PAGE_WORKER_CONCURRENCY_LIMIT,
+  WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
   WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
@@ -53,6 +59,11 @@ import {
 } from '../utils/stepPastNoRealFolder'
 import { studyRemovalMessages } from '../utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
+import {
+  type WikiPageRefusalReason,
+  wikiPageRefusalHtml,
+} from '../utils/wikiPageRefusalHtml'
+import { withServedAddresses } from '../utils/withServedAddresses'
 
 /**
  * Reads the README packaged with the extension, so every test of this file compares the same document a learner gets in the VSIX; tests run from `dist/tests`.
@@ -993,6 +1004,83 @@ test('the packaged README says, where it names the Wiki folder, that an untruste
 
   // Assert
   assert.equal(saysIt, true)
+})
+
+// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 10 seconds, 256 MB, 2 MiB), one of the four sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; seam=none
+test('the packaged README says under LLM Wiki what the reader makes inert in a served page and which pages and files it refuses, with the refusal page’s sentences and the limits of its page workers', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const section = readme.slice(
+    readme.indexOf('## LLM Wiki: open and update\n'),
+    readme.indexOf('## Install the private VSIX\n'),
+  )
+  const tooLarge =
+      'This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.',
+    pastTheDeadline =
+      'Codebook stopped preparing this page after 10 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.',
+    failed =
+      'Codebook could not prepare this page for reading. Reload the page; if it is still not shown, press Update LLM Wiki.',
+    busy =
+      'Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.'
+
+  // Act: the section's three paragraphs and four items, each whole, and what the product prints and keeps for them.
+  const delivered = heldSentences(section, [
+    "Before it serves a page, the reader reads the page's tags as a browser reads them and makes inert each address that is no relative path, `#fragment`, `http`, `https` or `mailto` address and not Codebook's own (an editor address that opens a file or calls another extension, `javascript:`, `data:`, `file:`): the attribute's name becomes `data-codebook-unlinked`, so the element and its text stay and a browser follows nothing. A refresh (`<meta http-equiv=\"refresh\">`), a frame's own page (`srcdoc`) and an svg animation of an address are made inert the same way. This holds for a page of any age, also one that a cloned repository carries or one written by hand into the Wiki folder. Codebook's own addresses get the scheme of the editor that serves the page.",
+    "The reader prepares each page in a worker thread, so the editor goes on working while a page is read: at most two pages at a time, each within 10 seconds and 256 MB of heap, while up to four more pages wait for a worker. A page it does not prepare is answered with status 503 by a short page, `Page not shown`, with one sentence and a link to the Wiki's overview (the overview's own has no such link):",
+    `- \`${tooLarge}\` for a page file larger than 2 MiB, which is not read, and for a page whose preparation needs more heap.`,
+    `- \`${pastTheDeadline}\` for a page whose preparation passes the 10 seconds.`,
+    `- \`${failed}\` for a page whose worker failed.`,
+    `- \`${busy}\` for a page asked for while two pages are prepared and four wait; its file is not read.`,
+    'An HTML page asked for as a part of a page (an image, a style sheet, a script, a fetch), and not to be opened as a page or in an inline frame (the browser says which in `Sec-Fetch-Dest`), is refused with `A Wiki page is served only to be opened as a page.` (status 403); a request without that header, from a client that is no browser, is served. A file of the Wiki that is no regular file (a named pipe, a device, a folder) is never opened, a page or any other file: `The Wiki file is no regular file; a pipe, a device or a folder at its path is not served.` (status 403).',
+  ])
+  const reasons: WikiPageRefusalReason[] = [
+    'too-large',
+    'deadline',
+    'failed',
+    'busy',
+  ]
+  const printed = reasons.map((reason) =>
+    wikiPageRefusalHtml(
+      reason,
+      WIKI_PAGE_SERVE_DEADLINE_MS,
+      '/w/0f/',
+      'guide.html',
+    ),
+  )
+  const overviewRefusal = wikiPageRefusalHtml(
+    'busy',
+    WIKI_PAGE_SERVE_DEADLINE_MS,
+    '/w/0f/',
+    'index.html',
+  )
+  const inert = withServedAddresses(
+    '<a href="vscode://file/etc/hosts">hosts</a>',
+    'vscode',
+  )
+
+  // Assert: every paragraph and item; the refusal page prints each quoted sentence, its title and the overview's link, which the overview's own lacks; an address is made inert under the quoted name; and the numbers are the product's.
+  assert.deepEqual(delivered, [true, true, true, true, true, true, true])
+  assert.deepEqual(
+    printed.map((html) =>
+      [tooLarge, pastTheDeadline, failed, busy].findIndex((sentence) =>
+        html.includes(
+          `<title>Page not shown</title></head><body><p>${sentence}</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p>`,
+        ),
+      ),
+    ),
+    [0, 1, 2, 3],
+  )
+  assert.equal(overviewRefusal.includes('Open the Wiki’s overview'), false)
+  assert.equal(
+    inert,
+    '<a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+  )
+  assert.equal(WIKI_PAGE_WORKER_CONCURRENCY_LIMIT, 2)
+  assert.equal(WIKI_PAGE_WAITING_LIMIT, 4)
+  assert.equal(WIKI_PAGE_SERVE_DEADLINE_MS, 10_000)
+  assert.equal(WIKI_PAGE_WORKER_HEAP_LIMIT_MB, 256)
+  assert.equal(WIKI_PAGE_FILE_LIMIT_BYTES, 2_097_152)
+  assert.deepEqual(WIKI_PAGE_NAVIGATION_DESTINATIONS, ['document', 'iframe'])
 })
 
 // Value: protects=a learner who finds an entry "Archive missing; remaining files kept" in Saved studies, or whose Node test is refused beside another window, reading what the entry is, how its rest is removed and why the test did not start; fails_when=the README no longer names what is left of a study whose archive was removed, how it is removed with and without a Trash, that it is neither selected nor counted, and that a run whose archive only waits to be saved is not such a loss, or no longer says that the start of a Node test takes the storage lock; why_new=Cycle 0046 rows 86, 181, 248 and 190: the entry, its place in the list and the lock at a Node test's start stood in no document; seam=none
