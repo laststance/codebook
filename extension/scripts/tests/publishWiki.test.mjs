@@ -7848,21 +7848,37 @@ for (const { when, printedStart, outcome, recovered } of [
   })
 }
 
-for (const { when, creationTime, outcome, recovered } of [
+for (const { when, recordedStart, tableTime, outcome, recovered } of [
   {
     when: 'of another process',
-    creationTime: '2026-10-06T10:00:00.1234560Z',
+    recordedStart: 'win:2026-10-05T09:12:33.1234567Z',
+    tableTime: '20261006190000.123456+540',
     outcome: 'recovers the Wiki',
     recovered: 'published-or-restored',
   },
   {
-    when: 'of the recorded start’s microsecond',
-    creationTime: '2026-10-05T09:12:33.1234560Z',
+    when: 'of the recorded start’s microsecond, named in a local time east of UTC',
+    recordedStart: 'win:2026-10-05T09:12:33.1234567Z',
+    tableTime: '20261005181233.123456+540',
     outcome: 'is refused as one that may still be running',
     recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
   },
+  {
+    when: 'of the recorded start’s microsecond, named in the hour a change from daylight saving time repeats, at the offset of its first pass',
+    recordedStart: 'win:2026-10-25T00:30:00.1234567Z',
+    tableTime: '20261025013000.123456+060',
+    outcome: 'is refused as one that may still be running',
+    recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+  },
+  {
+    when: 'of the same local time in the hour a change from daylight saving time repeats, at the offset of its second pass, an hour after the recorded start',
+    recordedStart: 'win:2026-10-25T00:30:00.1234567Z',
+    tableTime: '20261025013000.123456+000',
+    outcome: 'recovers the Wiki',
+    recovered: 'published-or-restored',
+  },
 ]) {
-  // Value: protects=the learner's --recover on Windows after a killed publish whose process id a process of another user, or one run as administrator, has now, whose start PowerShell may not read; fails_when=the publisher's Windows query reads the start alone, so it is unknown and the Wiki stays locked as "may still be running" for as long as that process runs, or the process table's creation time, named to the microsecond, is compared with the recorded start to the 100 ns, so a publisher that still runs counts as gone; why_new=Cycle 0047 row 63 (SIMP-1 = MAINT-1 = ADV-2 = CORE-1): the publisher's copy of the start reader lacked row 33's Win32_Process fallback; seam=the publisher's `system` option, here Windows with a stand-in for PowerShell that may not read the process's start (the CLI passes the system it runs on); no_claim=a real process of another user on Windows
+  // Value: protects=the learner's --recover on Windows after a killed publish whose process id a process of another user, or one run as administrator, has now, whose start PowerShell may not read; fails_when=the publisher's Windows query reads the start alone, so it is unknown and the Wiki stays locked as "may still be running" for as long as that process runs, or the process table's creation time, named to the microsecond, is compared with the recorded start to the 100 ns, so a publisher that still runs counts as gone, or the table's local time is turned into UTC by another offset than its own, so in the hour a change from daylight saving time repeats a publisher that still runs counts as gone, or another process as the publisher; why_new=Cycle 0047 row 63 (SIMP-1 = MAINT-1 = ADV-2 = CORE-1): the publisher's copy of the start reader lacked row 33's Win32_Process fallback; and row 117 (ADV2-10): the table's time is read as WMI's DMTF text with its offset from UTC; seam=the publisher's `system` option, here Windows with a stand-in for PowerShell that may not read the process's start (the CLI passes the system it runs on); no_claim=a real process of another user on Windows, and a real change of the clock
   test(`a recovery on Windows of a killed publish whose process id went to a process whose start PowerShell may not read, by the process table's creation time ${when}, ${outcome}`, async () => {
     // Arrange: the journal names the test process's id, this host, Windows's space and the killed publisher's start to the 100 ns.
     const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
@@ -7871,21 +7887,21 @@ for (const { when, creationTime, outcome, recovered } of [
         host: hostname(),
         space: 'win32',
         boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
-        start: 'win:2026-10-05T09:12:33.1234567Z',
+        start: recordedStart,
       }
     })
     const windows = {
       platform: 'win32',
       environment: { SystemRoot: 'C:\\Windows' },
-      // A stand-in for PowerShell that may not read the test process's start: only a query that falls back to the process table (Win32_Process) prints, its creation time behind the mark `cim:`.
+      // A stand-in for PowerShell that may not read the test process's start: only a query that falls back to the process table (Win32_Process by WMI) prints, its creation time in WMI's DMTF form behind the mark `wmi:`.
       run: async (program, args) =>
         program ===
           'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' &&
         args[3]?.includes(`Get-Process -Id ${process.pid} -ErrorAction Stop`) &&
         args[3].includes(
-          `'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${process.pid}' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o')`,
+          `'wmi:' + (Get-WmiObject -Class Win32_Process -Filter 'ProcessId=${process.pid}' -ErrorAction Stop).CreationDate`,
         )
-          ? `cim:${creationTime}`
+          ? `wmi:${tableTime}`
           : undefined,
     }
     try {

@@ -674,10 +674,14 @@ async function macStartOf(pid, system) {
   return text !== undefined && /^[\x20-\x7e]{1,64}$/.test(text) ? 'ps:' + text : undefined;
 }
 
-/** A UTC time in the round-trip form PowerShell's `ToString('o')` prints, with its whole seconds and its fraction as groups; an error text never has it. Read by {@link windowsStartOf} and {@link windowsTicksOf}. */
+/** A UTC time in the round-trip form PowerShell's `ToString('o')` prints, with its whole seconds and its fraction as groups; an error text never has it. Read by {@link windowsStartOf}, {@link utcTimeOfWmiCreation} and {@link windowsTicksOf}. */
 const WINDOWS_UTC_TIME = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/;
-/** What the Windows start query prints before a creation time it read from the process table (Win32_Process) because PowerShell may not read the process's start. Read by {@link windowsStartCommand} and {@link windowsStartOf}. */
-const PROCESS_TABLE_MARK = 'cim:';
+/** What the Windows start query prints before a creation time it read from the process table (Win32_Process, by WMI) because PowerShell may not read the process's start. Read by {@link windowsStartCommand} and {@link windowsStartOf}. */
+const PROCESS_TABLE_MARK = 'wmi:';
+/** A creation time as WMI's DMTF text names it (`yyyymmddHHMMSS.mmmmmm` and the offset from UTC in minutes with its sign, as `20261005181233.123456+540`), with its date and time fields, its microseconds, the offset's sign and the offset as groups; an error text never has it. Read by {@link utcTimeOfWmiCreation}. */
+const WMI_CREATION_TIME = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+-])(\d{3})$/;
+/** How many milliseconds a minute of a UTC offset holds. Read by {@link utcTimeOfWmiCreation}. */
+const MS_PER_MINUTE = 60_000;
 /** How many digits of a second a Windows start counts (100 ns ticks), and how many such ticks a millisecond has. Read by {@link windowsTicksOf}. */
 const WINDOWS_TICK_DIGITS = 7, WINDOWS_TICKS_PER_MS = 10_000n;
 /** How many 100 ns ticks the microsecond holds to which the process table names a creation time: a recorded start less than this far from it is that process's. Read by {@link startOfProcessTableTime}. */
@@ -690,7 +694,21 @@ function windowsTicksOf(text) {
   return BigInt(secondsMs) * WINDOWS_TICKS_PER_MS + BigInt((parts[2] ?? '').padEnd(WINDOWS_TICK_DIGITS, '0').slice(0, WINDOWS_TICK_DIGITS));
 }
 
-/** Names a process by the creation time the Windows process table gave for it, when PowerShell may not read the process's start. The table names the time to the microsecond, while a recorded start was read to the 100 ns by its own process: a recorded Windows start less than {@link WINDOWS_PROCESS_TABLE_PRECISION_TICKS} ticks from the table's time is that process's and is answered as it is, so {@link processStateOf} finds it equal; any other is answered as the table names it, which no recorded start equals. Called by {@link windowsStartOf}. @param expectedStart - The start the journal or the claim records for this process id, if any. @returns `expectedStart` for a Windows start of the same microsecond; `win:<creation>` otherwise. @example startOfProcessTableTime('2026-10-05T09:12:33.1234560Z', 'win:2026-10-05T09:12:33.1234567Z') // => 'win:2026-10-05T09:12:33.1234567Z' */
+/** Converts a creation time of the Windows process table, as WMI names it ({@link WMI_CREATION_TIME}), to the round-trip UTC form of every other Windows start. WMI names the time in local digits with the offset from UTC it used for them, so the time is taken back to UTC by that very offset: a conversion by the time zone's rules gives the hour that repeats at the end of daylight saving time one offset only, and a process created in the other half of that hour would be named an hour off. The same conversion as the extension's process-start reader. Called by {@link windowsStartOf} for the answer of the query's fallback ({@link windowsStartCommand}). @param creation - The creation time as WMI's DMTF text. @returns The time in UTC to the 100 ns, its last digit `0` (the table names microseconds); undefined for a text of another shape and for a date or a time out of range. @example utcTimeOfWmiCreation('20261025013000.123456+060') // => '2026-10-25T00:30:00.1234560Z', and utcTimeOfWmiCreation('20261025013000.123456+000') // => '2026-10-25T01:30:00.1234560Z' */
+function utcTimeOfWmiCreation(creation) {
+  const parts = WMI_CREATION_TIME.exec(creation);
+  if (!parts) return undefined;
+  const [, year, month, day, hour, minute, second, microseconds, sign, offsetMinutes] = parts;
+  const digits = year + '-' + month + '-' + day + 'T' + hour + ':' + minute + ':' + second, digitsAsUtcMs = Date.parse(digits + 'Z');
+  // A field out of its range (a 13th month, a 30th of February) names no time.
+  if (!Number.isFinite(digitsAsUtcMs) || new Date(digitsAsUtcMs).toISOString().slice(0, 19) !== digits) return undefined;
+  // The digits are the time at the named offset: UTC lies that many minutes earlier east of Greenwich and later west of it.
+  const offsetMs = (sign === '-' ? -1 : 1) * Number(offsetMinutes) * MS_PER_MINUTE;
+  const utc = new Date(digitsAsUtcMs - offsetMs).toISOString().slice(0, 19) + '.' + microseconds + '0Z';
+  return WINDOWS_UTC_TIME.test(utc) ? utc : undefined;
+}
+
+/** Names a process by the creation time the Windows process table gave for it, when PowerShell may not read the process's start. The table names the time to the microsecond, while a recorded start was read to the 100 ns by its own process: a recorded Windows start less than {@link WINDOWS_PROCESS_TABLE_PRECISION_TICKS} ticks from the table's time is that process's and is answered as it is, so {@link processStateOf} finds it equal; any other is answered as the table names it, which no recorded start equals. Called by {@link windowsStartOf}. @param creation - The creation time in round-trip UTC form, as {@link utcTimeOfWmiCreation} converted it. @param expectedStart - The start the journal or the claim records for this process id, if any. @returns `expectedStart` for a Windows start of the same microsecond; `win:<creation>` otherwise. @example startOfProcessTableTime('2026-10-05T09:12:33.1234560Z', 'win:2026-10-05T09:12:33.1234567Z') // => 'win:2026-10-05T09:12:33.1234567Z' */
 function startOfProcessTableTime(creation, expectedStart) {
   const creationTicks = windowsTicksOf(creation), expectedTicks = expectedStart?.startsWith('win:') ? windowsTicksOf(expectedStart.slice('win:'.length)) : undefined;
   // Only a Windows start of the same microsecond is confirmed; a start of another form or without a time never is.
@@ -699,19 +717,19 @@ function startOfProcessTableTime(creation, expectedStart) {
   return 'win:' + creation;
 }
 
-/** The PowerShell command that asks when a process was created: the process's start, and where this user may not read it (a process of another user, or one run as administrator), its creation time from the process table (Win32_Process through CIM) behind {@link PROCESS_TABLE_MARK}, in the one bounded query; a process id that names no process ends it with an error before the table is asked. The same command as the extension's process-start reader. Called by {@link windowsStartOf}. @example windowsStartCommand(4242) // => "$process = Get-Process -Id 4242 -ErrorAction Stop; try { … } … 'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=4242' …)" */
+/** The PowerShell command that asks when a process was created: the process's start, and where this user may not read it (a process of another user, or one run as administrator), its creation time from the process table (Win32_Process through WMI, `Get-WmiObject` of Windows PowerShell 5.1) behind {@link PROCESS_TABLE_MARK}, in the one bounded query; a process id that names no process ends it with an error before the table is asked. The table's time is printed as WMI's DMTF text, in local digits with the offset from UTC they were written with, and is converted by that offset ({@link utcTimeOfWmiCreation}): PowerShell's own conversion of a local time to UTC takes the offset of the time zone's rules, which give the repeated hour at the end of daylight saving time one offset only. The same command as the extension's process-start reader. Called by {@link windowsStartOf}. @example windowsStartCommand(4242) // => "$process = Get-Process -Id 4242 -ErrorAction Stop; try { … } … 'wmi:' + (Get-WmiObject -Class Win32_Process -Filter 'ProcessId=4242' -ErrorAction Stop).CreationDate }" */
 const windowsStartCommand = pid => ['$process = Get-Process -Id ' + pid + ' -ErrorAction Stop', 'try { $start = $process.StartTime } catch { $start = $null }',
-  "if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { '" + PROCESS_TABLE_MARK + "' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=" + pid + "' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o') }"].join('; ');
+  "if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { '" + PROCESS_TABLE_MARK + "' + (Get-WmiObject -Class Win32_Process -Filter 'ProcessId=" + pid + "' -ErrorAction Stop).CreationDate }"].join('; ');
 
-/** The start of a Windows process: the creation time PowerShell prints in UTC ({@link windowsStartCommand}), PowerShell started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). Where this user may not read the process's start, the process table's creation time answers ({@link startOfProcessTableTime}), so a process id that went to a process of another user does not keep a stopped publish's journal for as long as that process runs. The query of {@link START_QUERIES} on Windows. @param expectedStart - The start a journal or a claim records for this process id, which a creation time of the process table may confirm. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242, SYSTEM_HERE, undefined) // => 'win:2026-10-05T09:12:33.1234567Z' */
+/** The start of a Windows process: the creation time PowerShell prints in UTC ({@link windowsStartCommand}), PowerShell started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). Where this user may not read the process's start, the process table's creation time answers, converted to UTC by its own offset ({@link utcTimeOfWmiCreation}, {@link startOfProcessTableTime}), so a process id that went to a process of another user does not keep a stopped publish's journal for as long as that process runs. The query of {@link START_QUERIES} on Windows. @param expectedStart - The start a journal or a claim records for this process id, which a creation time of the process table may confirm. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242, SYSTEM_HERE, undefined) // => 'win:2026-10-05T09:12:33.1234567Z' */
 async function windowsStartOf(pid, system, expectedStart) {
   const systemRoot = [system.environment.SystemRoot, system.environment.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
   const text = systemRoot === undefined ? undefined : await system.run(win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-Command', windowsStartCommand(pid)]);
   if (text !== undefined && WINDOWS_UTC_TIME.test(text)) return 'win:' + text;
-  // A creation time read from the process table names the process to the microsecond only.
-  const creation = text?.startsWith(PROCESS_TABLE_MARK) ? text.slice(PROCESS_TABLE_MARK.length) : undefined;
-  return creation !== undefined && WINDOWS_UTC_TIME.test(creation) ? startOfProcessTableTime(creation, expectedStart) : undefined;
+  // A creation time read from the process table names the process to the microsecond only, in WMI's text with its offset from UTC.
+  const creation = text?.startsWith(PROCESS_TABLE_MARK) ? utcTimeOfWmiCreation(text.slice(PROCESS_TABLE_MARK.length)) : undefined;
+  return creation !== undefined ? startOfProcessTableTime(creation, expectedStart) : undefined;
 }
 
 /** The query of a process's start on each system whose starts the publisher reads. Read by {@link processStartOf}. */
