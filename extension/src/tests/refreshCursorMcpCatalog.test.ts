@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import * as crypto from 'node:crypto'
 import { constants as fileSystemConstants } from 'node:fs'
 import * as fileSystem from 'node:fs/promises'
 import {
@@ -9,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   symlink,
@@ -234,6 +236,91 @@ test('Cursor MCP setup preserves an interrupted catalog lock after bounded retri
   )
   assert.equal(await readFile(lockPath, 'utf8'), '{"pid":12345}')
   await assert.rejects(lstat(join(directory, 'mcp.json')), { code: 'ENOENT' })
+})
+
+// Value: protects=Cursor chat setup in every window when five or more Cursor windows restart together and each refreshes the MCP catalog under its one storage lock; fails_when=the windows pause the same fixed time between their tries, so they ask for the lock again in step and only one of them gets it at each try, or they give up after a few tries: the others end with "Codebook agent server started, but Cursor MCP registration failed: Learning storage is locked …" (Cycle 0046 probe: 6 windows, 2 failed; 10 windows, 6 failed); why_new=Cycle 0047 row 38 (P3RT16); seam=node:crypto randomInt of the loaded catalog, which draws from the test's random fractions, and its node:timers/promises setTimeout, which counts the pauses instead of waiting; no_claim=real windows in separate processes (a probe of the fix measured them)
+test('a window that finds the Cursor MCP catalog locked asks for the lock again up to twenty times, each after a pause that a random draw makes between 50 and 149 ms long, so that windows that restart together do not ask in step', async (context) => {
+  // Arrange: a lock another window keeps, random fractions of the test's, and pauses that are counted, not waited.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
+  await mkdir(lockDirectory, { recursive: true })
+  await writeFile(join(lockDirectory, 'writer.lock'), '{"pid":12345}')
+  const randomFractions = [0, 0.25, 0.5, 0.999]
+  let drawCount = 0
+  const pauses: number[] = []
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      // The real module stays the prototype: copying its properties would read its deprecated ones.
+      'node:crypto': Object.create(crypto, {
+        randomInt: {
+          // Answers as the real draw below a bound does for the next of the test's fractions.
+          value: (bound: number) =>
+            Math.floor(
+              randomFractions[drawCount++ % randomFractions.length]! * bound,
+            ),
+        },
+      }),
+      'node:timers/promises': {
+        setTimeout: async (delayMs: number) => {
+          pauses.push(delayMs)
+        },
+      },
+    },
+    // The catalog tells the lock's refusal by its class and a missing file by `instanceof Error`; these errors belong to this realm.
+    { Error },
+  )
+
+  // Act
+  const refusal = await answerOrRefusalOf(
+    catalog.refreshCursorMcpCatalog(storageRoot, directory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { refusal, pauses },
+    {
+      refusal: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(lockDirectory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
+      pauses: [
+        50, 75, 100, 149, 50, 75, 100, 149, 50, 75, 100, 149, 50, 75, 100, 149,
+        50, 75, 100, 149,
+      ],
+    },
+  )
+})
+
+// Value: protects=Cursor chat setup in a window that restarts together with several others, which take the catalog's lock in turn and keep it for longer together than three short pauses; fails_when=the window gives up after about 150 ms and reports "Learning storage is locked …" although the lock is free a moment later; why_new=Cycle 0047 row 38 (P3RT16); seam=none, a lock file of another window that is removed after 400 ms; no_claim=the length of each pause (the test before this one)
+test('Cursor MCP setup still creates the config when the windows that restart with it keep the catalog lock for 400 ms', async (context) => {
+  // Arrange: another window's lock that is released after 400 ms.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
+  await mkdir(lockDirectory, { recursive: true })
+  const lockPath = join(lockDirectory, 'writer.lock')
+  await writeFile(lockPath, '{"pid":12345}')
+  const released = delay(400).then(() => unlink(lockPath))
+
+  // Act
+  const setup = refreshCursorMcpCatalog(storageRoot, directory).then(
+    () => 'finished',
+    (error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+  )
+  await released
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup: await setup,
+      config: await readFile(join(directory, 'mcp.json'), 'utf8').catch(
+        () => 'no config',
+      ),
+    },
+    { setup: 'finished', config: '{"mcpServers":{}}\n' },
+  )
 })
 
 test('Cursor MCP discovery refresh refuses redirected config files', async (context) => {

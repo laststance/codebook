@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomInt, randomUUID } from 'node:crypto'
 import { constants as fileFlags, type BigIntStats } from 'node:fs'
 import {
   link,
@@ -15,6 +15,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import {
   CURSOR_MCP_CATALOG_LOCK_RETRIES,
   CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS,
+  CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS,
   CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
   CURSOR_MCP_CATALOG_REFRESH_STEP_MS,
   PRIVATE_FILE_MODE,
@@ -884,7 +885,14 @@ async function recoverRemoval(
   return undefined
 }
 
-/** Waits briefly for another active Cursor window's catalog writer, also one that is taking a stale lock over; the retries displace no lock themselves. {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. Only the lock's own refusal ({@link StorageLockHeldError}) is waited for, never any failure with an `EEXIST` under it. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
+/**
+ * Waits for other active Cursor windows' catalog writers, also one that is taking a stale lock over; called by {@link refreshCursorMcpCatalog}, {@link captureOwnedCursorMcpCatalogGeneration} and {@link removeOwnedCursorMcpCatalog} around their hold of the catalog's storage lock. The retries displace no lock themselves: {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. Only the lock's own refusal ({@link StorageLockHeldError}) is waited for, never any failure with an `EEXIST` under it.
+ * Cursor windows that restart together all refresh the catalog at once. Each pause is {@link CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS} plus a random draw below {@link CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS}, so the windows do not ask again in step, and {@link CURSOR_MCP_CATALOG_LOCK_RETRIES} tries leave room for dozens of them.
+ * @param operation - One try: the hold of the lock and the write under it.
+ * @returns What the first try that got the lock returned.
+ * @throws The lock's refusal after the last retry, and every other failure at once.
+ * @example await withCatalogLockRetry(() => withStorageLock('/private', update))
+ */
 async function withCatalogLockRetry<Result>(
   operation: () => Promise<Result>,
 ): Promise<Result> {
@@ -897,7 +905,11 @@ async function withCatalogLockRetry<Result>(
         retry >= CURSOR_MCP_CATALOG_LOCK_RETRIES
       )
         throw error
-      await delay(CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS)
+      // A pause of its own length for each window: windows that asked together ask again apart.
+      await delay(
+        CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS +
+          randomInt(CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS),
+      )
     }
   }
 }

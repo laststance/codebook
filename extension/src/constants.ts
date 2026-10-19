@@ -55,8 +55,12 @@ export const STORAGE_LOCK_RELEASE_RETRY_DELAY_MS = 25
 export const EDITOR_MACHINE_ID_PLACEHOLDER = 'someValue.machineId'
 export const CURSOR_MCP_CATALOG_REFRESH_STEP_MS = 1
 export const CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES = 16_384
-export const CURSOR_MCP_CATALOG_LOCK_RETRIES = 3
+/** How often a setup or a removal of the Cursor MCP catalog asks for the catalog's storage lock again while another window holds it, before it reports the lock; with pauses of {@link CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS} and up to {@link CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS} more, one to three seconds (two on average), in which dozens of Cursor windows that restart together take the lock one after the other. */
+export const CURSOR_MCP_CATALOG_LOCK_RETRIES = 20
+/** The shortest pause before the catalog's storage lock is asked for again. */
 export const CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS = 50
+/** The bound below which a random draw lengthens each pause before the catalog's lock is asked for again, so that windows that restart together do not ask in step and several of them take the lock between two of their tries. */
+export const CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS = 100
 export const CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS = 120_000
 export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
