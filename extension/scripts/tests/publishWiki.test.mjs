@@ -3368,6 +3368,77 @@ test('a publish refused because the learner added a file while it copied the lea
   }
 })
 
+// Value: protects=the learner's next edit of a candidate after a publish refused once it had finalized the candidate's manifest and record; fails_when=the refused publish leaves the candidate's manifest rewritten and its record marked published, so the next publish of the edited candidate is refused as "A previously finalized candidate changed"; why_new=Cycle 0047 row 29 (P3RT7); seam=a copy of the shipped publisher whose `node:fs/promises` adds a learner's file to the published Wiki just before the publish writes the candidate's finalized record (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a publish stopped by a kill, which the recovery handles
+test('a publish refused after it finalized the candidate puts the candidate’s prepared manifest and record back, and the candidate publishes after the learner edits it', async () => {
+  // Arrange: just before the publish writes the candidate's finalized record, the learner adds a file to the published Wiki, which the publish's last check refuses.
+  const { publishWiki: publishWhileTheLearnerWrites } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const manifestPath = join(wiki.next, 'codebook-wiki.json'),
+    recordPath = join(wiki.next, 'codebook-publication.json')
+  try {
+    const preparedManifest = await readFile(manifestPath),
+      preparedRecord = await readFile(recordPath)
+    swapBeforeWriting(
+      (path) => path === recordPath,
+      () => writeFile(join(wiki.output, 'later.txt'), 'Notes added meanwhile'),
+    )
+
+    // Act: the refused publish, then the learner's edit of the candidate's page and the candidate published again.
+    const refusal = await publishWhileTheLearnerWrites({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const candidateAfterRefusal = {
+      manifestIsAsPrepared: (await readFile(manifestPath)).equals(
+        preparedManifest,
+      ),
+      recordIsAsPrepared: (await readFile(recordPath)).equals(preparedRecord),
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.pages[0].contentHtml = '<h2 id="intro">Edited</h2>'
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        candidateAfterRefusal,
+        nextPublish,
+        publishesTheEdit: (
+          await readFile(join(wiki.output, 'index.html'), 'utf8')
+        ).includes('<h2 id="intro">Edited</h2>'),
+      },
+      {
+        refusal:
+          'Manual Wiki files changed during publication; output was preserved.',
+        candidateAfterRefusal: {
+          manifestIsAsPrepared: true,
+          recordIsAsPrepared: true,
+        },
+        nextPublish: { publishedFiles: 1 },
+        publishesTheEdit: true,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the next publish of a candidate after a publish refused because a learner's file stands where the candidate adds a page; fails_when=only a refused hold removes what the publish wrote, so its rendered pages and any copy of the learner's other files stay in the candidate and the next publish is refused for such a copy as a file outside its manifest; why_new=P2M1 (P2OCR2-2); seam=none; no_claim=which of the learner's files the publish copied before the conflict, which follows the order the file system lists them in
 test('a publish refused for a learner’s file that conflicts with a new page leaves none of the files it wrote in the candidate, and publishes once the conflict is gone', async () => {
   // Arrange: the published Wiki holds the learner's a.txt and pages/notes.html, and the candidate adds the page pages/notes.html.

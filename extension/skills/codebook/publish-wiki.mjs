@@ -179,10 +179,14 @@ function validHashes(value) {
   return value && typeof value === 'object' && !Array.isArray(value) && Object.entries(value).every(([path, hash]) => safePath(path) && !reserved(path) && typeof hash === 'string' && HASH.test(hash));
 }
 
-/** Loads independent metadata for {@link inspectOutput} and prepared-candidate checks before a write. @example await readReceipt('/wiki', '/repo') */
+/** Loads independent metadata for {@link inspectOutput} and prepared-candidate checks before a write ({@link parseReceipt}). @example await readReceipt('/wiki', '/repo') */
 async function readReceipt(directory, root, optional = false) {
   const bytes = await regularBytes(join(directory, RECEIPT), optional);
-  if (bytes === undefined) return undefined;
+  return bytes === undefined ? undefined : parseReceipt(bytes, root);
+}
+
+/** Parses and checks the bytes of a publication record, of a candidate or of a published Wiki. Called by {@link readReceipt}, and by {@link publishWiki}, which keeps the candidate's bytes to put them back after a refusal. @returns The record. @throws The refusal of an invalid record or of an invalid retained manifest. @example parseReceipt(await readFile('/repo/.codebook/next/codebook-publication.json'), '/repo') // => { schemaVersion: 1, kind: 'candidate', … } */
+function parseReceipt(bytes, root) {
   let receipt;
   try { receipt = JSON.parse(bytes); } catch (cause) { throw new Error('The Wiki publication record is invalid; output was preserved.', { cause }); }
   const baseline = receipt?.baseline;
@@ -304,13 +308,24 @@ async function replaceOwnFile(path, bytes) {
   return writeOwnFile(path, bytes);
 }
 
+/** Whether a file a step wrote is still its own: its path names the file the step wrote, by its device and file id ({@link isSameFileAt}), and that file still holds the step's bytes, by their SHA-256 digest. Called by {@link removeWritten} and {@link restoreFinalized}. @example await isStillWritten(await writeOwnFile('/repo/.codebook/next/index.html', html)) // => true until the file is edited, removed or a link stands on its path */
+async function isStillWritten(file) {
+  if (!(await isSameFileAt(file))) return false;
+  const current = await regularBytes(file.path, true).catch(() => undefined);
+  return current !== undefined && digest(current) === file.hash;
+}
+
+/** Puts back the bytes a candidate's manifest or record had before a refused publish finalized it: the publish's own file at the path ({@link isStillWritten}) takes the prepared bytes again ({@link replaceOwnFile}), and a name the publish emptied before its write failed gets them anew; an entry another writer put there stays. Called by {@link publishWiki} for every refusal before its swap, while the path and the candidate hold. @param finalized - The path, the bytes it had as prepared, and the record of the file the publish wrote there, absent while that write did not end. @example await restoreFinalized({ path: '/repo/.codebook/next/codebook-wiki.json', prepared: manifestBytes, file }) */
+async function restoreFinalized({ path, prepared, file }) {
+  if (await lookAt(path) === undefined) await writeOwnFile(path, prepared);
+  else if (file !== undefined && await isStillWritten(file)) await replaceOwnFile(path, prepared);
+}
+
 /** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses, and by {@link publishWiki} for every refusal before its swap. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText)], ['/repo/.codebook/next']) */
 async function removeWritten(written, folders) {
   for (const file of [...written].reverse()) {
-    // Only the file the step wrote: through a folder swapped for a link, the path names another file.
-    if (!(await isSameFileAt(file))) continue;
-    const current = await regularBytes(file.path, true).catch(() => undefined);
-    if (current !== undefined && digest(current) === file.hash) await unlink(file.path).catch(() => undefined);
+    // Only the file the step wrote, with its bytes: through a folder swapped for a link, the path names another file.
+    if (await isStillWritten(file)) await unlink(file.path).catch(() => undefined);
   }
   await removeMadeFolders(folders);
 }
@@ -388,7 +403,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   for (const path of manifest.assets) await requireRasterAsset(stage, path);
   // Validate authored content without modifying either the stage or published output.
   const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
-  const receipt = await readReceipt(stage, root, true);
+  const receiptBytes = await regularBytes(join(stage, RECEIPT), true), receipt = receiptBytes === undefined ? undefined : parseReceipt(receiptBytes, root);
   if (!receipt || receipt.output !== output) throw new Error('Use --prepare before editing a Wiki candidate for this output.');
   if (receipt.kind === 'published' && digest(bytes) !== receipt.manifestSha256) throw new Error('A previously finalized candidate changed. Preserve it and use --prepare again.');
   const inspectPrior = () => inspectOutput(output, root, { allowLegacy: receipt.baseline?.legacy === true });
@@ -414,6 +429,13 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const record = { projectRoot: root, output, stage, backup, pid: process.pid, id: randomUUID(), operation: 'publish', manifestSha256: digest(manifestText), priorManifestSha256: prior ? digest(prior.bytes) : undefined, priorLegacy: receipt.baseline?.legacy === true };
   const journalBytes = JSON.stringify(record);
   await writeFile(journal, journalBytes, { flag: 'wx' });
+  // The candidate's manifest and record as prepared, for each one the publish began to finalize: every refusal before the swap puts them back ({@link restoreFinalized}), so a refused publish leaves no finalized candidate that refuses the learner's next edit.
+  const finalized = [];
+  const finalize = async (path, text, prepared) => {
+    const entry = { path, prepared };
+    finalized.push(entry);
+    entry.file = await replaceOwnFile(path, text);
+  };
   let movedOld = false, swapped = false;
   try {
     await requirePathHeld();
@@ -430,8 +452,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     }
     await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
     // The manifest and the record take the place of the entries at their names, which a link put there after they were read does not lead out of the candidate.
-    await replaceOwnFile(join(stage, MANIFEST), manifestText);
-    await replaceOwnFile(join(stage, RECEIPT), JSON.stringify({ ...receipt, kind: 'published', manifestSha256: record.manifestSha256, manifestText }));
+    await finalize(join(stage, MANIFEST), manifestText, bytes);
+    await finalize(join(stage, RECEIPT), JSON.stringify({ ...receipt, kind: 'published', manifestSha256: record.manifestSha256, manifestText }), receiptBytes);
     // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
     const current = await inspectPrior();
     assertBaseline(receipt.baseline, current);
@@ -448,6 +470,9 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
     // The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it.
     await removeWritten(written, made);
+    // Put back only while the path and the candidate hold; a failure leaves the finalized manifest and record, which publish again unchanged, and the publish's own refusal is the one reported.
+    if (finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false))
+      for (const entry of finalized) await restoreFinalized(entry).catch(() => undefined);
     if (movedOld) {
       try { await rename(backup, output); }
       catch (cause) { throw new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause }); }
