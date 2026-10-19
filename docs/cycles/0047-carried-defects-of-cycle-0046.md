@@ -18,7 +18,7 @@ Can every defect Cycle 0046 left be closed, with nothing carried again, in one p
 
 - Hypothesis: each task (53 at filing, and every defect found while the cycle runs) is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies, and the cycle's own reviews leave nothing open.
 - Smallest observable outcome: every row of [the task table](0047-carried-defects.md) closed, the pull request merged after its reviews, required CI and the exact-head gate, and Issue #90 closed with a comment that states nothing is carried.
-- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 132 rows on 2026-10-19).
+- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 165 rows on 2026-10-19).
 - Out of scope for this cycle (still retained in PRODUCT_GOAL.md): any increment, among them native use in an editor for Windows (a feature cycle of its own) and the natural `/codebook` request's first-run proof (the next feature cycle's frozen request).
 - Conditions that falsify the approach: a task that neither a fix nor evidence can close; a fix that regresses a delivered behavior its tests or the native round hold.
 
@@ -100,9 +100,17 @@ Row 107 is the weightiest: on plain Node 24.21.0 without pointer compression, th
 
 Six fixers (R the page workers and the refusal page, F the filter's readings, P1 the publisher's owner gate, P2 the publisher's recovery, S the process starts, locks, recordings and the Study workspace, C the update marker) closed rows 107 to 129, 131 and 132 from `56d5629d`, each behavioral row with a test shown red on the unfixed code or on a mutant of its line; the parent integrated them by cherry-pick (no conflict) and ran each fixer's files again, and corrected the texts the fixes left behind (the README's sentences on the gone pairs, the unreadable marker and the six pages, the marker's and `systemErrorCode`'s docstrings). Decisions (owner away, recommended option): row 109 bounds an ending worker's place at 5 seconds and keeps at most as many lost threads as workers; row 112 records a computer's own host name outside the accepted form as a fixed stand-in, so such a computer can still recover its Wiki; row 128's partial close is not a defect (VS Code 1.140.0 and Cursor 3.23.12 close no tab on a refused group close); row 131's journal stage is answered only for the default name or the `--stage` passed, and a kept prior Wiki must have the publisher's `.previous-<UUID>` form. The row 107 test fails in about half of its runs at 256 MB, as the abort is not certain.
 
+### The delivery's third review pass (2026-10-19)
+
+The entry reads were made again after a context compaction (PRODUCT_GOAL version 10, the three feature contracts, IMPLEMENTATION.md, PROJECT_STATE.md, this record, DESIGN.md and DEVELOPMENT.md's delivery rules), and the approved PNG was opened with the image viewer (SHA-256 as above): the live explanation, the replay with its Learning summary, the DeepWiki reader and the shortcut list, as at the entry.
+
+The third pass, the last the ship's limit allows, read `135da98f` with the same reviewers as the second: the core checklist (all 149 eligible gate hunks read, none a finding), six specialists, the Red Team, the local CodeRabbit CLI, the open-code-review delegate (61 of 62 reviewable files; the generated test timings skipped), the Claude adversarial review, the Codex challenge on fixing cycle 2's application code and the Codex structured review. The read-only coverage reassessment found 25 of fixing cycle 2's 30 paths tested, and the parent's functional smoke passed (7 captures). Rows 133 to 165 are the pass's findings, merged where several sources named one defect. The weightiest: a journal a cloned repository carries can name another folder beside the Wiki as its candidate, and the recovery, which wrote nothing in a candidate before fixing cycle 1, replaces that folder's manifest and record (row 133, both Codex reviews, reproduced by Codex in memory); a stopped run that stays open is saved again after its writer record is released (row 162); row 107's test fails under CI's coverage and load although the process lives (row 143); 18 cells of the publisher's owner gates have no test (row 158). Rows 159 and 160 are the parent's.
+
+The pass did not converge. Under the ship's limit ([rule](../../DEVELOPMENT.md#standing-owner-direction)) fixing cycle 3 is the last: five fixers fix rows 133 to 158 and 161 to 165, and after them the ship stops, unconverged. No review of this invocation reads those fixes; only the owner starts the next invocation.
+
 ## Result and decision
 
-Result pending. Counts: 132 rows, 132 closed, 0 implementing; the third and last review pass of the delivery reads the candidate of fixing cycle 2.
+Result pending. Counts: 165 rows, 133 closed, 32 implementing; fixing cycle 3, the last the ship allows, fixes the findings of its third review pass.
 
 ## Handoff
 
