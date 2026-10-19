@@ -321,7 +321,7 @@ async function restoreFinalized({ path, prepared, file }) {
   else if (file !== undefined && await isStillWritten(file)) await replaceOwnFile(path, prepared);
 }
 
-/** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses, and by {@link publishWiki} for every refusal before its swap. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText)], ['/repo/.codebook/next']) */
+/** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses, by {@link prepareWikiStage} for a refusal after the candidate's files are written, and by {@link publishWiki} for every refusal before its swap. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText)], ['/repo/.codebook/next']) */
 async function removeWritten(written, folders) {
   for (const file of [...written].reverse()) {
     // Only the file the step wrote, with its bytes: through a folder swapped for a link, the path names another file.
@@ -330,7 +330,7 @@ async function removeWritten(written, folders) {
   await removeMadeFolders(folders);
 }
 
-/** Writes the files of a step, each new, with the hold of its folder before and after it ({@link makeFolderHeld}); a refused hold removes what the step wrote that is still its own and the folders it made, with `madeBefore` after them ({@link removeWritten}). An asset read failure rolls back completed writes too, but keeps the initial empty stage as preparation did before lazy reads. Ordinary write errors keep the files written before them; the failed write's own partial file is removed ({@link writeOwnFile}). Called by {@link prepareWikiStage} for a new candidate's files. @example await writeFilesHeld([['/repo/.codebook/next/codebook-publication.json', receiptText]], requirePathHeld, isFolderWhereItWas, ['/repo/.codebook/next']) */
+/** Writes the files of a step, each new, with the hold of its folder before and after it ({@link makeFolderHeld}); a refused hold removes what the step wrote that is still its own and the folders it made, with `madeBefore` after them ({@link removeWritten}). An asset read failure rolls back completed writes too, but keeps the initial empty stage as preparation did before lazy reads. Ordinary write errors keep the files written before them; the failed write's own partial file is removed ({@link writeOwnFile}). Called by {@link prepareWikiStage} for a new candidate's files. @returns The records of the files written ({@link writeOwnFile}) and the folders made, deepest first, which a later refusal of the step removes ({@link removeWritten}). @example await writeFilesHeld([['/repo/.codebook/next/codebook-publication.json', receiptText]], requirePathHeld, isFolderWhereItWas, ['/repo/.codebook/next']) */
 async function writeFilesHeld(files, requirePathHeld, isFolderWhereItWas, madeBefore) {
   const written = [], made = [];
   try {
@@ -345,6 +345,7 @@ async function writeFilesHeld(files, requirePathHeld, isFolderWhereItWas, madeBe
     else if (error.isCandidateReadFailure) await removeWritten(written, made);
     throw error;
   }
+  return { written, made };
 }
 
 /** Yields the files a new candidate starts with: its receipt, then the prior Wiki's manifest and assets. Each asset is read as a regular file ({@link regularBytes}) only when {@link writeFilesHeld} asks for the next file, after writing the previous one. Called by {@link prepareWikiStage}; no complete asset inventory of Buffers is kept. @example for await (const [path, bytes] of candidateFilesOf('/repo/.codebook/next', receipt, undefined, '/repo/.codebook/wiki')) console.log(path, bytes.length); */
@@ -374,9 +375,15 @@ export async function prepareWikiStage({ projectRoot, outputDirectory, stageDire
   try { await requirePathHeld(); } catch (error) { await removeMadeFolders([stage, ...paths.madeFolders]); throw error; }
   const receipt = { schemaVersion: 1, kind: 'candidate', repositoryRoot: root, output, baseline: baselineOf(prior) };
   // Every file of the candidate is written only while the path and the candidate's folders hold; a refusal removes what was written.
-  await writeFilesHeld(candidateFilesOf(stage, receipt, prior, output), requirePathHeld, await folderLookOf(stage), [stage, ...paths.madeFolders]);
-  await requireNoJournal(journal);
-  assertBaseline(receipt.baseline, await inspectOutput(output, root, { allowLegacy: adoptExisting }));
+  const { written, made } = await writeFilesHeld(candidateFilesOf(stage, receipt, prior, output), requirePathHeld, await folderLookOf(stage), [stage, ...paths.madeFolders]);
+  try {
+    await requireNoJournal(journal);
+    assertBaseline(receipt.baseline, await inspectOutput(output, root, { allowLegacy: adoptExisting }));
+  } catch (error) {
+    // A publish that began, or a Wiki that changed, after the candidate was written refuses it: what the preparation wrote and the folders it made are removed, each still its own, so the next preparation into the same folder is not refused for it.
+    await removeWritten(written, [...made, stage, ...paths.madeFolders]);
+    throw error;
+  }
   return { stage, manifest: join(stage, MANIFEST), output, legacyAdopted: Boolean(prior && !prior.receipt) };
 }
 

@@ -2712,6 +2712,87 @@ test('a preparation whose .codebook is swapped for a link to a folder outside th
   }
 })
 
+for (const refusalCase of [
+  {
+    name: 'a publish journal appears beside the Wiki',
+    change: (output) =>
+      writeFile(
+        `${output}.publish-journal.json`,
+        JSON.stringify({ pid: 99999999 }),
+      ),
+    undo: (output) => rm(`${output}.publish-journal.json`),
+    refusal: (output) =>
+      `An earlier Wiki publication needs inspection. Run --recover after its process exits: ${output}.publish-journal.json`,
+  },
+  {
+    name: 'a published page changes',
+    change: (output) => writeFile(join(output, 'index.html'), 'Edited page'),
+    undo: (output, publishedPage) =>
+      writeFile(join(output, 'index.html'), publishedPage),
+    refusal: () => 'A published Wiki file changed after generation: index.html',
+  },
+]) {
+  // Value: protects=the learner's next preparation into the same candidate folder after a preparation refused once it had written the candidate's files; fails_when=the last two checks of the preparation (the journal and the Wiki's baseline) refuse without removing the candidate's record and manifest, so the candidate folder stays and the next preparation into it fails because the folder exists; why_new=Cycle 0047 row 43 (P3RT21); seam=a copy of the shipped publisher whose `node:fs/promises` makes the change just before the preparation writes the candidate's manifest, its last file (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a refusal before the candidate's folder is made
+  test(`a preparation refused because ${refusalCase.name} after it wrote the candidate’s files removes the candidate, and the next preparation into the same folder succeeds`, async () => {
+    // Arrange: a published Wiki; just before the preparation writes the candidate's manifest, the change happens.
+    const { prepareWikiStage: prepareWhileTheWikiChanges } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-refused-preparation-')),
+    )
+    const root = join(directory, 'project'),
+      output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first'),
+      next = join(root, '.codebook/next')
+    try {
+      await mkdir(root)
+      await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      const publishedPage = await readFile(join(output, 'index.html'), 'utf8')
+      swapBeforeWriting(
+        (path) => path === join(next, 'codebook-wiki.json'),
+        () => refusalCase.change(output),
+      )
+
+      // Act: the refused preparation, then the change undone and the candidate prepared again into the same folder.
+      const refusal = await prepareWhileTheWikiChanges({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      }).then(
+        () => 'prepared',
+        (error) => error.message,
+      )
+      const candidateLeft = await readdir(next).catch(() => 'no candidate')
+      await refusalCase.undo(output, publishedPage)
+      const nextPreparation = await prepareWikiStage({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      }).then(
+        ({ stage }) => ({ stage }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { refusal, candidateLeft, nextPreparation },
+        {
+          refusal: refusalCase.refusal(output),
+          candidateLeft: 'no candidate',
+          nextPreparation: { stage: next },
+        },
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Value: protects=the folder outside the project that a missing `.codebook` leads to when another process makes it a link after the publisher looked at the path and before the publisher made it; fails_when=the preparation takes the missing folder as the end of its look, makes the parent through the link and then holds the Wiki behind it for an output outside the project, so it prepares there; why_new=Cycle 0046 /ship Codex review CX17 (the path was never looked at again once its missing folders were made); seam=a copy of the shipped publisher whose `node:fs/promises` makes `.codebook` a link just before the publisher makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
 test('a preparation whose missing .codebook becomes a link to a folder outside the project just before the publisher makes it is refused with the folder named, and nothing is written behind the link', async () => {
   // Arrange: a project without `.codebook` when the publisher looks at the path, and with a link of that name when the publisher makes the folder.
