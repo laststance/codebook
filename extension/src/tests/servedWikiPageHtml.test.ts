@@ -154,6 +154,24 @@ test('the reader’s script tag goes in at the body end the parser found, past a
   )
 })
 
+// Value: protects=the place of the reader's script tag on every served Wiki page, which goes in at the start of the body end the reader finds (readHtmlPage's bodyEndTagStart) or, without one, at the page's end; fails_when=the reader takes as the body's end a `</body>` the parser did not take as such (one in a comment, the first of two, one inside a template), or finds a body end on a frameset page or on a page whose body no `<body>` tag opened, where the pinned parser records none; why_new=Cycle 0047 row 147 (P3SIMP-1), the body end is noted at the `</body>` the parser takes instead of read from the finished tree; seam=none; no_claim=where the tag goes on these pages (the test above), and whether Chrome takes the same ends (the pinned parser stands for it)
+test('the reader finds a page’s body end at the last </body> the parser takes: past a commented one, at the second of two, none inside a template or for a frameset, and none for a body the parser put in by itself', () => {
+  // Arrange: a commented </body> before </BODY>, a second </body> after text past the first, a </body> inside a template, a frameset page, and the first page without its <body> tag.
+  const pages = [
+    '<body><!-- </body> --><p>x</BODY>',
+    '<body>a</body>b</body>',
+    '<body><template></body>',
+    '<frameset></frameset>',
+    '<!-- </body> --><p>x</BODY>',
+  ]
+
+  // Act
+  const bodyEnds = pages.map((page) => readHtmlPage(page).bodyEndTagStart)
+
+  // Assert: the offset of the `<` of the body end, or none.
+  assert.deepEqual(bodyEnds, [26, 15, undefined, undefined, undefined])
+})
+
 // Value: protects=the rule that the page a learner receives is the address filter's output, also where the reader's tag goes at the end of a page without a body end; fails_when=the tag is put after the filter read the page, so a tag the page leaves open at its end is closed by the reader's tag and its link to another extension's address is served live; why_new=Cycle 0047 row 7 (S11-F5), the tag's new place at a page's end; seam=none; no_claim=whether the reader's script loads on such a page (the page's open tag takes it as an attribute)
 test('a page that ends inside an open link tag gets the reader’s tag at its end, and the link the tag closes loses its link', () => {
   // Arrange: a page whose last tag has no end, its value a bare address of another extension.

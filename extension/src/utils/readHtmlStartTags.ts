@@ -46,7 +46,7 @@ const CHROME_READING: HtmlReading = {
   scriptingEnabled: true,
 }
 
-/** A page as one reading reads it: its start tags in source order; where the end tag of its body starts, when the parser took one as the body's end (`undefined` for a page without, and for a frameset); and whether a start tag put in right before that end, or at the page's end, would take the rules of svg or MathML content, as it does where such an element other than an integration point is the current node, so that a script tag there would be an svg or MathML element, which loads nothing. */
+/** A page as one reading reads it: its start tags in source order; where the end tag of its body starts, when the parser took one as the body's end (`undefined` for a page without, for a frameset, and for a body no `<body>` tag opened, on which the pinned parser records no place); and whether a start tag put in right before that end, or at the page's end, would take the rules of svg or MathML content, as it does where such an element other than an integration point is the current node, so that a script tag there would be an svg or MathML element, which loads nothing. */
 export type HtmlPageReading = {
   startTags: HtmlStartTag[]
   bodyEndTagStart: number | undefined
@@ -299,6 +299,8 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private readonly formattingEntryNames = new Map<string, number>()
   /** Whether the reading takes the select rules of 2025 ({@link HtmlReading}), which the select adapters apply; otherwise the pinned parser's own select rules stand. */
   private readonly followsCurrentSelectRules: boolean
+  /** Where the `</body>` the parser took as the body's end starts (the offset of its `<`): the last one the body rules met while the body was in scope, which the pinned parser records on the body; recorded by {@link HtmlPageReader.onEndTag}. `undefined` while the parser took none, and for a body no `<body>` tag opened, on which the pinned parser records no place (only such a body can give its place to a frameset). */
+  bodyEndTagStart: number | undefined = undefined
   /** Whether a start tag put in right before the `</body>` the parser took as the body's end would take the rules of svg or MathML content; recorded by {@link HtmlPageReader.onEndTag}. */
   bodyEndInForeignContent = false
   /** Whether a start tag put in at the page's end would take the rules of svg or MathML content; recorded by {@link HtmlPageReader.onEof}. */
@@ -322,34 +324,6 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     this.countFormattingEntries()
     // The rules before 2025 keep the ordinary scopes in a select, as the pinned parser's own checks do.
     if (this.followsCurrentSelectRules) this.endScopesAtOpenSelect()
-  }
-
-  /**
-   * Tells where the end tag of the page's body starts, as the parser took it: the last `</body>` the body rules met while the body was in scope, which the pinned parser records as the body's end tag; called by {@link readHtmlPage} after the whole page is read.
-   * @returns The offset of that `</body>`'s `<`; `undefined` when the parser took no `</body>` as the body's end, or the page has no body (a frameset).
-   * @example reader.bodyEndTagStart() // => 20 for '<!-- </body> --><p>x</BODY>' read whole
-   */
-  bodyEndTagStart(): number | undefined {
-    const root = this.treeAdapter
-      .getChildNodes(this.document)
-      .find(
-        (node) =>
-          this.treeAdapter.isElementNode(node) &&
-          this.treeAdapter.getTagName(node) === 'html',
-      )
-    const body =
-      root &&
-      this.treeAdapter.isElementNode(root) &&
-      this.treeAdapter
-        .getChildNodes(root)
-        .find(
-          (node) =>
-            this.treeAdapter.isElementNode(node) &&
-            this.treeAdapter.getTagName(node) === 'body',
-        )
-    return body
-      ? this.treeAdapter.getNodeSourceCodeLocation(body)?.endTag?.startOffset
-      : undefined
   }
 
   /**
@@ -950,9 +924,9 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Reads an end tag ({@link HtmlPageReader.readEndTag}), and for a `</body>` the parser takes as the body's end records whether a start tag put in right before it would take the rules of svg or MathML content: the body's end closes no element, so such a start tag meets the stack this end meets. The tokenizer calls this for each end tag.
+   * Reads an end tag ({@link HtmlPageReader.readEndTag}), and for a `</body>` the parser takes as the body's end records where it starts and whether a start tag put in right before it would take the rules of svg or MathML content: the body's end closes no element, so such a start tag meets the stack this end meets. The tokenizer calls this for each end tag.
    * @param token - The source end token.
-   * @returns Nothing; {@link HtmlPageReader.bodyEndInForeignContent} holds the answer of the body's end.
+   * @returns Nothing; {@link HtmlPageReader.bodyEndTagStart} and {@link HtmlPageReader.bodyEndInForeignContent} hold the body's end.
    * @example reader.onEndTag(bodyEnd) // records true for '<body><svg><g></body>'
    */
   override onEndTag(token: Parse5.Token.TagToken): void {
@@ -960,8 +934,10 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     const startTagIsForeign = this.tokenizer.inForeignNode
     this.readEndTag(token)
     // Only a `</body>` the parser takes is the body's end; one it ignores, inside a template or an svg foreignObject, leaves the record of an earlier one.
-    if (isBodyEnd && this.tookAsBodyEnd(token))
+    if (isBodyEnd && this.tookAsBodyEnd(token)) {
+      this.bodyEndTagStart = token.location?.startOffset
       this.bodyEndInForeignContent = startTagIsForeign
+    }
   }
 
   /**
@@ -1094,7 +1070,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
  * @param reading - The select rules and the scripting flag to read the page with; Chrome 151's with scripting when omitted.
  * @returns The start tags in source order, with every original attribute's exact positions and values, the start of the body's end tag, and whether a start tag right before it or at the page's end takes the rules of svg or MathML content ({@link HtmlPageReading}).
  * @example
- * readHtmlPage('<!-- </body> --><p>x</BODY>').bodyEndTagStart // => 20
+ * readHtmlPage('<body><!-- </body> --><p>x</BODY>').bodyEndTagStart // => 26
  * readHtmlPage('<body><svg><g></body>').bodyEndInForeignContent // => true
  */
 export function readHtmlPage(
@@ -1105,7 +1081,7 @@ export function readHtmlPage(
   reader.tokenizer.write(html, true)
   return {
     startTags: reader.startTags,
-    bodyEndTagStart: reader.bodyEndTagStart(),
+    bodyEndTagStart: reader.bodyEndTagStart,
     bodyEndInForeignContent: reader.bodyEndInForeignContent,
     pageEndInForeignContent: reader.pageEndInForeignContent,
   }
