@@ -75,6 +75,7 @@ import {
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
 import { hasOwnWriterRecordFolder } from './utils/hasOwnWriterRecordFolder'
+import { hasStudyArchive } from './utils/hasStudyArchive'
 import {
   isRecordingWriterLive,
   type ProcessStartsOfList,
@@ -1284,7 +1285,7 @@ export class RecordingWriter {
       })
   }
 
-  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. @example await writer.finish(runtime.evidence.elapsedMs()) */
+  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. The record of the writer goes at the seal only when the study is already saved; otherwise the study's save removes it ({@link LearningLibrary.saveStudy}). @example await writer.finish(runtime.evidence.elapsedMs()) */
   finish(endMs: number): Promise<RecordingSeal> {
     if (this.finishing) return this.finishing
     if (!this.frameCount)
@@ -1324,12 +1325,13 @@ export class RecordingWriter {
           seal,
           MAX_RECORDING_HEADER_BYTES,
         )
-        // A sealed recording has no writer any more; the record of its writer goes, and one that stays is swept at a later start.
-        await removeWriterRecord(
-          dirname(dirname(this.directory)),
-          this.header.studyId,
-          { directory: this.directory, createdAt: this.header.createdAt },
-        )
+        // A sealed recording keeps the record of its writer while its run has not saved its study: until that save the run holds it, and another window neither lists it as what is left of a removed study nor removes it (recordingWriterOf). The save removes the record then (removeWriterRecordsOfSealedRecordings).
+        const learningDirectory = dirname(dirname(this.directory))
+        if (await hasStudyArchive(learningDirectory, this.header.studyId))
+          await removeWriterRecord(learningDirectory, this.header.studyId, {
+            directory: this.directory,
+            createdAt: this.header.createdAt,
+          })
         this.finalized = true
         this.sealed()
         return seal

@@ -114,6 +114,28 @@ async function startRecording(
 }
 
 /**
+ * Saves the study of a recording in the library that shares its storage, as the run's checkpoint saves it: a configured study with the recording's study id.
+ * @param storage - The test's storage.
+ * @param studyId - The recording's study id, `<instance id>_<run id>`.
+ * @example await saveStudyOfRecording(storage, recording.studyId)
+ */
+async function saveStudyOfRecording(
+  storage: Awaited<ReturnType<typeof recordingStorage>>,
+  studyId: string,
+): Promise<void> {
+  const study = createConfiguredStudy()
+  const [instanceId = '', runId = ''] = studyId.split('_')
+  for (const observation of study.observations)
+    observation.snapshotUri = observation.snapshotUri
+      .replace(study.instanceId, instanceId)
+      .replace(study.runId, runId)
+  study.instanceId = instanceId
+  study.runId = runId
+  study.id = studyId
+  await storage.library.saveStudy(study)
+}
+
+/**
  * Rewrites what a recording's header says of its writer, for a test that names another editor process or another creation time.
  * @param folder - The recording's folder.
  * @param change - The owner fields and the creation time to put in the header.
@@ -894,7 +916,7 @@ const NAME_IN_A_RECORDING_AS_0_2_29_0_ACCEPTS_IT =
 
 // Value: protects=a window of 0.2.29.0 that shares the storage (until it is reloaded after an update, and after a rollback), which must still list and replay what this build records; fails_when=this build writes the writer's identity into the header or the recording's folder, or puts any entry that is no recording folder into a recordings root, which 0.2.29.0 refuses ("Recording library contains a non-directory entry.", "Recording contains unknown files.", a header schema error); why_new=Cycle 0046 /ship review R10: the record of the writer is new and lies outside every recording; seam=none, the folders as this build writes them, read with 0.2.29.0's rules
 test('the folders this build writes for a recording stay as 0.2.29.0 reads them: the header names its writer in the three fields it knows, and the record of the writer lies outside every recordings root', async (context) => {
-  // Arrange: one recording that is being written and one that was sealed.
+  // Arrange: one recording that is being written and one that was sealed before its run saved its study, which keeps the record of its writer until that save (Cycle 0047 row 36).
   const storage = await recordingStorage(context)
   const beingWritten = await startRecording(storage),
     sealed = await startRecording(storage)
@@ -934,23 +956,29 @@ test('the folders this build writes for a recording stay as 0.2.29.0 reads them:
         (name) => !NAME_IN_A_RECORDING_AS_0_2_29_0_ACCEPTS_IT.test(name),
       ),
       learningDirectory: (await readdir(storage.directory)).sort(),
-      writerRecords: await readdir(join(storage.directory, 'recording-owners')),
+      writerRecords: (
+        await readdir(join(storage.directory, 'recording-owners'))
+      ).sort(),
     },
     {
       ownersRead: [true, true],
       everyRootEntryIsARecordingFolder: true,
       namesUnknownTo0_2_29_0: [],
       learningDirectory: ['recording-owners', 'recordings.v2'],
-      writerRecords: [`${beingWritten.studyId}.json`],
+      writerRecords: [
+        `${beingWritten.studyId}.json`,
+        `${sealed.studyId}.json`,
+      ].sort(),
     },
   )
 })
 
-// Value: protects=the record of a recording's writer lasting exactly as long as the writer, so it never judges a finished recording and never stays behind; fails_when=the record is not written when the recording starts (the recording is judged by its header alone), or stays after the seal; why_new=Cycle 0046 /ship review R10 (b); seam=none, the store's own start and seal
-test('the record of a recording’s writer names this window’s process when the recording starts and is gone once the recording is sealed', async (context) => {
-  // Arrange
+// Value: protects=the record of a recording's writer lasting exactly as long as the writer, so it never judges a finished recording and never stays behind; fails_when=the record is not written when the recording starts (the recording is judged by its header alone), or stays after the seal of a recording whose study is saved; why_new=Cycle 0046 /ship review R10 (b); since Cycle 0047 row 36 the study is saved before the seal, as a run's checkpoint saves it, because the seal of a recording whose study is not saved keeps the record until that save (the next test); seam=none, the store's own start and seal, and the library's save
+test('the record of a recording’s writer names this window’s process when the recording starts and is gone once the recording of a saved study is sealed', async (context) => {
+  // Arrange: the run's checkpoint has saved its study before the recording is sealed.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
+  await saveStudyOfRecording(storage, recording.studyId)
   const recordPath = recordingOwnerRecordPath(
     storage.directory,
     recording.studyId,
@@ -978,6 +1006,29 @@ test('the record of a recording’s writer names this window’s process when th
       processStart: await readProcessStart(process.pid),
       isRecordLeftAfterTheSeal: false,
     },
+  )
+})
+
+// Value: protects=the finished recording of a run that has not saved its study yet, which another window must neither list as what is left of a removed study nor move to the Trash before that save; fails_when=the seal removes the record of the writer whatever the study's state, so nothing tells another window that the run still holds the recording, or the save leaves the record, so after the archive was removed by hand the rest stays unlisted while the writer runs; why_new=Cycle 0047 row 36 (P3RT14); seam=none, the store's own start and seal, and the library's save; no_claim=a second editor window (studyRemoval tests)
+test('the record of a recording’s writer stays after the seal while the run has not saved its study, and goes with the study’s save', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const recordPath = recordingOwnerRecordPath(
+    storage.directory,
+    recording.studyId,
+  )
+
+  // Act
+  await recording.writer.finish(1)
+  const isRecordLeftAfterTheSeal = await isPresent(recordPath)
+  await saveStudyOfRecording(storage, recording.studyId)
+  const isRecordLeftAfterTheSave = await isPresent(recordPath)
+
+  // Assert
+  assert.deepEqual(
+    { isRecordLeftAfterTheSeal, isRecordLeftAfterTheSave },
+    { isRecordLeftAfterTheSeal: true, isRecordLeftAfterTheSave: false },
   )
 })
 

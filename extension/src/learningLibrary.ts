@@ -51,6 +51,7 @@ import {
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
 import type { ProcessStartsOfList } from './utils/isRecordingWriterLive'
+import { isSealedRecordingReleased } from './utils/isSealedRecordingReleased'
 import { lookAtRecording, type RecordingLook } from './utils/lookAtRecording'
 import { newerStudyArchive } from './utils/newerStudyArchive'
 import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
@@ -63,6 +64,7 @@ import {
 } from './utils/recordingWriterOf'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { removeWriterRecord } from './utils/removeWriterRecord'
+import { removeWriterRecordsOfSealedRecordings } from './utils/removeWriterRecordsOfSealedRecordings'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
@@ -246,9 +248,10 @@ function isSameWriterSet(
 
 /**
  * Says whether two looks at one recording ({@link lookAtRecording}) found the same: the seal, the header's writer (its process id) and creation time, and the writer record's presence; for {@link LearningLibrary.verdictUnderLock}, which refuses a removal when another window's start may have changed the recording between them.
+ * A seal that came between the two looks keeps them the same: the writer that sealed it is the one judged before, and its run still holds the recording until it has saved its study ({@link isSealedRecordingReleased}).
  * @param before - The look before the storage lock.
  * @param now - The look under it.
- * @returns `true` when all four agree.
+ * @returns `true` when all four agree, or when only a seal came since.
  * @example isSameRecordingLook({ isSealed: false, hasWriterRecord: false }, { isSealed: false, header, hasWriterRecord: true }) // => false: a start wrote the header and the record meanwhile
  */
 function isSameRecordingLook(
@@ -256,7 +259,7 @@ function isSameRecordingLook(
   now: RecordingLook,
 ): boolean {
   return (
-    before.isSealed === now.isSealed &&
+    (before.isSealed === now.isSealed || now.isSealed) &&
     before.hasWriterRecord === now.hasWriterRecord &&
     before.header?.owner.pid === now.header?.owner.pid &&
     before.header?.createdAt === now.header?.createdAt
@@ -573,19 +576,21 @@ export class LearningLibrary {
   }
 
   /**
-   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a recording sealed since the judgement has no writer; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
+   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a sealed recording that its run has released ({@link isSealedRecordingReleased}) has no writer; one sealed since the judgement that its run still holds for its study's first save keeps the verdict of the writer that sealed it; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `sealed` for a recording sealed since; the verdict found before the lock while the look is the same.
+   * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
    * @throws "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
-   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed
+   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed and its study saved
    */
   private async verdictUnderLock(
     recording: string,
     verdicts: RemovalWriterVerdicts,
   ): Promise<RemovalWriterVerdict | 'sealed'> {
     const now = await lookAtRecording(recording)
-    if (now.isSealed) return 'sealed'
+    // A sealed recording that a run of another window still holds for its study's first save keeps that writer's verdict.
+    if (now.isSealed && (await isSealedRecordingReleased(recording, now)))
+      return 'sealed'
     const before = verdicts.get(recording)
     // A start under way between the two looks gives a recording another window may have just begun to write.
     if (!before || !isSameRecordingLook(before.look, now))
@@ -1081,7 +1086,7 @@ export class LearningLibrary {
     )
   }
 
-  /** Replaces one committed projection atomically, retaining bounded partial observations on later failure. @example await library.saveStudy(study) */
+  /** Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, the record of the writer of the study's sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save. @example await library.saveStudy(study) */
   saveStudy(input: RetainedStudy): Promise<void> {
     const study = decodeRetainedStudy(input, this.workspaceKey)
     return this.locked(async () => {
@@ -1111,6 +1116,11 @@ export class LearningLibrary {
         MAX_STUDY_ARCHIVE_BYTES,
       )
       await this.writeMetadata(study)
+      // The study's sealed recording no longer waits for this save; a record that cannot be removed only keeps the recording from other windows while its writer runs.
+      await removeWriterRecordsOfSealedRecordings(
+        this.directory,
+        study.id,
+      ).catch(() => undefined)
     })
   }
 

@@ -241,6 +241,46 @@ export async function recordingWriterState(
 }
 
 /**
+ * Judges what holds a sealed recording: the run that wrote it, while that run has not saved its study yet, so that another window takes the recording neither for what is left of a removed study nor for something a removal may move; called by {@link recordingWriterOf} for every sealed recording with a readable header.
+ * A sealed recording keeps the record of its writer's full identity ({@link recordingOwnerRecordPath}) until its study is saved ({@link RecordingWriter.finish}, {@link removeWriterRecordsOfSealedRecordings}), and that record decides, as it does for an unsealed recording ({@link writerStateByRecord}). The caller asks only for a recording its run has not released ({@link isSealedRecordingReleased}); nothing holds a sealed recording without such a record (its study was saved, it was made by 0.2.29.0, or its record could not be written), nor this window's own: this window lists the finished recording of its own run whose archive could not be saved yet, and Retry storage there writes the archive.
+ * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`.
+ * @param header - What the recording's header says of its writer.
+ * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
+ * @returns The state of the writer whose run may still save the study ({@link RecordingWriterState}: `may-run`, `on-another-host`, `unconfirmed-here`, or `gone`); `undefined` when nothing holds the recording, which is then finished.
+ * @example
+ * await sealedRecordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'may-run' } while another window of this machine has not saved that study
+ * await sealedRecordingWriterState('/storage/learning/recordings.v2/<id>', header) // => undefined once that window saved it
+ */
+export async function sealedRecordingWriterState(
+  directory: string,
+  header: RecordingWriterOfHeader,
+  starts: ProcessStartsOfList = new Map(),
+): Promise<RecordingWriterState | undefined> {
+  // This window's own run is judged by this window, by its header's session.
+  if (isOwnRecording(header.owner)) return undefined
+  const recordedOwner = await readRecordingWriterRecord(
+    directory,
+    header.createdAt,
+  )
+  // Without its writer's record a sealed recording waits for no save.
+  if (!recordedOwner) return undefined
+  // A record that names this very process (its id and its start on this machine) is this window's own as well.
+  const identity = await currentStorageOwner()
+  if (
+    recordedOwner.pid === process.pid &&
+    recordedOwner.processStart !== undefined &&
+    recordedOwner.processStart === identity.processStart &&
+    isSameStorageMachine(recordedOwner, identity)
+  )
+    return undefined
+  return writerStateByRecord(
+    recordedOwner,
+    header,
+    readStartOncePerList(starts),
+  )
+}
+
+/**
  * Says whether the editor process that writes an unsealed recording may still run, on this machine or on another one ({@link recordingWriterState}); called only by the status {@link RecordingStore.ownerState} gives a recording another session wrote (`unfinalized` while its writer may run, `interrupted` once it is gone).
  * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`.
  * @param header - What the recording's header says of its writer.

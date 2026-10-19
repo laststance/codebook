@@ -5,7 +5,7 @@ import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
 /**
- * Removes the record of a recording's writer once the recording has no writer any more, and only from a real folder of records ({@link hasOwnWriterRecordFolder}); called by {@link RecordingWriter.finish} after the seal, for the sealed recording alone, and by {@link LearningLibrary.removeStudy} after every recording of the study moved.
+ * Removes the record of a recording's writer once the recording has no writer any more, and only from a real folder of records ({@link hasOwnWriterRecordFolder}); called for the sealed recording alone by {@link RecordingWriter.finish} after the seal of a recording whose study is saved, and by {@link removeWriterRecordsOfSealedRecordings} when the study of a sealed recording is saved, and by {@link LearningLibrary.removeStudy} after every recording of the study moved.
  * A link or anything else at the folder's place is left as it is, with what it leads to; a record that cannot be removed stays for the sweep at a later start of a recording. The look and the removal are separate steps ({@link hasOwnWriterRecordFolder}: only this user's own processes can put a link there between them), and the removal never follows a link at the record's own name.
  * @param learningDirectory - The private learning directory that holds the `recordings.vN` folders.
  * @param studyId - The recording's study id.

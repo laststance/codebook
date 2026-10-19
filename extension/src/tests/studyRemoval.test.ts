@@ -1569,6 +1569,123 @@ test('a recording that is still being written for a study that is not saved yet 
 })
 
 /**
+ * Records and seals the recording of a run whose study is not saved yet, as another editor window leaves it when its run has ended and its first save has not happened: the recording names a live process of this machine, the other window, in its header and in the record of its writer.
+ * @param context - The test, at whose end the other window's process is killed.
+ * @param storage - The removal storage of the test.
+ * @returns The study the other window has not saved yet, whose id the recording has.
+ * @example const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+ */
+async function sealedRecordingOfAnotherWindow(
+  context: TestContext,
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+) {
+  const otherWindow = await idleChild(context)
+  const study = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of study.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      study.runId,
+      runId,
+    )
+  study.runId = runId
+  study.id = `${study.instanceId}_${runId}`
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, study.id, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  await recording.finish(1)
+  return study
+}
+
+// Value: protects=the recording of another window's run that has ended and has not saved its study yet (its first save failed and waits for Retry storage, or is still on its way); fails_when=a sealed recording counts as finished whatever run holds it, so this window lists it as "Archive missing; remaining files kept" and Delete moves it to the Trash before the other window saves the study, which then has no recording (data loss); why_new=Cycle 0047 row 36 (P3RT14); seam=the recording's header and writer record, which name a live child process of the test as the other window, and the injected mover; no_claim=a real second editor window
+test('the finished recording of another window whose study that window has not saved yet is neither listed nor moved by this window', async (context) => {
+  // Arrange
+  const storage = await removalStorage(context, 4)
+  const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+
+  // Act
+  const listed = (await storage.library.list()).map((entry) => entry.id)
+  const removal = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal,
+      moved: storage.moved,
+      recordingLeft: await readdir(join(storage.directory, 'recordings.v2')),
+    },
+    {
+      listed: [],
+      removal: {
+        outcome: 'nothing-moved',
+        cause: 'Study archive is unavailable.',
+      },
+      moved: [],
+      recordingLeft: [unsaved.id],
+    },
+  )
+})
+
+// Value: protects=the finished recording of another window's run once that window saved its study: from then on the study is listed by its archive, and what its archive leaves when it is removed by hand is listed again and removable (Cycle 0046 row 86); fails_when=the record of the writer that keeps the finished recording for its run's first save outlives the save, so after the archive was removed by hand the rest stays unlisted and keeps its place while the other window runs; why_new=Cycle 0047 row 36 (P3RT14): the seal keeps that record until the save; seam=the recording's header and writer record, which name a live child process of the test as the other window, the library's save of the study, as the other window saves it, and the injected mover; no_claim=a real second editor window
+test('once another window saved the study of its finished recording, the study is listed by its archive, and what is left after its archive was removed by hand is listed and moves to the Trash', async (context) => {
+  // Arrange: the other window saves its study; later the learner removes its archive and its catalog sidecar by hand.
+  const storage = await removalStorage(context, 4)
+  const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+  await storage.library.saveStudy(unsaved)
+  const listedWhenSaved = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  await rm(join(storage.directory, `${unsaved.id}.study.meta.v3.json`))
+  await rm(join(storage.directory, `${unsaved.id}.study.v3.json`))
+
+  // Act
+  const listedAfterRemovalByHand = (await storage.library.list()).map(
+    (entry) => ({ id: entry.id, format: entry.format }),
+  )
+  const removal = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listedWhenSaved,
+      listedAfterRemovalByHand,
+      removal,
+      moved: storage.moved,
+    },
+    {
+      listedWhenSaved: [{ id: unsaved.id, format: 'v3' }],
+      listedAfterRemovalByHand: [{ id: unsaved.id, format: 'archive-missing' }],
+      removal: { outcome: 'moved' },
+      moved: [join('recordings.v2', unsaved.id)],
+    },
+  )
+})
+
+/**
  * Leaves a recording of a saved study in one recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming the writer's process and host and the time the recording was created.
  * @param storage - The removal storage of the test.
  * @param studyId - The saved study's id.
