@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { hostname, uptime } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { renderWikiPages } from './render-wiki.mjs';
@@ -471,11 +471,11 @@ async function finalizedManifestTextOf(manifest, owned, stage) {
   return JSON.stringify(manifest, null, 2) + '\n';
 }
 
-/** The journal of a publish, with the backup name of the prior Wiki and the text of the candidate's finalized record. The journal keeps the candidate's prepared manifest and record, so the recovery of a publish stopped after it finalized them puts them back ({@link restoreStoppedCandidate}). Called by {@link publishWiki} before it writes the journal. @returns The journal's record, the backup's path (none without a prior Wiki) and the finalized record's text. @example await publishJournalOf(paths, prior, receipt, manifestText, manifestBytes, receiptBytes) // => { record: { projectRoot: '/repo', …, operation: 'publish', … }, backup: '/repo/.codebook/wiki.previous-…', finalizedReceiptText: '{…}' } */
-async function publishJournalOf({ root, output, stage }, prior, receipt, manifestText, bytes, receiptBytes) {
+/** The journal of a publish, with the backup name of the prior Wiki and the text of the candidate's finalized record. The journal keeps the candidate's prepared manifest and record, so the recovery of a publish stopped after it finalized them puts them back ({@link restoreStoppedCandidate}), and names its owner as `system` tells it ({@link ownerHere}). Called by {@link publishWiki} before it writes the journal. @returns The journal's record, the backup's path (none without a prior Wiki) and the finalized record's text. @example await publishJournalOf(paths, prior, receipt, manifestText, manifestBytes, receiptBytes, SYSTEM_HERE) // => { record: { projectRoot: '/repo', …, operation: 'publish', … }, backup: '/repo/.codebook/wiki.previous-…', finalizedReceiptText: '{…}' } */
+async function publishJournalOf({ root, output, stage }, prior, receipt, manifestText, bytes, receiptBytes, system) {
   const backup = prior ? output + '.previous-' + randomUUID() : undefined;
   const manifestSha256 = digest(manifestText), finalizedReceiptText = JSON.stringify({ ...receipt, kind: 'published', manifestSha256, manifestText });
-  const record = { projectRoot: root, output, stage, backup, pid: process.pid, owner: await ownerHere(), id: randomUUID(), operation: 'publish', manifestSha256, priorManifestSha256: prior ? digest(prior.bytes) : undefined, priorLegacy: receipt.baseline?.legacy === true,
+  const record = { projectRoot: root, output, stage, backup, pid: process.pid, owner: await ownerHere(system), id: randomUUID(), operation: 'publish', manifestSha256, priorManifestSha256: prior ? digest(prior.bytes) : undefined, priorLegacy: receipt.baseline?.legacy === true,
     finalizedReceiptSha256: digest(finalizedReceiptText), prepared: { manifest: bytes.toString('base64'), receipt: receiptBytes.toString('base64') } };
   return { record, backup, finalizedReceiptText };
 }
@@ -527,8 +527,8 @@ async function restoreFinalizedFiles(finalized, stage) {
   return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
-export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false }) {
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @param options.system - The system whose process and boot the journal records of its owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
   if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
   // Every write below is held to the look the paths were resolved with.
@@ -546,7 +546,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   await writePagesHeld(rendered, stage, writeHeld, written, made);
   if (renderOnly) return { stage, renderedPages: rendered.size };
   const manifestText = await finalizedManifestTextOf(manifest, owned, stage);
-  const { record, backup, finalizedReceiptText } = await publishJournalOf(paths, prior, receipt, manifestText, bytes, receiptBytes);
+  const { record, backup, finalizedReceiptText } = await publishJournalOf(paths, prior, receipt, manifestText, bytes, receiptBytes, system);
   const journalBytes = JSON.stringify(record);
   await writeFile(journal, journalBytes, { flag: 'wx' });
   const finalized = [], finalize = finalizerOf(stage, record.id, finalized);
@@ -646,9 +646,12 @@ const START_QUERY_TIMEOUT_MS = 3_000, START_QUERY_MAX_BYTES = 1024;
 /** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link processStartOf}. */
 const LINUX_STAT_START_INDEX = 19;
 
-/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}). Called by {@link macStartOf} and {@link windowsStartOf}. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
+/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}): the runner of {@link SYSTEM_HERE}, which {@link macStartOf} and {@link windowsStartOf} run their queries with. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
 const queryText = (program, args, env) => new Promise(resolve => execFile(program, args, { env, timeout: START_QUERY_TIMEOUT_MS, maxBuffer: START_QUERY_MAX_BYTES, killSignal: 'SIGKILL', windowsHide: true },
   (error, stdout) => resolve(error ? undefined : String(stdout).trim() || undefined)));
+
+/** The system the publisher runs on, as the owner judgement asks it about processes and the boot: its `platform`, which picks the query of a process's start ({@link START_QUERIES}), the boot's form ({@link bootHere}) and the space of process ids ({@link processSpaceHere}); its `environment`, which names the Windows folder PowerShell is started from ({@link windowsStartOf}); and `run`, the runner of the bounded queries ({@link queryText}). The CLI passes it to the step it runs, and a step called without one asks it too; the publisher's tests name another system with a stand-in runner, so the queries of macOS and Windows run on every system. Read by {@link publishWiki} and {@link recoverWikiPublication}. */
+const SYSTEM_HERE = Object.freeze({ platform: process.platform, environment: process.env, run: queryText });
 
 /** The start of a Linux process: the clock ticks since the boot in `/proc/<pid>/stat`. The query of {@link START_QUERIES} on Linux. @returns `linux:<ticks>`; undefined when the file cannot be read or holds no start. @example await linuxStartOf(process.pid) // => 'linux:16362446' */
 async function linuxStartOf(pid) {
@@ -658,16 +661,16 @@ async function linuxStartOf(pid) {
   return stat.includes(')') && /^\d+$/.test(ticks ?? '') ? 'linux:' + ticks : undefined;
 }
 
-/** The start of a macOS process: what `ps` prints in the C locale and in UTC, so two callers with different ones read the same text. The query of {@link START_QUERIES} on macOS. @returns `ps:<text>`; undefined for any other answer. @example await macStartOf(4242) // => 'ps:Mon Oct  5 09:12:33 2026' */
-async function macStartOf(pid) {
-  const text = await queryText('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC' });
+/** The start of a macOS process: what `ps` prints in the C locale and in UTC, so two callers with different ones read the same text, run by the runner of `system` ({@link SYSTEM_HERE}). The query of {@link START_QUERIES} on macOS. @returns `ps:<text>`; undefined for any other answer. @example await macStartOf(4242, SYSTEM_HERE) // => 'ps:Mon Oct  5 09:12:33 2026' */
+async function macStartOf(pid, system) {
+  const text = await system.run('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC' });
   return text !== undefined && /^[\x20-\x7e]{1,64}$/.test(text) ? 'ps:' + text : undefined;
 }
 
-/** The start of a Windows process: the creation time PowerShell prints in UTC, PowerShell started by its full path under the system root, never found on the search path. The query of {@link START_QUERIES} on Windows. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242) // => 'win:2026-10-05T09:12:33.1234567Z' */
-async function windowsStartOf(pid) {
-  const systemRoot = [process.env.SystemRoot, process.env.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
-  const text = systemRoot === undefined ? undefined : await queryText(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+/** The start of a Windows process: the creation time PowerShell prints in UTC, PowerShell started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). The query of {@link START_QUERIES} on Windows. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242, SYSTEM_HERE) // => 'win:2026-10-05T09:12:33.1234567Z' */
+async function windowsStartOf(pid, system) {
+  const systemRoot = [system.environment.SystemRoot, system.environment.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
+  const text = systemRoot === undefined ? undefined : await system.run(win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id ' + pid + " -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')"]);
   return text !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(text) ? 'win:' + text : undefined;
 }
@@ -675,30 +678,32 @@ async function windowsStartOf(pid) {
 /** The query of a process's start on each system whose starts the publisher reads. Read by {@link processStartOf}. */
 const START_QUERIES = { linux: linuxStartOf, darwin: macStartOf, win32: windowsStartOf };
 
-/** When a process began, as its system tells it ({@link START_QUERIES}), so that a process id another process took since is told from the process a journal or a claim records. Called by {@link ownerHere} for this process and by {@link processStateOf} for the process that has a recorded id now. @returns The start with its system's form before a colon (`linux:`, `ps:`, `win:`); undefined when it cannot be read, and on any other system. @example await processStartOf(process.pid) // => 'linux:16362446' */
-async function processStartOf(pid) {
-  return Object.hasOwn(START_QUERIES, process.platform) ? START_QUERIES[process.platform](pid) : undefined;
+/** When a process began, as its system tells it ({@link START_QUERIES} by the platform of `system`), so that a process id another process took since is told from the process a journal or a claim records. Called by {@link ownerHere} for this process and by {@link processStateOf} for the process that has a recorded id now. @returns The start with its system's form before a colon (`linux:`, `ps:`, `win:`); undefined when it cannot be read, and on any other system. @example await processStartOf(process.pid, SYSTEM_HERE) // => 'linux:16362446' */
+async function processStartOf(pid, system) {
+  return Object.hasOwn(START_QUERIES, system.platform) ? START_QUERIES[system.platform](pid, system) : undefined;
 }
 
-/** The boot of this machine that this process runs under: the kernel's boot id on Linux, else the boot time, the wall clock minus the uptime, which a correction of the clock moves ({@link BOOT_TIME_TOLERANCE_MS}). Called by {@link ownerHere}. @example await bootHere() // => { id: '0c1d7a52-6f0e-4d3b-9a57-3f6f0a1b2c3d' } on Linux, { atMs: 1790000000000 } elsewhere */
-async function bootHere() {
+/** The boot of this machine that this process runs under: the kernel's boot id on Linux, else the boot time, the wall clock minus the uptime, which a correction of the clock moves ({@link BOOT_TIME_TOLERANCE_MS}); macOS and Windows, by the platform of `system`, have no kernel boot id to read. Called by {@link ownerHere}. @example await bootHere(SYSTEM_HERE) // => { id: '0c1d7a52-6f0e-4d3b-9a57-3f6f0a1b2c3d' } on Linux, { atMs: 1790000000000 } elsewhere */
+async function bootHere(system) {
+  const atMs = Date.now() - Math.round(uptime() * 1000);
+  if (system.platform === 'darwin' || system.platform === 'win32') return { atMs };
   const id = await readFile('/proc/sys/kernel/random/boot_id', 'utf8').then(text => text.trim(), () => '');
-  return id ? { id } : { atMs: Date.now() - Math.round(uptime() * 1000) };
+  return id ? { id } : { atMs };
 }
 
-/** The space of process ids this process probes: its system, and on Linux its pid namespace, which two containers or two WSL distributions of one kernel do not share; `linux@` when the namespace cannot be read, which then counts as one space with every other record of this host and boot that could not read it either. Called by {@link ownerHere}. @example await processSpaceHere() // => 'linux@4026531836' */
-async function processSpaceHere() {
-  if (process.platform !== 'linux') return process.platform;
+/** The space of process ids this process probes: its system (the platform of `system`), and on Linux its pid namespace, which two containers or two WSL distributions of one kernel do not share; `linux@` when the namespace cannot be read, which then counts as one space with every other record of this host and boot that could not read it either. Called by {@link ownerHere}. @example await processSpaceHere(SYSTEM_HERE) // => 'linux@4026531836' */
+async function processSpaceHere(system) {
+  if (system.platform !== 'linux') return system.platform;
   return 'linux@' + (/^pid:\[(\d+)\]$/.exec(await readlink('/proc/self/ns/pid').catch(() => ''))?.[1] ?? '');
 }
 
-/** The read of {@link ownerHere}, once per process. */
-let ownerHereReading;
+/** The read of {@link ownerHere}, once per process and system. */
+const ownerReadings = new WeakMap();
 
-/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name, the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}). Read once per process. Called by {@link publishWiki}, {@link claimRecovery} and {@link recoverWikiPublication} before they write a journal or a claim, and by {@link requireExited}. @returns The owner, without the process id. @example await ownerHere() // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
-function ownerHere() {
-  ownerHereReading ??= (async () => ({ host: hostname(), space: await processSpaceHere(), boot: await bootHere(), start: await processStartOf(process.pid) }))();
-  return ownerHereReading;
+/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name, the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system. Called by {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} before a journal or a claim is written, and by {@link requireExited}. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
+function ownerHere(system) {
+  if (!ownerReadings.has(system)) ownerReadings.set(system, (async () => ({ host: hostname(), space: await processSpaceHere(system), boot: await bootHere(system), start: await processStartOf(process.pid, system) }))());
+  return ownerReadings.get(system);
 }
 
 /** Whether a recorded boot is in the form {@link bootHere} gives: a boot id, or a boot time. Called by {@link isOwnerForm}. @example isBootForm({ atMs: 1790000000000 }) // => true */
@@ -713,10 +718,10 @@ function isProcessIdFree(pid) {
   try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
 }
 
-/** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine or in another space of process ids, which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; an earlier boot ended every process of it, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}. @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' } }) // => 'gone' */
-async function ownerStateOf({ pid, owner }, here) {
+/** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine or in another space of process ids, which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; an earlier boot ended every process of it, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}, with the owner `system` tells of this process ({@link ownerHere}). @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' } }, SYSTEM_HERE) // => 'gone' */
+async function ownerStateOf({ pid, owner }, here, system) {
   if (owner === undefined) return isProcessIdFree(pid) ? 'gone' : 'running';
-  return placeStateOf(owner, here) ?? processStateOf(pid, owner);
+  return placeStateOf(owner, here) ?? processStateOf(pid, owner, system);
 }
 
 /** Judges a recorded owner by where it ran, before its process id is probed: `elsewhere` for another machine (another host name, unless both name one boot id) or another space of process ids, `gone` for an earlier boot of this machine ({@link isOfEarlierBootTime} where neither names a boot id). Called by {@link ownerStateOf}. @returns The state; undefined when the owner ran under this boot, in this space, and its process id decides ({@link processStateOf}). @example placeStateOf({ host: 'other', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'workstation', space: 'linux@1', boot: { id: 'boot-2' } }) // => 'elsewhere' */
@@ -733,36 +738,36 @@ function placeStateOf(owner, here) {
 const isOfEarlierBootTime = (owner, here, hasBootIds) => owner.start === undefined && !hasBootIds && Number.isFinite(owner.boot.atMs) && Number.isFinite(here.boot.atMs) &&
   Math.abs(owner.boot.atMs - here.boot.atMs) > BOOT_TIME_TOLERANCE_MS;
 
-/** Judges a recorded owner of this boot and space by its process id: `gone` when no process has the id, or when the process that has it now began at another time than the recorded start; `running` otherwise, also when the start cannot be read. Called by {@link ownerStateOf}. @example await processStateOf(process.pid, { start: 'linux:1' }) // => 'gone' */
-async function processStateOf(pid, owner) {
+/** Judges a recorded owner of this boot and space by its process id: `gone` when no process has the id, or when the process that has it now began at another time than the recorded start, as `system` tells it ({@link processStartOf}); `running` otherwise, also when the start cannot be read. Called by {@link ownerStateOf}. @example await processStateOf(process.pid, { start: 'linux:1' }, SYSTEM_HERE) // => 'gone' */
+async function processStateOf(pid, owner, system) {
   if (isProcessIdFree(pid)) return 'gone';
-  const liveStart = owner.start === undefined ? undefined : await processStartOf(pid);
+  const liveStart = owner.start === undefined ? undefined : await processStartOf(pid, system);
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
-/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it. Called by {@link recoverWikiPublication} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids. @example await requireExited({ pid: 1 }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
-async function requireExited(recorded) {
+/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it. Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}). @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
+async function requireExited(recorded, { system }) {
   const { pid, owner } = recorded ?? {};
   if (!Number.isSafeInteger(pid) || pid < 1 || owner !== undefined && !isOwnerForm(owner)) throw new Error('The Wiki recovery owner is invalid.');
-  const state = await ownerStateOf({ pid, owner }, await ownerHere());
+  const state = await ownerStateOf({ pid, owner }, await ownerHere(system), system);
   if (state === 'gone') return;
   if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + JSON.stringify(owner.host) + ' (' + owner.space + '), where this recovery cannot look at it. Run --recover there after it exits.');
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
 }
 
-/** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock. @example await claimRecovery(journal, journalBytes) */
-async function claimRecovery(journal, bytes) {
+/** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim is judged by it ({@link requireExited}). @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
+async function claimRecovery(journal, bytes, ownerJudgement) {
   // Journal hash -> exclusive owner -> stopped owner ID -> exclusive successor; a live owner stops traversal.
   const claims = [], visited = new Set();
   let parent = digest(bytes);
   while (!visited.has(parent)) {
     visited.add(parent);
-    const path = journal + '.recovery-' + parent, claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(), id: randomUUID() });
+    const path = journal + '.recovery-' + parent, claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(ownerJudgement.system), id: randomUUID() });
     try { await writeFile(path, claimBytes, { flag: 'wx' }); claims.push({ path, bytes: claimBytes }); return claims; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     const previousBytes = await regularBytes(path), previous = JSON.parse(previousBytes);
     if (typeof previous.id !== 'string' || !/^[a-f0-9-]{36}$/.test(previous.id)) throw new Error('The Wiki recovery claim is invalid; it was preserved.');
-    await requireExited(previous);
+    await requireExited(previous, ownerJudgement);
     claims.push({ path, bytes: previousBytes });
     parent = previous.id;
   }
@@ -847,15 +852,15 @@ async function restoreManifestHeld(record, paths, requirePathHeld, isResumed) {
   catch (error) { if (error.isHoldRefusal) await removeWritten(written, []); throw error; }
 }
 
-/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
-export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory }) {
+/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system = SYSTEM_HERE }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { journal } = paths;
   // Every write and move below is held to the look the paths were resolved with.
   const requirePathHeld = await holdOfPath(paths, []);
   const found = await regularBytes(journal, true);
   // A journal found here is one a stopped publish or recovery left; this recovery writes its own below.
   const isResumed = found !== undefined;
-  const opened = isResumed ? await resumeJournal(found, paths, requirePathHeld) : await startManifestRecovery(paths, requirePathHeld);
+  const opened = isResumed ? await resumeJournal(found, paths, requirePathHeld, { system }) : await startManifestRecovery(paths, requirePathHeld, system);
   if (opened.result !== undefined) return opened.result;
   const { record, bytes, claims } = opened;
   let completed = false, result;
@@ -871,36 +876,36 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
     for (const claim of cleanup) await removeOwnedRecord(claim.path, claim.bytes);
   }
   // The ended recovery's journal is gone, so this one starts from the manifest as it is now and writes a journal of its own: it cannot be superseded in turn.
-  return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory });
+  return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, its owner must have exited ({@link requireExited}), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
-async function resumeJournal(bytes, { root, output, journal }, requirePathHeld) {
+/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
+async function resumeJournal(bytes, { root, output, journal }, requirePathHeld, ownerJudgement) {
   const record = JSON.parse(bytes);
   if (record?.projectRoot !== root || record.output !== output || !['publish', 'restore-manifest', undefined].includes(record.operation))
     throw new Error('The Wiki publication journal does not identify this output; inspect it without moving files.');
-  await requireExited(record);
+  await requireExited(record, ownerJudgement);
   await requirePathHeld();
-  return { record, bytes, claims: await claimRecovery(journal, bytes) };
+  return { record, bytes, claims: await claimRecovery(journal, bytes, ownerJudgement) };
 }
 
-/** Starts the recovery of an edited manifest when no journal stands: the retained publication must be there, a manifest that is the retained one needs nothing, and otherwise this recovery's own journal is written ({@link manifestJournalOf}) while the path holds; a journal written after a swap is this recovery's own, and it is removed with the refusal. Called by {@link recoverWikiPublication}. @returns `{ result }` when the manifest is current; the journal's record and bytes, with no claims, otherwise. @throws The refusal of a Wiki without a retained publication, and of a changed path. @example await startManifestRecovery(paths, requirePathHeld) // => { result: { status: 'published-current', output: '/repo/.codebook/wiki' } } */
-async function startManifestRecovery(paths, requirePathHeld) {
+/** Starts the recovery of an edited manifest when no journal stands: the retained publication must be there, a manifest that is the retained one needs nothing, and otherwise this recovery's own journal is written ({@link manifestJournalOf}) while the path holds; a journal written after a swap is this recovery's own, and it is removed with the refusal. Called by {@link recoverWikiPublication}. @returns `{ result }` when the manifest is current; the journal's record and bytes, with no claims, otherwise. @throws The refusal of a Wiki without a retained publication, and of a changed path. @example await startManifestRecovery(paths, requirePathHeld, SYSTEM_HERE) // => { result: { status: 'published-current', output: '/repo/.codebook/wiki' } } */
+async function startManifestRecovery(paths, requirePathHeld, system) {
   const { root, output, journal } = paths;
   const state = await recoveryState(root, output, paths.stage);
   if (!state || !state.receipt && !state.legacyRecovery) throw new Error('No retained Wiki publication is available for recovery.');
   if (state.actual && state.actual.equals(state.bytes)) return { result: { status: 'published-current', output } };
-  const record = await manifestJournalOf(state, paths), bytes = Buffer.from(JSON.stringify(record));
+  const record = await manifestJournalOf(state, paths, system), bytes = Buffer.from(JSON.stringify(record));
   await requirePathHeld();
   await writeFile(journal, bytes, { flag: 'wx' });
   await requirePathHeld().catch(async error => { await removeOwnedRecord(journal, bytes); throw error; });
   return { record, bytes, claims: [] };
 }
 
-/** The journal of a recovery of an edited manifest: the retained manifest's digest, the edited one's (null for a missing manifest), where the edit is kept beside the Wiki and where the staging file goes, by a new id, and the prepared stage of a legacy adoption. Called by {@link startManifestRecovery}. @example await manifestJournalOf(state, paths) // => { projectRoot: '/repo', output: '/repo/.codebook/wiki', operation: 'restore-manifest', … } */
-async function manifestJournalOf(state, { root, output, stage }) {
+/** The journal of a recovery of an edited manifest: the retained manifest's digest, the edited one's (null for a missing manifest), where the edit is kept beside the Wiki and where the staging file goes, by a new id, the prepared stage of a legacy adoption, and its owner as `system` tells it ({@link ownerHere}). Called by {@link startManifestRecovery}. @example await manifestJournalOf(state, paths, SYSTEM_HERE) // => { projectRoot: '/repo', output: '/repo/.codebook/wiki', operation: 'restore-manifest', … } */
+async function manifestJournalOf(state, { root, output, stage }, system) {
   const id = randomUUID();
-  return { projectRoot: root, output, operation: 'restore-manifest', pid: process.pid, owner: await ownerHere(), id, manifestSha256: digest(state.bytes),
+  return { projectRoot: root, output, operation: 'restore-manifest', pid: process.pid, owner: await ownerHere(system), id, manifestSha256: digest(state.bytes),
     modifiedManifestSha256: state.actual ? digest(state.actual) : null,
     modifiedManifestBackup: output + '.modified-manifest-' + id + '.json', temporaryManifest: join(output, '.codebook-restore-' + id + '.json'), sourceStage: state.legacyRecovery ? stage : undefined };
 }
@@ -998,7 +1003,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exitCode = 2;
   } else {
     const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
-    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true })
+    // The system the publisher runs on is the one its owner judgement asks ({@link SYSTEM_HERE}).
+    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, system: SYSTEM_HERE })
       .then(result => console.log(JSON.stringify(result)))
       .catch(error => { console.error(String(error)); process.exitCode = 1; });
   }

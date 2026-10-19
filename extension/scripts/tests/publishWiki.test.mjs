@@ -17,7 +17,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { register } from 'node:module'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir, uptime } from 'node:os'
 import { basename, dirname, join, relative } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -7628,6 +7628,127 @@ test('a recovery of a killed publish whose process id another process has now re
   }
 })
 
+for (const { when, printedStart, outcome, recovered } of [
+  {
+    when: 'whose process id another process has now',
+    printedStart: 'Tue Oct  6 10:00:00 2026',
+    outcome: 'recovers the Wiki',
+    recovered: 'published-or-restored',
+  },
+  {
+    when: 'whose process still runs',
+    printedStart: 'Mon Oct  5 09:12:33 2026',
+    outcome: 'is refused as one that may still be running',
+    recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+  },
+]) {
+  // Value: protects=the learner's --recover on macOS after a killed publish, judged by the start `ps` prints for the recorded process id; fails_when=the macOS query of a process's start is wrong (another program, other arguments, a locale or time zone of the caller's own), so the start is unknown and every process id another process took keeps the Wiki locked as "may still be running", or the start is not compared and a publisher that still runs is recovered around; why_new=Cycle 0047 row 64 (TEST-5): the publisher's macOS query never ran on CI; seam=the publisher's `system` option, here macOS with a stand-in for `ps` (the CLI passes the system it runs on); no_claim=a real `ps` on a Mac
+  test(`a recovery on macOS of a killed publish ${when}, by the start ps prints, ${outcome}`, async () => {
+    // Arrange: the journal names the test process's id, this host, macOS's space and a start ps printed for the killed publisher.
+    const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+      record.pid = process.pid
+      record.owner = {
+        host: hostname(),
+        space: 'darwin',
+        boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+        start: 'ps:Mon Oct  5 09:12:33 2026',
+      }
+    })
+    const macOS = {
+      platform: 'darwin',
+      environment: {},
+      // A stand-in for ps: it prints the start of the test process for the exact query, in the C locale and in UTC, and nothing for any other query.
+      run: async (program, args, env) =>
+        program === '/bin/ps' &&
+        JSON.stringify(args) ===
+          JSON.stringify(['-o', 'lstart=', '-p', String(process.pid)]) &&
+        JSON.stringify(env) === JSON.stringify({ LC_ALL: 'C', TZ: 'UTC' })
+          ? printedStart
+          : undefined,
+    }
+    try {
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        system: macOS,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, recovery },
+        { killed: '', recovery: recovered },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+for (const { when, printedStart, outcome, recovered } of [
+  {
+    when: 'whose process id another process has now',
+    printedStart: '2026-10-06T10:00:00.1234567Z',
+    outcome: 'recovers the Wiki',
+    recovered: 'published-or-restored',
+  },
+  {
+    when: 'whose process still runs',
+    printedStart: '2026-10-05T09:12:33.1234567Z',
+    outcome: 'is refused as one that may still be running',
+    recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+  },
+]) {
+  // Value: protects=the learner's --recover on Windows after a killed publish, judged by the start PowerShell prints for the recorded process id; fails_when=the Windows query of a process's start is wrong (PowerShell looked for elsewhere than under the system root, another command), so the start is unknown and every process id another process took keeps the Wiki locked as "may still be running", or the start is not compared and a publisher that still runs is recovered around; why_new=Cycle 0047 row 64 (TEST-5): the publisher's Windows query never ran on CI; seam=the publisher's `system` option, here Windows with a stand-in for PowerShell (the CLI passes the system it runs on); no_claim=a real PowerShell on Windows
+  test(`a recovery on Windows of a killed publish ${when}, by the start PowerShell prints, ${outcome}`, async () => {
+    // Arrange: the journal names the test process's id, this host, Windows's space and a start PowerShell printed for the killed publisher.
+    const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+      record.pid = process.pid
+      record.owner = {
+        host: hostname(),
+        space: 'win32',
+        boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+        start: 'win:2026-10-05T09:12:33.1234567Z',
+      }
+    })
+    const windows = {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      // A stand-in for PowerShell under the system root: it prints the start of the test process for a query of its process id, and nothing for any other program or query.
+      run: async (program, args) =>
+        program ===
+          'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' &&
+        JSON.stringify(args.slice(0, 3)) ===
+          JSON.stringify(['-NoProfile', '-NonInteractive', '-Command']) &&
+        args[3].includes(`Get-Process -Id ${process.pid} -ErrorAction Stop`)
+          ? printedStart
+          : undefined,
+    }
+    try {
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        system: windows,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, recovery },
+        { killed: '', recovery: recovered },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Value: protects=the learner's --recover after a killed publish before a restart of the machine, whose process id a process of the new boot has; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running"; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no process start and the test process's own id; no_claim=a boot time moved by a correction of the clock within the tolerance
 test('a recovery of a killed publish whose journal names an earlier boot of this machine recovers the Wiki whatever process has its id now', async () => {
   // Arrange
@@ -7662,6 +7783,57 @@ test('a recovery of a killed publish whose journal names an earlier boot of this
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+for (const { platform, system } of [
+  { platform: 'darwin', system: 'macOS' },
+  { platform: 'win32', system: 'Windows' },
+]) {
+  for (const { apartMs, outcome, recovered } of [
+    {
+      apartMs: 61_000,
+      outcome: 'recovers the Wiki: an earlier boot',
+      recovered: 'published-or-restored',
+    },
+    {
+      apartMs: 59_000,
+      outcome:
+        'is refused as one that may still be running: the same boot, moved by a correction of the clock',
+      recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+    },
+  ]) {
+    // Value: protects=the learner's --recover on a system that names its boot by no id after a killed publish whose journal names no process start, judged by the boot time with a tolerance of one minute; fails_when=the boot times are not compared, compared without the tolerance or only in one direction, so a journal of an earlier boot whose process id a process of this boot has keeps the Wiki locked as "may still be running", or a boot time moved by a correction of the clock counts as another boot and a publisher that may still run is recovered around; why_new=Cycle 0047 row 64 (TEST-5): the boot-time rule never ran on CI, where Linux names its boot by an id; seam=the publisher's `system` option, here macOS or Windows whose queries print nothing, so no boot session and no start is read (the CLI passes the system it runs on); no_claim=a clock corrected while the test runs
+    test(`a recovery on ${system} of a killed publish whose journal names no start and a boot time ${apartMs / 1000} seconds before this one ${outcome}`, async () => {
+      // Arrange: the journal names the test process's id, this host, the system's space, no start and a boot time apart from this boot's.
+      const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+        record.pid = process.pid
+        record.owner = {
+          host: hostname(),
+          space: platform,
+          boot: { atMs: Date.now() - Math.round(uptime() * 1000) - apartMs },
+        }
+      })
+      try {
+        // Act
+        const recovery = await recoverWikiPublication({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          system: { platform, environment: {}, run: async () => undefined },
+        }).then(
+          ({ status }) => status,
+          (error) => error.message,
+        )
+
+        // Assert
+        assert.deepEqual(
+          { killed, recovery },
+          { killed: '', recovery: recovered },
+        )
+      } finally {
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    })
+  }
+}
 
 // Value: protects=a Wiki whose publish runs on another machine that opens the same project folder (a shared or synced folder): a recovery here does not move its files; fails_when=the recovery probes the recorded process id on this machine, where no process has it, and goes on while the publisher on the other machine may still run; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another machine's host name and boot id; no_claim=a machine renamed and restarted since the journal was written, which is judged as another machine
 test('a recovery of a publish whose journal names another machine is refused with that machine named, and the journal is kept', async () => {
