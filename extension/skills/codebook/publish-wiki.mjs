@@ -544,13 +544,24 @@ async function recoveryState(root, output, stageDirectory) {
   return { ...parsed, bytes, actual: await regularBytes(join(output, MANIFEST), true), files, legacyRecovery: true };
 }
 
-/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). @example await restoreManifest(record, paths, writeHeld, requireHeld) */
-async function restoreManifest(record, paths, writeHeld, requireHeld) {
+/** Ends a resumed metadata recovery whose edited manifest the learner changed again after its process stopped: the staging file it wrote in the Wiki folder is removed while it holds the retained manifest, so no file of the recovery's is left there for the next publish to carry over as the learner's, and the edit it kept beside the Wiki stays. The refusal it answers is marked, so {@link recoverWikiPublication} removes the journal and recovers again from the manifest as it is now. Called by {@link restoreManifest}. @returns The marked refusal, to be thrown. @example throw await endSupersededRestore(record, requireHeld) */
+async function endSupersededRestore(record, requireHeld) {
+  const temporary = await regularBytes(record.temporaryManifest, true).catch(() => undefined);
+  if (temporary !== undefined && digest(temporary) === record.manifestSha256) { await requireHeld(); await unlink(record.temporaryManifest); }
+  return Object.assign(new Error('The altered Wiki manifest changed again after an interrupted recovery; that recovery was ended.'), { isSupersededRestore: true });
+}
+
+/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). A recovery resumed after its process stopped (`isResumed`) whose edited manifest changed again since is ended ({@link endSupersededRestore}); one that runs from its start refuses such a change, which happened while it ran. @example await restoreManifest(record, paths, writeHeld, requireHeld, false) */
+async function restoreManifest(record, paths, writeHeld, requireHeld, isResumed) {
   const { root, output } = paths;
   let state = await recoveryState(root, output, record.sourceStage);
   if (!state || !state.receipt && !state.legacyRecovery || digest(state.bytes) !== record.manifestSha256) throw new Error('The retained Wiki generation changed; recovery was stopped.');
   if (state.actual && digest(state.actual) === record.manifestSha256) return;
-  if ((state.actual ? digest(state.actual) : null) !== record.modifiedManifestSha256) throw new Error('The altered Wiki manifest changed during recovery; it was preserved.');
+  if ((state.actual ? digest(state.actual) : null) !== record.modifiedManifestSha256) {
+    // An edit after the stopped recovery's process ended is the learner's latest; it is kept by a new recovery, not refused for good.
+    if (isResumed) throw await endSupersededRestore(record, requireHeld);
+    throw new Error('The altered Wiki manifest changed during recovery; it was preserved.');
+  }
   if (state.actual) {
     const retained = await regularBytes(record.modifiedManifestBackup, true);
     if (retained && !retained.equals(state.actual)) throw new Error('The retained edited manifest conflicts with recovery; it was preserved.');
@@ -566,8 +577,8 @@ async function restoreManifest(record, paths, writeHeld, requireHeld) {
   await renameRetried(record.temporaryManifest, join(output, MANIFEST));
 }
 
-/** Restores an edited manifest ({@link restoreManifest}) only while the output's path and the Wiki folder hold: each write is held before and after it and the rename before it, by the path ({@link holdOfPath}) and the Wiki folder itself ({@link folderLookOf}), and a refused hold removes what this recovery wrote that is still its own ({@link removeWritten}). Called by {@link recoverWikiPublication}. @example await restoreManifestHeld(record, paths, requirePathHeld) */
-async function restoreManifestHeld(record, paths, requirePathHeld) {
+/** Restores an edited manifest ({@link restoreManifest}) only while the output's path and the Wiki folder hold: each write is held before and after it and the rename before it, by the path ({@link holdOfPath}) and the Wiki folder itself ({@link folderLookOf}), and a refused hold removes what this recovery wrote that is still its own ({@link removeWritten}). Called by {@link recoverWikiPublication}, with whether the journal is one a stopped recovery left (`isResumed`). @example await restoreManifestHeld(record, paths, requirePathHeld, false) */
+async function restoreManifestHeld(record, paths, requirePathHeld, isResumed) {
   const isOutputWhereItWas = await folderLookOf(paths.output), written = [];
   const requireHeld = async () => {
     await requirePathHeld();
@@ -575,16 +586,18 @@ async function restoreManifestHeld(record, paths, requirePathHeld) {
   };
   // The hold is taken before and after each write, so a swap during the write is seen before anything else is read or moved.
   const writeHeld = async (path, bytes) => { await requireHeld(); written.push(await writeOwnFile(path, bytes)); await requireHeld(); };
-  try { await restoreManifest(record, paths, writeHeld, requireHeld); }
+  try { await restoreManifest(record, paths, writeHeld, requireHeld, isResumed); }
   catch (error) { if (error.isHoldRefusal) await removeWritten(written, []); throw error; }
 }
 
-/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, journal } = paths;
   // Every write and move below is held to the look the paths were resolved with.
   const requirePathHeld = await holdOfPath(paths, []);
   let bytes = await regularBytes(journal, true), record, claims = [];
+  // A journal found here is one a stopped publish or recovery left; this recovery writes its own below.
+  const isResumed = bytes !== undefined;
   if (bytes) {
     record = JSON.parse(bytes);
     if (record?.projectRoot !== root || record.output !== output || !['publish', 'restore-manifest', undefined].includes(record.operation))
@@ -606,18 +619,19 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
     // A journal written after a swap is this recovery's own; it is removed with the refusal.
     await requirePathHeld().catch(async error => { await removeOwnedRecord(journal, bytes); throw error; });
   }
-  let completed = false;
+  let completed = false, result;
   try {
     await requirePathHeld();
     if (!(await regularBytes(journal)).equals(bytes)) throw new Error('The Wiki publication journal changed during recovery.');
-    let result;
     if (record.operation === 'restore-manifest') {
       if (!HASH.test(record.manifestSha256) || record.modifiedManifestSha256 !== null && !HASH.test(record.modifiedManifestSha256) ||
         typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id) ||
         record.modifiedManifestBackup !== output + '.modified-manifest-' + record.id + '.json' ||
         record.temporaryManifest !== join(output, '.codebook-restore-' + record.id + '.json')) throw new Error('The Wiki metadata recovery journal is invalid.');
-      await restoreManifestHeld(record, paths, requirePathHeld);
-      result = { status: 'manifest-restored', output, modifiedManifestBackup: record.modifiedManifestSha256 === null ? undefined : record.modifiedManifestBackup };
+      // A superseded recovery leaves no result; the journal is removed below and the recovery runs again.
+      result = await restoreManifestHeld(record, paths, requirePathHeld, isResumed).then(
+        () => ({ status: 'manifest-restored', output, modifiedManifestBackup: record.modifiedManifestSha256 === null ? undefined : record.modifiedManifestBackup }),
+        error => { if (error.isSupersededRestore) return undefined; throw error; });
     } else {
       if (typeof record.stage !== 'string' || dirname(record.stage) !== dirname(output) || record.stage === output ||
         record.backup !== undefined && (typeof record.backup !== 'string' || dirname(record.backup) !== dirname(output) || !record.backup.startsWith(output + '.previous-')))
@@ -625,7 +639,8 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
       if (record.operation === 'publish' && (!HASH.test(record.manifestSha256) || typeof record.priorLegacy !== 'boolean' ||
         record.backup !== undefined && !HASH.test(record.priorManifestSha256)))
         throw new Error('The Wiki publication journal is missing generation identity; it was preserved.');
-      const current = await inspectOutput(output, root, { allowLegacy: record.operation === undefined || record.priorLegacy === true });
+      // The record's retained manifest decides which generation stands; an edit of the published manifest since is left to the next recovery.
+      const current = await inspectOutput(output, root, { allowLegacy: record.operation === undefined || record.priorLegacy === true, allowManifestDrift: true });
       if (current) {
         if (record.operation === 'publish' && ![record.manifestSha256, record.priorManifestSha256].includes(digest(current.bytes)))
           throw new Error('The current Wiki does not match the interrupted publication.');
@@ -644,12 +659,13 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
     }
     await removeOwnedRecord(journal, bytes);
     completed = true;
-    return result;
   } finally {
     // Keep stopped ancestors on failure: removing them could let a new contender skip an active descendant.
     const cleanup = completed ? claims.reverse() : claims.slice(-1);
     for (const claim of cleanup) await removeOwnedRecord(claim.path, claim.bytes);
   }
+  // The ended recovery's journal is gone, so this one starts from the manifest as it is now and writes a journal of its own: it cannot be superseded in turn.
+  return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

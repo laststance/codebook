@@ -6779,3 +6779,176 @@ test('recovering an interrupted first publication reports the retained stage wit
     await rm(root, { recursive: true, force: true })
   }
 })
+
+/** The probe that runs one step of the shipped publisher in a process of its own and kills that process at a point a test names (`scripts/tests/utils/killedPublisherProbe.mjs`). */
+const KILLED_PUBLISHER_PROBE = fileURLToPath(
+  new URL('./utils/killedPublisherProbe.mjs', import.meta.url),
+)
+
+/**
+ * Runs a step of the shipped publisher in a process of its own that is killed where `spec` says, as a closed terminal or a crashed editor stops a publish or a recovery there.
+ * @param {{ operation: 'publishWiki' | 'prepareWikiStage' | 'recoverWikiPublication', options: object, killBeforeWriting: string, killBeforeReadingAfterIt?: string }} spec - The step, what it is called with, and the start of the path of the file before whose write (or before whose read after that write) the process is killed.
+ * @returns {string} What the probe printed: empty once the process was killed there.
+ * @example
+ * runKilledPublisher({ operation: 'publishWiki', options: { projectRoot, outputDirectory, stageDirectory }, killBeforeWriting: join(stageDirectory, 'codebook-wiki.json') }) // => ''
+ */
+function runKilledPublisher(spec) {
+  return spawnSync(
+    process.execPath,
+    [KILLED_PUBLISHER_PROBE, JSON.stringify(spec)],
+    { encoding: 'utf8', timeout: 10_000 },
+  ).stdout
+}
+
+// Value: protects=a Wiki whose publish was killed and whose published manifest was edited afterwards: the first --recover ends the publish's journal and the second restores the manifest and keeps the edit; fails_when=the recovery of a publish journal inspects the Wiki without allowing the manifest's drift, so it refuses with "run --recover" and keeps the journal, which the preparation and the publish also refuse for, and the Wiki is locked for good; why_new=Cycle 0047 row 27 (P3RT5); seam=a publisher process killed just before it writes the candidate's finalized manifest (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a published page edited after the kill, which recovery still refuses
+test('a Wiki whose publish was killed and whose published manifest was edited afterwards is recovered: the publish journal ends, then the manifest is restored and the edit kept beside the Wiki', async () => {
+  // Arrange: a published Wiki and a prepared candidate; the publish of the candidate is killed after its journal, then the learner edits the published manifest.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-killed-then-edited-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next'),
+    manifestPath = join(output, 'codebook-wiki.json')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    const generatedManifest = await readFile(manifestPath)
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      },
+      killBeforeWriting: join(next, 'codebook-wiki.json'),
+    })
+    await writeFile(manifestPath, '{"edited":"by the learner"}')
+
+    // Act
+    const firstRecovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const secondRecovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      async ({ status, modifiedManifestBackup }) => ({
+        status,
+        keptEdit: await readFile(modifiedManifestBackup, 'utf8'),
+      }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        firstRecovery,
+        secondRecovery,
+        manifestIsGenerated: (await readFile(manifestPath)).equals(
+          generatedManifest,
+        ),
+        journal: await access(`${output}.publish-journal.json`).then(
+          () => 'a journal',
+          () => 'no journal',
+        ),
+      },
+      {
+        killed: '',
+        firstRecovery: 'published-or-restored',
+        secondRecovery: {
+          status: 'manifest-restored',
+          keptEdit: '{"edited":"by the learner"}',
+        },
+        manifestIsGenerated: true,
+        journal: 'no journal',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki whose recovery of an edited manifest was killed after it kept the edit and wrote its staging file, and whose manifest the learner edited again afterwards: the next --recover restores the generated manifest, keeps both edits beside the Wiki and leaves no staging file in it; fails_when=the resumed recovery compares the manifest with the edit its journal recorded and refuses "changed during recovery", keeping the journal, so every later --recover, preparation and publish is refused and the Wiki is locked for good; why_new=Cycle 0047 row 27 (P3RT5, the restore-manifest journal); seam=a recovery process killed just after it wrote its staging file, at its next read of the Wiki's record (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=an edit while a recovery runs, which that recovery still refuses
+test('a Wiki whose manifest recovery was killed and whose manifest was edited again afterwards is recovered with the generated manifest, both edits kept beside the Wiki and no staging file in it', async () => {
+  // Arrange: a published Wiki whose manifest the learner edited; its recovery is killed after it kept the edit and wrote its staging file; then the learner edits the manifest again.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-killed-restore-edited-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    manifestPath = join(output, 'codebook-wiki.json')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    const generatedManifest = await readFile(manifestPath)
+    await writeFile(manifestPath, '{"edited":"first"}')
+    const killed = runKilledPublisher({
+      operation: 'recoverWikiPublication',
+      options: { projectRoot: root, outputDirectory: output },
+      killBeforeWriting: join(output, '.codebook-restore-'),
+      killBeforeReadingAfterIt: join(output, 'codebook-publication.json'),
+    })
+    await writeFile(manifestPath, '{"edited":"second"}')
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    const keptEdits = []
+    for (const name of await readdir(dirname(output)))
+      if (name.startsWith('wiki.modified-manifest-'))
+        keptEdits.push(await readFile(join(dirname(output), name), 'utf8'))
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        manifestIsGenerated: (await readFile(manifestPath)).equals(
+          generatedManifest,
+        ),
+        keptEdits: keptEdits.sort(),
+        stagingFilesInTheWiki: (await readdir(output)).filter((name) =>
+          name.startsWith('.codebook-restore-'),
+        ),
+        journal: await access(`${output}.publish-journal.json`).then(
+          () => 'a journal',
+          () => 'no journal',
+        ),
+      },
+      {
+        killed: '',
+        recovery: 'manifest-restored',
+        manifestIsGenerated: true,
+        keptEdits: ['{"edited":"first"}', '{"edited":"second"}'],
+        stagingFilesInTheWiki: [],
+        journal: 'no journal',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
