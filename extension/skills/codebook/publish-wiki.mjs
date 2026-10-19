@@ -653,7 +653,7 @@ const START_QUERY_TIMEOUT_MS = 3_000, START_QUERY_MAX_BYTES = 1024;
 /** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link linuxStartOf}. */
 const LINUX_STAT_START_INDEX = 19;
 
-/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}): the runner of {@link SYSTEM_HERE}, which {@link macStartOf} and {@link windowsStartOf} run their queries with. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
+/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}): the runner of {@link SYSTEM_HERE}, which {@link macStartOf}, {@link windowsStartOf} and {@link bootHere} run their queries with. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
 const queryText = (program, args, env) => new Promise(resolve => execFile(program, args, { env, timeout: START_QUERY_TIMEOUT_MS, maxBuffer: START_QUERY_MAX_BYTES, killSignal: 'SIGKILL', windowsHide: true },
   (error, stdout) => resolve(error ? undefined : String(stdout).trim() || undefined)));
 
@@ -1082,8 +1082,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exitCode = 2;
   } else {
     const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
-    // The system the publisher runs on is the one its owner judgement asks ({@link SYSTEM_HERE}).
     const goneOwner = options['--gone-host'] === undefined ? undefined : { host: options['--gone-host'], space: options['--gone-space'] };
+    // The system the publisher runs on is the one its owner judgement asks ({@link SYSTEM_HERE}).
     operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, goneOwner, system: SYSTEM_HERE })
       .then(result => console.log(JSON.stringify(result)))
       .catch(error => { console.error(String(error)); process.exitCode = 1; });
