@@ -1916,6 +1916,90 @@ test('the finished recording of a run on another computer that has not saved its
   )
 })
 
+// Value: protects=a learner whose Delete meets the study of a run on another computer (a shared storage folder) that a checkpoint taken before the seal saved and whose final save failed there, reading a refusal and a dialog that are true for it; fails_when=the archive of the earlier checkpoint releases the sealed recording again (as before Cycle 0047 row 98), so Delete moves the study and its recording without a word while the window there may still save it by Retry storage and write the study back without its recording; or the refusal stops saying that a window there may still have to save it; why_new=Cycle 0047 row 128 (ADV2-11): the study stays held by its writer's record after a failed final save, and Delete asks; seam=the recording's header and the record of its writer, which name an editor of another machine, the library's save of that run's checkpoint taken while it stopped, the removal's messages, and the injected mover; no_claim=a real second computer and its failed write, the editor's dialog (studyWorkspaceRemoval tests)
+test('the study of a run on another computer whose final save failed after a checkpoint saved it before the seal keeps its recording held, and the refusal and its dialog say a window there may still have to save it', async (context) => {
+  // Arrange: an editor of another machine records a study; a checkpoint taken while its run stopped saved the study; the run sealed the recording, and its save of the final state failed there.
+  const storage = await removalStorage(context, 4)
+  const study = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of study.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      study.runId,
+      runId,
+    )
+  study.runId = runId
+  study.id = `${study.instanceId}_${runId}`
+  study.state = 'stopping'
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, study.id, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'old-laptop.local',
+  })
+  await rewriteWriterRecord(storage.directory, study.id, {
+    machineId: 'machine-b',
+  })
+  await storage.library.saveStudy(study)
+  await recording.finish(1)
+  const directory = join(storage.directory, 'recordings.v2', study.id)
+  const { createdAt }: { createdAt: string } = JSON.parse(
+    await readFile(join(directory, 'header.json'), 'utf8'),
+  )
+  const startedAt = new Date(createdAt).toLocaleString()
+  const messages = studyRemovalMessages('Trash')
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const dialog = {
+    title: messages.unconfirmedWriterTitle([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+    detail: messages.unconfirmedWriterDetail([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { removal, dialog, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.`,
+        unconfirmedWriter: {
+          directory,
+          host: 'old-laptop.local',
+          startedAt: createdAt,
+          place: 'another-computer',
+        },
+      },
+      dialog: {
+        title:
+          "This study's recording may still be in use on another computer. Move the study to the Trash anyway?",
+        detail: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. If a window still records it or still has to save it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+      },
+      moved: [],
+    },
+  )
+})
+
 /**
  * Leaves a recording of a saved study in one recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming the writer's process and host and the time the recording was created.
  * @param storage - The removal storage of the test.
