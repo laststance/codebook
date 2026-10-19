@@ -7113,16 +7113,25 @@ const KILLED_PUBLISHER_PROBE = fileURLToPath(
 /**
  * Runs a step of the shipped publisher in a process of its own that is killed where `spec` says, as a closed terminal or a crashed editor stops a publish or a recovery there.
  * @param {{ operation: 'publishWiki' | 'prepareWikiStage' | 'recoverWikiPublication', options: object, killAt: { call: 'writing' | 'reading' | 'renaming', folder: string, name: string }[] }} spec - The step, what it is called with, and the chain of calls before whose last the process is killed: each the call of a file directly in `folder` whose name matches the regular expression `name`, waited for once the one before it was reached.
- * @returns {string} What the probe printed: empty once the process was killed there.
+ * @returns {string} Empty once the process was killed there, which ends the probe by its own SIGKILL with nothing printed; otherwise how the probe ended and what it printed and wrote to its errors: a step that ended or was refused before the point (`not killed`), a probe that crashed, or one that ran past its 10 seconds and was ended with SIGTERM, so a test's assertion of the kill names the cause instead of taking it for the kill.
  * @example
  * runKilledPublisher({ operation: 'publishWiki', options: { projectRoot, outputDirectory, stageDirectory }, killAt: [{ call: 'writing', folder: stageDirectory, name: 'codebook-wiki\\.json$' }] }) // => ''
  */
 function runKilledPublisher(spec) {
-  return spawnSync(
+  const probe = spawnSync(
     process.execPath,
     [KILLED_PUBLISHER_PROBE, JSON.stringify(spec)],
     { encoding: 'utf8', timeout: 10_000 },
-  ).stdout
+  )
+  // The kill is the probe's own SIGKILL with nothing printed; on Windows, where a process that kills itself ends with exit code 1 and no signal, nothing on its errors tells it from a crash.
+  const isKilled =
+    probe.stdout === '' &&
+    (process.platform === 'win32'
+      ? probe.status === 1 && probe.signal === null && probe.stderr === ''
+      : probe.signal === 'SIGKILL')
+  return isKilled
+    ? ''
+    : `not killed (${probe.signal === null ? `exit code ${probe.status}` : `signal ${probe.signal}`}): ${probe.stdout}${probe.stderr}`
 }
 
 // Value: protects=a Wiki whose publish was killed and whose published manifest was edited afterwards: the first --recover ends the publish's journal and the second restores the manifest and keeps the edit; fails_when=the recovery of a publish journal inspects the Wiki without allowing the manifest's drift, so it refuses with "run --recover" and keeps the journal, which the preparation and the publish also refuse for, and the Wiki is locked for good; why_new=Cycle 0047 row 27 (P3RT5); seam=a publisher process killed just before it writes the candidate's finalized manifest (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a published page edited after the kill, which recovery still refuses
