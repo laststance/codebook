@@ -7230,6 +7230,117 @@ test('a recovery of a publish whose journal names another machine is refused wit
   }
 })
 
+// Value: protects=a publish that runs in another space of process ids of this machine (another WSL distribution, a container): a recovery here moves none of its files; fails_when=the recovery skips the check of the space, finds the recorded process id free in its own space and recovers while that publisher may still run; why_new=the test of another machine changes the host name, which ends the judgement before the space is compared; seam=none; no_claim=a real second space of process ids (the killed publisher's journal is given the space linux@0, which no pid namespace has)
+test('a recovery of a publish whose journal names another space of process ids on this machine is refused with that space named, and the journal is kept', async () => {
+  // Arrange: the journal keeps this machine's host name and boot, and names a space of process ids this recovery does not run in.
+  const { wiki, killed, record } = await publishKilledAfterItsJournal(
+    (record) => {
+      record.owner = { ...record.owner, space: 'linux@0' }
+    },
+  )
+  try {
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        journal: await access(`${wiki.output}.publish-journal.json`).then(
+          () => 'kept',
+          () => 'gone',
+        ),
+      },
+      {
+        killed: '',
+        recovery: `The prior Wiki publisher process ${record.pid} ran on ${JSON.stringify(record.owner.host)} (linux@0), where this recovery cannot look at it. Run --recover there after it exits.`,
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the Wiki against a recovery that acts on a journal whose owner record it cannot read; fails_when=the form of the owner is not checked, so a boot id that is no text counts as an earlier boot or the owner as gone, and the recovery moves the Wiki's files; why_new=no test gives a journal an owner of the wrong form; seam=none; no_claim=other wrong forms of the owner (the killed publisher's journal is given a boot id that is a number)
+test('a recovery of a publish whose journal names an owner it cannot read is refused as an invalid owner, and the journal is kept', async () => {
+  // Arrange: the journal keeps its host name and space, and its boot id is a number, a form the publisher never writes.
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.owner = { ...record.owner, boot: { id: 42 } }
+  })
+  try {
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        journal: await access(`${wiki.output}.publish-journal.json`).then(
+          () => 'kept',
+          () => 'gone',
+        ),
+      },
+      {
+        killed: '',
+        recovery: 'The Wiki recovery owner is invalid.',
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's --recover after a killed publish on a machine whose host name changed since, under the same boot; fails_when=a host name that differs counts as another machine whatever the boot id, so the Wiki stays locked with "Run --recover there after it exits"; why_new=the test of another machine changes the host name and the boot id together; seam=none; no_claim=macOS and Windows, which name no boot id (the killed publisher's journal is given an earlier host name of this machine)
+test(
+  'a recovery of a killed publish whose journal names an earlier host name of this machine under the same boot recovers the Wiki',
+  {
+    skip:
+      process.platform === 'linux'
+        ? false
+        : 'only Linux names its boot by an id, which tells a renamed machine from another one',
+  },
+  async () => {
+    // Arrange: the journal keeps this boot's id and this space, and names the host name the machine had before.
+    const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+      record.owner = { ...record.owner, host: 'name-before-the-rename' }
+    })
+    try {
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, recovery },
+        { killed: '', recovery: 'published-or-restored' },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
 // Value: protects=the learner's next edit of a candidate after a publish that was killed once it had finalized the candidate's manifest and record, and the --recover that followed; fails_when=the recovery leaves the candidate's manifest rewritten and its record marked published, so the next publish of the edited candidate is refused as "A previously finalized candidate changed"; why_new=Cycle 0047 row 29 (P3RT7, a publish stopped by a kill); seam=a publisher process killed after it finalized the candidate, at its next read of the Wiki's record (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a journal of an earlier version, which keeps no prepared manifest or record to put back
 test('a publish killed after it finalized the candidate is recovered with the candidate’s prepared manifest and record put back, and the candidate publishes after the learner edits it', async () => {
   // Arrange: the publish of the candidate is killed after it finalized the candidate's manifest and record.

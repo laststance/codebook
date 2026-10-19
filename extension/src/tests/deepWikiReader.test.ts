@@ -27,6 +27,8 @@ import { readDeepWikiManifest, startDeepWikiReader } from '../deepWikiReader'
 import type * as linkGuardModule from '../utils/assertNoLinkOnWikiPath'
 import type * as linkWalkModule from '../utils/findLinkOnWikiPath'
 import type * as openWithoutFollowingModule from '../utils/openWithoutFollowing'
+import { openWithoutFollowing } from '../utils/openWithoutFollowing'
+import type { WikiPageRefusalReason } from '../utils/wikiPageRefusalHtml'
 import type * as wikiPageWorkerModule from '../wikiPageWorker'
 
 import {
@@ -1334,6 +1336,101 @@ test('while six pages are in hand, a further page is refused at once with 503 an
   )
 })
 
+// Value: protects=the Wiki reader's pages after pages it could not serve: each page gives its place back once it is answered, refused or failed; fails_when=a page its worker refuses, or one whose open fails, keeps its place, so after six such pages every page is refused with "Reload the page in a moment" until the editor reloads; why_new=the test of six pages in hand lets all six be served and asks for no page after them; seam=none; no_claim=the real page workers and a real race at the open (a stand-in worker refuses six pages, a stand-in opener fails six opens with ELOOP)
+test('pages that their worker refuses and pages whose open fails give their places back, so the page asked for after twelve of them is served', async (context) => {
+  // Arrange: a page besides the overview; an opener whose first six opens fail, as when a link takes the path between the reader's look and its open; a page worker that refuses its first six pages and serves the pages after them.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-places-given-back-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let failedOpenCount = 0
+  const openerFailingSixTimes: typeof openWithoutFollowingModule = {
+    openWithoutFollowing: async (
+      ...parameters: Parameters<typeof openWithoutFollowing>
+    ) => {
+      // The first six opens fail; every later one opens the file.
+      if (failedOpenCount < 6) {
+        failedOpenCount += 1
+        throw Object.assign(new Error('A link took the page’s path.'), {
+          code: 'ELOOP',
+        })
+      }
+      return openWithoutFollowing(...parameters)
+    },
+  }
+  const refusals: WikiPageRefusalReason[] = [
+    'failed',
+    'deadline',
+    'too-large',
+    'failed',
+    'deadline',
+    'too-large',
+  ]
+  let askedPageCount = 0
+  const workerRefusingSixPages: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      const refusal = refusals[askedPageCount]
+      askedPageCount += 1
+      return refusal
+        ? { state: refusal }
+        : { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderRefusingPages } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      './utils/openWithoutFollowing': openerFailingSixTimes,
+      './wikiPageWorker': workerRefusingSixPages,
+    },
+    { URL },
+  )
+  const reader = await startReaderRefusingPages(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: twelve pages one after another, each answered before the next is asked for, then one more.
+  const refusedStatuses: number[] = []
+  // Six opens fail, then six pages are refused by the worker.
+  for (let request = 0; request < 12; request += 1) {
+    const response = await fetch(new URL('later.html', reader.url))
+    await response.text()
+    refusedStatuses.push(response.status)
+  }
+  const nextResponse = await fetch(new URL('later.html', reader.url))
+  const next = { status: nextResponse.status, body: await nextResponse.text() }
+
+  // Assert
+  assert.deepEqual(
+    { refusedStatuses, next },
+    {
+      refusedStatuses: [
+        500, 500, 500, 500, 500, 500, 503, 503, 503, 503, 503, 503,
+      ],
+      next: { status: 200, body: '<p>Prepared page</p>' },
+    },
+  )
+})
+
 // Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
 test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
   // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.
@@ -1725,6 +1822,50 @@ test('an asset of the Wiki is sent byte for byte from its opened file in parts, 
   )
 })
 
+// Value: protects=an empty file of the Wiki folder that the manifest lists, such as a style sheet left empty by hand, which the reader serves as an empty answer; fails_when=the reader streams an empty file like any other, from byte 0 to byte -1, which Node refuses as out of range, so the file is answered with status 500; why_new=the test of a streamed asset sends an image of 300,000 bytes, and no test lists an empty file; seam=none; no_claim=none beyond protects
+test('an empty style sheet of the Wiki is served as an empty answer with status 200', async (context) => {
+  // Arrange: a style sheet of no bytes that the manifest names.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-empty-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(join(outputDirectory, 'notes.css'), '')
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['notes.css'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(new URL('notes.css', reader.url), {
+    headers: { 'Sec-Fetch-Dest': 'style' },
+  })
+  const answer = {
+    status: response.status,
+    type: response.headers.get('content-type'),
+    body: await response.text(),
+  }
+
+  // Assert
+  assert.deepEqual(answer, {
+    status: 200,
+    type: 'text/css; charset=utf-8',
+    body: '',
+  })
+})
+
 // Value: protects=every request of the open Wiki reader, and the few threads of the editor host's file system, against a named pipe at the path of an asset the manifest lists; fails_when=the reader reads a file that is no page without looking at what it is, so the read of the pipe holds a thread of the host's file system until a writer comes, which may be never; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); seam=none (a real named pipe, whose waiting reader the test releases when it ends); no_claim=Windows, which has no named pipe in a folder
 test(
   'an asset whose path holds a named pipe is refused at once with 403, and no read of it waits for a writer',
@@ -1793,6 +1934,92 @@ test(
       status: 403,
       body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
     })
+  },
+)
+
+// Value: protects=the reader when another entry takes a listed file's path after its look and before its open; fails_when=the isFile check after the open is dropped, so the folder that took a page's path is read and the connection closes with no answer instead of 403; why_new=the pipe tests refuse at the look, before the open; seam=none; no_claim=the real race's timing (the folder takes the path at the look), and Windows, whose open looks at the path itself
+test(
+  'a page and an asset whose path a folder takes after the reader’s look and before its open are refused with 403 as no regular file',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no O_NOFOLLOW: its open looks at the path itself and refuses the folder before the reader’s check after the open'
+        : false,
+  },
+  async (context) => {
+    // Arrange: the overview and a style sheet the manifest names, and a file system whose lstat lets a folder take the looked-at path right after the reader's look found a regular file there.
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-swap-after-look-')),
+    )
+    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    const { outputDirectory, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    await writeFile(join(outputDirectory, 'notes.css'), 'p { color: red; }')
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        repositoryRoot: projectRoot,
+        pages: [],
+        assets: ['notes.css'],
+        includedSources: [],
+      }),
+    )
+    const fileSystemWhoseLookedAtFileBecomesAFolder = {
+      ...fileSystemPromises,
+      lstat: async (...parameters: Parameters<typeof lstat>) => {
+        const look = await lstat(...parameters)
+        // Only the two served files are swapped, after the look saw them as regular files.
+        if (
+          ['index.html', 'notes.css'].includes(basename(String(parameters[0])))
+        ) {
+          await rm(parameters[0])
+          await mkdir(parameters[0])
+        }
+        return look
+      },
+    }
+    const { startDeepWikiReader: startReaderWhosePathsAreTaken } =
+      await loadModule<typeof deepWikiReaderModule>(
+        join(__dirname, '..', 'deepWikiReader.js'),
+        { 'node:fs/promises': fileSystemWhoseLookedAtFileBecomesAFolder },
+        { URL },
+      )
+    const reader = await startReaderWhosePathsAreTaken(
+      outputDirectory,
+      projectRoot,
+      async () => ({ handoff: 'not asked' }),
+    )
+    context.after(() => reader.close())
+
+    // Act
+    const pageResponse = await fetch(reader.url)
+    const page = {
+      status: pageResponse.status,
+      body: await pageResponse.text(),
+    }
+    const assetResponse = await fetch(new URL('notes.css', reader.url), {
+      headers: { 'Sec-Fetch-Dest': 'style' },
+    })
+    const asset = {
+      status: assetResponse.status,
+      body: await assetResponse.text(),
+    }
+
+    // Assert
+    assert.deepEqual(
+      { page, asset },
+      {
+        page: {
+          status: 403,
+          body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
+        },
+        asset: {
+          status: 403,
+          body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
+        },
+      },
+    )
   },
 )
 
