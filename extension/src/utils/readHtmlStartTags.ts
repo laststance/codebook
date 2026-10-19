@@ -876,8 +876,6 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       }
       const tagName = this.treeAdapter.getTagName(element)
       if (tagName === token.tagName) {
-        // The token takes the element's own name, as the pinned rule gives it for the end location.
-        token.tagName = tagName
         this.openElements.shortenToLength(index)
         return
       }
